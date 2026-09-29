@@ -1,6 +1,6 @@
 # SPECIFICATIONS.md — Borealis 终端管理软件需求规格书
 
-> 本文件是 **Borealis**（工作区目录 `aurora-view`，命名口径见裁决 7.14）的需求规格总纲，仿 Aurora `codespec/SPECIFICATIONS.md` 形态。
+> 本文件是 **Borealis**（命名口径见裁决 7.14）的需求规格总纲，仿 Aurora `codespec/SPECIFICATIONS.md` 形态。
 > 章节号统一纯数字点分层级（`1` / `1.1` / `1.1.1`）；需求标识见 §1.4，与章节号并存。
 > **本文只述需求**：不表达优先级、不表达交付分期与任务划分——那部分属 [`PLAN.md`](PLAN.md)（里程碑、优先级映射、观察池排期）。需求条目里出现的「延后子项」「延后观察项」只是需求本身的边界标注，其落期由 PLAN.md 决定。
 > 依据框架现状（Aurora alpha，2026-09-20 实测、2026-09-22 与 2026-09-29 复核，见附录 A）写成；技术选型与架构留给 `ARCHITECTURE.draft.md`。
@@ -299,7 +299,7 @@
 
 | # | 议题 | 裁决 |
 |:---|:---|:---|
-| 7.1 | 产品名 | **Borealis**（北极光，呼应 Aurora 极光血统；仓库目录名 `aurora-view` 不变——该括注由裁决 7.14 修订为「目录名为例外」） |
+| 7.1 | 产品名 | **Borealis**（北极光，呼应 Aurora 极光血统） |
 | 7.2 | SSH 传输库 | **libssh2**（C、成熟、SFTP 内置）；接入后如遇阻塞可换 libssh，接口层预留抽象 |
 | 7.3 | 默认等宽字体 | **内置 Cascadia Code**（SIL OFL 1.1，允许再分发） |
 | 7.4 | scrollback 超长行策略 | **截断为默认**（省内存，对齐 Tabby）；`SPEC.FEAT.TERM.04` 中做成配置项（截断/换行） |
@@ -312,7 +312,7 @@
 | 7.11 | 跨平台等价与分期解耦 | **等价性要求（SPEC.NF.PLAT.01）不打折，交付分期不在本文表达**——「先 Windows 后 Linux」的落期与理由归 PLAN.md。本条在需求侧保留的硬约束是：**平台相关层（PTY、串口、传输、默认 shell 探测、DPI 缩放上报）自首个交付阶段起即以接口抽象隔离**，禁止 Windows 假设（ConPTY 句柄、Win32 类型、码页 API）渗入共享路径；否则后补的 Linux 等价会退化成重写。本条同时修订 7.6 与 SPEC.FEAT.RENDER.05 中任何以里程碑表述分期的旧措辞 |
 | 7.12 | 应用侧三方依赖获取方式 | **经 `find_package` + vcpkg 获取**，不采用 Aurora 的「源码全量进 `third_party/`、断网可构建」口径（该口径是库交付约束，不约束消费者）。**链接形态约束**：Aurora 以静态库交付且不强制 CRT（顶层 `CMakeLists.txt` 仅在 ASan 前置块设 `CMAKE_MSVC_RUNTIME_LIBRARY`，其余走 CMake 默认 `/MD`/`/MDd`），故 vcpkg triplet 取 **`x64-windows-static-md`**（静态库 + 动态 CRT）以同时满足「不把 DLL 拖进 SPEC.NF.PKG.01 打包」与「CRT 与 Aurora 一致」；`x64-windows`（DLL 形态）与 `x64-windows-static`（`/MT`）各有冲突。**本条 triplet 组合尚未经真机链接验证**（属推断），留待接入 libssh2 时实测确认并回填。前置条件：本机尚无 vcpkg（`VCPKG_ROOT` 未设、PATH 无该命令），须在 SSH 族需求开工前安装 |
 | 7.13 | 框架缺口的处理节奏 | 除 G1/G2 外，开发中再撞到的框架缺口按**类别分流**：① 渲染与事件链路上的（影响公共 API 形态，如 G1 网格原语、G2 多击语义）——撞到即先在 Aurora 侧补公共 API + 单测 + 文档回写，应用侧不等不绕；② 交互体验类的（选择 overlay、光标闪烁驱动、tooltip 等用现有公共 API 即可组合实现的）——先在应用侧实现，不进框架。本条是设计约束 3.3.1 的执行细则：「不在应用侧私改渲染路径」仍为硬禁，但**用公共 API 组合出的应用侧控件不属于私改**，无需强行 push 进框架 |
-| 7.14 | 命名统一（修订 7.1 的括注） | 仓内**一切可自主命名的标识统一 `borealis`**：命名空间 `borealis`（按模块域分 `borealis::vt` / `borealis::term` / `borealis::session` 等）、CMake project 与 target `borealis`、可执行产物 `Borealis`、子目录与文档自称均不再出现 `aurora-view`。**唯一例外是当前工作区目录名仍为 `aurora-view`**——改目录名须由人在 IDE 会话外执行（牵动工程路径、既有构建目录与 IDE 配置），故本文与代码中凡指涉该目录处（含本文开头「仓库 `aurora-view`」）在改名前保留原样，改名后须同步回填 |
+| 7.14 | 命名统一（修订 7.1 的括注） | 仓内**一切可自主命名的标识统一 `borealis`**：命名空间 `borealis`（按模块域分 `borealis::vt` / `borealis::term` / `borealis::session` 等）、CMake project 与 target `borealis`、可执行产物 `Borealis`、目录与文档自称均不再出现旧名。本条曾把「工作区目录名仍为旧名」列为唯一例外（理由：改目录名须由人在 IDE 会话外执行，会牵动工程路径、既有构建目录与 IDE 配置），并规定改名后须同步回填；该例外已于 2026-09-29 随人完成目录改名而失效，本文与 `AGENTS.md` 中的相应括注已按本条要求删除，例外条款不再适用 |
 | 7.15 | East Asian Width 中 Ambiguous 类的默认宽度 | **默认按单宽（窄）处理**，并提供 **profile 级覆盖为双宽**。理由：Ambiguous 区间（箱线字符、`±`/`°`/`→`、全角标点等）在 UTF-8 环境下主流终端（Windows Terminal、xterm 默认、WezTerm 默认）按单宽呈现，本机 shell 与 SSH 是首要场景，取单宽可与既有终端的复制/换行/列对齐直觉一致；而 GB18030/GBK 串口与部分日文环境按双宽更正确，故覆盖项挂在 SPEC.FEAT.TERM.09 的会话配置旁边（profile 粒度，非全局设置），避免为少数场景把默认值改成对多数场景错误的一侧。**该默认值随框架宽度判定 API 一并表达**：判定接口须接受 Ambiguous 宽度模式作为入参（见附录 A.2 G1），而非在框架内硬编码单/双宽，否则应用侧只能绕开公共 API 自行查表 |
 
 ---
@@ -374,4 +374,4 @@ G1（网格渲染）、G2（多击事件）落地后**必须以框架公共 API 
 
 ## 版本与变更历史
 
-当前 **v0.8**。完整变更历史（含各版本当时的优先级与里程碑口径表述，作为历史记录不回填改写）与旧需求编号 → 新标识的映射表，见 [`CHANGELOG.md`](CHANGELOG.md)。
+当前 **v0.9**。完整变更历史（含各版本当时的优先级与里程碑口径表述，作为历史记录不回填改写）与旧需求编号 → 新标识的映射表，见 [`CHANGELOG.md`](CHANGELOG.md)。

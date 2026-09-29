@@ -11,7 +11,7 @@
 **Borealis** 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨平台终端管理软件：本地终端 / SSH / 串口 / Telnet 四类连接 + 多标签与任意分屏工作区。本仓是 **消费者应用**，不是库。
 
 - 与 Aurora 的接入方式：`add_subdirectory(../aurora)` 走源码树；本仓自有三方依赖经 `find_package` + vcpkg 获取（裁决 7.12），**不把 Aurora 源码复制进本仓**。
-- 命名：仓内一切可自主命名的标识统一 `borealis`（命名空间 `borealis::vt` / `borealis::term` / `borealis::session` 等、CMake project 与 target `borealis`、产物 `Borealis`）。**唯一例外是当前工作区目录名仍为 `aurora-view`**（裁决 7.14），凡指涉该目录处改名前保留原样。
+- 命名：仓内一切可自主命名的标识统一 `borealis`（命名空间 `borealis::vt` / `borealis::term` / `borealis::session` 等、CMake project 与 target `borealis`、产物 `Borealis`、工作区目录名亦已统一）。裁决 7.14 曾把目录名列为例外，该例外随 2026-09-29 的改名已失效并删除。
 - 工具链：MSVC + Ninja + Win32 后端；构建命令一律最大化并行线程（Ninja 默认满核，CMake 用 `--parallel`，MSBuild 用 `/m`，Make 用 `-j%NUMBER_OF_PROCESSORS%`）。
 
 ---
