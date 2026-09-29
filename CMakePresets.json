@@ -1,0 +1,40 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "msvc",
+      "displayName": "MSVC + Ninja (default)",
+      "description": "Ninja generator with the MSVC toolchain (AGENTS.md §1). Configure must run inside a Visual Studio developer environment so cl.exe is on PATH (e.g. VS 2022 Developer PowerShell).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "msvc",
+      "displayName": "Build (build/)",
+      "configurePreset": "msvc"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "msvc",
+      "displayName": "Test (build/, parallel)",
+      "configurePreset": "msvc",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 0
+      }
+    }
+  ]
+}
