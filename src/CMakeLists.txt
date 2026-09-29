@@ -6,7 +6,8 @@
 # ============================================================
 
 add_library(borealis_core STATIC
-        vt/parser.cpp)
+        vt/parser.cpp
+        term/utf8.cpp)
 
 # 消费者统一配置（链接 aurora + C++20 + 共享 PCH + 统一告警），额外私有头目录为本仓公共头根。
 aurora_setup_consumer_target(borealis_core "${CMAKE_CURRENT_SOURCE_DIR}/../include")
