@@ -39,7 +39,7 @@
 | **需求本身**（做什么、做到什么程度、验收判据） | `codespec/SPECIFICATIONS.md` | 🥇 需求以它为准；本文 §4.2 解释其标识规范 |
 | **优先级、交付分期、观察池、延后子项** | `codespec/PLAN.md` | 🥇 唯一的分期来源；需求文档里找不到「何时做」就来这里找 |
 | **版本演进、旧需求编号 → 新标识映射** | `codespec/CHANGELOG.md` | 历史记录，条目按当时口径原文照录 |
-| **架构 / 模块划分 / 线程与数据流 / 平台层边界** | `codespec/ARCHITECTURE.draft.md` | 草案（已起草，待评审）；通过评审后提升为 `codespec/ARCHITECTURE.md` |
+| **架构 / 模块划分 / 线程与数据流 / 平台层边界** | `codespec/ARCHITECTURE.md` | 🥇 架构以它为准（2026-09-30 评审通过，由 `ARCHITECTURE.draft.md` 提升）；待定决策见其 §16 |
 | **框架侧能力、缺口、编码规则** | Aurora 主仓 `AGENTS.md` 与其 `codespec/` | 跨仓改动 Aurora 前必读 |
 
 引用文档一律「仓库相对路径 + 章节号」（如 `codespec/SPECIFICATIONS.md` §1.4），**不写 `file:line` 行号锚点**（会随改动漂移），**不引用只存在于本机的文件**。
@@ -112,6 +112,6 @@
 
 ## 6 现状快照（2026-09-29）
 
-- 已有：`codespec/` 四份文档（需求 / 计划 / 变更历史 / 架构草案 `ARCHITECTURE.draft.md`，待评审后提升为 `ARCHITECTURE.md`）、`.gitignore`、`.gitattributes`、若干本地提交；**无 remote，未推送**。
+- 已有：`codespec/` 四份文档（需求 / 计划 / 变更历史 / 架构 `ARCHITECTURE.md`，2026-09-30 评审通过）、`.gitignore`、`.gitattributes`、若干本地提交；**无 remote，未推送**。
 - 尚无：全部代码与构建脚本（§2 中标注「待建」的行）、本机 vcpkg（`VCPKG_ROOT` 未设）。
 - 本文凡引用「待建」路径处均非既存事实；相应目录或文件落地后必须回填本表与 §2，避免出现「文档有、代码无」的死链。

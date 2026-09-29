@@ -1,6 +1,6 @@
-# ARCHITECTURE.draft.md — Borealis 架构设计草案
+# ARCHITECTURE.md — Borealis 架构设计
 
-> **状态**：草案。评审通过后提升为 `codespec/ARCHITECTURE.md`，并按 `AGENTS.md` §2 回填目录表。
+> **状态**：已通过评审（2026-09-30），由 `ARCHITECTURE.draft.md` 提升而来。评审期间的修订沿革见 [`CHANGELOG.md`](CHANGELOG.md) v0.10–v0.12；§16 待定决策清单随开发收敛，每项拍板后写入正文并从该表移除。
 > **职责边界**：本文件只述架构与设计（分层、运行时、模块映射、数据流、平台边界、关键取舍）。需求本身见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md)，优先级与交付分期见 [`PLAN.md`](PLAN.md)——本文件不表达优先级与阶段。
 > 章节号为纯数字点分层级；需求标识引用一律写全（见 `SPECIFICATIONS.md` §1.4）。
 

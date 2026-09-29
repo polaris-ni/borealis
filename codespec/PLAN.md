@@ -162,4 +162,4 @@
 
 - **先 Windows 后 Linux**：开发机为 win32，首个交付阶段的出口判据本身就是「替换 Windows Terminal」，Linux 侧当时缺少等价验证手段。
 - 该分期**不减损** `SPEC.NF.PLAT.01` 的等价性要求；平台相关层（PTY、串口、传输、默认 shell 探测、DPI 缩放上报）自首个交付阶段起即按接口抽象隔离，禁止 Windows 假设（ConPTY 句柄、Win32 类型、码页 API）渗入共享路径——否则后补的 Linux 等价会退化成重写。
-- Linux 侧验证通道与 CI 形态属实施细节，见 `ARCHITECTURE.draft.md`；本机 WSL 与 GitHub Actions 两条路径的取舍随 M2 开工前裁决。
+- Linux 侧验证通道与 CI 形态属实施细节，见 `codespec/ARCHITECTURE.md` §14.4；本机 WSL 与 GitHub Actions 两条路径的取舍随 M2 开工前裁决。
