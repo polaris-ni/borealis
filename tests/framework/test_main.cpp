@@ -1,0 +1,459 @@
+// 测试框架入口：main 由框架唯一提供，测试文件禁止自定义 main()。
+#include "aurora/core/platform.h"  // NOLINT
+
+// Windows CRT 家族（MSVC/clang-cl 与 MinGW 同走 ucrtbase，abort 行为控制一致）。
+#ifdef AURORA_PLATFORM_WINDOWS
+#include <crtdbg.h>  // _set_abort_behavior / _CrtSetReportMode（关闭 Debug CRT abort 弹窗）
+#endif
+
+#include <algorithm>
+#include <charconv>
+#include <condition_variable>
+#include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
+#include <mutex>
+#include <random>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <vector>
+
+#include "aurora/cli/args.h"
+#include "aurora/cli/command.h"
+#include "aurora_test.h"
+#include "death_test.h"
+#include "isolation.h"
+#include "reporter.h"
+#include "test_selftest.h"
+
+namespace {
+
+using aurora::testing::CaseResult;
+using aurora::testing::ExitCode;
+using aurora::testing::RunSummary;
+using aurora::testing::TestCase;
+using aurora::testing::TestRegistry;
+
+/// @brief 命令行解析结果。
+struct CliOptions {
+    bool list = false;  ///< --list：只列出用例，不执行
+    bool verbose = false;  ///< --verbose：输出诊断笔记
+    bool selftest = false;  ///< --selftest：跑框架内建自检
+    std::string list_format{"cases"};  ///< --format=cases|suites
+    std::string run_suite;  ///< --run=<suite>：只跑指定套件
+    std::string name_filter;  ///< --filter=<substr>：全名子串过滤
+    std::string report_path;  ///< --report=<path>：结果报告（.xml → JUnit，其余 JSON）
+    std::string death_child;  ///< --death-child=<键>：本进程是死亡测试子进程
+    std::string death_capture;  ///< --death-capture=<file>：子进程把 stderr 接到该采集文件
+    std::uint64_t shuffle_seed = 0;  ///< --shuffle=<seed>
+    bool shuffle = false;
+    int repeat = 1;  ///< --repeat=<n>
+    int timeout_ms = 0;  ///< --timeout=<ms>：单轮总时限，0 表示不设
+};
+
+auto print_help(const aurora::cli::CommandSpec &spec) -> void {
+    std::printf("%s", aurora::cli::help_text(spec).c_str());
+}
+
+/// @brief 数值参数解析（非数字 / 残留字符 / 越界均视为用法错误）。
+///
+/// std::from_chars 只接受指针区间，故此处是唯一一处指针算术。
+template <typename T>
+[[nodiscard]] auto parse_number(std::string_view text, T &destination, int base = 10) -> bool {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic): from_chars 需要 [first, last)
+    const std::pair<const char *, const char *> span{text.data(), text.data() + text.size()};
+    const auto result = std::from_chars(span.first, span.second, destination, base);
+    return result.ec == std::errc{} && result.ptr == span.second;
+}
+
+/// @brief 命令声明表：runner 的全部旗标集中于此，`--help` 与取值域校验由 aurora::cli 派生。
+[[nodiscard]] auto build_spec() -> aurora::cli::CommandSpec {
+    using aurora::cli::Arity;
+    using aurora::cli::OptionSchema;
+    using aurora::cli::ValueKind;
+    return aurora::cli::CommandSpec{
+        .name = "aurora_test_runner",
+        .about = "aurora_test_runner - Aurora test framework runner",
+        .options =
+            {
+                OptionSchema{
+                    .long_name = "run",
+                    .kind = ValueKind::String,
+                    .help = "Run cases of the given suite (suite == test file stem)",
+                    .value_hint = "SUITE",
+                },
+                OptionSchema{
+                    .long_name = "filter",
+                    .kind = ValueKind::String,
+                    .help = "Filter cases by substring of `Suite.Case`",
+                    .value_hint = "SUBSTR",
+                },
+                OptionSchema{
+                    .long_name = "list",
+                    .kind = ValueKind::Bool,
+                    .arity = Arity::flag(),
+                    .help = "List registered cases and exit",
+                },
+                OptionSchema{
+                    .long_name = "format",
+                    .kind = ValueKind::Enum,
+                    .help = "With --list: output shape",
+                    .value_hint = "FMT",
+                    .default_text = "cases",
+                    .choices = {"cases", "suites"},
+                },
+                OptionSchema{
+                    .long_name = "verbose",
+                    .kind = ValueKind::Bool,
+                    .arity = Arity::flag(),
+                    .help = "Also print per-case diagnostic notes",
+                },
+                OptionSchema{
+                    .long_name = "report",
+                    .kind = ValueKind::String,
+                    .help = "Write results: .xml -> JUnit XML, otherwise JSON",
+                    .value_hint = "PATH",
+                },
+                OptionSchema{
+                    // optional_one：`--shuffle` 裸给即随机播种（seed=0），`--shuffle=7` 定种可复现。
+                    .long_name = "shuffle",
+                    .kind = ValueKind::Int,
+                    .arity = Arity::optional_one(),
+                    .help = "Randomize case order (exposes order dependencies)",
+                    .value_hint = "SEED",
+                    .minimum = 0,
+                },
+                OptionSchema{
+                    .long_name = "repeat",
+                    .kind = ValueKind::Int,
+                    .help = "Run the selected cases n times (leaks state?)",
+                    .value_hint = "N",
+                    .default_text = "1",
+                    .minimum = 1,
+                },
+                OptionSchema{
+                    .long_name = "timeout",
+                    .kind = ValueKind::Int,
+                    .help = "Overall deadline in ms; partial results are still reported",
+                    .value_hint = "MS",
+                    .default_text = "0",
+                    .minimum = 0,
+                },
+                OptionSchema{
+                    .long_name = "selftest",
+                    .kind = ValueKind::Bool,
+                    .arity = Arity::flag(),
+                    .help = "Run the built-in framework self-test",
+                },
+                OptionSchema{
+                    .long_name = "death-child",
+                    .kind = ValueKind::String,
+                    .help = "Internal: this process is a death-test child (hex site key)",
+                    .value_hint = "KEY",
+                    .hidden = true,
+                },
+                OptionSchema{
+                    .long_name = "death-capture",
+                    .kind = ValueKind::String,
+                    .help = "Internal: child redirects its stderr into this file",
+                    .value_hint = "FILE",
+                    .hidden = true,
+                },
+            },
+        .epilog =
+            "Exit codes:\n"
+            "  0  all passed\n"
+            "  1  at least one case failed\n"
+            "  2  CLI error, no case matched the filter, or report could not be written\n"
+            "  3  overall timeout hit (watchdog; partial results flushed to --report)",
+    };
+}
+
+/// @brief 已声明选项 → CliOptions：未给出的字符串槽留空，数值槽回落声明表默认值。
+auto apply_options(const aurora::cli::Arguments &given, CliOptions &options) -> void {
+    using aurora::cli::Arguments;
+    const auto text = [&given](const char *name) -> std::string {
+        const auto value = given.get<std::string>(name);
+        return value.ok() ? value.value() : std::string{};
+    };
+    const auto number = [&given](const char *name, int fallback) -> int {
+        const auto value = given.get<int>(name);
+        return value.ok() ? value.value() : fallback;
+    };
+    options.list = given.flag("list");
+    options.verbose = given.flag("verbose");
+    options.selftest = given.flag("selftest");
+    options.list_format = text("format");
+    options.run_suite = text("run");
+    options.name_filter = text("filter");
+    options.report_path = text("report");
+    options.death_child = text("death-child");
+    options.death_capture = text("death-capture");
+    options.repeat = number("repeat", options.repeat);
+    options.timeout_ms = number("timeout", options.timeout_ms);
+    options.shuffle = given.explicitly_given("shuffle");
+    if (const auto seed = given.get<std::int64_t>("shuffle"); seed.ok()) {
+        options.shuffle_seed = static_cast<std::uint64_t>(seed.value());
+    }
+}
+
+auto print_list(const CliOptions &options) -> void {
+    const auto &registry = TestRegistry::instance();
+    if (options.list_format == "suites") {
+        for (const auto &suite : registry.suites()) {
+            std::printf("%s\n", suite.c_str());
+        }
+        return;  // 仅打印，列出用例恒成功（退出码 0 由调用方给出）
+    }
+    for (const auto *test_case : registry.cases()) {
+        std::printf("%s\n", test_case->full_name().c_str());
+    }
+}
+
+/// @brief 已完成结果的共享槽：主线程逐条追加，watchdog 只读快照。
+///
+/// 文件级粒度下超时会让整进程退出，若不共享这份数据，「跑了一半超时」就等于「什么都没有」。
+class ResultSink {
+  public:
+    auto push(CaseResult result) -> void {
+        const std::scoped_lock<std::mutex> guard{mutex_};
+        results_.push_back(std::move(result));
+    }
+
+    [[nodiscard]] auto snapshot() const -> std::vector<CaseResult> {
+        const std::scoped_lock<std::mutex> guard{mutex_};
+        return results_;
+    }
+
+    /// @brief 正常路径的唯一读者：直接移交，避免整份结果再复制一遍。
+    [[nodiscard]] auto take() -> std::vector<CaseResult> {
+        const std::scoped_lock<std::mutex> guard{mutex_};
+        return std::move(results_);
+    }
+
+  private:
+    mutable std::mutex mutex_;
+    std::vector<CaseResult> results_;
+};
+
+/// @brief 超时看门狗：到点先把已完成结果落盘，再以退出码 3 结束进程。
+///
+/// 协作式退出（进程内无法强杀死循环线程）；进程级强杀由 CTest 的 TIMEOUT 属性承担，
+/// 两层职责不重叠。
+class TimeoutWatchdog {
+  public:
+    TimeoutWatchdog(int timeout_ms, const ResultSink &sink, std::string_view report_path) : sink_(&sink) {
+        if (timeout_ms <= 0) {
+            return;  // 未启用
+        }
+        const auto budget = std::chrono::milliseconds{timeout_ms};
+        worker_ = std::thread([this, budget, timeout_ms, report_path]() -> void {
+            std::unique_lock<std::mutex> lock{mutex_};
+            if (done_.wait_for(lock, budget, [this]() -> bool { return stopped_; })) {
+                return;  // 正常收尾，无需介入
+            }
+            const auto partial = sink_->snapshot();
+            std::fflush(stdout);  // 先落已打印的用例进度，超时行才按真实顺序出现
+            std::fprintf(stderr, "[test] TIMEOUT after %d ms (%zu case(s) finished)\n", timeout_ms, partial.size());
+            std::fflush(stderr);
+            if (!report_path.empty()) {
+                std::string error;
+                const auto summary = aurora::testing::summarize(partial);
+                if (!aurora::testing::write_report(report_path, partial, summary, &error)) {
+                    std::fprintf(stderr, "[test] %s\n", error.c_str());
+                }
+            }
+            std::fflush(stdout);
+            std::fflush(stderr);
+            std::_Exit(static_cast<int>(ExitCode::Timeout));
+        });
+    }
+
+    TimeoutWatchdog(const TimeoutWatchdog &) = delete;
+    auto operator=(const TimeoutWatchdog &) -> TimeoutWatchdog & = delete;
+    TimeoutWatchdog(TimeoutWatchdog &&) = delete;
+    auto operator=(TimeoutWatchdog &&) -> TimeoutWatchdog & = delete;
+
+    ~TimeoutWatchdog() { stop(); }
+
+    auto stop() -> void {
+        if (!worker_.joinable()) {
+            return;
+        }
+        {
+            const std::scoped_lock<std::mutex> guard{mutex_};
+            stopped_ = true;
+        }
+        done_.notify_all();
+        worker_.join();
+    }
+
+  private:
+    std::mutex mutex_;
+    std::condition_variable done_;
+    std::thread worker_;
+    bool stopped_ = false;
+    const ResultSink *sink_ = nullptr;
+};
+
+/// @brief 报告落盘（正常路径）；写失败返回退出码 2。
+auto emit_report(std::string_view path, const std::vector<CaseResult> &results, const RunSummary &summary) -> int {
+    if (path.empty()) {
+        return static_cast<int>(ExitCode::AllPassed);
+    }
+    std::string error;
+    if (aurora::testing::write_report(path, results, summary, &error)) {
+        return static_cast<int>(ExitCode::AllPassed);
+    }
+    std::fprintf(stderr, "[test] %s\n", error.c_str());
+    return static_cast<int>(ExitCode::UsageOrNoMatch);
+}
+
+auto run_selected(const std::vector<const TestCase *> &selected, const CliOptions &options) -> int {
+    // 死亡测试子进程：安静重跑同一用例，只按「站点是否到达 / 语句是否致死」给退出码。
+    const bool silent = aurora::testing::detail::death_child_mode();
+    auto order = selected;
+    if (options.shuffle && order.size() > 1) {
+        std::mt19937_64 engine{options.shuffle_seed};
+        std::ranges::shuffle(order, engine);
+    }
+
+    ResultSink sink;
+    TimeoutWatchdog watchdog{silent ? 0 : options.timeout_ms, sink, options.report_path};
+
+    const int rounds = silent ? 1 : options.repeat;
+    for (int round = 0; round < rounds; ++round) {
+        for (const auto *test_case : order) {
+            if (!silent) {
+                std::printf("[ RUN      ] %s\n", test_case->full_name().c_str());
+            }
+            // 用例边界资源隔离：进用例前开新临时目录并接管 TMP/TMPDIR/TEMP、兜底卸载
+            // 剪贴板注入残留；出用例后清理临时目录、卸载注入。死亡测试子进程**不**自建目录，
+            // 而是复用父进程经 TMPDIR 继承的唯一临时目录（见 isolation.cpp），由父进程 end_case
+            // 统一回收——避免子进程异常退出后 test_temp/ 残留（验收）。
+            aurora::testing::isolation::begin_case();
+            auto result = aurora::testing::run_case(*test_case);
+            aurora::testing::isolation::end_case();
+            if (!silent) {
+                aurora::testing::print_case_result(result, options.verbose);
+            }
+            if (rounds > 1) {
+                result.full_name += "#" + std::to_string(round);
+            }
+            sink.push(std::move(result));
+        }
+    }
+    watchdog.stop();
+
+    const auto results = sink.take();
+    const auto summary = aurora::testing::summarize(results);
+    if (!silent) {
+        aurora::testing::print_summary(summary);
+    }
+    if (silent) {
+        // 走到这里说明目标站点从未被执行（语句被条件挡住，或根本不在本用例里）。
+        std::_Exit(aurora::testing::detail::death_child_exit_code());
+    }
+    const auto report_code = emit_report(options.report_path, results, summary);
+    const auto run_code = aurora::testing::exit_code_for(summary);
+    return run_code != static_cast<int>(ExitCode::AllPassed) ? run_code : report_code;
+}
+
+}  // namespace
+
+// 入口不吞异常：用例体外逃的异常即「测试框架自身有缺陷」的信号，让它穿过 main 走 terminate/非零退出，
+// 与 examples/ 下各 demo 入口同口径（框架对**用例体**的异常另有捕获，不在此路径）。
+// NOLINTNEXTLINE(bugprone-exception-escape)
+auto main(int argc, char **argv) -> int {
+#ifdef AURORA_PLATFORM_WINDOWS
+    // Windows CRT（MSVC/clang-cl 与 MinGW 的 abort 同在 ucrtbase 实现）：abort() 默认带
+    // _CALL_REPORTFAULT，以 fail-fast（0xC0000409，WER 事件类型 BEX64）终止——Debug CRT
+    // 会弹「abort() has been called」模态对话框挂住无人值守运行；Release 下则触发 WER
+    // 崩溃报告管线（实测死亡测试每个站点被拖慢约 5s，伴随 WerFault 与杀软行为分析）。
+    // 死亡测试子进程以 abort() 为致死路径，统一降级为调试器输出并关闭 fail-fast 上报：
+    // 弹窗与 WER 均不再介入，abort 的退出码（3）与「已致死」判据不受影响。父进程与
+    // death-child 子进程经此处重跑 main 均生效。
+    _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_DEBUG);
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_DEBUG);
+    _set_abort_behavior(0, _CALL_REPORTFAULT);
+#endif
+    if (argc > 0) {
+        aurora::testing::detail::set_executable_path(*argv);  // argc > 0 已判，指针解引用而非下标
+    }
+    // 统一 cwd → 仓库根（可定位时）：相对路径（--report、用例内 golden/fixtures）以仓库根为基准。
+    // 须在解析 CLI 之前完成，使所有相对路径解释一致；死亡测试子进程重跑 main 时同样生效。
+    aurora::testing::isolation::setup();
+    const auto spec = build_spec();
+    const auto parsed = aurora::cli::parse(spec, argc, argv);
+    if (!parsed) {
+        std::fprintf(stderr, "[test] %s\n", parsed.error().message.c_str());
+        print_help(spec);
+        return static_cast<int>(ExitCode::UsageOrNoMatch);
+    }
+    if (parsed.value().shows_display()) {
+        std::printf("%s", parsed.value().display_text.c_str());
+        return static_cast<int>(ExitCode::AllPassed);
+    }
+    CliOptions options;
+    apply_options(parsed.value().arguments, options);
+    if (!options.death_child.empty()) {
+        std::uint64_t key = 0;
+        if (!parse_number(options.death_child, key, 16) || key == 0) {
+            std::fprintf(stderr, "[test] bad --death-child: %s\n", options.death_child.c_str());
+            return static_cast<int>(ExitCode::UsageOrNoMatch);
+        }
+        aurora::testing::detail::enter_death_child(key);
+        // MSVC 的默认 terminate 处理走 fail-fast（0xC0000409），不打印任何诊断；
+        // GCC 的 libstdc++ 会打印 "terminate called after throwing an instance of ..."。
+        // 死亡测试的 stderr 期望依赖该诊断文本，故子进程统一自装 terminate handler：
+        // 解出当前异常的 what() 打到 stderr（stderr 已被 freopen 到采集文件或为无缓冲
+        // 管道），再以 abort() 保证非 0 退出码（判据「已致死」不变）。
+        std::set_terminate([] {
+            if (const auto current = std::current_exception()) {
+                try {
+                    std::rethrow_exception(current);
+                } catch (const std::exception &error) {
+                    std::fprintf(stderr, "terminate called after throwing an exception: %s\n", error.what());
+                } catch (...) {
+                    std::fprintf(stderr, "terminate called after throwing a non-standard exception\n");
+                }
+            } else {
+                std::fprintf(stderr, "terminate called without an active exception\n");
+            }
+            std::fflush(stderr);
+            std::abort();
+        });
+        if (!options.death_capture.empty()) {
+            // 由子进程自己接管 stderr：命令行里就不需要任何 shell 重定向（cmd 的引号/路径规则最易出错）。
+            if (std::freopen(options.death_capture.c_str(), "w", stderr) == nullptr) {
+                std::fprintf(stderr, "[test] cannot capture stderr into %s\n", options.death_capture.c_str());
+            } else {
+                // glibc 下把 stderr freopen 到普通文件会使其转为全缓冲，随后 AURORA_CHECK
+                // 的 abort() 不刷缓冲 → 采集文件为空、死亡测试断言失败（MSVC/Windows 的 stderr
+                // 本就无缓冲，故该问题只在 glibc/Linux 上出现）。显式置回无缓冲。
+                (void)std::setvbuf(stderr, nullptr, _IONBF, 0);
+            }
+        }
+    }
+    if (options.selftest) {
+        return aurora::testing::run_framework_selftest();
+    }
+    // 参数化用例（TEST_P / TYPED_TEST）在静态初始化期只登记描述符，展开后才能被读取；
+    // 所有静态初始化均先于 main，故此处一次展开即得全集（finalize 幂等）。
+    TestRegistry::instance().finalize();
+    if (options.list) {
+        print_list(options);
+        return static_cast<int>(ExitCode::AllPassed);
+    }
+
+    const auto &registry = TestRegistry::instance();
+    const auto selected = aurora::testing::select_cases(registry.cases(), options.run_suite, options.name_filter);
+    if (selected.empty()) {
+        std::fprintf(stderr, "[test] no test case matched (run='%s', filter='%s')\n", options.run_suite.c_str(),
+                     options.name_filter.c_str());
+        return static_cast<int>(ExitCode::UsageOrNoMatch);
+    }
+    return run_selected(selected, options);
+}
