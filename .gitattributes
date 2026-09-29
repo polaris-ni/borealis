@@ -1,0 +1,19 @@
+# 仓库内一律存 LF，工作区也检出 LF：以本文件为准，覆盖本机 core.autocrlf=true
+* text=auto eol=lf
+
+# Windows 批处理/PowerShell 脚本必须保持 CRLF 才能被 cmd 正确解释
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制产物不做任何换行/编码转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.pdf binary

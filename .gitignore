@@ -1,0 +1,34 @@
+# 构建目录与产物
+/build/
+/build-*/
+/cmake-build-*/
+/out/
+/dist/
+
+# CMake 在构建目录内生成的东西（构建目录已整体忽略，此处兜住源码树内的散落产物）
+CMakeCache.txt
+CMakeFiles/
+DartConfiguration.tcl
+compile_commands.json
+Testing/
+
+# 编译中间产物与二进制：三方依赖经 find_package + vcpkg 获取（裁决 7.12），仓库不内置预编译库
+*.o
+*.obj
+*.d
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.a
+*.dll
+*.exe
+
+# IDE 本地状态
+/.idea/
+/.vscode/
+*.user
+
+# 本地临时文件与日志
+*.log
+*.tmp
