@@ -41,7 +41,7 @@
 | 单实例 | 同一用户会话仅运行一个应用进程；后续启动的参数经进程间协议转交首个实例 |
 | Scrollback | 终端主缓冲区之上的历史回滚行存储 |
 | 备屏幕 Alternate screen | `vim`/`htop` 类全屏程序使用的独立缓冲 |
-| 字符编码 | 会话字节流到文本的解码规则（UTF-8 / GB18030 / Latin-1 等），与「宽字符」为两个独立维度 |
+| 字符编码 | 会话字节流与文本之间的**双向**转换规则（UTF-8 / GB18030 / Latin-1 等）：解码为「字节流 → 文本」，编码为「文本 → 字节流」（发送方向，见 `SPEC.FEAT.TERM.09`）；与「宽字符」为两个独立维度 |
 | Profile | 一组可复用的连接参数（主机、认证方式、串口参数等） |
 
 ### 1.4 需求标识规范
@@ -74,8 +74,8 @@
 | 能力域 | 内容 | 对应需求 |
 |:---|:---|:---|
 | 终端仿真 | xterm-256color 级转义序列、真彩色、主/备屏、scrollback、鼠标上报、宽字符 | `SPEC.FEAT.TERM.01–08` |
-| 网格渲染 | 等宽网格、字形缓存、属性样式、光标形态、DPI 缩放适配 | `SPEC.FEAT.RENDER.01–05` |
-| 终端交互 | 键盘映射、多击选择、复制粘贴、搜索、URL 检测 | `SPEC.FEAT.INTERACT.01–05` |
+| 网格渲染 | 等宽网格、字形缓存与 CJK 缺字回退、属性样式、光标形态、DPI 缩放适配 | `SPEC.FEAT.RENDER.01–05` |
+| 终端交互 | 键盘映射、多击选择、复制粘贴、搜索、URL 检测、输入法 | `SPEC.FEAT.INTERACT.01–06` |
 | 会话传输 | PTY 尺寸同步、字符编码与解码韧性 | `SPEC.FEAT.XFER.01`、`SPEC.FEAT.TERM.09` |
 | 工作区 | 多标签、分屏、多窗口、状态提示、命令面板 | `SPEC.FEAT.WS.01–12` |
 | 连接类型 | 本地终端、SSH（含档案管理）、SFTP 浏览、串口、Telnet | `SPEC.FEAT.CONN.01–07` |
@@ -123,7 +123,7 @@
 1. UI 层**只使用 Aurora 公共 API**；框架缺口先补框架、再做应用，不在应用侧私改渲染路径。
 2. 传输层（SSH/串口/Telnet/PTY）为平台相关实现，与 UI 之间以会话抽象解耦；线程模型遵守 Aurora「单线程 UI、后台线程池 + 信号回主线程」。
 3. 配置持久化使用 Aurora `Preferences`（JSON 文件）。
-4. 日志走 Aurora `Logger`，禁止裸标准输出（Aurora 规则 §5.8）。
+4. 日志走 Aurora `Logger`，禁止裸标准输出（Aurora 主仓 `AGENTS.md` §5 规则 8）。
 
 ---
 
@@ -141,19 +141,19 @@
 
 **SPEC.FEAT.TERM.05 滚动区域与光标控制** DECSTBM 滚动区域、光标定位/保存恢复/可见性、字符擦除/插入/删除、制表位。
 
-**SPEC.FEAT.TERM.06 鼠标上报** X10 / 普通 / 按钮事件 / SGR 扩展模式；`vim`/`htop` 内滚轮与点击可用；备屏模式下滚轮转方向键（alternate scroll，DECSET 1007）供 less/less 类程序翻页；上报模式与本地选择交互自动切换。
+**SPEC.FEAT.TERM.06 鼠标上报** X10 / 普通 / 按钮事件 / SGR 扩展模式；`vim`/`htop` 内滚轮与点击可用；备屏模式下滚轮转方向键（alternate scroll，DECSET 1007）供 less/more 类程序翻页；上报模式与本地选择交互自动切换。
 
 **SPEC.FEAT.TERM.07 OSC 集成** OSC 52 剪贴板写（读方向见 SPEC.FEAT.CONN.12）、OSC 8 超链接、OSC 0/2 标题设置。**标题消费链路**：OSC 设置的标题覆盖标签名，用户手动重命名的优先级更高（可配）；活动标签标题同步至窗口标题栏（与 SPEC.FEAT.WS.06 配合）。
 
 **SPEC.FEAT.TERM.08 宽字符** 按 Unicode East Asian Width 处理 CJK 双宽占位；**Ambiguous 类字符（箱线字符、`±`/`°`/`→` 一类符号、全角标点等）默认按单宽（窄）处理，并可按 profile 覆盖为双宽**（裁决 7.15）——覆盖项与 SPEC.FEAT.TERM.09 的会话编码项协同（GB18030/GBK 与 CP437 类场景常需切换该宽度口径）；Emoji 呈现不要求完美对齐（延后观察项）；combining character 基础处理。验收：同一份含 Ambiguous 字符的输出，在默认配置与覆盖配置下分别按单宽/双宽排布，且光标列位与占位一致（不出现半格错位）。
 
-**SPEC.FEAT.TERM.09 字符编码** 会话级编码可配：UTF-8 为本地终端与 SSH 默认；**串口默认 GB18030**（裁决 7.6），备选 GBK / Big5 / Latin-1 / CP437。解码失败按替换字符处理，且**不得中断解析、不得污染后续行**；非法字节序列计数进 SPEC.NF.RELI.01 可观测面板。验收：GB18030 串口输出正确显示，且混入非法字节后终端持续可用。
+**SPEC.FEAT.TERM.09 字符编码** 会话级编码可配：UTF-8 为本地终端与 SSH 默认；**串口默认 GB18030**（裁决 7.6），备选 GBK / Big5 / Latin-1 / CP437。编码为**双向**口径（裁决 7.16）：**解码方向**（会话字节流 → 文本）失败按替换字符处理，且**不得中断解析、不得污染后续行**，非法字节序列计数进 SPEC.NF.RELI.01 可观测面板；**发送方向**（文本 → 会话编码字节）适用于一切写入会话的文本——键入字符、SPEC.FEAT.INTERACT.06 的输入法 commit 文本、SPEC.FEAT.INTERACT.03 的粘贴、快捷片段发送，遇目标编码不可表示的字符（如 GB18030 会话里输入 Emoji）按可配策略处理（替换 / 丢弃并提示 / 原样透传 UTF-8），**默认替换并给出一次性提示，不得静默发送乱码字节**。验收：GB18030 串口输出正确显示，且混入非法字节后终端持续可用；GB18030 串口会话中输入中文，发往设备的字节为合法 GB18030 序列（设备侧正确回显）。
 
 ### 4.2 网格渲染与光标（`SPEC.FEAT.RENDER.01–05`）
 
 **SPEC.FEAT.RENDER.01 等宽网格渲染** 终端视区为固定单元格网格；单帧只重绘变更行/单元格（脏行 diff）；字形经缓存复用，避免整屏重排。性能验收见 SPEC.NF.PERF.02。
 
-**SPEC.FEAT.RENDER.02 字体** 等宽字体选择（系统等宽字体枚举 + **内置 Cascadia Code 为默认**，裁决 7.3）、字号调整（含 Ctrl+滚轮缩放）、行高/字距可调。字体连字（ligature）为延后子项。
+**SPEC.FEAT.RENDER.02 字体** 等宽字体选择（系统等宽字体枚举 + **内置 Cascadia Code 为默认**，裁决 7.3）、字号调整（含 Ctrl+滚轮缩放）、行高/字距可调。字体连字（ligature）为延后子项。**CJK 缺字回退链**（裁决 7.16）：内置 Cascadia Code **不含汉字字形**，故须配缺字回退——默认回退至系统等宽 CJK 字体（Windows 微软雅黑/等线一类、Linux 文泉驿或 Noto Sans Mono CJK 一类），回退链顺序可配；回退得到的双宽字符仍须按 SPEC.FEAT.TERM.08 占两格，**不得因回退破坏网格对齐**。本项是 SPEC.FEAT.TERM.09「GB18030 串口输出正确显示」验收的前置条件。验收：默认配置下含汉字的会话输出呈现为字形而非豆腐块，且列位与光标位置一致。
 
 **SPEC.FEAT.RENDER.03 属性渲染** 前景/背景色、粗体/暗淡/斜体/下划线（含双线/波浪线）/删除线/反色/不可见，按 SGR 状态渲染；「粗体渲染为亮色」（bold-is-bright）与「最小对比度强制」（避免深色主题下不可读）均为可配开关。
 
@@ -161,7 +161,7 @@
 
 **SPEC.FEAT.RENDER.05 缩放适配** 支持系统 DPI 变更与跨屏 DPI 差异（Windows per-monitor DPI、Linux fractional scaling）；逻辑 dp → 物理像素的 cell 尺寸换算须保证网格对齐（cell 边界吸附、字形缓存按 DPI 分档失效重建）；字体缩放（SPEC.FEAT.RENDER.02）叠加在系统 DPI 之上，二者正交。验收：150% / 175% / 200% 及跨屏拖动后无错位、无字形模糊。**框架现状（2026-09-29 复核）**：DPI 变更通知的公共 API 已具备——`Surface::set_scale_change_handler`（`include/aurora/window/surface.h`），Win32 后端已在 `WM_DPICHANGED` 处理中接线上报，Headless 侧另有 `emit_scale_change` 测试钩子，故 **Windows 无框架阻塞**（G12 关闭）。唯 Linux 三后端（X11 / Wayland / GLFW）尚无缩放变化上报调用，该腿属 Linux 等价范畴（分期见 PLAN.md），核实确为框架缺失则按 A.3 以公共 API 反哺框架。
 
-### 4.3 终端交互（`SPEC.FEAT.INTERACT.01–05`）
+### 4.3 终端交互（`SPEC.FEAT.INTERACT.01–06`）
 
 **SPEC.FEAT.INTERACT.01 键盘映射** 完整转发 Ctrl/Alt/Shift/Meta 组合键、功能键、方向键至 PTY；`Ctrl+C`/`Ctrl+Z` 等控制字符直通；Ctrl+Alt 系与 UI 快捷键冲突时以配置裁决。`DECCKM`（`?1` 光标键应用模式）与 keypad 应用模式（`DECKPAM`/`DECKPNM`）须生效——应用模式下方向键发送 `SS3 A` 而非 `ESC[A`。kitty keyboard protocol / `modifyOtherKeys` 为延后观察项。
 
@@ -172,6 +172,8 @@
 **SPEC.FEAT.INTERACT.04 终端内搜索** Ctrl+F 浮层：大小写开关、正则开关、全部匹配高亮、Enter/N+Enter 前后跳转、匹配计数。性能：100,000 行 scrollback（SPEC.FEAT.TERM.04 上限）下首次搜索响应 ≤ 200 ms（P95）。
 
 **SPEC.FEAT.INTERACT.05 URL 检测** 视区内 URL 识别（含 OSC 8），Ctrl/Cmd+点击或右键「打开链接」。打开前确认可配（默认「首次确认并记住同域」）；协议白名单（默认仅 http/https）；OSC 8 显式超链接与纯文本启发式识别的信任级别可分别配置。
+
+**SPEC.FEAT.INTERACT.06 输入法（IME）** CJK 输入法在终端视区内可用（裁决 7.16）：组合中（preedit）文本**就地渲染在光标所在单元格处**，候选词窗口按光标的屏幕坐标定位（不得固定在窗口角落或跟随鼠标）；**组合中间态不发往会话**，仅在 commit 时把最终文本经会话编码写入（SPEC.FEAT.TERM.09 的发送方向；非 UTF-8 会话的编码发送随该条落地）；组合期间的光标形态与位置须可辨，避免与终端自身光标混淆。框架侧能力已具备——`TextCompositionEvent` 完整含 preedit，Win32 / X11 / Wayland 三后端均已实现（附录 A.1）；但终端为自绘网格，框架不会自动把 cell 内容暴露给输入法，故 preedit 绘制与「光标 → 屏幕坐标」换算由应用侧视口实现。验收：中文输入法在本地终端会话中可正常输入并正确显示；候选窗出现在光标处而非窗口角落；GB18030 串口会话中输入中文，设备侧收到合法 GB18030 字节序列。
 
 ### 4.4 工作区（`SPEC.FEAT.WS.01–12`）
 
@@ -279,7 +281,7 @@
 
 **SPEC.NF.RELI.01 可观测性** 全链路日志分级（走 Aurora Logger）；VT 解析器未知序列计数统计（调试面板可查）；非法字节序列计数（SPEC.FEAT.TERM.09）与背压水位（SPEC.NF.PERF.06）一并进调试面板；崩溃时留存会话与诊断信息。
 
-**SPEC.NF.A11Y.01 无障碍基线** 键盘全操作可达；随 Aurora 无障碍平台桥（`ACCESSIBILITY_DESIGN`）落地逐步接入。本项为延后观察项，分期见 PLAN.md。
+**SPEC.NF.A11Y.01 无障碍基线** 键盘全操作可达；随 Aurora 无障碍平台桥（Aurora 主仓 `codespec/ARCHITECTURE.md` §8.5）落地逐步接入。本项为延后观察项，分期见 PLAN.md。
 
 **SPEC.NF.PKG.01 打包分发** Windows：便携 zip + 安装包（NSIS 或 MSIX 二选一，尚未裁决）双形态；Linux：tar 通用 + AppImage；产物含 LICENSE/第三方声明（Cascadia Code OFL、libssh2/BSD 等合规文件）；自动更新不做（裁剪表），但安装包须支持覆盖升级且保留用户配置。产品对外名称统一 **Borealis**（裁决 7.1）。
 
@@ -295,7 +297,7 @@
 
 ---
 
-## 7 已裁决项（2026-09-22；7.11–7.15 于 2026-09-29 追加）
+## 7 已裁决项（7.1–7.4 于 2026-09-22、7.5–7.10 于 2026-09-23 落定；7.11–7.15 于 2026-09-29 追加，7.16 于 2026-09-30 追加）
 
 | # | 议题 | 裁决 |
 |:---|:---|:---|
@@ -314,6 +316,7 @@
 | 7.13 | 框架缺口的处理节奏 | 除 G1/G2 外，开发中再撞到的框架缺口按**类别分流**：① 渲染与事件链路上的（影响公共 API 形态，如 G1 网格原语、G2 多击语义）——撞到即先在 Aurora 侧补公共 API + 单测 + 文档回写，应用侧不等不绕；② 交互体验类的（选择 overlay、光标闪烁驱动、tooltip 等用现有公共 API 即可组合实现的）——先在应用侧实现，不进框架。本条是设计约束 3.3.1 的执行细则：「不在应用侧私改渲染路径」仍为硬禁，但**用公共 API 组合出的应用侧控件不属于私改**，无需强行 push 进框架 |
 | 7.14 | 命名统一（修订 7.1 的括注） | 仓内**一切可自主命名的标识统一 `borealis`**：命名空间 `borealis`（按模块域分 `borealis::vt` / `borealis::term` / `borealis::session` 等）、CMake project 与 target `borealis`、可执行产物 `Borealis`、目录与文档自称均不再出现旧名。本条曾把「工作区目录名仍为旧名」列为唯一例外（理由：改目录名须由人在 IDE 会话外执行，会牵动工程路径、既有构建目录与 IDE 配置），并规定改名后须同步回填；该例外已于 2026-09-29 随人完成目录改名而失效，本文与 `AGENTS.md` 中的相应括注已按本条要求删除，例外条款不再适用 |
 | 7.15 | East Asian Width 中 Ambiguous 类的默认宽度 | **默认按单宽（窄）处理**，并提供 **profile 级覆盖为双宽**。理由：Ambiguous 区间（箱线字符、`±`/`°`/`→`、全角标点等）在 UTF-8 环境下主流终端（Windows Terminal、xterm 默认、WezTerm 默认）按单宽呈现，本机 shell 与 SSH 是首要场景，取单宽可与既有终端的复制/换行/列对齐直觉一致；而 GB18030/GBK 串口与部分日文环境按双宽更正确，故覆盖项挂在 SPEC.FEAT.TERM.09 的会话配置旁边（profile 粒度，非全局设置），避免为少数场景把默认值改成对多数场景错误的一侧。**该默认值随框架宽度判定 API 一并表达**：判定接口须接受 Ambiguous 宽度模式作为入参（见附录 A.2 G1），而非在框架内硬编码单/双宽，否则应用侧只能绕开公共 API 自行查表 |
+| 7.16 | 中文输入与显示链路 | **三处一并补全**（此前规格书只覆盖「显示宽度」，漏掉「输入」与「字形可得性」两个维度）：① 新增 `SPEC.FEAT.INTERACT.06` 输入法——preedit 就地渲染、候选窗按光标坐标定位、组合中间态不发往会话、commit 文本经会话编码写入；② `SPEC.FEAT.RENDER.02` 补 **CJK 缺字回退链**——内置 Cascadia Code 不含汉字字形，无回退则 `SPEC.FEAT.TERM.09` 的「GB18030 串口输出正确显示」验收必然呈现豆腐块；③ `SPEC.FEAT.TERM.09` 的编码口径由**单向解码**改为**双向**，补发送方向（文本 → 会话编码字节），§1.3 术语表同步。理由：首要用户为中文开发者、串口默认编码为 GB18030（裁决 7.6），中文输入与显示属日常刚需而非增量特性；框架侧能力均已具备（`TextCompositionEvent` 含 preedit 且三后端已实现、字体缺字链回退，见附录 A.1），故本条属**需求侧补全而非框架缺口**，不占用 G 编号。代价：①②须随首个交付阶段落地（在本地终端输入或显示中文即触发），不可延后；③的完整非 UTF-8 发送方向随 `SPEC.FEAT.TERM.09` 的既有落期实现 |
 
 ---
 
@@ -327,7 +330,7 @@
 | 能力 | 事实 |
 |:---|:---|
 | 剪贴板 | `Clipboard::set_text` / `get_text`（`app/clipboard.h`）→ SPEC.FEAT.INTERACT.03 SPEC.FEAT.CONN.12 |
-| IME | `TextCompositionEvent` 完整含 preedit，**Win32 / X11 / Wayland 三后端均已实现** → CJK 输入在三大平台均已接线 |
+| IME | `TextCompositionEvent` 完整含 preedit，**Win32 / X11 / Wayland 三后端均已实现** → SPEC.FEAT.INTERACT.06（CJK 输入在三大平台均已接线；preedit 绘制与光标坐标换算属应用侧） |
 | 焦点作用域 | `FocusManager::push_scope` / `pop_scope`（`event/focus.h`）→ 弹窗/搜索框焦点管理 |
 | 光标形状 | `CursorShape`（`core/enums.h`）+ `Surface::set_cursor`（`window/surface.h`）→ 文本/指针切换 |
 | 多窗口 | `Application::open_window` + `WindowEventBus`（`app/application.h`、`app/window_bus.h`）→ SPEC.FEAT.WS.03 |
@@ -338,6 +341,7 @@
 | **命令注册表** | `CommandRegistry`（顶层 `commands.h`）：`add` / `remove` / `find` / `search` / `invoke` / `bind_shortcuts` / `to_menu_items`，另有 `command_fuzzy_score` → SPEC.FEAT.PREF.04 SPEC.FEAT.WS.07 |
 | **命令面板** | `CommandPalette`（`widget/command_palette.h`）：模态浮层 + 即时过滤 + 焦点作用域 + Enter/Esc/↑/↓ 全接管，数据源即 `CommandRegistry*` → SPEC.FEAT.WS.07 近乎零成本 |
 | **可拖拽分割器** | `Splitter`（`widget/splitter.h`）：响应式 `ratio()`、`handle_size`、`on_ratio_change`、`min_first`/`min_second` 钳制 → SPEC.FEAT.WS.02；**二元**（first/second），嵌套与方向键焦点路由需应用侧实现 |
+| **标签栏**（能力有限，2026-09-29 实测） | `TabBar`（`widget/tab_bar.h`）：事件仅 `on_change`（选中）/ `on_close`（关闭），属性为 `selected_index`、`tab_height`、四个**全局**配色（`active_color` / `bar_background` / `tab_background` / `text_color`）、`indicator_thickness`、字号与内边距 → SPEC.FEAT.WS.01 的切换与关闭；**无拖拽重排、无逐标签图标、无逐标签状态角标**（配色为全局，不能区分单个标签），故 SPEC.FEAT.WS.01 的重排与图标、SPEC.FEAT.WS.04 的状态角标须应用侧自研 |
 | 滚动容器 | `Scroll` 惯性/位置恢复（`widget/scroll.h`）→ scrollback 视口参考 |
 | 主题 | token 体系 + `Theme::light()` / `dark()`（`theming/theme.h`）+ `ThemeScope`（`theming/theme_scope.h`）→ SPEC.FEAT.PREF.01 |
 | 持久化 | `Preferences` JSON（`preferences/preferences.h`）+ `Storage` 抽象（`storage/storage.h`）→ SPEC.FEAT.PREF.03 SPEC.FEAT.PREF.07 |
@@ -354,7 +358,7 @@
 | # | 缺口（含事实依据） | 阻塞 | 优先级与去向 |
 |:---|:---|:---|:---|
 | G1 | **无等宽网格/逐字符绘制原语**：`Painter::draw_text` 三个重载均为字符串粒度（Rect + 字符串 + Font + Color），无 cell 网格、无行 diff 绘制路径；另经复核，`FontEngine` 自身记录了 FreeType hinting 下 dp 测量与物理光栅宽度的偏差（advance 取整到整像素、行尾累计），故终端整屏网格不可直接复用现有 dp 链路 | SPEC.FEAT.RENDER.01 SPEC.FEAT.RENDER.03 SPEC.FEAT.RENDER.05 | **形态已裁决**：以 `Painter` 批量文本 run 原语 + 等宽整像素 cell 度量 + East Asian Width 宽度判定进框架（宽度判定入参须含 Ambiguous 宽度模式，见裁决 7.15，不得在框架内硬编码单/双宽）；网格模型、脏行 diff 策略与颜色合成（含 SGR 属性、bold-is-bright、最小对比度）留应用侧，原语只收合成后的最终值。框架原语落地时同步建网格吞吐基准并挂性能回归门禁（落期见 PLAN.md） |
-| G2 | **鼠标无多击语义**：`MouseEvent` 无 `click_count`，双击/三击需应用自算 | SPEC.FEAT.INTERACT.02 | **形态已裁决**：`click_count` 由框架统一自算（按下时间窗 + 位置容差），五后端行为一致且可用 HeadlessSurface 纯逻辑单测覆盖，不依赖各平台双时设置 |
+| G2 | **鼠标无多击语义**：`MouseEvent` 无 `click_count`，双击/三击需应用自算 | SPEC.FEAT.INTERACT.02 | **形态已裁决**：`click_count` 由框架统一自算（按下时间窗 + 位置容差），五后端（win32 / x11 / wayland / glfw / macos）行为一致，headless 经同一 dispatcher 路径用于单测，不依赖各平台双时设置 |
 | G3 | **无 VT/OSC 解析工具**：全库无 vt/ansi 相关代码 | SPEC.FEAT.TERM.01–08 | 属应用域，不进框架；要求纯逻辑模块 + 全量单测（HeadlessSurface 回放断言） |
 | G4 | `LazyList` 仅固定行高模式（`item_extent`，可变行高列为后续增强） | — | scrollback 用 `Scroll` + 自管视口更合适，不阻塞 |
 | G5 | 无 HTTP 客户端（`image_widget.h` 注释明言不内置） | — | 本产品不需要；OSC 8 图片类远期特性才受影响 |
@@ -374,4 +378,4 @@ G1（网格渲染）、G2（多击事件）落地后**必须以框架公共 API 
 
 ## 版本与变更历史
 
-当前 **v0.9**。完整变更历史（含各版本当时的优先级与里程碑口径表述，作为历史记录不回填改写）与旧需求编号 → 新标识的映射表，见 [`CHANGELOG.md`](CHANGELOG.md)。
+当前 **v0.12**。完整变更历史（含各版本当时的优先级与里程碑口径表述，作为历史记录不回填改写）与旧需求编号 → 新标识的映射表，见 [`CHANGELOG.md`](CHANGELOG.md)。

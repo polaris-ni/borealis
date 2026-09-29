@@ -27,6 +27,7 @@ Testing/
 # IDE 本地状态
 /.idea/
 /.vscode/
+/.workbuddy/
 *.user
 
 # 本地临时文件与日志
