@@ -145,7 +145,7 @@
 
 **SPEC.FEAT.TERM.07 OSC 集成** OSC 52 剪贴板写（读方向见 SPEC.FEAT.CONN.12）、OSC 8 超链接、OSC 0/2 标题设置。**标题消费链路**：OSC 设置的标题覆盖标签名，用户手动重命名的优先级更高（可配）；活动标签标题同步至窗口标题栏（与 SPEC.FEAT.WS.06 配合）。
 
-**SPEC.FEAT.TERM.08 宽字符** 按 Unicode East Asian Width 处理 CJK 双宽占位；Emoji 呈现不要求完美对齐（延后观察项）；combining character 基础处理。
+**SPEC.FEAT.TERM.08 宽字符** 按 Unicode East Asian Width 处理 CJK 双宽占位；**Ambiguous 类字符（箱线字符、`±`/`°`/`→` 一类符号、全角标点等）默认按单宽（窄）处理，并可按 profile 覆盖为双宽**（裁决 7.15）——覆盖项与 SPEC.FEAT.TERM.09 的会话编码项协同（GB18030/GBK 与 CP437 类场景常需切换该宽度口径）；Emoji 呈现不要求完美对齐（延后观察项）；combining character 基础处理。验收：同一份含 Ambiguous 字符的输出，在默认配置与覆盖配置下分别按单宽/双宽排布，且光标列位与占位一致（不出现半格错位）。
 
 **SPEC.FEAT.TERM.09 字符编码** 会话级编码可配：UTF-8 为本地终端与 SSH 默认；**串口默认 GB18030**（裁决 7.6），备选 GBK / Big5 / Latin-1 / CP437。解码失败按替换字符处理，且**不得中断解析、不得污染后续行**；非法字节序列计数进 SPEC.NF.RELI.01 可观测面板。验收：GB18030 串口输出正确显示，且混入非法字节后终端持续可用。
 
@@ -295,7 +295,7 @@
 
 ---
 
-## 7 已裁决项（2026-09-22；7.11–7.14 于 2026-09-29 追加）
+## 7 已裁决项（2026-09-22；7.11–7.15 于 2026-09-29 追加）
 
 | # | 议题 | 裁决 |
 |:---|:---|:---|
@@ -313,6 +313,7 @@
 | 7.12 | 应用侧三方依赖获取方式 | **经 `find_package` + vcpkg 获取**，不采用 Aurora 的「源码全量进 `third_party/`、断网可构建」口径（该口径是库交付约束，不约束消费者）。**链接形态约束**：Aurora 以静态库交付且不强制 CRT（顶层 `CMakeLists.txt` 仅在 ASan 前置块设 `CMAKE_MSVC_RUNTIME_LIBRARY`，其余走 CMake 默认 `/MD`/`/MDd`），故 vcpkg triplet 取 **`x64-windows-static-md`**（静态库 + 动态 CRT）以同时满足「不把 DLL 拖进 SPEC.NF.PKG.01 打包」与「CRT 与 Aurora 一致」；`x64-windows`（DLL 形态）与 `x64-windows-static`（`/MT`）各有冲突。**本条 triplet 组合尚未经真机链接验证**（属推断），留待接入 libssh2 时实测确认并回填。前置条件：本机尚无 vcpkg（`VCPKG_ROOT` 未设、PATH 无该命令），须在 SSH 族需求开工前安装 |
 | 7.13 | 框架缺口的处理节奏 | 除 G1/G2 外，开发中再撞到的框架缺口按**类别分流**：① 渲染与事件链路上的（影响公共 API 形态，如 G1 网格原语、G2 多击语义）——撞到即先在 Aurora 侧补公共 API + 单测 + 文档回写，应用侧不等不绕；② 交互体验类的（选择 overlay、光标闪烁驱动、tooltip 等用现有公共 API 即可组合实现的）——先在应用侧实现，不进框架。本条是设计约束 3.3.1 的执行细则：「不在应用侧私改渲染路径」仍为硬禁，但**用公共 API 组合出的应用侧控件不属于私改**，无需强行 push 进框架 |
 | 7.14 | 命名统一（修订 7.1 的括注） | 仓内**一切可自主命名的标识统一 `borealis`**：命名空间 `borealis`（按模块域分 `borealis::vt` / `borealis::term` / `borealis::session` 等）、CMake project 与 target `borealis`、可执行产物 `Borealis`、子目录与文档自称均不再出现 `aurora-view`。**唯一例外是当前工作区目录名仍为 `aurora-view`**——改目录名须由人在 IDE 会话外执行（牵动工程路径、既有构建目录与 IDE 配置），故本文与代码中凡指涉该目录处（含本文开头「仓库 `aurora-view`」）在改名前保留原样，改名后须同步回填 |
+| 7.15 | East Asian Width 中 Ambiguous 类的默认宽度 | **默认按单宽（窄）处理**，并提供 **profile 级覆盖为双宽**。理由：Ambiguous 区间（箱线字符、`±`/`°`/`→`、全角标点等）在 UTF-8 环境下主流终端（Windows Terminal、xterm 默认、WezTerm 默认）按单宽呈现，本机 shell 与 SSH 是首要场景，取单宽可与既有终端的复制/换行/列对齐直觉一致；而 GB18030/GBK 串口与部分日文环境按双宽更正确，故覆盖项挂在 SPEC.FEAT.TERM.09 的会话配置旁边（profile 粒度，非全局设置），避免为少数场景把默认值改成对多数场景错误的一侧。**该默认值随框架宽度判定 API 一并表达**：判定接口须接受 Ambiguous 宽度模式作为入参（见附录 A.2 G1），而非在框架内硬编码单/双宽，否则应用侧只能绕开公共 API 自行查表 |
 
 ---
 
@@ -352,7 +353,7 @@
 
 | # | 缺口（含事实依据） | 阻塞 | 优先级与去向 |
 |:---|:---|:---|:---|
-| G1 | **无等宽网格/逐字符绘制原语**：`Painter::draw_text` 三个重载均为字符串粒度（Rect + 字符串 + Font + Color），无 cell 网格、无行 diff 绘制路径；另经复核，`FontEngine` 自身记录了 FreeType hinting 下 dp 测量与物理光栅宽度的偏差（advance 取整到整像素、行尾累计），故终端整屏网格不可直接复用现有 dp 链路 | SPEC.FEAT.RENDER.01 SPEC.FEAT.RENDER.03 SPEC.FEAT.RENDER.05 | **形态已裁决**：以 `Painter` 批量文本 run 原语 + 等宽整像素 cell 度量 + East Asian Width 宽度判定进框架；网格模型、脏行 diff 策略与颜色合成（含 SGR 属性、bold-is-bright、最小对比度）留应用侧，原语只收合成后的最终值。框架原语落地时同步建网格吞吐基准并挂性能回归门禁（落期见 PLAN.md） |
+| G1 | **无等宽网格/逐字符绘制原语**：`Painter::draw_text` 三个重载均为字符串粒度（Rect + 字符串 + Font + Color），无 cell 网格、无行 diff 绘制路径；另经复核，`FontEngine` 自身记录了 FreeType hinting 下 dp 测量与物理光栅宽度的偏差（advance 取整到整像素、行尾累计），故终端整屏网格不可直接复用现有 dp 链路 | SPEC.FEAT.RENDER.01 SPEC.FEAT.RENDER.03 SPEC.FEAT.RENDER.05 | **形态已裁决**：以 `Painter` 批量文本 run 原语 + 等宽整像素 cell 度量 + East Asian Width 宽度判定进框架（宽度判定入参须含 Ambiguous 宽度模式，见裁决 7.15，不得在框架内硬编码单/双宽）；网格模型、脏行 diff 策略与颜色合成（含 SGR 属性、bold-is-bright、最小对比度）留应用侧，原语只收合成后的最终值。框架原语落地时同步建网格吞吐基准并挂性能回归门禁（落期见 PLAN.md） |
 | G2 | **鼠标无多击语义**：`MouseEvent` 无 `click_count`，双击/三击需应用自算 | SPEC.FEAT.INTERACT.02 | **形态已裁决**：`click_count` 由框架统一自算（按下时间窗 + 位置容差），五后端行为一致且可用 HeadlessSurface 纯逻辑单测覆盖，不依赖各平台双时设置 |
 | G3 | **无 VT/OSC 解析工具**：全库无 vt/ansi 相关代码 | SPEC.FEAT.TERM.01–08 | 属应用域，不进框架；要求纯逻辑模块 + 全量单测（HeadlessSurface 回放断言） |
 | G4 | `LazyList` 仅固定行高模式（`item_extent`，可变行高列为后续增强） | — | scrollback 用 `Scroll` + 自管视口更合适，不阻塞 |
@@ -373,4 +374,4 @@ G1（网格渲染）、G2（多击事件）落地后**必须以框架公共 API 
 
 ## 版本与变更历史
 
-当前 **v0.7**。完整变更历史（含各版本当时的优先级与里程碑口径表述，作为历史记录不回填改写）与旧需求编号 → 新标识的映射表，见 [`CHANGELOG.md`](CHANGELOG.md)。
+当前 **v0.8**。完整变更历史（含各版本当时的优先级与里程碑口径表述，作为历史记录不回填改写）与旧需求编号 → 新标识的映射表，见 [`CHANGELOG.md`](CHANGELOG.md)。
