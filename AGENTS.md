@@ -24,9 +24,9 @@
 |:---|:---|:---|
 | `codespec/` | 全部项目文档（需求 / 计划 / 变更历史 / 架构） | 已有（四份：`SPECIFICATIONS.md` `PLAN.md` `CHANGELOG.md` `ARCHITECTURE.md`） |
 | `CMakeLists.txt` `CMakePresets.json` `cmake/` | 构建编排与模块 | 已有：`CMakeLists.txt`（消费 Aurora 源码树 + `add_subdirectory(src)` + `include(cmake/BorealisTests.cmake)`）、`CMakePresets.json`（单一 `msvc` 预设：Ninja + MSVC，构建目录 `build/`）、`cmake/BorealisTests.cmake`（注册式 runner，每条 CTest = `--run=<stem>`，另有一条 `framework_selftest`） |
-| `include/borealis/` | 本仓公共头（按模块域分目录：`vt` `term` `grid` `session` `conn` `ui` `config`） | 计划 / 待建：目录已创建但为空，尚无公共头 |
-| `src/` | 实现；平台相关实现落在 `src/platform/{win,posix}/` | 已有：`src/CMakeLists.txt` + `src/main.cpp`（空壳应用：建一个原生窗口并跑帧循环）；`src/platform/{win,posix}/` 下的平台实现计划 / 待建 |
-| `tests/` | `framework/`（测试框架）+ `unit/utest_*` + `integration/itest_*` + `e2e/etest_*` + `fixtures/`（转义序列回放夹具） | 已有：`tests/framework/`（复刻 Aurora 注册式测试框架源码）；`tests/unit/` `tests/integration/` `tests/e2e/` `tests/fixtures/` 目录已创建但为空，各类用例与回放夹具计划 / 待建 |
+| `include/borealis/` | 本仓公共头（按模块域分目录：`vt` `term` `grid` `session` `conn` `ui` `config`） | 部分落地：`vt/` 有 `sequence.h`（语义单元结构）与 `parser.h`（表驱动解析器）；`term` `grid` `session` `conn` `ui` `config` 各域计划 / 待建 |
+| `src/` | 实现；平台相关实现落在 `src/platform/{win,posix}/` | 已有：`src/CMakeLists.txt` + `src/main.cpp`（空壳应用）+ `src/vt/parser.cpp`（编入 `borealis_core` 静态库）；`src/platform/{win,posix}/` 下的平台实现计划 / 待建 |
+| `tests/` | `framework/`（测试框架）+ `support/`（公共设施）+ `unit/utest_*` + `integration/itest_*` + `e2e/etest_*` + `fixtures/`（转义序列回放夹具） | 已有：`tests/framework/`（复刻 Aurora 注册式测试框架源码）、`tests/support/paths.h`（仓库相对路径，夹具回放用）、`tests/unit/utest_vt_parser.cpp`、`tests/fixtures/vt/parser_cases.tsv`；`integration/` `e2e/` 目录仍为空，其用例计划 / 待建 |
 | `assets/` | 内置字体（Cascadia Code，OFL）与图标；随包分发的许可声明 | 计划 / 待建（目录尚未创建） |
 | `tools/` | 基准、门禁与校验脚本 | 仅有 `tools/msvc_env.bat`（VS 开发者环境包装，供 MSVC 通道的配置与构建使用）；基准与门禁脚本计划 / 待建 |
 
@@ -114,6 +114,7 @@
 ## 6 现状快照（2026-09-30）
 
 - 已有：`codespec/` 四份文档（需求 / 计划 / 变更历史 / 架构 `ARCHITECTURE.md`，2026-09-30 评审通过）、构建骨架（顶层 `CMakeLists.txt`、`CMakePresets.json` 的单一 `msvc` 预设 = Ninja + MSVC 且构建目录为 `build/`、`cmake/BorealisTests.cmake`、`src/CMakeLists.txt` + `src/main.cpp` 空壳应用、`tests/framework/` 测试框架源码）、`tools/msvc_env.bat`、`.gitignore`、`.gitattributes`、若干本地提交；**无 remote，未推送**。
-- 构建命令用法事实：MSVC 通道的配置与构建须经 `tools/msvc_env.bat` 包装（或等价的 VS 开发者环境），因为默认 PATH 不含 `cl.exe`；配置走 `cmake --preset msvc`，构建走 `cmake --build --preset msvc`（Ninja 默认满核并行）。
-- 尚无：`include/borealis/` 下的公共头与全部业务代码、`tests/unit/` `tests/integration/` `tests/e2e/` 的用例与 `tests/fixtures/` 回放夹具、`assets/`、基准与门禁脚本；本机 vcpkg（`VCPKG_ROOT` 未设）。
+- 业务代码首块已落地：终端逻辑层的 VT 解析器——`include/borealis/vt/`（`sequence.h` `parser.h`）+ `src/vt/parser.cpp`，编入 `borealis_core` 静态库（应用与测试 runner 均链接它）；配套 `tests/unit/utest_vt_parser.cpp` 与回放夹具 `tests/fixtures/vt/parser_cases.tsv`（`SPEC.FEAT.TERM.01`；架构 §5 落点）。
+- 构建命令用法事实：MSVC 通道的配置与构建须经 `tools/msvc_env.bat` 包装（或等价的 VS 开发者环境），因为默认 PATH 不含 `cl.exe`；配置走 `cmake --preset msvc`，构建走 `cmake --build --preset msvc`（Ninja 默认满核并行）。该包装另行探测 MSVC 工具集与 Windows SDK 目录补齐 `INCLUDE` / `LIB`：`vcvars64.bat` 要用 `reg.exe` 定位 SDK，而本机沙箱把 `reg.exe` 列入黑名单，拦截后 `cl.exe` 会报找不到 `crtdbg.h`。
+- 尚无：`include/borealis/` 下除 `vt/` 之外的公共头（`term` `grid` `session` `conn` `ui` `config`）、终端状态机与网格模型、`tests/integration/` `tests/e2e/` 的用例、`assets/`、基准与门禁脚本；本机 vcpkg（`VCPKG_ROOT` 未设）。
 - 本文凡引用「计划 / 待建」路径处均非既存事实；相应目录或文件落地后必须回填本表与 §2，避免出现「文档有、代码无」的死链。
