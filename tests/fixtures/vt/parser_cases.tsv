@@ -1,0 +1,46 @@
+﻿# Borealis VT 解析器回放夹具（tests/fixtures/vt/parser_cases.tsv）
+# ------------------------------------------------------------
+# 列以制表符分隔：名称 \t 输入 \t 期望（多条事件以 | 分隔）
+# 以 # 开头或空行为注释。
+#
+# 输入与期望的转义：\e ESC(0x1B)  \a BEL(0x07)  \s ST(0x9C)  \n \r \t  \\ 反斜杠
+#                   \uXXXX 码点  \xNN 字节值
+#
+# 期望事件：
+#   PRINT:<chars>                     每个字符各一条 Print
+#   EXEC:<char>                       一条 Execute
+#   ESC:<intermediates>:<final>       ESC 序列
+#   CSI:<intermediates>:<final>:<params>   CSI 序列；params 置末段（内部可含 :），空串表示「无参数」
+#   OSC:<data>                        OSC 字符串
+#   DCSH:<intermediates>:<final>:<params> DCS 起始   DCSP:<data> 负载   DCSU:<data> 结束
+#   IGN:<char>                        被忽略的序列（触发码点）
+# ------------------------------------------------------------
+plain_ascii	abc	PRINT:a|PRINT:b|PRINT:c
+# 夹具按字节读取、不做 UTF-8 解码（解码在解析器之前，见架构 §3.3），故 CJK 一律写 \u 转义。
+cjk_code_points	\u4E2D\u6587	PRINT:\u4E2D|PRINT:\u6587
+c0_controls	\n\r\t	EXEC:\n|EXEC:\r|EXEC:\t
+esc_reverse_index	\eM	ESC::M
+esc_save_cursor	\e7	ESC::7
+esc_full_reset	\ec	ESC::c
+charset_dec_special_graphics	\e(0	ESC:(:0
+charset_ascii	\e(B	ESC:(:B
+decaln_screen_fill	\e#8	ESC:#:8
+csi_no_params	\e[m	CSI::m:
+csi_cursor_up	\e[5A	CSI::A:5
+csi_two_params	\e[1;31m	CSI::m:1;31
+csi_leading_default_param	\e[;31m	CSI::m:;31
+csi_truecolor_subparams	\e[38:2::12:34:56m	CSI::m:38:2::12:34:56
+csi_private_alt_screen	\e[?1049h	CSI:?:h:1049
+csi_private_bracketed_paste	\e[?2004h	CSI:?:h:2004
+csi_intermediate	\e[1 p	CSI: :p:1
+csi_param_overflow_clamped	\e[99999999m	CSI::m:65535
+osc_title_bel	\e]0;hello\a	OSC:0;hello
+osc_title_st	\e]2;dir\e\\	OSC:2;dir
+osc_with_cjk	\e]0;\u4E2D\u6587\a	OSC:0;\u4E2D\u6587
+dcs_request_status_string	\eP1;2$ppayload\e\\	DCSH:$:p:1;2|DCSP:payload|DCSU:
+dcs_terminated_by_8bit_st	\eP$px\s	DCSH:$:p:|DCSP:x|DCSU:
+eight_bit_csi	\x9B31m	CSI::m:31
+eight_bit_osc	\x9D0;t\a	OSC:0;t
+apc_string_dropped	\e_payload\e\\	IGN:\\
+cancel_in_csi_then_text	\e[1;2\x18A	IGN:\x18|PRINT:A
+illegal_prefix_ignored_then_text	\e[1?mZ	IGN:?|IGN:m|PRINT:Z
