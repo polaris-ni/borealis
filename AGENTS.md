@@ -18,17 +18,17 @@
 
 ## 2 目录布局（约定）
 
-下表是**目标布局**，除 `codespec/` 外均为「随开工创建」，现在还不存在——引用它们时不得写成既存事实。
+下表混合了**已落地路径**与**规划路径**，以「现状」列为准；引用标着「计划 / 待建」的路径处不得写成既存事实。
 
 | 路径 | 作用 | 现状 |
 |:---|:---|:---|
-| `codespec/` | 全部项目文档（需求 / 计划 / 变更历史 / 架构） | 已有 |
-| `CMakeLists.txt` `CMakePresets.json` `cmake/` | 构建编排与模块 | 待建 |
-| `include/borealis/` | 本仓公共头（按模块域分目录：`vt` `term` `grid` `session` `conn` `ui` `config`） | 待建 |
-| `src/` | 实现；平台相关实现落在 `src/platform/{win,posix}/` | 待建 |
-| `tests/` | `framework/`（测试框架）+ `unit/utest_*` + `integration/itest_*` + `e2e/etest_*` + `fixtures/`（转义序列回放夹具） | 待建 |
-| `assets/` | 内置字体（Cascadia Code，OFL）与图标；随包分发的许可声明 | 待建 |
-| `tools/` | 基准、门禁与校验脚本 | 待建 |
+| `codespec/` | 全部项目文档（需求 / 计划 / 变更历史 / 架构） | 已有（四份：`SPECIFICATIONS.md` `PLAN.md` `CHANGELOG.md` `ARCHITECTURE.md`） |
+| `CMakeLists.txt` `CMakePresets.json` `cmake/` | 构建编排与模块 | 已有：`CMakeLists.txt`（消费 Aurora 源码树 + `add_subdirectory(src)` + `include(cmake/BorealisTests.cmake)`）、`CMakePresets.json`（单一 `msvc` 预设：Ninja + MSVC，构建目录 `build/`）、`cmake/BorealisTests.cmake`（注册式 runner，每条 CTest = `--run=<stem>`，另有一条 `framework_selftest`） |
+| `include/borealis/` | 本仓公共头（按模块域分目录：`vt` `term` `grid` `session` `conn` `ui` `config`） | 计划 / 待建：目录已创建但为空，尚无公共头 |
+| `src/` | 实现；平台相关实现落在 `src/platform/{win,posix}/` | 已有：`src/CMakeLists.txt` + `src/main.cpp`（空壳应用：建一个原生窗口并跑帧循环）；`src/platform/{win,posix}/` 下的平台实现计划 / 待建 |
+| `tests/` | `framework/`（测试框架）+ `unit/utest_*` + `integration/itest_*` + `e2e/etest_*` + `fixtures/`（转义序列回放夹具） | 已有：`tests/framework/`（复刻 Aurora 注册式测试框架源码）；`tests/unit/` `tests/integration/` `tests/e2e/` `tests/fixtures/` 目录已创建但为空，各类用例与回放夹具计划 / 待建 |
+| `assets/` | 内置字体（Cascadia Code，OFL）与图标；随包分发的许可声明 | 计划 / 待建（目录尚未创建） |
+| `tools/` | 基准、门禁与校验脚本 | 仅有 `tools/msvc_env.bat`（VS 开发者环境包装，供 MSVC 通道的配置与构建使用）；基准与门禁脚本计划 / 待建 |
 
 ---
 
@@ -107,11 +107,13 @@
 2. **本仓不长期持有框架分叉**：进了框架的原语必须以 Aurora 的公共 API 形式存在，本仓只消费公共头。
 3. **不在应用侧私改渲染路径**：这是硬禁；但按第 1 条用公共 API 组合出的应用侧控件不算私改。
 4. **改 Aurora 前读 Aurora 的根 `AGENTS.md`**，并遵守其规则（含其字面量语言、文档注释、测试注册与门禁口径）。本文所称「Aurora 主仓」即 §1 里经 `add_subdirectory` 接入的那个仓库；对它的引用一律写「Aurora 主仓 `codespec/<文档>` §N」形态，不写本机绝对路径。
+5. **`add_subdirectory` 消费的两个前提**（2026-09-30 实测）：① Aurora 有 7 个默认 ON 的开关（`AURORA_BUILD_TESTS` / `AURORA_BUILD_E2E` / `AURORA_BUILD_DEMOS` / `AURORA_ENABLE_CLANG_FORMAT` / `AURORA_ENABLE_CLANG_TIDY` / `AURORA_BUILD_DOCS` / `AURORA_ENABLE_CCACHE`），须在 `add_subdirectory` 之前以缓存变量关掉，否则其目标与 CTest 门禁会灌进本仓构建面——细节见 Aurora 主仓 `codespec/BUILD_OPTIONS.md` §9.5；② Aurora 侧须是「子项目安全」的：其 `cmake/` 模块曾一律用 `CMAKE_SOURCE_DIR` 拼自身源码树路径，子项目场景下该变量指向本仓根，生成链落不到规则上（只能 configure、不能 build），已由 Aurora 主仓改为 `AURORA_SOURCE_DIR` 修掉。二者任一不成立，本仓构建即断，排查时先看这两处。
 
 ---
 
-## 6 现状快照（2026-09-29）
+## 6 现状快照（2026-09-30）
 
-- 已有：`codespec/` 四份文档（需求 / 计划 / 变更历史 / 架构 `ARCHITECTURE.md`，2026-09-30 评审通过）、`.gitignore`、`.gitattributes`、若干本地提交；**无 remote，未推送**。
-- 尚无：全部代码与构建脚本（§2 中标注「待建」的行）、本机 vcpkg（`VCPKG_ROOT` 未设）。
-- 本文凡引用「待建」路径处均非既存事实；相应目录或文件落地后必须回填本表与 §2，避免出现「文档有、代码无」的死链。
+- 已有：`codespec/` 四份文档（需求 / 计划 / 变更历史 / 架构 `ARCHITECTURE.md`，2026-09-30 评审通过）、构建骨架（顶层 `CMakeLists.txt`、`CMakePresets.json` 的单一 `msvc` 预设 = Ninja + MSVC 且构建目录为 `build/`、`cmake/BorealisTests.cmake`、`src/CMakeLists.txt` + `src/main.cpp` 空壳应用、`tests/framework/` 测试框架源码）、`tools/msvc_env.bat`、`.gitignore`、`.gitattributes`、若干本地提交；**无 remote，未推送**。
+- 构建命令用法事实：MSVC 通道的配置与构建须经 `tools/msvc_env.bat` 包装（或等价的 VS 开发者环境），因为默认 PATH 不含 `cl.exe`；配置走 `cmake --preset msvc`，构建走 `cmake --build --preset msvc`（Ninja 默认满核并行）。
+- 尚无：`include/borealis/` 下的公共头与全部业务代码、`tests/unit/` `tests/integration/` `tests/e2e/` 的用例与 `tests/fixtures/` 回放夹具、`assets/`、基准与门禁脚本；本机 vcpkg（`VCPKG_ROOT` 未设）。
+- 本文凡引用「计划 / 待建」路径处均非既存事实；相应目录或文件落地后必须回填本表与 §2，避免出现「文档有、代码无」的死链。
