@@ -36,6 +36,9 @@ aurora_setup_consumer_target(borealis_test_runner
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
         "${BOREALIS_AURORA_DIR}/tools/include")
 
+# 纯逻辑模块：用例直接链接被测实现，不经应用可执行文件（§4.4 第 20 条）。
+target_link_libraries(borealis_test_runner PRIVATE borealis_core)
+
 foreach (tst ${BOREALIS_TEST_CASE_SOURCES})
     get_filename_component(tname ${tst} NAME_WE)
     if (tname MATCHES "^etest_")
