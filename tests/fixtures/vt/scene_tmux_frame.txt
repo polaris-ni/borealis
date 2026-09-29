@@ -1,0 +1,1 @@
+\e[?1049h\e[2J\e[H\e(0lqqqqqqqqqqk\e(B\r\n\e(0x\e(B pane title \e(0x\e(B\r\n\e(0mqqqqqqqqqqj\e(B\r\n\e]0;user@host: ~/proj\a\e[38:2::80:250:123muser\e[0m:\e[34m~/proj\e[0m$ \e[?2004h\xC0\xAF\e[32mok\e[0m\e[?1049l
