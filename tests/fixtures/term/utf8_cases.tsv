@@ -1,0 +1,34 @@
+﻿# Borealis UTF-8 解码回放夹具（tests/fixtures/term/utf8_cases.tsv）
+# ------------------------------------------------------------
+# 列以制表符分隔：名称 \t 输入字节（十六进制，空格分隔） \t 期望码点序列
+# 以 # 开头或空行为注释。
+#
+# 期望写法：\uXXXX（BMP） / \UXXXXXX（增补平面） / R（替换字符 U+FFFD）
+#
+# 严格 UTF-8：过长编码、代理项、超出 U+10FFFF 的值与孤立续字节一律替换为 U+FFFD，
+# 且按 Unicode「最大子部分」口径——残缺序列补一个替换字符后，非法字节再按新序列起点
+# 重新判定，故 `E0 80 80` 产出三个替换字符而非一个。
+# ------------------------------------------------------------
+ascii_single	41	A
+ascii_text	48 65 6C 6C 6F	Hello
+control_nul	00	\u0000
+boundary_7f	7F	\u007F
+boundary_80	C2 80	\u0080
+two_byte	 C3 A9	\u00E9
+boundary_7ff	DF BF	\u07FF
+boundary_800	E0 A0 80	\u0800
+three_byte_cjk	E4 B8 AD	\u4E2D
+boundary_ffff	EF BF BF	\uFFFF
+boundary_10000	F0 90 80 80	\U010000
+four_byte_emoji	F0 9F 98 80	\U01F600
+boundary_10ffff	F4 8F BF BF	\U10FFFF
+lone_continuation	80	R
+overlong_two_byte	C0 80	RR
+overlong_three_byte	E0 80 80	RRR
+overlong_four_byte	F0 80 80 80	RRRR
+surrogate_encoded	ED A0 80	RRR
+beyond_max_f4	F4 90 80 80	RRRR
+beyond_max_f5	F5 80 80 80	RRRR
+truncated_then_ascii	E4 B8 41	RA
+valid_then_truncated	41 E4 B8	AR
+mixed_valid_and_invalid	41 80 42	ARB
