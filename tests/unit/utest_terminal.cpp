@@ -3,7 +3,8 @@
 /// 测试说明: 终端状态机的语义解释——打印与自动换行、C0 执行与制表位、滚动区域与区域内/整屏
 ///           滚动（含 scrollback 相互作用）、IL/DL/ICH/DCH/ECH、ED/EL、SGR（16/256/真彩与
 ///           两种子参数写法）、DEC 私有模式登记、字符集指派、主备屏、宽字符占位与
-///           Ambiguous 覆盖口径、RIS 复位、整屏脏标记（SPEC.FEAT.TERM.01 / .02 / .03 / .05 / .08）。
+///           Ambiguous 覆盖口径、RIS 复位、尺寸变更与整屏脏标记
+///           （SPEC.FEAT.TERM.01 / .02 / .03 / .05 / .08，SPEC.FEAT.XFER.01 前置）。
 
 #include <cstddef>
 #include <cstdint>
@@ -445,6 +446,59 @@ AURORA_TEST_CASE(unknown_sequences_do_not_break_printing) {
     term.feed(U"\x1B[?99h\x1B[5n\x1B[c\x1B]0;title\x07ok");
     AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("ok"));
     AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{2});
+}
+
+AURORA_TEST_CASE(resize_pulls_history_back_into_view) {
+    // 变高时底部锚定：被顶进 scrollback 的历史重新回到视口，输出顺序不变。
+    Terminal term{4, 2, 5, narrow_only};
+    term.feed(U"1\r\n2\r\n3\r\n4");
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("3"));
+
+    term.resize(4, 4);
+
+    AURORA_TEST_CHECK_EQ(term.active_grid().visible_rows(), std::size_t{4});
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("1"));
+    AURORA_TEST_CHECK_EQ(row_text(term, 3), std::string("4"));
+    AURORA_TEST_CHECK_TRUE(term.full_screen_dirty());  // 行号与内容的对应关系整体变了
+}
+
+AURORA_TEST_CASE(resize_narrows_columns_without_reflow) {
+    // 列宽变更沿用裁决 7.5：变窄即截断，已有行不重排到新宽度。
+    Terminal term{10, 3, 5, narrow_only};
+    term.feed(U"abcdefgh");
+
+    term.resize(4, 3);
+
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("abcd"));
+    AURORA_TEST_CHECK_EQ(term.active_grid().columns(), std::size_t{4});
+}
+
+AURORA_TEST_CASE(resize_resets_scroll_region_and_clamps_cursor) {
+    // 滚动区域与光标挂在尺寸上：resize 后带必须回到全屏，光标不得留在界外。
+    Terminal term{10, 5, 5, narrow_only};
+    term.feed(U"\x1B[2;4r\x1B[5;10H");
+    AURORA_TEST_CHECK_EQ(term.scroll_region().bottom, std::size_t{3});
+
+    term.resize(6, 3);
+
+    AURORA_TEST_CHECK_EQ(term.scroll_region().top, std::size_t{0});
+    AURORA_TEST_CHECK_EQ(term.scroll_region().bottom, std::size_t{2});
+    AURORA_TEST_CHECK_EQ(term.cursor().row, std::size_t{2});
+    AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{5});
+    term.feed(U"x");  // 钳位失效就会在此越界
+    AURORA_TEST_CHECK_EQ(row_text(term, 2), std::string("     x"));
+}
+
+AURORA_TEST_CASE(resize_to_same_size_leaves_no_damage) {
+    // 去抖后仍可能收到同一尺寸（SPEC.FEAT.XFER.01）；无变化却判废副本会让每帧整屏重建。
+    Terminal term{10, 3, 5, narrow_only};
+    term.feed(U"x");
+    term.clear_full_screen_dirty();
+
+    term.resize(10, 3);
+
+    AURORA_TEST_CHECK_FALSE(term.full_screen_dirty());
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("x"));
 }
 
 }  // namespace borealis::test_cases::utest_terminal
