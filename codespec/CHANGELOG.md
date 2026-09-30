@@ -6,6 +6,18 @@
 
 ---
 
+## v0.16（2026-09-30）码点宽度判定由框架交付，双宽占位与 combining 一并接线（裁决 7.20）
+
+**动机**：`SPEC.FEAT.TERM.08` 的宽度腿此前只到「机制可用」——状态机经注入接缝取格数，但生产侧挂的是「一律单宽」的缺省实现，CJK 双宽占位不生效，combining 更是无处可去。按裁决 7.13 类别 ①（影响渲染链路的框架缺口）**本仓不等不绕**，判定表须先在 Aurora 侧以公共 API 落地；而落地时实测出一个规格书没写到的分叉：Ambiguous 区间**包含**组合区段（U+0300–U+036F 一类），于是「先判宽度还是先判零宽」成了会决定正确性的选择，连同零宽码点在网格里怎么存一起回写成裁决 7.20。
+
+- **框架侧（跨仓，Aurora 分支 `dev-1.0.0-alpha.9.uat.2` 提交 `9efe3968`，未推送）**：新增 `aurora/core/unicode_width.h` 的 `unicode_cell_width(char32_t, AmbiguousWidthMode) -> 0 / 1 / 2`，一个原语同时给出零宽（General_Category Mn/Me/Cf）与 East Asian Width（W/F 双宽）两判据，内部固定「先零宽、再宽度」的次序，Ambiguous 口径以入参给出（裁决 7.15 的要求）。数据由 UCD 18.0.0 实测导出为零宽 379 段 / Wide+Fullwidth 126 段 / Ambiguous 179 段的 constexpr 区间表，**不把上游数据文件复制进仓**，许可声明记入 Aurora `THIRD_PARTY_LICENSES.md` 第 9 节，能力面写入 `codespec/specification/01-core.md` §7.3，单测 `tests/unit/utest_unicode_width.cpp`（含全码点扫描：结果恒 ≤2 且 Wide 口径不小于 Narrow 口径）。
+- **本仓代码落地**：`term::UnicodeWidthPolicy`（声明在 `include/borealis/term/width.h`、实现在 `src/term/width.cpp`，因本仓公共头不含 Aurora 头）替换生产侧的单宽缺省；`grid::Row` 新增「基础格列号 → 零宽标记序列」侧表（`CombiningMark`、`attach_combining` / `combining` / `clear_combining`、单格上限 `kMaxCombiningMarksPerCell = 8`），落实架构 §4.1 早就写明却无载体的低频属性外置；状态机 `do_print` 在宽度为 0 时不写格、不推进光标、不触发换行，把码点并入光标左侧最近的基础格（跳过双宽延续格挂到前半格）。`SingleWidthPolicy` 退为测试用常数注入值。
+- **测试**：新增 `tests/unit/utest_width_policy.cpp`（口径类断言：W/F 恒双宽、Ambiguous 随口径 1/2、零宽先于宽度、中性单宽）与 `tests/integration/itest_unicode_width.cpp`（全链路字节流跑 `SPEC.FEAT.TERM.08` 的验收线：CJK 双宽占位与延续格、**同一份**含 Ambiguous 的输出编一次字节喂两台终端、行末放不下的双宽字符整体换行不留半格、combining 并入/不推进光标/落双宽前半格/行首丢弃/行末不触发换行/覆盖即清除）；`tests/unit/utest_grid_storage.cpp` 补侧表六例（并入序、脏标记、只清本列、上限、截断与复位、随整行搬移）；`tests/integration/itest_terminal_scene.cpp` 改挂 `UnicodeWidthPolicy` 并把「单宽缺省」的旧注释改写为映射前判定口径的说明；字节→状态机的接线从场景用例下沉到 `tests/support/terminal_feed.h` 以免两处漂移。CTest 共 13 项全绿（MSVC + Ninja）。
+- **代价与边界**：① 判定表版本随框架升级，本仓不持表也不复制数据，故本仓宽度用例只断言「口径」不断言具体码点归属，UCD 变更由 Aurora 侧承担；② 零宽标记**只存不绘**——上屏层落地（`SPEC.FEAT.RENDER.01`）时须按 §4.1 取侧表合成字形，否则 combining 在屏幕上仍不可见；③ 上限 8 之外的标记静默丢弃，与「不可信输入须有界」相比损失的是极端字素簇的保真度；④ 字素簇切分与 Emoji 呈现仍不属本条（`SPEC.FEAT.TERM.08` 的延后观察项）。
+- 需求条目数量（66 条）、标识体系、优先级与分期结构均未变动；本次为「框架缺口闭合 + 需求空洞补裁决」，`SPEC.FEAT.TERM.08` 的语义未改，附录 A.2 G1 的「影响需求」列补登该条（此前是推断，现为实测）。
+
+---
+
 ## v0.15（2026-09-30）本地终端连接在 Win32 侧落地，会话首次由真实 PTY 驱动（裁决 7.19）
 
 **动机**：会话层之上六层纯逻辑都由测试替身驱动，`SPEC.FEAT.CONN.01` 的 Windows 腿（ConPTY）是 M1 出口判据「替换 Windows Terminal」的唯一硬前置。落地过程撞到四处 API 语义空白——宿主标准句柄的传递、伪终端管道端的归属、`ClosePseudoConsole` 与子进程的关系、环境块的合成与排序——任一处漏掉都表现为「进程在跑但屏幕空白」或「关标签卡死」，且都不在需求与架构文档里，故先实现后实测再回写成裁决。

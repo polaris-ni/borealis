@@ -297,7 +297,7 @@
 
 ---
 
-## 7 已裁决项（7.1–7.4 于 2026-09-22、7.5–7.10 于 2026-09-23 落定；7.11–7.15 于 2026-09-29 追加，7.16–7.19 于 2026-09-30 追加）
+## 7 已裁决项（7.1–7.4 于 2026-09-22、7.5–7.10 于 2026-09-23 落定；7.11–7.15 于 2026-09-29 追加，7.16–7.20 于 2026-09-30 追加）
 
 | # | 议题 | 裁决 |
 |:---|:---|:---|
@@ -320,10 +320,11 @@
 | 7.17 | 窗口**行数**变化时的历史处理 | **移动窗口边界、底部锚定**：最后一行仍是同一行——视口变高时从 scrollback 顶部收回历史填满，变矮时视口顶行自然溢出进历史，超出容量则从最旧端丢弃，历史不足以填满新视口时顶部补空白行。已有行不重排（沿用 7.5 的列宽口径，二者共同构成尺寸变化的完整行为）。**scrollback 容量是需求的配置值，不随视口变高而缩水**：`SPEC.FEAT.TERM.04` 的「可配置容量（默认 10,000 行）」若被 resize 蚕食，该配置就失去意义，故存储容量按「视口行数 + scrollback 容量」计，**视口变高必然扩容**。理由：候选「固定总容量、视口变大时历史上限相应缩小」可让尺寸变化完全不搬数据也不重分配，但把需求承诺的回滚行数变成随窗口高度浮动的值；候选「变矮时直接丢弃多余行」则与 `SPEC.FEAT.TERM.04` 的回滚定位相悖。代价：行数变化是重分配路径（代价按现存行数计），须与 `SPEC.FEAT.XFER.01` 的去抖合并下发配合，才能把开销压到每帧边界一次；行号与内容的对应关系整体改变，读取方须整屏重建（架构 §3.4） |
 | 7.18 | 会话层接口形态与输出背压的提交粒度 | **①接口粒度取「基础接口 + 能力接口组合」**（架构 §7.2 的待定项就此拍板）：所有连接类型共同实现 `Connection`（`start` / `write` / `resize` / `close` / `alive`）与反向的 `ConnectionEvents`（`on_bytes` / `on_closed`），SSH 独有面（SFTP / 隧道 / 执行通道）到其落期以独立能力接口增补——本地终端不为空实现买单，公共接口也不因新增连接类型翻改。② **背压队列的条目是「视口行区间提交」，不是字节也不是 cell 值**：权威网格由读线程持有（架构 §3.4），主线程按提交去网格取最新值，故队列满时把区间**并宽**即可做到「合并而非丢弃」，条目数上限即内存上限；行脏标记**由消费侧清除**，写侧只登记，否则主线程取不到列级增量、退化成整行重绘（`SPEC.FEAT.RENDER.01` 的单帧只重绘变更单元格落空）。③ **设备查询应答只报能力档位 62**（VT220 + 高级视频选项），不报 132 列 / sixel / ReGIS / 打印机附加能力号；`CSI > c`（DA2）与 `CSI ? 6 n` 按「宁可不答也不答一份错格式」忽略。理由：`SPEC.FEAT.TERM.01` 只要求 `DA1`/`DSR`「正确响应」，而附加能力号一旦误报，`vim`/`tmux` 会走本仓未实现的分支并留下难排查的显示异常。代价：①②的锁序固定为「先取队列、再读网格」，任何持网格锁入队的写法都会构成反向锁序；③以 `vim`/`tmux` 真机走查为最终验收（须待 ConPTY 落地） |
 | 7.19 | 本地终端连接在 Win32 侧的实现口径 | `SPEC.FEAT.CONN.01` 的 Windows 腿落地时撞到的四处 API 语义，均不在需求与架构文档里，漏掉表现为空白屏或挂死且难以归因，就此定死：① **宿主的标准输入/输出/错误句柄一律不交给子进程**（`STARTF_USESTDHANDLES` 置位并把三句柄设空）：不设这条时 `CreateProcessW` 会把**宿主**的标准句柄拷给子进程，宿主经脚本重定向 / 日志文件启动（CI、`>` 重定向、后台启动）时子进程输出直接落进宿主那个文件，伪终端管道一个字节都收不到，会话呈现为「进程活着但屏幕永远空白」；置空后子进程按自己的控制台（即伪终端）打开 `CONIN$`/`CONOUT$`，与无标准句柄的图形宿主同形态。② **交给伪终端的那两个管道端（输入读端、输出写端）须在子进程建好后关闭本进程这一份**：本进程继续持有输出管道的写端，conhost 退场时写端不归零、`ReadFile` 永不返回 `ERROR_BROKEN_PIPE`，读线程退不出来，关闭标签就卡在读线程回收上。③ **关闭标签即终结子进程**：`ClosePseudoConsole` 只断控制台连接、不保证带走子进程，故关停路径补 `TerminateProcess`（与 Windows Terminal 的关闭同口径）。④ **PTY 环境注入的次序为「继承值 → PTY 默认注入 → profile 覆盖」**，合成后的环境块按键排序（`CreateProcessW` 的硬要求），`TERM=xterm-256color` / `COLORTERM=truecolor` 两个默认值以共享常量给出，posix 侧须同口径。另记两条实测事实供排障：给了宽字符环境块必须带 `CREATE_UNICODE_ENVIRONMENT`，否则 `CreateProcessW` 对**任何**非空 `lpEnvironment` 返回 `ERROR_INVALID_PARAMETER`(87)（原样拷贝的 `GetEnvironmentStringsW()` 亦不例外）；`PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` 的 `lpValue` 传 **HPCON 本身**并配 `sizeof(HPCON)`，传 `&hPC` 会被判为非法伪终端句柄、子进程以 `0xC0000142` 初始化失败——官方文档未列该属性，形态以 Windows Terminal 生产代码与 `winconpty.h` 的「该结构是与 OS 共享的 ABI」注释为准。**⑤ 真机 e2e 的运行前提**：宿主进程须能访问窗口站与桌面；无控制台的受限上下文（沙箱、服务会话）里子进程的伪终端初始化会失败，`SPEC.FEAT.CONN.01` 的 e2e 用例只能在交互会话中运行，不得以该环境下的失败结论判定实现有误 |
+| 7.20 | 码点占位格数的判定归属、零宽的处理与判定次序 | **① 判定表归框架，应用侧只转调**：Aurora 侧新增 `aurora/core/unicode_width.h` 的 `unicode_cell_width(char32_t, AmbiguousWidthMode)`，**一个原语同时给出三档结果 0 / 1 / 2**（0 = 不独立占格的零宽码点，判据为 General_Category Mn/Me/Cf；2 = East Asian Width 的 W/F），Ambiguous 口径以入参传入（裁决 7.15 的要求）。本仓 `term::UnicodeWidthPolicy` 只做口径转发、不持表；`include/borealis/**` 公共头不含 Aurora 头，故声明在接缝头、实现落在 `src/term/width.cpp`。**② 判定次序不可交换**：Ambiguous 区间**包含**组合区段（U+0300–U+036F、U+FE00–U+FE0F、U+E0100–U+E01EF）与 U+00AD，若先按 Ambiguous 口径判宽度，零宽字符就会占 1–2 格；故框架原语内部固定「先零宽、再宽度」，数据以 UCD 18.0.0 实测导出（零宽 379 段、Wide+Fullwidth 126 段、Ambiguous 179 段）。**③ 零宽码点不进 `Cell` 主结构**：网格行内挂「基础格列号 → 标记序列」侧表（架构 §4.1 的低频属性外置口径），写入基础格即清其标记、整行搬移随行走、截断与复位一并丢弃；单格上限 `Row::kMaxCombiningMarksPerCell = 8`，超限**丢弃不报错**——会话字节流是不可信输入，连续投喂零宽码点不得让一行无限膨胀。**④ 宽度按字符集映射前的码点判定**：`ESC ( 0` 把 0x5F–0x7E 重映射为 U+2500 一类框线，那些码点属 Ambiguous，按映射后判定会让 Ambiguous=Wide 的 profile 把边框画成半格错位。代价：UCD 数据升级只由 Aurora 侧承担（本仓不复制表），本仓的宽度用例因此以「口径」而非「具体码点归属」为断言主体 |
 
 ---
 
-## 附录 A Aurora 框架现状与缺口分析（2026-09-20 实测，2026-09-22 与 2026-09-29 复核）
+## 附录 A Aurora 框架现状与缺口分析（2026-09-20 实测，2026-09-22、2026-09-29 与 2026-09-30 复核）
 
 > 「隐式驱动」：本文不逐条挂钩需求与缺口，仅在此独立盘点。
 > **路径一律相对 Aurora 主仓根目录，引用一律用符号名**——不使用 `file:line` 锚点（随上游提交必然漂移）。
@@ -360,7 +361,7 @@
 
 | # | 缺口（含事实依据） | 阻塞 | 优先级与去向 |
 |:---|:---|:---|:---|
-| G1 | **无等宽网格/逐字符绘制原语**：`Painter::draw_text` 三个重载均为字符串粒度（Rect + 字符串 + Font + Color），无 cell 网格、无行 diff 绘制路径；另经复核，`FontEngine` 自身记录了 FreeType hinting 下 dp 测量与物理光栅宽度的偏差（advance 取整到整像素、行尾累计），故终端整屏网格不可直接复用现有 dp 链路 | SPEC.FEAT.RENDER.01 SPEC.FEAT.RENDER.03 SPEC.FEAT.RENDER.05 | **形态已裁决**：以 `Painter` 批量文本 run 原语 + 等宽整像素 cell 度量 + East Asian Width 宽度判定进框架（宽度判定入参须含 Ambiguous 宽度模式，见裁决 7.15，不得在框架内硬编码单/双宽）；网格模型、脏行 diff 策略与颜色合成（含 SGR 属性、bold-is-bright、最小对比度）留应用侧，原语只收合成后的最终值。框架原语落地时同步建网格吞吐基准并挂性能回归门禁（落期见 PLAN.md） |
+| G1 | **无等宽网格/逐字符绘制原语**：`Painter::draw_text` 三个重载均为字符串粒度（Rect + 字符串 + Font + Color），无 cell 网格、无行 diff 绘制路径；另经复核，`FontEngine` 自身记录了 FreeType hinting 下 dp 测量与物理光栅宽度的偏差（advance 取整到整像素、行尾累计），故终端整屏网格不可直接复用现有 dp 链路 | SPEC.FEAT.RENDER.01 SPEC.FEAT.RENDER.03 SPEC.FEAT.RENDER.05 SPEC.FEAT.TERM.08 | **形态已裁决**：以 `Painter` 批量文本 run 原语 + 等宽整像素 cell 度量 + East Asian Width 宽度判定进框架（宽度判定入参须含 Ambiguous 宽度模式，见裁决 7.15，不得在框架内硬编码单/双宽）；网格模型、脏行 diff 策略与颜色合成（含 SGR 属性、bold-is-bright、最小对比度）留应用侧，原语只收合成后的最终值。框架原语落地时同步建网格吞吐基准并挂性能回归门禁（落期见 PLAN.md）。**三腿中的宽度判定腿已闭合（2026-09-30 实测）**：Aurora 侧公共 API `aurora/core/unicode_width.h` 的 `unicode_cell_width(char32_t, AmbiguousWidthMode)` 一次给出 0 / 1 / 2 三档、Ambiguous 口径为入参（数据 UCD 18.0.0，形态与次序见裁决 7.20），带 `tests/unit/utest_unicode_width.cpp`；余下两腿（批量文本 run 原语、等宽整像素 cell 度量）未开工 |
 | G2 | **鼠标无多击语义**：`MouseEvent` 无 `click_count`，双击/三击需应用自算 | SPEC.FEAT.INTERACT.02 | **形态已裁决**：`click_count` 由框架统一自算（按下时间窗 + 位置容差），五后端（win32 / x11 / wayland / glfw / macos）行为一致，headless 经同一 dispatcher 路径用于单测，不依赖各平台双时设置 |
 | G3 | **无 VT/OSC 解析工具**：全库无 vt/ansi 相关代码 | SPEC.FEAT.TERM.01–08 | 属应用域，不进框架；要求纯逻辑模块 + 全量单测（HeadlessSurface 回放断言） |
 | G4 | `LazyList` 仅固定行高模式（`item_extent`，可变行高列为后续增强） | — | scrollback 用 `Scroll` + 自管视口更合适，不阻塞 |

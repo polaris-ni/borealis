@@ -33,7 +33,7 @@
 
 **并行与预研**：M0 与 M1 可部分并行（渲染原语先行，PTY 与解析器同步开发）；SSH 传输栈与 M1/M2 的 UI 无耦合，可提前预研（裁决 7.2）。
 
-**M0 → M1 的阻塞粒度**（2026-09-30 口径，供开工排序用）：M0 不是 M1 的整体前置——G1 阻塞 `SPEC.FEAT.RENDER.01` `SPEC.FEAT.RENDER.03` `SPEC.FEAT.RENDER.05`，以及 `SPEC.FEAT.TERM.08` 的宽度判定腿（East Asian Width 判定须由框架公共 API 提供且接口接受 Ambiguous 宽度模式入参，见裁决 7.15，应用侧不得自行查表替代；此归属为**推断**，附录 A.2 的「影响需求」列未列 `SPEC.FEAT.TERM.08`，待裁决补登）；G2 阻塞 `SPEC.FEAT.INTERACT.02` 的双击/三击腿。M1 的其余项（终端逻辑层、键盘映射、UI 容器、PTY 与尺寸同步、配置）不依赖框架缺口，可在 M0 未关闭期间推进。
+**M0 → M1 的阻塞粒度**（2026-09-30 口径，供开工排序用）：M0 不是 M1 的整体前置——G1 阻塞 `SPEC.FEAT.RENDER.01` `SPEC.FEAT.RENDER.03` `SPEC.FEAT.RENDER.05`，以及 `SPEC.FEAT.TERM.08` 的宽度判定腿（East Asian Width 判定须由框架公共 API 提供且接口接受 Ambiguous 宽度模式入参，见裁决 7.15，应用侧不得自行查表替代；此归属为**推断**，附录 A.2 的「影响需求」列已随该腿闭合补登 `SPEC.FEAT.TERM.08`（2026-09-30 实测，裁决 7.20））；G2 阻塞 `SPEC.FEAT.INTERACT.02` 的双击/三击腿。M1 的其余项（终端逻辑层、键盘映射、UI 容器、PTY 与尺寸同步、配置）不依赖框架缺口，可在 M0 未关闭期间推进。
 
 ---
 
@@ -150,7 +150,7 @@
 
 | 缺口 | 内容 | 补入时点 |
 |:---|:---|:---|
-| G1 | 批量文本绘制原语 + 等宽整像素 cell 度量 + East Asian Width 宽度判定 | M0（阻塞 `SPEC.FEAT.RENDER.01` `SPEC.FEAT.RENDER.03` `SPEC.FEAT.RENDER.05` 与 `SPEC.FEAT.TERM.08` 的宽度判定腿；M1 其余项不受阻，粒度见 §2） |
+| G1 | 批量文本绘制原语 + 等宽整像素 cell 度量 + East Asian Width 宽度判定（**第三腿已于 2026-09-30 闭合**：Aurora 公共 API `unicode_cell_width` 给出 0 / 1 / 2 三档，见裁决 7.20；余下两腿未开工） | M0（阻塞 `SPEC.FEAT.RENDER.01` `SPEC.FEAT.RENDER.03` `SPEC.FEAT.RENDER.05`；`SPEC.FEAT.TERM.08` 的宽度判定腿已不再受阻，粒度见 §2） |
 | G2 | `MouseEvent` 多击语义（框架统一自算） | M0（阻塞 `SPEC.FEAT.INTERACT.02` 的双击/三击腿，属 M2；该条的 M1 腿是流式拖拽/矩形块基本面，不受阻） |
 | G12 残留单腿 | X11 / Wayland / GLFW 的 DPI 缩放变化上报（公共 API 与 Win32 已具备） | M2 的 Linux 等价补齐 |
 | G9 / G11 | OS 级全局热键、系统通知 API | 观察池（§5），触发条件为 Quick Terminal 或系统通知开工 |
@@ -174,8 +174,8 @@
 
 | 阶段 | 状态 | 依据与剩余项 |
 |:---|:---|:---|
-| **M0 框架补强** | 未开工 | G1 / G2 在 Aurora 主仓均未落地；按 §2 的阻塞粒度，二者不构成 M1 的整体前置 |
-| **M1 单终端 MVP（Windows）** | 部分落地 | 已落地（纯逻辑层均可脱离 UI 独立单测；平台层为 Windows 侧真机 e2e）：`SPEC.FEAT.TERM.01` 的 VT 解析器与字符集切换映射、`SPEC.FEAT.TERM.09` 的 UTF-8 双向编解码（M1 基线腿）、`SPEC.FEAT.TERM.04` 的 scrollback 环形存储、**终端状态机**（`SPEC.FEAT.TERM.01` 的 Print/Execute/ESC/CSI 显示内核与私有模式登记、`SPEC.FEAT.TERM.02` 的 16/256/真彩色、`SPEC.FEAT.TERM.03` 的主备屏、`SPEC.FEAT.TERM.05` 的光标与滚动区域/擦除/插删/制表位；`SPEC.FEAT.TERM.08` 的占位机制腿，判定表待 G1）、**会话层**（架构 §7.2 粒度拍板后的 `session::Connection` 基础接口与 `ConnectionEvents` 反向通道、`session::Session` 组合解码/状态机/网格与写通道、`session::DamageQueue` 的有界背压队列：`SPEC.NF.PERF.06` 的合并而非丢弃与单帧预算让出、`SPEC.NF.RELI.01` 的水位/合并/让出计数、`SPEC.FEAT.TERM.01` 的 DA1/DSR 应答回写、`SPEC.FEAT.XFER.01` 的尺寸下发腿）、**`SPEC.FEAT.CONN.01` 的本地终端 Windows 腿**（`conn::LocalTerminalSpec` + 连接工厂、`platform::ConptyConnection` 的伪终端创建/挂载/读写/关停、默认 shell 探测链、PTY 环境注入与 profile 覆盖，实现口径见裁决 7.19）。未开工：`SPEC.FEAT.CONN.01` 的 POSIX 腿（`$SHELL` 探测 + `forkpty` 同口径）、`SPEC.FEAT.TERM.07` 的 OSC 消费（状态机内当前整体吞掉，留 `TODO(SPEC.FEAT.TERM.07)`）、`SPEC.FEAT.RENDER.01–04`、`SPEC.FEAT.WS.01` `SPEC.FEAT.WS.02`、`SPEC.FEAT.INTERACT.01`、`SPEC.FEAT.XFER.01` 的去抖与 UI 侧尺寸来源、`SPEC.FEAT.PREF.03` `SPEC.FEAT.PREF.06` |
+| **M0 框架补强** | 部分落地 | G1 的宽度判定腿已在 Aurora 主仓以公共 API 落地并带单测（`unicode_cell_width`，裁决 7.20）；G1 余下两腿（批量文本 run 原语、等宽整像素 cell 度量）与 G2 未落地。按 §2 的阻塞粒度，余下缺口不构成 M1 的整体前置 |
+| **M1 单终端 MVP（Windows）** | 部分落地 | 已落地（纯逻辑层均可脱离 UI 独立单测；平台层为 Windows 侧真机 e2e）：`SPEC.FEAT.TERM.01` 的 VT 解析器与字符集切换映射、`SPEC.FEAT.TERM.09` 的 UTF-8 双向编解码（M1 基线腿）、`SPEC.FEAT.TERM.04` 的 scrollback 环形存储、**终端状态机**（`SPEC.FEAT.TERM.01` 的 Print/Execute/ESC/CSI 显示内核与私有模式登记、`SPEC.FEAT.TERM.02` 的 16/256/真彩色、`SPEC.FEAT.TERM.03` 的主备屏、`SPEC.FEAT.TERM.05` 的光标与滚动区域/擦除/插删/制表位；`SPEC.FEAT.TERM.08` 的宽度与双宽占位、combining 并入腿（判定表随 G1 第三腿闭合））、**会话层**（架构 §7.2 粒度拍板后的 `session::Connection` 基础接口与 `ConnectionEvents` 反向通道、`session::Session` 组合解码/状态机/网格与写通道、`session::DamageQueue` 的有界背压队列：`SPEC.NF.PERF.06` 的合并而非丢弃与单帧预算让出、`SPEC.NF.RELI.01` 的水位/合并/让出计数、`SPEC.FEAT.TERM.01` 的 DA1/DSR 应答回写、`SPEC.FEAT.XFER.01` 的尺寸下发腿）、**`SPEC.FEAT.CONN.01` 的本地终端 Windows 腿**（`conn::LocalTerminalSpec` + 连接工厂、`platform::ConptyConnection` 的伪终端创建/挂载/读写/关停、默认 shell 探测链、PTY 环境注入与 profile 覆盖，实现口径见裁决 7.19）。未开工：`SPEC.FEAT.CONN.01` 的 POSIX 腿（`$SHELL` 探测 + `forkpty` 同口径）、`SPEC.FEAT.TERM.07` 的 OSC 消费（状态机内当前整体吞掉，留 `TODO(SPEC.FEAT.TERM.07)`）、`SPEC.FEAT.RENDER.01–04`、`SPEC.FEAT.WS.01` `SPEC.FEAT.WS.02`、`SPEC.FEAT.INTERACT.01`、`SPEC.FEAT.XFER.01` 的去抖与 UI 侧尺寸来源、`SPEC.FEAT.PREF.03` `SPEC.FEAT.PREF.06` |
 | **M2–M5** | 未开工 | 排期不变 |
 
 **M1 待接接缝**（已落地模块之间尚未打通处；表中顺序即建议的开工顺序）：
@@ -186,8 +186,8 @@
 | 状态机 → 会话回写 | 已打通 | 终端属性与光标位置查询（DA1、DSR）经会话写通道回写：状态机经注入的 `term::ResponseSink` 在锁内登记应答、会话出锁后编码写入连接（架构 §3.4、§5.2，裁决 7.18③ 定下只报档位 62）。单元用例 `tests/unit/utest_session.cpp` 以 `Connection` 替身驱动全链路并断言回写字节。余下 OSC 0/2/7/8/52/133 的消费仍未开工，当前按协议整体吞掉不留痕（`TODO(SPEC.FEAT.TERM.07)`） |
 | 会话 → 平台连接 | 已打通（Windows 腿） | `conn::make_local_terminal_connection` 造出 `platform::ConptyConnection` 并交予 `session::Session`，读线程把伪终端管道的原始字节喂进「解码 → 解析 → 状态机 → 网格」整条链；端到端证据是 `tests/e2e/etest_local_terminal.cpp`（真实 shell 的输出上屏、键入往返、突发输出的队列水位、关闭后进程终结且内容保留）。四处 Win32 实现口径见裁决 7.19。余下的是帧调度通知（提交入队后经 `au::post_to_main` 唤醒主线程排帧，架构 §3.2），随上屏层接，当前消费方按帧轮询 `has_damage()` |
 | 网格行数变化 | 已定并落地（PTY 下发已接线，UI 侧来源未接） | 策略按裁决 7.17 收敛：移动窗口边界、底部锚定，历史自动收回或溢出；存储层 `Storage::set_rows`、状态机 `Terminal::resize` 与会话层 `Session::resize`（含连接侧下发与整屏脏通知）三层已串通并带单测，连接侧下发由 `platform::ConptyConnection::resize` 走 `ResizePseudoConsole`（真机 e2e 覆盖尺寸变更后流不中断）。余下的是**尺寸由 UI 侧何处来**与去抖合并（`SPEC.FEAT.XFER.01`），随渲染层那一棒接 |
-| 宽度判定 | 接缝已落地，判定表待 G1 | 状态机经注入的 `WidthPolicy` 取格数、自身不查表（架构 §6.3）；生产侧当前挂 `SingleWidthPolicy`，故 **CJK 双宽占位尚不生效**，East Asian Width 表属框架原语 G1（见 §2）。双宽占位、延续格与光标列位以桩判定在单测中验证 |
+| 宽度判定 | 已接线（框架真判定） | 状态机经注入的 `WidthPolicy` 取格数、自身不查表（架构 §6.3）；生产实现 `term::UnicodeWidthPolicy` 转调 Aurora `unicode_cell_width`（0 / 1 / 2 三档 + Ambiguous 入参，裁决 7.20），零宽码点并入网格行的组合标记侧表。验收证据：`tests/integration/itest_unicode_width.cpp` 以真实字节流跑全链路，断言 CJK 双宽占位与延续格、同一份含 Ambiguous 输出在两种口径下的列位一致、行末整体换行不留半格、combining 不占格不推进光标。`SingleWidthPolicy` 退为测试用常数注入值（不受 Unicode 版本影响的用例），桩判定仍用于状态机自身的机制类单测 |
 
-**验证现状**（2026-09-30）：MSVC + Ninja 全量构建通过；CTest 全绿共 11 项——解析器 / UTF-8 / 字符集 / 网格存储 / 终端状态机 / 背压队列 / 会话七个单元用例，加「解码→解析」「全链路回放首帧」两个集成用例、框架自检，以及本仓首个真机 e2e `etest_local_terminal`（Windows 侧 ConPTY，8 个用例）。**e2e 的运行环境是硬前提**：宿主须能访问窗口站与桌面，无控制台的受限上下文里子进程的伪终端初始化会失败，该环境下的失败不代表实现有误（裁决 7.19⑤）。**仍未真机走查、无像素级验收**：M1 出口判据中的「替换 Windows Terminal 日常使用」「窗口连续 resize 后 `vim`/`tmux`/`htop` 不错位」均未验证——二者的前置（渲染层与 UI 侧尺寸来源）未落地，字节链路虽已由真实 PTY 驱动，但没有上屏路径就没有用户可见的行为。
+**验证现状**（2026-09-30）：MSVC + Ninja 全量构建通过；CTest 全绿共 13 项——解析器 / UTF-8 / 字符集 / 网格存储（含组合标记侧表）/ 终端状态机 / 宽度判定口径 / 背压队列 / 会话八个单元用例，加「解码→解析」「全链路回放首帧」「宽度判定端到端（含 Ambiguous 双口径与 combining）」三个集成用例、框架自检，以及本仓首个真机 e2e `etest_local_terminal`（Windows 侧 ConPTY，8 个用例）。**e2e 的运行环境是硬前提**：宿主须能访问窗口站与桌面，无控制台的受限上下文里子进程的伪终端初始化会失败，该环境下的失败不代表实现有误（裁决 7.19⑤）。**仍未真机走查、无像素级验收**：M1 出口判据中的「替换 Windows Terminal 日常使用」「窗口连续 resize 后 `vim`/`tmux`/`htop` 不错位」均未验证——二者的前置（渲染层与 UI 侧尺寸来源）未落地，字节链路虽已由真实 PTY 驱动，但没有上屏路径就没有用户可见的行为。
 
 **待裁决**：`codespec/ARCHITECTURE.md` §16 的 A（会话抽象粒度）已于 2026-09-30 拍板为「基础接口 + 能力接口组合」并写入该文档 §7.2（同时作为裁决 7.18 记入需求侧）；D（网格所有权与主线程读取方式）已于 2026-09-30 收敛为「后台权威 + 主线程增量快照脏 cell」并写入该文档 §3.4，终端状态机与会话层据此落地，整屏位移以「整屏脏」标记通知副本重建。余下 B（视口是否复用框架 `Scroll`）、E（单实例转交通道）、F（配置 schema 迁移）仍待拍板。
