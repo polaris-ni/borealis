@@ -5,23 +5,22 @@
 ///           验收线（框线字符不得显示为乱码字母）、提示符的 SGR 颜色落格、OSC 标题串被吞而
 ///           非上屏、非法字节后链路持续、主备屏互不污染（SPEC.FEAT.TERM.03）。
 ///
-///           本用例刻意用生产侧当前挂载的 SingleWidthPolicy：它同时是「G1 未落地期间双宽占位
-///           不生效」这一既成事实的证据（架构 §6.3）。双宽占位本身由 utest_terminal 用桩策略覆盖。
+///           本用例把宽度判定挂生产的 `UnicodeWidthPolicy`：框线由 `ESC ( 0` 映射而来，其宽度按
+///           映射前的 ASCII 字母判定，故整帧仍是单宽排布（SPEC.FEAT.TERM.08、裁决 7.15 的场景分工）。
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "borealis/grid/cell.h"
 #include "borealis/grid/storage.h"
 #include "borealis/term/terminal.h"
-#include "borealis/term/utf8.h"
 #include "borealis/term/width.h"
 #include "framework/aurora_test.h"
 #include "support/fixture_text.h"
 #include "support/paths.h"
+#include "support/terminal_feed.h"
 
 namespace borealis::test_cases::itest_terminal_scene {
 
@@ -29,22 +28,8 @@ namespace {
 
 using borealis::grid::ColorSource;
 using borealis::grid::Storage;
-using borealis::term::SingleWidthPolicy;
 using borealis::term::Terminal;
-using borealis::term::Utf8Decoder;
-
-/// @brief 解码器的码点出口直接接状态机：生产链路里这两步同在会话读线程上（架构 §3.2）。
-class TerminalFeeder final : public borealis::term::CodePointSink {
-  public:
-    explicit TerminalFeeder(Terminal &terminal) : terminal_{&terminal} {}
-
-    auto on_code_point(char32_t code_point) -> void override {
-        terminal_->feed(std::u32string_view{&code_point, 1});
-    }
-
-  private:
-    Terminal *terminal_ = nullptr;
-};
+using borealis::term::UnicodeWidthPolicy;
 
 /// @brief 视口某行的码点前缀（框线字符要用码点比对，转成 ASCII 就丢掉被测事实）。
 [[nodiscard]] auto cells_of(Storage &grid, std::size_t row, std::size_t count) -> std::u32string {
@@ -80,15 +65,7 @@ class TerminalFeeder final : public borealis::term::CodePointSink {
 auto replay(Terminal &terminal, std::string_view scene, std::string_view stop_before) -> std::uint64_t {
     const auto cut = stop_before.empty() ? scene.size() : scene.find(stop_before);
     const auto used = cut == std::string_view::npos ? scene.size() : cut;
-    std::vector<std::byte> raw;
-    for (const char c : scene.substr(0, used)) {
-        raw.push_back(static_cast<std::byte>(static_cast<unsigned char>(c)));
-    }
-    TerminalFeeder feeder{terminal};
-    Utf8Decoder decoder;
-    decoder.feed(raw, feeder);
-    decoder.finish(feeder);
-    return decoder.stats().replaced;
+    return borealis::testing::feed_bytes(terminal, scene.substr(0, used));
 }
 
 }  // namespace
@@ -96,7 +73,7 @@ auto replay(Terminal &terminal, std::string_view scene, std::string_view stop_be
 AURORA_TEST_CASE(scene_frame_paints_box_lines_not_letters) {
     const std::string scene = load_scene();
     AURORA_TEST_REQUIRE_MSG(!scene.empty(), "fixture unreadable: tests/fixtures/vt/scene_tmux_frame.txt");
-    SingleWidthPolicy width_policy;
+    UnicodeWidthPolicy width_policy;
     Terminal terminal{20, 5, 5, width_policy};
 
     // 退出备屏的那条序列之前，画面全在备屏上：先断言框线的落格码点。
@@ -124,7 +101,7 @@ AURORA_TEST_CASE(scene_frame_paints_box_lines_not_letters) {
 AURORA_TEST_CASE(scene_prompt_colors_and_swallowed_osc) {
     const std::string scene = load_scene();
     AURORA_TEST_REQUIRE_MSG(!scene.empty(), "fixture unreadable: tests/fixtures/vt/scene_tmux_frame.txt");
-    SingleWidthPolicy width_policy;
+    UnicodeWidthPolicy width_policy;
     Terminal terminal{20, 5, 5, width_policy};
     const auto replaced = replay(terminal, scene, "\x1B[?1049l");
 
@@ -156,7 +133,7 @@ AURORA_TEST_CASE(scene_prompt_colors_and_swallowed_osc) {
 AURORA_TEST_CASE(scene_alt_screen_exit_leaves_main_untouched) {
     const std::string scene = load_scene();
     AURORA_TEST_REQUIRE_MSG(!scene.empty(), "fixture unreadable: tests/fixtures/vt/scene_tmux_frame.txt");
-    SingleWidthPolicy width_policy;
+    UnicodeWidthPolicy width_policy;
     Terminal terminal{20, 5, 5, width_policy};
     replay(terminal, scene, "");  // 整帧，含进出备屏
 

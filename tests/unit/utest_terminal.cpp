@@ -406,7 +406,8 @@ AURORA_TEST_CASE(ambiguous_width_override_changes_occupancy) {
 }
 
 AURORA_TEST_CASE(single_width_policy_keeps_cjk_in_one_cell) {
-    // G1 未落地期间生产侧挂 SingleWidthPolicy：双宽占位不生效，但内容不得丢失或错位。
+    // 常数注入值不受 Unicode 版本影响：单宽口径下双宽字符各占一格，内容不得丢失或错位。
+    // 真实判定的双宽占位由 itest_unicode_width 端到端覆盖。
     auto term = make_terminal(narrow_only);
     term.feed(U"\x4E2D\x4E2D");
     AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 0).code_point),

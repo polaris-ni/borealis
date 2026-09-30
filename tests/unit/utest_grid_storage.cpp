@@ -2,7 +2,9 @@
 /// 目标单元: include/borealis/grid/storage.h + row.h + cell.h
 /// 测试说明: 环形缓冲存储的滚动语义（不搬移行数据、溢出覆盖最旧）、区域滚动只动带内行、
 ///           容量上下限、列宽变更不 reflow、行数变更的窗口边界语义、行的脏区间与占用上界、
-///           清空复位（架构 §4.2 / §4.3 / §4.5 / §4.6，SPEC.FEAT.XFER.01 前置）。
+///           组合标记侧表（并入序、脏标记、覆盖即清除、上限、截断与整行搬移）、
+///           清空复位（架构 §4.1 / §4.2 / §4.3 / §4.5 / §4.6，SPEC.FEAT.TERM.04、SPEC.FEAT.TERM.08、
+///           SPEC.FEAT.XFER.01 前置）。
 
 #include <cstddef>
 #include <cstdint>
@@ -51,6 +53,20 @@ auto text_of(const Row &row) -> std::string {
 auto row_head(const Storage &storage, std::size_t row) -> char {
     return static_cast<char>(storage.visible_line(row).cell(0).code_point);
 }
+
+/// @brief 并入某格的零宽码点串（顺序即并入顺序）。
+auto marks_of(const Row &row, std::size_t column) -> std::u32string {
+    std::u32string out;
+    for (const auto &mark : row.combining(column)) {
+        out.push_back(mark.code_point);
+    }
+    return out;
+}
+
+/// @brief 组合重音符一类零宽码点：不独立占格，只挂在左侧基础格上。
+constexpr char32_t kMark1 = U'\x0301';
+constexpr char32_t kMark2 = U'\x0302';
+constexpr char32_t kMark3 = U'\x0303';
 
 }  // namespace
 
@@ -159,6 +175,89 @@ AURORA_TEST_CASE(wide_cell_continuation_is_flagged) {
     AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(head.width), std::uint32_t{2});
     AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(tail.width), std::uint32_t{0});
     AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(head.flags & kFlagBold), std::uint32_t{0});
+}
+
+AURORA_TEST_CASE(combining_marks_attach_in_column_order) {
+    // 侧表按列号升序、同列按并入序连续——equal_range 取游程的正确性全靠这个序。
+    Row row(6);
+    row.set(3, marker(U'A'));
+    row.set(1, marker(U'B'));
+    row.attach_combining(1, kMark1);
+    row.attach_combining(3, kMark2);
+    row.attach_combining(1, kMark3);
+
+    AURORA_TEST_CHECK(marks_of(row, 1) == std::u32string{kMark1, kMark3});
+    AURORA_TEST_CHECK(marks_of(row, 3) == std::u32string{kMark2});
+    AURORA_TEST_CHECK(marks_of(row, 0).empty());
+    AURORA_TEST_CHECK(marks_of(row, 2).empty());
+    AURORA_TEST_CHECK(marks_of(row, 5).empty());
+}
+
+AURORA_TEST_CASE(combining_mark_dirties_its_base_cell) {
+    // 并入标记改变了该格的显示内容，却不动 `Cell` 本体：不标脏就会被渲染侧当干净列跳过。
+    Row row(4);
+    row.set(2, marker(U'X'));
+    row.clear_dirty();
+    AURORA_TEST_CHECK_FALSE(row.dirty());
+
+    row.attach_combining(2, kMark1);
+    AURORA_TEST_CHECK(row.dirty());
+    AURORA_TEST_CHECK_EQ(row.dirty_left(), std::size_t{2});
+    AURORA_TEST_CHECK_EQ(row.dirty_right(), std::size_t{3});
+}
+
+AURORA_TEST_CASE(writing_a_cell_clears_only_its_own_marks) {
+    // 相邻列各有标记时，覆盖左列不得把右列的游程一起擦掉。
+    Row row(4);
+    row.set(1, marker(U'X'));
+    row.set(2, marker(U'Y'));
+    row.attach_combining(1, kMark1);
+    row.attach_combining(2, kMark2);
+
+    row.set(1, marker(U'Z'));
+    AURORA_TEST_CHECK(marks_of(row, 1).empty());
+    AURORA_TEST_CHECK(marks_of(row, 2) == std::u32string{kMark2});
+}
+
+AURORA_TEST_CASE(combining_run_is_bounded) {
+    // 会话字节流不可信：连续投喂零宽码点不得让一行无限膨胀。
+    Row row(2);
+    row.set(0, marker(U'X'));
+    for (std::size_t i = 0; i < Row::kMaxCombiningMarksPerCell + 4U; ++i) {
+        row.attach_combining(0, kMark1);
+    }
+    AURORA_TEST_CHECK_EQ(row.combining(0).size(), Row::kMaxCombiningMarksPerCell);
+}
+
+AURORA_TEST_CASE(row_reset_and_resize_discard_marks) {
+    Row row(6);
+    row.set(1, marker(U'X'));
+    row.set(5, marker(U'Y'));
+    row.attach_combining(1, kMark1);
+    row.attach_combining(5, kMark2);
+
+    row.resize(3);
+    AURORA_TEST_CHECK(marks_of(row, 1) == std::u32string{kMark1});
+    AURORA_TEST_CHECK(marks_of(row, 5).empty());  // 基础格已被截断，标记无处可挂
+
+    row.reset();
+    AURORA_TEST_CHECK(marks_of(row, 1).empty());
+}
+
+AURORA_TEST_CASE(marks_travel_with_the_whole_row) {
+    // 区域滚动是整行 `std::move`：标记须跟着基础格一起走，落到新行号上。
+    Storage storage(4, 3, 0);
+    storage.visible_line(1).set(0, marker(U'A'));
+    storage.visible_line(1).attach_combining(0, kMark1);
+    storage.visible_line(2).set(0, marker(U'B'));
+    storage.visible_line(2).attach_combining(0, kMark2);
+
+    storage.scroll_region_up(1, 2, 1);
+
+    AURORA_TEST_CHECK(marks_of(storage.visible_line(1), 0) == std::u32string{kMark2});
+    AURORA_TEST_CHECK(marks_of(storage.visible_line(2), 0).empty());  // 腾空的行不带残留
+    storage.visible_line(2).set(0, marker(U'C'));
+    AURORA_TEST_CHECK_EQ(text_of(storage.visible_line(2)), std::string("C   "));
 }
 
 AURORA_TEST_CASE(clear_returns_to_initial_state) {
