@@ -1,0 +1,450 @@
+/// 测试类型: unit
+/// 目标单元: include/borealis/term/terminal.h
+/// 测试说明: 终端状态机的语义解释——打印与自动换行、C0 执行与制表位、滚动区域与区域内/整屏
+///           滚动（含 scrollback 相互作用）、IL/DL/ICH/DCH/ECH、ED/EL、SGR（16/256/真彩与
+///           两种子参数写法）、DEC 私有模式登记、字符集指派、主备屏、宽字符占位与
+///           Ambiguous 覆盖口径、RIS 复位、整屏脏标记（SPEC.FEAT.TERM.01 / .02 / .03 / .05 / .08）。
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+
+#include "borealis/grid/cell.h"
+#include "borealis/grid/storage.h"
+#include "borealis/term/terminal.h"
+#include "borealis/term/width.h"
+#include "framework/aurora_test.h"
+
+namespace borealis::test_cases::utest_terminal {
+
+namespace {
+
+using borealis::grid::ColorSource;
+using borealis::grid::Storage;
+using borealis::term::AmbiguousWidth;
+using borealis::term::SingleWidthPolicy;
+using borealis::term::Terminal;
+using borealis::term::WidthPolicy;
+
+/// @brief 桩宽度判定：只认本用例用到的两个码点。
+///
+/// 把 G1 的 East Asian Width 表搬进测试就变成「测副本而非被测物」，故此处只留最小判据：
+/// 「中」恒双宽、「±」按 Ambiguous 口径取值（架构 §6.3 的注入接缝）。
+class StubWidthPolicy final : public WidthPolicy {
+  public:
+    [[nodiscard]] auto width_of(char32_t code_point, AmbiguousWidth ambiguous) const noexcept
+        -> std::uint8_t override {
+        if (code_point == U'\x4E2D') {
+            return 2U;
+        }
+        if (code_point == U'\x00B1') {
+            return ambiguous == AmbiguousWidth::Wide ? 2U : 1U;
+        }
+        return 1U;
+    }
+};
+
+SingleWidthPolicy narrow_only;
+StubWidthPolicy stub_width;
+
+/// @brief 建一台 10 列 × 3 行、scrollback 5 行的终端。
+[[nodiscard]] auto make_terminal(const WidthPolicy &policy) -> Terminal {
+    return {10, 3, 5, policy};
+}
+
+/// @brief 视口某行的可见文本（行尾空格剥掉，免得断言写成数列宽）。
+[[nodiscard]] auto row_text(Terminal &term, std::size_t row) -> std::string {
+    const auto &grid = term.active_grid();
+    const auto &line = grid.visible_line(row);
+    std::string out;
+    for (std::size_t column = 0; column < line.columns(); ++column) {
+        out.push_back(static_cast<char>(line.cell(column).code_point));
+    }
+    while (!out.empty() && out.back() == ' ') {
+        out.pop_back();
+    }
+    return out;
+}
+
+/// @brief 视口某行的码点串（框线字符一类非 ASCII 断言用）。
+[[nodiscard]] auto row_code_points(Terminal &term, std::size_t row, std::size_t count) -> std::u32string {
+    const auto &line = term.active_grid().visible_line(row);
+    std::u32string out;
+    for (std::size_t column = 0; column < count && column < line.columns(); ++column) {
+        out.push_back(line.cell(column).code_point);
+    }
+    return out;
+}
+
+/// @brief 视口某行某列的 cell。
+[[nodiscard]] auto cell_at(Terminal &term, std::size_t row, std::size_t column) -> const borealis::grid::Cell & {
+    return term.active_grid().visible_line(row).cell(column);
+}
+
+/// @brief 把三行分别写成 "AAA"/"BBB"/"CCC"，供行级搬移类断言。
+auto fill_three_rows(Terminal &term) -> void {
+    term.feed(U"AAA\r\nBBB\r\nCCC");
+}
+
+}  // namespace
+
+AURORA_TEST_CASE(print_advances_cursor_and_defers_wrap) {
+    // 落满行末并不立刻换行（xterm 的「行末技巧」）：越界只压在最后一列，下一帧可覆盖它。
+    auto term = make_terminal(narrow_only);
+    term.feed(U"abc");
+    AURORA_TEST_CHECK_EQ(term.cursor().row, std::size_t{0});
+    AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{3});
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("abc"));
+
+    term.feed(U"0123456789ab");
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("abc0123456"));
+    AURORA_TEST_CHECK_EQ(row_text(term, 1), std::string("789ab"));
+    AURORA_TEST_CHECK_EQ(term.cursor().row, std::size_t{1});
+    AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{5});
+}
+
+AURORA_TEST_CASE(wrapped_text_continues_on_next_line) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"0123456789ab");
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("0123456789"));
+    AURORA_TEST_CHECK_EQ(row_text(term, 1), std::string("ab"));
+    AURORA_TEST_CHECK_EQ(term.cursor().row, std::size_t{1});
+    AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{2});
+}
+
+AURORA_TEST_CASE(autowrap_off_overwrites_last_column) {
+    // `CSI ?7 l` 后行末不再换行，第 11 个字符覆盖最后一列（DECAWM 的验收面）。
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B[?7l0123456789X");
+    AURORA_TEST_CHECK_FALSE(term.modes().auto_wrap);
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("012345678X"));
+    AURORA_TEST_CHECK_EQ(row_text(term, 1), std::string(""));
+    AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{9});
+}
+
+AURORA_TEST_CASE(control_codes_cr_bs_and_newline) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"abcd\rXY");            // CR 归零后覆盖前两列
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("XYcd"));
+    term.feed(U"\x08Z");               // BS 退一列再落字
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("XZcd"));
+    AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{2});
+    term.feed(U"\n");                  // LF 下移一行
+    AURORA_TEST_CHECK_EQ(term.cursor().row, std::size_t{1});
+}
+
+AURORA_TEST_CASE(tab_uses_default_stops_and_tbc_clears_them) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\tX");
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("        X"));  // 默认每 8 列一个停位
+
+    term.feed(U"\x1B[H\x1B[3g\tY");  // TBC 3：清空全部停位，HT 只能走到最后一列
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("        XY"));
+}
+
+AURORA_TEST_CASE(hts_installs_stop_at_cursor) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B[1;6H\x1B[I\x1B[H\tX");  // 在第 5 列设停位，回行首后 HT 应停在那里
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("     X"));
+}
+
+AURORA_TEST_CASE(line_feed_at_bottom_pushes_line_into_scrollback) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"1\r\n2\r\n3\r\n4");
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("2"));
+    AURORA_TEST_CHECK_EQ(row_text(term, 2), std::string("4"));
+    const auto &main_grid = term.main_grid();
+    AURORA_TEST_CHECK_EQ(main_grid.total_lines(), std::size_t{4});
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(main_grid.line(0).cell(0).code_point),
+                         std::uint32_t{U'1'});
+}
+
+AURORA_TEST_CASE(reverse_index_pulls_line_back_from_scrollback) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"1\r\n2\r\n3\r\n4");       // 已顶出一行历史
+    term.feed(U"\x1B[H\x1BM");            // 光标到带顶后 RI：把历史收回来
+    AURORA_TEST_CHECK_EQ(term.main_grid().total_lines(), std::size_t{3});
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("1"));
+    AURORA_TEST_CHECK_EQ(row_text(term, 2), std::string("3"));
+}
+
+AURORA_TEST_CASE(decstbm_scrolls_within_region_only) {
+    // 区域滚动不得进 scrollback：带外行是状态行/命令行，只有整屏滚动才推历史。
+    auto term = Terminal{10, 4, 5, narrow_only};
+    term.feed(U"top\r\naaa\r\nbbb\r\nbtm");
+    term.feed(U"\x1B[2;3r");
+    AURORA_TEST_CHECK_EQ(term.scroll_region().top, std::size_t{1});
+    AURORA_TEST_CHECK_EQ(term.scroll_region().bottom, std::size_t{2});
+    const auto lines_before = term.main_grid().total_lines();
+
+    term.feed(U"\x1B[3;1Hxxx\r\nyyy");  // 带底写满后喂 LF：带内上滚，带外两行不动
+    AURORA_TEST_CHECK_EQ(term.main_grid().total_lines(), lines_before);
+    AURORA_TEST_CHECK_FALSE(term.full_screen_dirty());
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("top"));
+    AURORA_TEST_CHECK_EQ(row_text(term, 1), std::string("xxx"));
+    AURORA_TEST_CHECK_EQ(row_text(term, 2), std::string("yyy"));
+    AURORA_TEST_CHECK_EQ(row_text(term, 3), std::string("btm"));
+}
+
+AURORA_TEST_CASE(il_dl_insert_and_delete_lines_inside_region) {
+    auto term = make_terminal(narrow_only);
+    fill_three_rows(term);
+    term.feed(U"\x1B[1;1H\x1B[2L");       // IL 2：顶部插两行空行，底部内容被推出
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string(""));
+    AURORA_TEST_CHECK_EQ(row_text(term, 1), std::string(""));
+    AURORA_TEST_CHECK_EQ(row_text(term, 2), std::string("AAA"));
+
+    term.feed(U"\x1B[1;1H\x1B[1M");       // DL 1：整体上移一行
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string(""));
+    AURORA_TEST_CHECK_EQ(row_text(term, 1), std::string("AAA"));
+}
+
+AURORA_TEST_CASE(ich_dch_and_ech_shift_cells_in_line) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"abcd");
+    term.feed(U"\x1B[1;2H\x1B[2@");       // ICH 2：光标处插两格空，右侧整体右移
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("a  bcd"));
+
+    term.feed(U"\x1B[1;1H\x1B[3P");       // DCH 3：删掉三格，左侧内容左移
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("bcd"));
+
+    term.feed(U"\x1B[1;1H\x1B[2X");       // ECH 2：擦除但不搬移
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("  d"));
+}
+
+AURORA_TEST_CASE(erase_display_and_erase_line_modes) {
+    auto term = make_terminal(narrow_only);
+    fill_three_rows(term);
+    term.feed(U"\r\nD");                    // 越界换行：首行进 scrollback
+    AURORA_TEST_CHECK_EQ(term.main_grid().total_lines(), std::size_t{4});
+
+    term.feed(U"\x1B[1;2H\x1B[0K");        // EL 0：光标到行尾
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("B"));
+
+    term.feed(U"\x1B[2;2H\x1B[1K");        // EL 1：行首到光标（含光标格）
+    AURORA_TEST_CHECK_EQ(row_text(term, 1), std::string("  C"));
+
+    term.feed(U"\x1B[2J");                  // ED 2：整屏清空，历史仍在
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string(""));
+    AURORA_TEST_CHECK_EQ(row_text(term, 2), std::string(""));
+    AURORA_TEST_CHECK_EQ(term.main_grid().total_lines(), std::size_t{4});
+
+    term.feed(U"\x1B[3J");                  // ED 3：连 scrollback 一起清（xterm 口径）
+    AURORA_TEST_CHECK_EQ(term.main_grid().total_lines(), std::size_t{3});
+}
+
+AURORA_TEST_CASE(sgr_sets_flags_and_basic_colors) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B[1;34;41mX");
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 0).flags),
+                         static_cast<std::uint32_t>(borealis::grid::kFlagBold));
+    AURORA_TEST_CHECK_EQ(cell_at(term, 0, 0).foreground, std::uint32_t{4});
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 0).foreground_source),
+                         static_cast<std::uint32_t>(ColorSource::Palette));
+    AURORA_TEST_CHECK_EQ(cell_at(term, 0, 0).background, std::uint32_t{1});
+
+    term.feed(U"\x1B[0mY");                // SGR 0 复位整支笔
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 1).flags), std::uint32_t{0});
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 1).foreground_source),
+                         static_cast<std::uint32_t>(ColorSource::Default));
+
+    term.feed(U"\x1B[90mZ");               // 高亮前景 90–97 落到调色板 8–15
+    AURORA_TEST_CHECK_EQ(cell_at(term, 0, 2).foreground, std::uint32_t{8});
+}
+
+AURORA_TEST_CASE(sgr_extended_colors_both_notations) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B[38;5;123mA");
+    AURORA_TEST_CHECK_EQ(cell_at(term, 0, 0).foreground, std::uint32_t{123});
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 0).foreground_source),
+                         static_cast<std::uint32_t>(ColorSource::Palette));
+
+    term.feed(U"\x1B[38;2;10;20;30mB");    // 平参数式真彩色
+    AURORA_TEST_CHECK_EQ(cell_at(term, 0, 1).foreground, std::uint32_t{0x0A141E});
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 1).foreground_source),
+                         static_cast<std::uint32_t>(ColorSource::Rgb));
+
+    term.feed(U"\x1B[38:2::12:34:56mC");   // 子参数式（含色彩空间缺省段）
+    AURORA_TEST_CHECK_EQ(cell_at(term, 0, 2).foreground, std::uint32_t{0x0C2238});
+
+    term.feed(U"\x1B[48:5:99mD");          // 子参数式的背景色
+    AURORA_TEST_CHECK_EQ(cell_at(term, 0, 3).background, std::uint32_t{99});
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 3).background_source),
+                         static_cast<std::uint32_t>(ColorSource::Palette));
+}
+
+AURORA_TEST_CASE(dec_private_modes_are_registered) {
+    auto term = make_terminal(narrow_only);
+    // 一序列多模式：DECSET/DECRST 的参数是列表，只认首个会把 vim/tmux 的批量开关漏掉。
+    // 这些模式默认全为「关」，故必须先 `h` 再 `l`，两个方向各断一次才不是空转。
+    term.feed(U"\x1B[?1;4;6;25;1004;2004h");
+    AURORA_TEST_CHECK_TRUE(term.modes().cursor_key_app);
+    AURORA_TEST_CHECK_TRUE(term.modes().insert_mode);
+    AURORA_TEST_CHECK_TRUE(term.modes().origin_mode);
+    AURORA_TEST_CHECK_TRUE(term.modes().cursor_visible);
+    AURORA_TEST_CHECK_TRUE(term.modes().focus_reporting);
+    AURORA_TEST_CHECK_TRUE(term.modes().bracketed_paste);
+
+    term.feed(U"\x1B[?1;4;6;25;1004;2004l");
+    AURORA_TEST_CHECK_FALSE(term.modes().cursor_key_app);
+    AURORA_TEST_CHECK_FALSE(term.modes().insert_mode);
+    AURORA_TEST_CHECK_FALSE(term.modes().origin_mode);
+    AURORA_TEST_CHECK_FALSE(term.modes().cursor_visible);
+    AURORA_TEST_CHECK_FALSE(term.modes().focus_reporting);
+    AURORA_TEST_CHECK_FALSE(term.modes().bracketed_paste);
+}
+
+AURORA_TEST_CASE(insert_mode_shifts_before_print) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"abcd");
+    term.feed(U"\x1B[?4h\x1B[1;2HXY");     // IRM：写入位置腾出等量空格，右侧内容右移
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("aXYbcd"));
+}
+
+AURORA_TEST_CASE(origin_mode_addresses_region) {
+    auto term = Terminal{10, 4, 5, narrow_only};
+    term.feed(U"\x1B[2;3r\x1B[?6h");       // 区域 [1,2] + DECOM：原点即区域左上
+    AURORA_TEST_CHECK_EQ(term.cursor().row, std::size_t{1});
+    term.feed(U"\x1B[1;5H");
+    AURORA_TEST_CHECK_EQ(term.cursor().row, std::size_t{1});
+    AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{4});
+    term.feed(U"x");
+    term.feed(U"\x1B[?6l\x1B[1;1HA");      // 退出原点模式后按整屏解释
+    AURORA_TEST_CHECK_EQ(term.cursor().row, std::size_t{0});
+}
+
+AURORA_TEST_CASE(save_and_restore_cursor) {
+    auto term = make_terminal(narrow_only);
+    // `\x1B7` 会被十六进制转义贪婪吞成 U+01B7，故 ESC 用八进制 `\033` 起头。
+    term.feed(U"\x1B[2;3H\0337\x1B[1;1H\0338");   // ESC 7 / ESC 8
+    AURORA_TEST_CHECK_EQ(term.cursor().row, std::size_t{1});
+    AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{2});
+    term.feed(U"\x1B[3;4H\x1B[s\x1B[1;1H\x1B[u");  // CSI s / CSI u 同效
+    AURORA_TEST_CHECK_EQ(term.cursor().row, std::size_t{2});
+    AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{3});
+}
+
+AURORA_TEST_CASE(dec_special_graphics_paints_box_lines) {
+    // `ESC ( 0` 之后的 lqqk 必须变成箱线码点，`ESC ( B` 之后恢复字母（SPEC.FEAT.TERM.01 验收线）。
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B(0lqqk\x1B(Bqq");
+    const std::u32string expected{U'\x250C', U'\x2500', U'\x2500', U'\x2510', U'q', U'q'};
+    AURORA_TEST_CHECK(row_code_points(term, 0, 6) == expected);
+}
+
+AURORA_TEST_CASE(esc_percent_g_records_utf8_and_keeps_line_drawing) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B%G");
+    AURORA_TEST_CHECK_TRUE(term.modes().utf8_received);
+    term.feed(U"\x1B(0l");
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 0).code_point),
+                         std::uint32_t{U'\x250C'});  // UTF-8 模式下框线仍生效
+    term.feed(U"\x1B%@");
+    AURORA_TEST_CHECK_FALSE(term.modes().utf8_received);
+}
+
+AURORA_TEST_CASE(alternate_screen_leaves_main_and_history_untouched) {
+    auto term = make_terminal(narrow_only);
+    fill_three_rows(term);
+    const auto lines_before = term.main_grid().total_lines();
+
+    term.feed(U"\x1B[?1049h");
+    AURORA_TEST_CHECK_TRUE(term.modes().alternate_screen);
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string(""));
+    term.feed(U"ALT");
+    AURORA_TEST_CHECK_EQ(term.main_grid().total_lines(), lines_before);  // 备屏不进 scrollback
+
+    term.feed(U"\x1B[?1049l");
+    AURORA_TEST_CHECK_FALSE(term.modes().alternate_screen);
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("AAA"));          // 退出即恢复主屏原状
+    AURORA_TEST_CHECK_EQ(row_text(term, 2), std::string("CCC"));
+}
+
+AURORA_TEST_CASE(cursor_is_restored_after_1049_exit) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B[2;5H\x1B[?1049h\x1B[1;1H\x1B[?1049l");
+    AURORA_TEST_CHECK_EQ(term.cursor().row, std::size_t{1});
+    AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{4});
+}
+
+AURORA_TEST_CASE(wide_characters_pair_with_continuation_cells) {
+    auto term = make_terminal(stub_width);
+    term.feed(U"\x4E2D\x4E2Dx");
+    AURORA_TEST_CHECK_EQ(cell_at(term, 0, 0).width, std::uint8_t{2});
+    AURORA_TEST_CHECK_TRUE(cell_at(term, 0, 1).is_wide_continuation());
+    AURORA_TEST_CHECK_EQ(cell_at(term, 0, 2).width, std::uint8_t{2});
+    AURORA_TEST_CHECK_TRUE(cell_at(term, 0, 3).is_wide_continuation());
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 4).code_point),
+                         std::uint32_t{U'x'});
+    AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{5});
+}
+
+AURORA_TEST_CASE(overwriting_tail_cell_clears_its_leader) {
+    // 光标停在双宽字符的后半格时，前半格必须一起清空，否则留下半格错位（SPEC.FEAT.TERM.08 验收）。
+    auto term = make_terminal(stub_width);
+    term.feed(U"\x4E2DX");
+    term.feed(U"\x1B[1;2H.");  // 落在延续格上
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 0).code_point),
+                         std::uint32_t{U' '});
+    AURORA_TEST_CHECK_FALSE(cell_at(term, 0, 0).is_wide_continuation());
+}
+
+AURORA_TEST_CASE(ambiguous_width_override_changes_occupancy) {
+    // 同一份含 Ambiguous 字符的输出：默认单宽、覆盖后双宽，且光标列位与占位一致（裁决 7.15）。
+    auto narrow = make_terminal(stub_width);
+    narrow.feed(U"\x00B1x");
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(narrow, 0, 1).code_point), std::uint32_t{U'x'});
+    AURORA_TEST_CHECK_EQ(narrow.cursor().column, std::size_t{2});
+
+    auto wide = make_terminal(stub_width);
+    wide.set_ambiguous_width(AmbiguousWidth::Wide);
+    wide.feed(U"\x00B1x");
+    AURORA_TEST_CHECK_TRUE(cell_at(wide, 0, 1).is_wide_continuation());
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(wide, 0, 2).code_point), std::uint32_t{U'x'});
+    AURORA_TEST_CHECK_EQ(wide.cursor().column, std::size_t{3});
+}
+
+AURORA_TEST_CASE(single_width_policy_keeps_cjk_in_one_cell) {
+    // G1 未落地期间生产侧挂 SingleWidthPolicy：双宽占位不生效，但内容不得丢失或错位。
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x4E2D\x4E2D");
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 0).code_point),
+                         std::uint32_t{U'\x4E2D'});
+    AURORA_TEST_CHECK_FALSE(cell_at(term, 0, 1).is_wide_continuation());
+    AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{2});
+}
+
+AURORA_TEST_CASE(ris_restores_power_on_state) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"AAA\r\nBBB\x1B[?7l\x1B[1m\x1B[2;3r");
+    term.feed(U"\033c");
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string(""));
+    AURORA_TEST_CHECK_TRUE(term.modes().auto_wrap);
+    AURORA_TEST_CHECK_EQ(term.scroll_region().bottom, std::size_t{2});
+    AURORA_TEST_CHECK_EQ(term.cursor().row, std::size_t{0});
+    term.feed(U"X");
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 0).flags), std::uint32_t{0});
+}
+
+AURORA_TEST_CASE(full_screen_dirty_marks_row_identity_changes_only) {
+    auto term = make_terminal(narrow_only);
+    AURORA_TEST_CHECK_FALSE(term.full_screen_dirty());
+
+    term.feed(U"\x1B[H\x1B[2J");   // 清屏只改 cell 内容，不动行号对应关系
+    AURORA_TEST_CHECK_FALSE(term.full_screen_dirty());
+
+    term.feed(U"1\r\n2\r\n3\r\n4");  // 整屏滚动：行号与内容的对应关系变了
+    AURORA_TEST_CHECK_TRUE(term.full_screen_dirty());
+    term.clear_full_screen_dirty();
+    AURORA_TEST_CHECK_FALSE(term.full_screen_dirty());
+}
+
+AURORA_TEST_CASE(unknown_sequences_do_not_break_printing) {
+    // 未识别序列与设备查询被消费掉而不中断后续输出（架构 §5.5 的降级口径）。
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B[?99h\x1B[5n\x1B[c\x1B]0;title\x07ok");
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("ok"));
+    AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{2});
+}
+
+}  // namespace borealis::test_cases::utest_terminal
