@@ -175,18 +175,18 @@
 | 阶段 | 状态 | 依据与剩余项 |
 |:---|:---|:---|
 | **M0 框架补强** | 未开工 | G1 / G2 在 Aurora 主仓均未落地；按 §2 的阻塞粒度，二者不构成 M1 的整体前置 |
-| **M1 单终端 MVP（Windows）** | 部分落地 | 已落地（纯逻辑层，均可脱离 UI 独立单测）：`SPEC.FEAT.TERM.01` 的 VT 解析器与字符集切换映射、`SPEC.FEAT.TERM.09` 的 UTF-8 双向编解码（M1 基线腿）、`SPEC.FEAT.TERM.04` 的 scrollback 环形存储。未开工：终端状态机（解析事件 → 网格内容与终端模式）、`SPEC.FEAT.TERM.08` 的宽度判定、`SPEC.FEAT.RENDER.01–04`、`SPEC.FEAT.WS.01` `SPEC.FEAT.WS.02`、`SPEC.FEAT.INTERACT.01`、`SPEC.FEAT.CONN.01` `SPEC.FEAT.XFER.01`、`SPEC.FEAT.PREF.03` `SPEC.FEAT.PREF.06` |
+| **M1 单终端 MVP（Windows）** | 部分落地 | 已落地（纯逻辑层，均可脱离 UI 独立单测）：`SPEC.FEAT.TERM.01` 的 VT 解析器与字符集切换映射、`SPEC.FEAT.TERM.09` 的 UTF-8 双向编解码（M1 基线腿）、`SPEC.FEAT.TERM.04` 的 scrollback 环形存储、**终端状态机**（`SPEC.FEAT.TERM.01` 的 Print/Execute/ESC/CSI 显示内核与私有模式登记、`SPEC.FEAT.TERM.02` 的 16/256/真彩色、`SPEC.FEAT.TERM.03` 的主备屏、`SPEC.FEAT.TERM.05` 的光标与滚动区域/擦除/插删/制表位；`SPEC.FEAT.TERM.08` 的占位机制腿，判定表待 G1）。未开工：`SPEC.FEAT.TERM.07` 的 OSC 消费（状态机内当前整体吞掉，留 `TODO(SPEC.FEAT.TERM.07)`）、`SPEC.FEAT.RENDER.01–04`、`SPEC.FEAT.WS.01` `SPEC.FEAT.WS.02`、`SPEC.FEAT.INTERACT.01`、`SPEC.FEAT.CONN.01` `SPEC.FEAT.XFER.01`、`SPEC.FEAT.PREF.03` `SPEC.FEAT.PREF.06` |
 | **M2–M5** | 未开工 | 排期不变 |
 
-**M1 待接接缝**（已落地模块之间、以及它们与终端状态机之间尚未打通；表中顺序即建议的开工顺序）：
+**M1 待接接缝**（已落地模块之间尚未打通处；表中顺序即建议的开工顺序）：
 
 | 接缝 | 现状 | 说明 |
 |:---|:---|:---|
-| 终端状态机 | 未开工 | M1 其余项的共同前置：解析器输出的语义单元、字符集映射的槽位与 GL/GR 调用、网格内容与终端模式都要经它才连得起来。**故 `ESC(0` 的框线效果当前没有端到端证据**——映射函数已就位但暂无调用方 |
-| 解码 → 解析 | 已打通 | 有集成用例回放真实形态输出（字节流 → 解码 → 解析），断言落在结构而非语义 |
-| 网格行数变化 | 策略未定 | PTY 尺寸同步后 scrollback 与视口的行数增减策略未决，代码侧留 `TODO(SPEC.FEAT.XFER.01)`；宽度语义不入存储层 |
-| 宽度判定 | 未实现 | `SPEC.FEAT.TERM.08` 的 East Asian Width 判定走框架公共 API（见 §2），应用侧不自行查表 |
+| 解码 → 解析 → 状态机 → 网格 | 已打通 | 集成用例 `tests/integration/itest_terminal_scene.cpp` 以真实形态的首帧输出驱动全链路（字节流 → 解码 → 解析 → 网格内容），断言落在框线码点、SGR 色值与来源、OSC 吞掉、主备屏互不污染。**`ESC(0` 的框线效果就此有端到端证据**（`SPEC.FEAT.TERM.01` 验收判据腿） |
+| 状态机 → 会话回写 | 未接线 | 终端属性 / 光标位置查询（DA1、DSR）与 OSC 响应需要会话的写通道，其 owner 是尚未落地的连接层；状态机内以 `TODO(SPEC.FEAT.TERM.01)` 标注。OSC 0/2/7/8/52/133 的消费同处未开工，当前按协议整体吞掉不留痕（`TODO(SPEC.FEAT.TERM.07)`） |
+| 网格行数变化 | 策略未定 | PTY 尺寸同步后 scrollback 与视口的行数增减策略未决，代码侧留 `TODO(SPEC.FEAT.XFER.01)`（`include/borealis/grid/storage.h`）；宽度语义不入存储层 |
+| 宽度判定 | 接缝已落地，判定表待 G1 | 状态机经注入的 `WidthPolicy` 取格数、自身不查表（架构 §6.3）；生产侧当前挂 `SingleWidthPolicy`，故 **CJK 双宽占位尚不生效**，East Asian Width 表属框架原语 G1（见 §2）。双宽占位、延续格与光标列位以桩判定在单测中验证 |
 
-**验证现状**（2026-09-30）：MSVC + Ninja 全量构建通过；CTest 全绿——解析器 / UTF-8 / 字符集 / 网格存储四个单元用例，加解码→解析集成用例与框架自检。**尚未真机走查、无像素级验收**：M1 出口判据中的「替换 Windows Terminal 日常使用」「窗口连续 resize 后 TUI 不错位」均未验证。
+**验证现状**（2026-09-30）：MSVC + Ninja 全量构建通过；CTest 全绿共 8 项——解析器 / UTF-8 / 字符集 / 网格存储 / 终端状态机五个单元用例，加「解码→解析」与「全链路回放首帧」两个集成用例及框架自检。`tests/e2e/` 仍无用例。**尚未真机走查、无像素级验收**：M1 出口判据中的「替换 Windows Terminal 日常使用」「窗口连续 resize 后 TUI 不错位」均未验证，且后者的前置（网格行数变化策略、渲染层）都未落地。
 
-**待裁决**：`codespec/ARCHITECTURE.md` §16 的 A（会话抽象粒度）仍待拍板；D（网格所有权与主线程读取方式）已于 2026-09-30 收敛为「后台权威 + 主线程增量快照脏 cell」，写入该文档 §3.4，终端状态机开工的前置已解除。
+**待裁决**：`codespec/ARCHITECTURE.md` §16 的 A（会话抽象粒度）仍待拍板；D（网格所有权与主线程读取方式）已于 2026-09-30 收敛为「后台权威 + 主线程增量快照脏 cell」并写入该文档 §3.4，终端状态机据此落地，整屏位移以「整屏脏」标记通知副本重建已在状态机侧实现（增量脏区表达不出「平移了一屏」）。
