@@ -101,6 +101,15 @@ class Terminal final : public vt::SequenceSink {
     /// @param ambiguous 新口径。
     auto set_ambiguous_width(AmbiguousWidth ambiguous) noexcept -> void { ambiguous_ = ambiguous; }
 
+    /// @brief 变更视口尺寸（PTY 尺寸同步下发，`SPEC.FEAT.XFER.01`）。
+    ///
+    /// 主备屏同步改尺寸：列宽变更不 reflow（裁决 7.5），行数变更只移动窗口边界、
+    /// 历史自动收回或溢出（存储层 `set_rows`）。滚动区域与待换行状态随尺寸失效，
+    /// 光标与被保存的光标位置钳进新视口，并以整屏脏通知读取方重建副本（架构 §3.4）。
+    /// @param columns 新列数。
+    /// @param rows 新行数。
+    auto resize(std::size_t columns, std::size_t rows) -> void;
+
     /// @brief 把状态机恢复到上电态（`ESC c` RIS、会话重设、编码切换）。
     auto reset_to_default() -> void;
 

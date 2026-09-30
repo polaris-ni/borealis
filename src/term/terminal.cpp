@@ -803,4 +803,30 @@ auto Terminal::reset_to_default() -> void {
     full_screen_dirty_ = true;
 }
 
+auto Terminal::resize(std::size_t columns, std::size_t rows) -> void {
+    if (columns == 0 || rows == 0) {
+        return;  // 无效尺寸：下发的只能是正数，收到 0 说明调用方算错了，改网格会越界
+    }
+    if (columns == main_.columns() && rows == main_.visible_rows()) {
+        return;  // 去抖后仍可能收到同一尺寸，无变化就不该把 UI 副本整体判废
+    }
+    const bool width_changed = columns != main_.columns();
+    main_.set_columns(columns);
+    main_.set_rows(rows);
+    alt_.set_columns(columns);
+    alt_.set_rows(rows);
+    if (width_changed) {
+        // 制表位挂在列上：列数一变旧位置就失去意义，按默认间距整表重建。
+        tab_stops_.assign(columns, false);
+        set_tab_stops_default();
+    }
+    cursor_ = {std::min(cursor_.row, rows - 1), clamp_column(cursor_.column)};
+    saved_main_ = {std::min(saved_main_.row, rows - 1), clamp_column(saved_main_.column)};
+    saved_alt_ = {std::min(saved_alt_.row, rows - 1), clamp_column(saved_alt_.column)};
+    region_top_ = 0;
+    region_bottom_ = rows - 1;  // DECSTBM 的带随尺寸失效（xterm 同口径）
+    pending_wrap_ = false;
+    full_screen_dirty_ = true;
+}
+
 }  // namespace borealis::term
