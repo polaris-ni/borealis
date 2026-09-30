@@ -9,6 +9,7 @@ add_library(borealis_core STATIC
         vt/parser.cpp
         term/utf8.cpp
         term/charset.cpp
+        term/width.cpp
         term/terminal.cpp
         grid/storage.cpp
         session/damage_queue.cpp

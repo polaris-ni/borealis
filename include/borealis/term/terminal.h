@@ -156,6 +156,9 @@ class Terminal final : public vt::SequenceSink {
     /// @brief 在光标处写入一个 cell（含双宽延续格与「覆盖后半格」的清理）。
     auto write_cell(char32_t code_point, std::uint8_t width) -> void;
 
+    /// @brief 把零宽码点并入光标左侧最近的基础格（`SPEC.FEAT.TERM.08` 的 combining 腿）。
+    auto attach_combining(char32_t code_point) -> void;
+
     /// @brief 以当前笔的空白格填充某行的一段列区间（闭开区间）。
     auto fill_blank(std::size_t row, std::size_t first, std::size_t last) -> void;
 

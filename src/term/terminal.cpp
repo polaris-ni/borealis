@@ -109,6 +109,12 @@ auto Terminal::do_print(const vt::Sequence &seq) -> void {
     // 那些码点在 East Asian Width 里属 Ambiguous，Ambiguous=Wide 的 profile 会把边框画成
     // 半格错位——线条字符恒单宽才是既有终端的既成事实（裁决 7.15 的场景分工）。
     const std::uint8_t width = width_policy_.width_of(code_point, ambiguous_);
+    if (width == 0U) {
+        // 零宽码点不占格也不推进光标，更不得触发换行——它并进光标左侧的基础格（SPEC.FEAT.TERM.08）。
+        // 不经字符集映射：DEC 表只重定义 0x5F–0x7E，其中无零宽码点。
+        attach_combining(code_point);
+        return;
+    }
     if (modes_.auto_wrap && pending_wrap_) {
         cursor_.column = 0;
         line_down();
@@ -687,6 +693,23 @@ auto Terminal::write_cell(char32_t code_point, std::uint8_t width) -> void {
         continuation.flags = pen_.flags | grid::kFlagWideContinuation;
         row.set(cursor_.column + 1, continuation);
     }
+}
+
+auto Terminal::attach_combining(char32_t code_point) -> void {
+    auto &row = buffer().visible_line(cursor_.row);
+    // 基础格是「光标刚刚走过的那一格」。光标停在刚写过的格上而非其右侧有两种来路：延迟换行
+    // 待置位（DECAWM=on 落满行末时列被夹住）、或关自动换行后行末的写入覆盖同格不推进。
+    const auto standing_on_last =
+        pending_wrap_ || (!modes_.auto_wrap && cursor_.column + 1U >= columns());
+    if (cursor_.column == 0U && !standing_on_last) {
+        return;  // 行首左侧无格可并：标记丢弃（会话字节流不可信，不得越界）
+    }
+    auto base = standing_on_last ? cursor_.column : cursor_.column - 1U;
+    // 双宽字符的光标落在延续格上，零宽码点须并入它的前半格而不是后半格。
+    while (base > 0U && row.cell(base).is_wide_continuation()) {
+        --base;
+    }
+    row.attach_combining(base, code_point);
 }
 
 auto Terminal::fill_blank(std::size_t row_index, std::size_t first, std::size_t last) -> void {
