@@ -59,6 +59,13 @@ class Row {
         dirty_ = true;
     }
 
+    /// @brief 整行登记为脏（行内容整体搬移后调用：脏区间无法逐列表达「全部变了」）。
+    auto mark_dirty_all() noexcept -> void {
+        dirty_ = true;
+        dirty_left_ = 0;
+        dirty_right_ = cells_.size();
+    }
+
     /// @brief 是否有未消费的脏区。
     [[nodiscard]] auto dirty() const noexcept -> bool { return dirty_; }
 
@@ -73,6 +80,16 @@ class Row {
 
     /// @brief 占用上界：自上次 reset 以来被写过的最大列 + 1，重置时可跳过其后区间。
     [[nodiscard]] auto occupancy() const noexcept -> std::size_t { return occupancy_; }
+
+    /// @brief 整行恢复空白并清空脏标记与占用上界（滚动复用行时调用）。
+    ///
+    /// 作为 `std::move` 赋值的源被掏空后仍可安全调用：容器会按 @p columns 补回宽度，
+    /// 否则该行残留零宽、后续写入即越界。
+    /// @param columns 行宽（与所属网格一致）。
+    auto reset(std::size_t columns) -> void {
+        cells_.resize(columns);
+        reset();
+    }
 
     /// @brief 整行恢复空白并清空脏标记与占用上界（滚动复用行时调用）。
     auto reset() noexcept -> void {

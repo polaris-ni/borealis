@@ -74,8 +74,34 @@ class Storage {
     ///
     /// 只推进 `zero` 偏移并 reset 复用行，不搬移任何行数据——这是选环形缓冲而非
     /// 行容器的全部理由（高频滚动下搬移代价随行数线性增长）。
+    ///
+    /// 整屏位移后各行内容与行号的关系变了，但本层不打行级脏标记：脏 cell 增量模型
+    /// 表达不出「整屏平移」，调用方须以整屏脏通知重建（架构 §3.4）。
     /// @param count 上滚行数。
     auto scroll_up(std::size_t count) -> void;
+
+    /// @brief 下滚 @p count 行（反向索引）：视口内容整体下移，顶部补空白行。
+    ///
+    /// scrollback 里还有行时先把它们收回视口——回退行计数即可，数据无需搬移；
+    /// 无历史可收回时才真的搬行，此时底行内容丢失。
+    /// @param count 下滚行数。
+    auto scroll_down(std::size_t count) -> void;
+
+    /// @brief 视口内 `[first, last]`（闭区间）行带上滚 @p count 行，带底补空白。
+    ///
+    /// 与 `scroll_up` 的区别是本带**不进 scrollback**：滚动区域是终端模式内的概念，
+    /// 只有整屏滚动才代表历史输出被顶出。带内行按脏处理（内容换了行号），
+    /// 带外行不受影响，故不打整屏脏。
+    /// @param first 带顶行号（视口内，0 基）。
+    /// @param last 带底行号（视口内，含）。
+    /// @param count 上滚行数；超过带高时按带高截断。
+    auto scroll_region_up(std::size_t first, std::size_t last, std::size_t count) -> void;
+
+    /// @brief 视口内 `[first, last]` 行带下滚 @p count 行，带顶补空白，带底行被丢弃。
+    /// @param first 带顶行号（视口内，0 基）。
+    /// @param last 带底行号（视口内，含）。
+    /// @param count 下滚行数；超过带高时按带高截断。
+    auto scroll_region_down(std::size_t first, std::size_t last, std::size_t count) -> void;
 
     /// @brief 变更列数：所有行同步改宽，已有 cell 不搬移、不重排（裁决 7.5）。
     /// @param columns 新的列数。

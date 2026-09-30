@@ -8,6 +8,7 @@
 #include "borealis/grid/storage.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace borealis::grid {
 
@@ -48,6 +49,54 @@ auto Storage::scroll_up(std::size_t count) -> void {
         // 已满：最旧行出列（它所占的物理槽位随即被新的底部行复用）。
         zero_ = (zero_ + 1) % buffer_.size();
         buffer_[physical(lines_ - 1)].reset();
+    }
+}
+
+auto Storage::scroll_down(std::size_t count) -> void {
+    for (std::size_t i = 0; i < count; ++i) {
+        if (lines_ > rows_) {
+            // 收回一行历史：视口上界回退一行，环形偏移与行数据都不必动。
+            --lines_;
+            continue;
+        }
+        for (std::size_t index = rows_ - 1; index > 0; --index) {
+            visible_line(index) = std::move(visible_line(index - 1));
+        }
+        visible_line(0).reset(columns_);
+    }
+}
+
+auto Storage::scroll_region_up(std::size_t first, std::size_t last, std::size_t count) -> void {
+    const std::size_t height = last - first + 1;
+    const std::size_t moved = std::min(count, height);
+    if (moved == 0U) {
+        return;
+    }
+    for (std::size_t offset = moved; offset < height; ++offset) {
+        visible_line(first + offset - moved) = std::move(visible_line(first + offset));
+    }
+    for (std::size_t index = last - moved + 1; index <= last; ++index) {
+        visible_line(index).reset(columns_);
+    }
+    for (std::size_t index = first; index <= last; ++index) {
+        visible_line(index).mark_dirty_all();
+    }
+}
+
+auto Storage::scroll_region_down(std::size_t first, std::size_t last, std::size_t count) -> void {
+    const std::size_t height = last - first + 1;
+    const std::size_t moved = std::min(count, height);
+    if (moved == 0U) {
+        return;
+    }
+    for (std::size_t offset = height; offset > moved; --offset) {
+        visible_line(first + offset - 1) = std::move(visible_line(first + offset - 1 - moved));
+    }
+    for (std::size_t index = first; index < first + moved; ++index) {
+        visible_line(index).reset(columns_);
+    }
+    for (std::size_t index = first; index <= last; ++index) {
+        visible_line(index).mark_dirty_all();
     }
 }
 

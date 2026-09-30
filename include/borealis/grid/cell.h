@@ -33,6 +33,17 @@ enum : std::uint16_t {
 /// @brief 标志位掩码类型。
 using CellFlags = std::uint16_t;
 
+/// @brief 颜色的来源，决定合成时怎么解释 `foreground` / `background` 的位。
+///
+/// 调色板索引必须与真彩色值分开存：`SPEC.FEAT.TERM.02` 要求 16 基本色可由主题重映射，
+/// 合成期只有拿到「这是索引 4」而不是某个 RGB 常数才能套用主题色；把索引预解析成
+/// 色值会让主题切换失去依据。
+enum class ColorSource : std::uint8_t {
+    Default,  ///< 未指定，由主题给默认前景/背景（此时色值字段为 `kColorDefault`）。
+    Palette,  ///< 调色板索引，`kColorDefault` 之外的低 8 位为索引值。
+    Rgb,      ///< 24-bit 真彩色，低 24 位为 0xRRGGBB。
+};
+
 /// @brief 一个网格单元。
 ///
 /// `width` 由写入方填入：双宽字符占两格时，首格写 2、延续格写 0 并置
@@ -43,6 +54,8 @@ struct Cell {
     std::uint32_t background = kColorDefault;
     CellFlags flags = kFlagNone;
     std::uint8_t width = 1;
+    ColorSource foreground_source = ColorSource::Default;
+    ColorSource background_source = ColorSource::Default;
 
     /// @brief 该格是否为双宽字符的延续格（不承载字符、不被光标停留）。
     [[nodiscard]] auto is_wide_continuation() const noexcept -> bool {
@@ -56,6 +69,8 @@ struct Cell {
         background = kColorDefault;
         flags = kFlagNone;
         width = 1;
+        foreground_source = ColorSource::Default;
+        background_source = ColorSource::Default;
     }
 };
 
