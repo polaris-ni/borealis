@@ -238,6 +238,8 @@ UTF-8 为本地终端与 SSH 默认；**串口默认 GB18030**（裁决 7.6）�
 
 本地终端（`SPEC.FEAT.CONN.01`）、SSH（`SPEC.FEAT.CONN.02`）、串口（`SPEC.FEAT.CONN.05`）、Telnet（`SPEC.FEAT.CONN.06`）。进程退出后保留终端内容供回看；SSH 断线自动重连（`SPEC.FEAT.WS.05`）。
 
+本地终端的落地形态（2026-09-30，Windows 腿）：声明面在 `conn` 域公共头 `include/borealis/conn/local_terminal.h`——`LocalTerminalSpec`（命令行 / 启动目录 / 追加环境变量，全标准类型）、`kPtyDefaultEnvironment`（`TERM` / `COLORTERM` 的注入默认值，避免两条平台腿各写一份）、`default_shell_command_line()` 与 `make_local_terminal_connection()` 工厂（返回 `session::Connection`）；实现面在 `src/platform/win/`（`platform::ConptyConnection`，私有头不出 `src/`）。工厂吃初始尺寸，使**会话启动只下发一次尺寸**（`SPEC.FEAT.XFER.01`）——`Session` 不再在 `start()` 里补发一次 `resize`。Win32 侧有四处只能靠实测确定的 API 语义（宿主标准句柄、伪终端管道端归属、关停与子进程、环境块合成），已回写为裁决 7.19；POSIX 腿按同一接口与同一口径实现，尚未开工。
+
 ### 7.4 凭据
 
 凭据经 OS 凭据库存储，配置只存引用句柄；OS 凭据库不可用时降级为「每次询问」，**绝不降级为明文**（`SPEC.FEAT.CONN.09`）。

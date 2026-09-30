@@ -6,6 +6,17 @@
 
 ---
 
+## v0.15（2026-09-30）本地终端连接在 Win32 侧落地，会话首次由真实 PTY 驱动（裁决 7.19）
+
+**动机**：会话层之上六层纯逻辑都由测试替身驱动，`SPEC.FEAT.CONN.01` 的 Windows 腿（ConPTY）是 M1 出口判据「替换 Windows Terminal」的唯一硬前置。落地过程撞到四处 API 语义空白——宿主标准句柄的传递、伪终端管道端的归属、`ClosePseudoConsole` 与子进程的关系、环境块的合成与排序——任一处漏掉都表现为「进程在跑但屏幕空白」或「关标签卡死」，且都不在需求与架构文档里，故先实现后实测再回写成裁决。
+
+- **新增裁决 7.19**：①②③④ 即上述四处口径（①`STARTF_USESTDHANDLES` + 三句柄置空；②交给伪终端的两端在子进程建好后关掉本进程那份，否则输出管道永不 EOF、读线程回收不了；③关标签即补 `TerminateProcess`；④环境按「继承 → PTY 默认 → profile 覆盖」合成并排序），另附两条实测事实（宽字符环境块必须带 `CREATE_UNICODE_ENVIRONMENT`，否则任何非空 `lpEnvironment` 都返回 87；`PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` 的 `lpValue` 传 HPCON 本身而非其地址，传地址子进程以 `0xC0000142` 失败），并给出 ⑤「e2e 用例只能在能访问窗口站/桌面的交互会话中运行」这条运行前提。
+- **代码落地**（全部在 `src/platform/win/`，Win32 类型不外泄，裁决 7.11）：`conn::LocalTerminalSpec` 与 `make_local_terminal_connection` 工厂（`include/borealis/conn/local_terminal.h`，本仓第一个 `conn` 域公共头）、`platform::ConptyConnection`（`CreatePseudoConsole` + 属性表挂子进程 + 单读线程 + 有界关停）、`default_shell_command_line()` 的 Windows 探测链（PowerShell → cmd → WSL，对应 `SPEC.FEAT.CONN.01`）、UTF-8 ↔ UTF-16 转换工具 `win_text`；`src/CMakeLists.txt` 以 `if (WIN32)` 增补平台源。
+- **测试**：新增 `tests/e2e/etest_local_terminal.cpp`（本仓首个 e2e，8 个用例）以真实 ConPTY 驱动全链路，断言落在权威网格而非原始字节：自定义命令输出上屏、`TERM`/`COLORTERM` 注入与 profile 覆盖、启动目录、键入往返 + 尺寸变更后流不中断、3000 行突发下队列水位不越界且末行可达、关闭后进程不在且内容保留（`SPEC.FEAT.CONN.01`、`SPEC.FEAT.XFER.01` 会话启动腿、`SPEC.NF.PERF.06` 真机腿）。CTest 共 11 项全绿。
+- **代价与边界**：③ 的「关标签即终结」意味着后台跑长任务再关标签会丢进程，与 Windows Terminal 同口径但须随 `SPEC.FEAT.WS.01` 的关闭前确认一起在 UI 侧提示；⑤ 使本仓 e2e 无法在无控制台的受限环境里跑（该环境下的失败不是实现有误）；默认 shell 探测链、POSIX 侧的 `$SHELL` 腿与 SSH 族连接仍未开工。真机走查「替换 Windows Terminal 日常使用」与 `vim`/`tmux` 的 TUI 验收仍待渲染层。
+
+---
+
 ## v0.14（2026-09-30）会话抽象粒度拍板，输出背压与查询回写落口径（裁决 7.18）
 
 **动机**：状态机之后要接「会话回写」这一棒，撞上文档里三处空白——架构 §16 A 的会话抽象粒度仍列三案待拍板、`SPEC.NF.PERF.06` 只说「合并而非丢弃」却没说队列条目是什么粒度、`SPEC.FEAT.TERM.01` 要求 DA1/DSR「正确响应」却没定应答该报哪些能力号。三者都会决定公共接口形态与可观测行为，不该由实现自行择一，故先由用户裁决粒度、再落代码。
