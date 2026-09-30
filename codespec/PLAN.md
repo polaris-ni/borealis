@@ -33,6 +33,8 @@
 
 **并行与预研**：M0 与 M1 可部分并行（渲染原语先行，PTY 与解析器同步开发）；SSH 传输栈与 M1/M2 的 UI 无耦合，可提前预研（裁决 7.2）。
 
+**M0 → M1 的阻塞粒度**（2026-09-30 口径，供开工排序用）：M0 不是 M1 的整体前置——G1 阻塞 `SPEC.FEAT.RENDER.01` `SPEC.FEAT.RENDER.03` `SPEC.FEAT.RENDER.05`，以及 `SPEC.FEAT.TERM.08` 的宽度判定腿（East Asian Width 判定须由框架公共 API 提供且接口接受 Ambiguous 宽度模式入参，见裁决 7.15，应用侧不得自行查表替代；此归属为**推断**，附录 A.2 的「影响需求」列未列 `SPEC.FEAT.TERM.08`，待裁决补登）；G2 阻塞 `SPEC.FEAT.INTERACT.02` 的双击/三击腿。M1 的其余项（终端逻辑层、键盘映射、UI 容器、PTY 与尺寸同步、配置）不依赖框架缺口，可在 M0 未关闭期间推进。
+
 ---
 
 ## 3 需求优先级总表（权威映射）
@@ -47,7 +49,7 @@
 | `SPEC.FEAT.TERM.06` | 鼠标上报 | P1 | M2 |
 | `SPEC.FEAT.TERM.07` | OSC 集成 | P1 | M2 |
 | `SPEC.FEAT.TERM.08` | 宽字符 | P0 | M1 |
-| `SPEC.FEAT.TERM.09` | 字符编码 | P1 | M3 |
+| `SPEC.FEAT.TERM.09` | 字符编码 | P1 | M3；UTF-8 基线腿随 M1（本地终端默认编码，是 M1 出口判据「中文可输入可显示」的必需前置），编码可配与 GB18030 等其余腿留 M3 |
 | `SPEC.FEAT.RENDER.01` | 等宽网格渲染 | P0 | M1 |
 | `SPEC.FEAT.RENDER.02` | 字体 | P0 | M1 |
 | `SPEC.FEAT.RENDER.03` | 属性渲染 | P0 | M1 |
@@ -148,8 +150,8 @@
 
 | 缺口 | 内容 | 补入时点 |
 |:---|:---|:---|
-| G1 | 批量文本绘制原语 + 等宽整像素 cell 度量 + East Asian Width 宽度判定 | M0（阻塞 M1） |
-| G2 | `MouseEvent` 多击语义（框架统一自算） | M0（阻塞 M2 的文本选择） |
+| G1 | 批量文本绘制原语 + 等宽整像素 cell 度量 + East Asian Width 宽度判定 | M0（阻塞 `SPEC.FEAT.RENDER.01` `SPEC.FEAT.RENDER.03` `SPEC.FEAT.RENDER.05` 与 `SPEC.FEAT.TERM.08` 的宽度判定腿；M1 其余项不受阻，粒度见 §2） |
+| G2 | `MouseEvent` 多击语义（框架统一自算） | M0（阻塞 `SPEC.FEAT.INTERACT.02` 的双击/三击腿，属 M2；该条的 M1 腿是流式拖拽/矩形块基本面，不受阻） |
 | G12 残留单腿 | X11 / Wayland / GLFW 的 DPI 缩放变化上报（公共 API 与 Win32 已具备） | M2 的 Linux 等价补齐 |
 | G9 / G11 | OS 级全局热键、系统通知 API | 观察池（§5），触发条件为 Quick Terminal 或系统通知开工 |
 | G10 | ~~无音频播放 API~~ 已关闭（WASAPI/ALSA 后端具备），无须补框架 | — |
@@ -163,3 +165,28 @@
 - **先 Windows 后 Linux**：开发机为 win32，首个交付阶段的出口判据本身就是「替换 Windows Terminal」，Linux 侧当时缺少等价验证手段。
 - 该分期**不减损** `SPEC.NF.PLAT.01` 的等价性要求；平台相关层（PTY、串口、传输、默认 shell 探测、DPI 缩放上报）自首个交付阶段起即按接口抽象隔离，禁止 Windows 假设（ConPTY 句柄、Win32 类型、码页 API）渗入共享路径——否则后补的 Linux 等价会退化成重写。
 - Linux 侧验证通道与 CI 形态属实施细节，见 `codespec/ARCHITECTURE.md` §14.4；本机 WSL 与 GitHub Actions 两条路径的取舍随 M2 开工前裁决。
+
+---
+
+## 8 交付进展（滚动更新）
+
+> 本节只记**阶段级**进展与待接接缝，供开工排序用。**文件级现状**（哪些路径已落地、哪些仍待建）以 `AGENTS.md` §6 为唯一来源，此处不重复。随进展就地更新，不另开文档。
+
+| 阶段 | 状态 | 依据与剩余项 |
+|:---|:---|:---|
+| **M0 框架补强** | 未开工 | G1 / G2 在 Aurora 主仓均未落地；按 §2 的阻塞粒度，二者不构成 M1 的整体前置 |
+| **M1 单终端 MVP（Windows）** | 部分落地 | 已落地（纯逻辑层，均可脱离 UI 独立单测）：`SPEC.FEAT.TERM.01` 的 VT 解析器与字符集切换映射、`SPEC.FEAT.TERM.09` 的 UTF-8 双向编解码（M1 基线腿）、`SPEC.FEAT.TERM.04` 的 scrollback 环形存储。未开工：终端状态机（解析事件 → 网格内容与终端模式）、`SPEC.FEAT.TERM.08` 的宽度判定、`SPEC.FEAT.RENDER.01–04`、`SPEC.FEAT.WS.01` `SPEC.FEAT.WS.02`、`SPEC.FEAT.INTERACT.01`、`SPEC.FEAT.CONN.01` `SPEC.FEAT.XFER.01`、`SPEC.FEAT.PREF.03` `SPEC.FEAT.PREF.06` |
+| **M2–M5** | 未开工 | 排期不变 |
+
+**M1 待接接缝**（已落地模块之间、以及它们与终端状态机之间尚未打通；表中顺序即建议的开工顺序）：
+
+| 接缝 | 现状 | 说明 |
+|:---|:---|:---|
+| 终端状态机 | 未开工 | M1 其余项的共同前置：解析器输出的语义单元、字符集映射的槽位与 GL/GR 调用、网格内容与终端模式都要经它才连得起来。**故 `ESC(0` 的框线效果当前没有端到端证据**——映射函数已就位但暂无调用方 |
+| 解码 → 解析 | 已打通 | 有集成用例回放真实形态输出（字节流 → 解码 → 解析），断言落在结构而非语义 |
+| 网格行数变化 | 策略未定 | PTY 尺寸同步后 scrollback 与视口的行数增减策略未决，代码侧留 `TODO(SPEC.FEAT.XFER.01)`；宽度语义不入存储层 |
+| 宽度判定 | 未实现 | `SPEC.FEAT.TERM.08` 的 East Asian Width 判定走框架公共 API（见 §2），应用侧不自行查表 |
+
+**验证现状**（2026-09-30）：MSVC + Ninja 全量构建通过；CTest 全绿——解析器 / UTF-8 / 字符集 / 网格存储四个单元用例，加解码→解析集成用例与框架自检。**尚未真机走查、无像素级验收**：M1 出口判据中的「替换 Windows Terminal 日常使用」「窗口连续 resize 后 TUI 不错位」均未验证。
+
+**待裁决**：`codespec/ARCHITECTURE.md` §16 的 A（会话抽象粒度）与 D（网格所有权与主线程读取方式）仍待拍板；D 直接决定网格实现的最终形态，宜在终端状态机开工前收敛。
