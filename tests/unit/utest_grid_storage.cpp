@@ -1,8 +1,8 @@
 /// 测试类型: unit
 /// 目标单元: include/borealis/grid/storage.h + row.h + cell.h
 /// 测试说明: 环形缓冲存储的滚动语义（不搬移行数据、溢出覆盖最旧）、区域滚动只动带内行、
-///           容量上下限、列宽变更不 reflow、行的脏区间与占用上界、清空复位（架构 §4.2 / §4.3 /
-///           §4.5 / §4.6）。
+///           容量上下限、列宽变更不 reflow、行数变更的窗口边界语义、行的脏区间与占用上界、
+///           清空复位（架构 §4.2 / §4.3 / §4.5 / §4.6，SPEC.FEAT.XFER.01 前置）。
 
 #include <cstddef>
 #include <cstdint>
@@ -247,6 +247,100 @@ AURORA_TEST_CASE(scroll_down_without_history_shifts_rows_down) {
     AURORA_TEST_CHECK_EQ(storage.visible_line(0).columns(), std::size_t{4});
     AURORA_TEST_CHECK_EQ(row_head(storage, 1), 'A');
     AURORA_TEST_CHECK_EQ(row_head(storage, 2), 'B');
+}
+
+AURORA_TEST_CASE(set_rows_grows_by_recycling_history) {
+    // 视口变高 = 窗口上界回退到历史里，收回的行按原顺序出现在视口顶部。
+    Storage storage(4, 3, 5);
+    storage.visible_line(0).set(0, marker(U'1'));
+    storage.visible_line(1).set(0, marker(U'2'));
+    storage.visible_line(2).set(0, marker(U'3'));
+    storage.scroll_up(2);  // 上面三行整体进历史，视口底部是两行空白
+
+    const auto lines_before = storage.total_lines();
+    storage.set_rows(5);
+
+    AURORA_TEST_CHECK_EQ(storage.total_lines(), lines_before);
+    AURORA_TEST_CHECK_EQ(storage.visible_rows(), std::size_t{5});
+    AURORA_TEST_CHECK_EQ(row_head(storage, 0), '1');
+    AURORA_TEST_CHECK_EQ(row_head(storage, 2), '3');
+    AURORA_TEST_CHECK_EQ(row_head(storage, 4), ' ');
+}
+
+AURORA_TEST_CASE(set_rows_shrinks_without_moving_row_data) {
+    // 变矮只动窗口边界：溢出进历史的那行连地址都没换（环形缓冲在此的全部意义）。
+    Storage storage(4, 3, 5);
+    storage.visible_line(0).set(0, marker(U'1'));
+    storage.visible_line(1).set(0, marker(U'2'));
+    storage.visible_line(2).set(0, marker(U'3'));
+    const auto *overflowing = &storage.visible_line(1);
+
+    storage.set_rows(2);
+
+    AURORA_TEST_CHECK_EQ(storage.total_lines(), std::size_t{3});
+    AURORA_TEST_CHECK(&storage.visible_line(0) == overflowing);
+    AURORA_TEST_CHECK_EQ(row_head(storage, 0), '2');
+    AURORA_TEST_CHECK_EQ(row_head(storage, 1), '3');
+}
+
+AURORA_TEST_CASE(set_rows_shrinks_by_overflowing_into_history) {
+    // 视口变矮 = 顶行溢出进历史，历史不因此丢内容（总行数不变）。
+    Storage storage(4, 3, 5);
+    storage.visible_line(0).set(0, marker(U'1'));
+    storage.visible_line(1).set(0, marker(U'2'));
+    storage.visible_line(2).set(0, marker(U'3'));
+    const auto lines_before = storage.total_lines();
+
+    storage.set_rows(2);
+
+    AURORA_TEST_CHECK_EQ(storage.total_lines(), lines_before);
+    AURORA_TEST_CHECK_EQ(storage.visible_rows(), std::size_t{2});
+    AURORA_TEST_CHECK_EQ(row_head(storage, 0), '2');
+    AURORA_TEST_CHECK_EQ(row_head(storage, 1), '3');
+}
+
+AURORA_TEST_CASE(set_rows_pads_top_with_blanks_when_history_short) {
+    // scrollback 为 0（备屏形态）时变高没有历史可收回，只能顶部补空白；
+    // 物理容量此刻不够，须走扩容拉直那条罕见路径，行宽与内容都得保住。
+    Storage storage(4, 2, 0);
+    storage.visible_line(0).set(0, marker(U'A'));
+    storage.visible_line(1).set(0, marker(U'B'));
+
+    storage.set_rows(4);
+
+    AURORA_TEST_CHECK_EQ(storage.visible_rows(), std::size_t{4});
+    AURORA_TEST_CHECK_EQ(storage.total_lines(), std::size_t{4});
+    AURORA_TEST_CHECK_EQ(row_head(storage, 0), ' ');
+    AURORA_TEST_CHECK_EQ(row_head(storage, 1), ' ');
+    AURORA_TEST_CHECK_EQ(row_head(storage, 2), 'A');
+    AURORA_TEST_CHECK_EQ(row_head(storage, 3), 'B');
+    for (std::size_t row = 0; row < storage.visible_rows(); ++row) {
+        AURORA_TEST_CHECK_EQ(storage.visible_line(row).columns(), std::size_t{4});
+    }
+}
+
+AURORA_TEST_CASE(set_rows_discards_oldest_when_capacity_is_exceeded) {
+    // 无历史可容身时（容量 = 视口），变矮溢出的行只能丢弃，且从最旧一端丢。
+    Storage storage(2, 3, 0);
+    storage.visible_line(0).set(0, marker(U'A'));
+    storage.visible_line(1).set(0, marker(U'B'));
+    storage.visible_line(2).set(0, marker(U'C'));
+
+    storage.set_rows(2);
+
+    AURORA_TEST_CHECK_EQ(storage.total_lines(), std::size_t{2});
+    AURORA_TEST_CHECK_EQ(row_head(storage, 0), 'B');
+    AURORA_TEST_CHECK_EQ(row_head(storage, 1), 'C');
+}
+
+AURORA_TEST_CASE(set_rows_zero_is_ignored) {
+    Storage storage(4, 3, 2);
+    storage.visible_line(0).set(0, marker(U'A'));
+
+    storage.set_rows(0);
+
+    AURORA_TEST_CHECK_EQ(storage.visible_rows(), std::size_t{3});
+    AURORA_TEST_CHECK_EQ(row_head(storage, 0), 'A');
 }
 
 }  // namespace borealis::test_cases::utest_grid_storage
