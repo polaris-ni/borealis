@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <span>
+#include <string>
 
 #include "borealis/term/charset.h"
 
@@ -37,6 +38,13 @@ constexpr std::int32_t kPaletteMax = 255;
 /// @brief 调色板索引钳制后转色值字段。
 [[nodiscard]] auto make_palette(std::int32_t index) noexcept -> std::uint32_t {
     return static_cast<std::uint32_t>(std::clamp(index, 0, kPaletteMax));
+}
+
+/// @brief 把非负整数按十进制追加进应答文本（MSVC 的 `<string>` 不提供 `std::to_u32string`）。
+auto append_decimal(std::u32string &out, std::size_t value) -> void {
+    for (const char digit : std::to_string(value)) {
+        out.push_back(static_cast<char32_t>(digit));
+    }
 }
 
 }  // namespace
@@ -378,15 +386,41 @@ auto Terminal::do_csi(const vt::Sequence &seq) -> void {
             }
             break;
         }
-        case U'n':  // DSR
-            // TODO(SPEC.FEAT.TERM.01): 设备与光标位置查询的响应回写未接线（会话写通道未落地，
-            // 归 §16 A 会话抽象粒度）；此处消费掉序列以免中断解析。
+        case U'n': {  // DSR
+            if (private_mode) {
+                break;  // `CSI ? 6 n`（DEC 定位器光标报告）未实现：宁可不答，也不答一份错格式
+            }
+            const auto report = vt::param_or(params, 0, 0);
+            if (report == 5) {
+                emit_response(U"\x1B[0n");  // 无故障；终端无自检语义，恒按可用应答
+            } else if (report == 6) {
+                // 报告口径是**整屏**视口坐标（1 基），与 DECOM 原点模式无关：vim 用它校准光标行。
+                std::u32string position = U"\x1B[";
+                append_decimal(position, cursor_.row + 1U);
+                position += U';';
+                append_decimal(position, clamp_column(cursor_.column) + 1U);
+                position += U'R';
+                emit_response(position);
+            }
             break;
+        }
         case U'c':  // DA1
-            // TODO(SPEC.FEAT.TERM.01): 同上——终端属性响应待会话写通道落地。
+            // 只报能力档位 62（VT220 + 高级视频选项），与 `SPEC.FEAT.TERM.01` 声明的
+            // xterm/VT100/VT220 兼容口径一致。132 列、sixel/ReGIS、打印机这类附加能力号
+            // 一律不报：前者是 §2.2 裁剪项，误报会让 vim/tmux 走我们没实现的分支。
+            // `CSI > c`（DA2）与 `CSI ? c` 不在本需求覆盖内，忽略。
+            if (seq.intermediates.empty()) {
+                emit_response(U"\x1B[?62c");
+            }
             break;
         default:
             break;  // 未识别终结符：忽略而不中断（架构 §5.5）
+    }
+}
+
+auto Terminal::emit_response(std::u32string_view response) -> void {
+    if (response_sink_ != nullptr) {
+        response_sink_->on_response(response);
     }
 }
 

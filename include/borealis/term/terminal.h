@@ -7,7 +7,8 @@
 // 光标与终端模式。本模块运行在会话读线程内，是权威 grid 的**唯一写入方**（架构 §3.4），
 // 不触达 UI、不做 IO，故可脱离 UI 单测（AGENTS.md §4.4 第 20 条）。
 //
-// 覆盖面：`SPEC.FEAT.TERM.01`（Print/Execute/ESC/CSI 显示内核 + 私有模式登记 + 字符集指派）、
+// 覆盖面：`SPEC.FEAT.TERM.01`（Print/Execute/ESC/CSI 显示内核 + 私有模式登记 + 字符集指派 +
+// DA1/DSR 查询应答，应答经 `ResponseSink` 交给会话写通道）、
 // `SPEC.FEAT.TERM.02`（16/256/真彩色，色值与来源分开存）、`SPEC.FEAT.TERM.03`（主备屏）、
 // `SPEC.FEAT.TERM.05`（滚动区域、光标定位/保存恢复/可见性、擦除与插删、制表位）、
 // `SPEC.FEAT.TERM.08` 的占位机制（格数由注入的 WidthPolicy 给出，本模块不查表）。
@@ -55,6 +56,20 @@ struct ScrollRegion {
     std::size_t bottom = 0;
 };
 
+/// @brief 终端响应回写接缝：查询类序列（DSR / DA1）的应答经此离开状态机。
+///
+/// 回调发生在 `Terminal::feed` 期间，也就是会话持有网格锁的临界区内——实现方**只能登记**
+/// 应答文本，不得在此直接写连接或触达 UI（架构 §3.4「临界区内不做阻塞 IO」）。
+/// 焦点上报与鼠标上报（`SPEC.FEAT.TERM.01` / `SPEC.FEAT.TERM.06`）落地时同走本接缝。
+class ResponseSink {
+  public:
+    virtual ~ResponseSink() = default;
+
+    /// @brief 收到一段应答文本（码点流，尚未按会话编码成字节）。
+    /// @param response 应答文本，仅在本调用期间有效。
+    virtual auto on_response(std::u32string_view response) -> void = 0;
+};
+
 /// @brief 语义解释层：把解析出的语义单元执行成网格与模式变更。
 class Terminal final : public vt::SequenceSink {
   public:
@@ -100,6 +115,10 @@ class Terminal final : public vt::SequenceSink {
     /// @brief 设定 Ambiguous 类宽度口径（profile 级覆盖，裁决 7.15）。
     /// @param ambiguous 新口径。
     auto set_ambiguous_width(AmbiguousWidth ambiguous) noexcept -> void { ambiguous_ = ambiguous; }
+
+    /// @brief 挂上响应回写接缝（会话层在构造后接线；查询应答在挂上之前一律丢弃）。
+    /// @param sink 应答接收端，生命周期由调用方保证，且不短于本终端；传 nullptr 即摘除。
+    auto set_response_sink(ResponseSink *sink) noexcept -> void { response_sink_ = sink; }
 
     /// @brief 变更视口尺寸（PTY 尺寸同步下发，`SPEC.FEAT.XFER.01`）。
     ///
@@ -164,6 +183,9 @@ class Terminal final : public vt::SequenceSink {
     /// @brief 光标列位的行内钳制（含双宽字符不得停在延续格上的口径）。
     [[nodiscard]] auto clamp_column(std::size_t column) const noexcept -> std::size_t;
 
+    /// @brief 把一段应答交给回写接缝；未接线时丢弃（单测可只喂序列不接 sink）。
+    auto emit_response(std::u32string_view response) -> void;
+
     auto set_tab_stops_default() noexcept -> void;
 
     std::array<Charset, 4> designated_{Charset::Ascii, Charset::Ascii, Charset::Ascii, Charset::Ascii};
@@ -180,6 +202,7 @@ class Terminal final : public vt::SequenceSink {
     std::size_t region_top_ = 0;
     std::size_t region_bottom_ = 0;
     AmbiguousWidth ambiguous_ = AmbiguousWidth::Narrow;
+    ResponseSink *response_sink_ = nullptr;
     bool pending_wrap_ = false;  ///< 已在行末落字、下一个可打印字符须先换行（DECAWM 的延迟换行）。
     bool full_screen_dirty_ = false;
 };
