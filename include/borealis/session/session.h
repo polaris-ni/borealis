@@ -36,7 +36,9 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
   public:
     /// @brief 组装一个会话。
     /// @param connection 传输连接，所有权交给会话；构造即可用，尚未启动。
-    /// @param size 初始视口尺寸（会话启动与分屏挂载时各下发一次，`SPEC.FEAT.XFER.01`）。
+    /// @param size 初始视口尺寸：网格据此建立。连接侧的初始尺寸在创建连接时给出（见
+    ///             `conn::make_local_terminal_connection`），两处必须由同一次布局决策派生
+    ///             （`SPEC.FEAT.XFER.01` 的会话启动腿）。
     /// @param scrollback_limit 主屏 scrollback 容量（`SPEC.FEAT.TERM.04`）。
     /// @param width_policy 宽度判定接缝，生命周期须不短于本会话（架构 §6.3）。
     Session(std::unique_ptr<Connection> connection, Size size, std::size_t scrollback_limit,

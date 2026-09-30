@@ -14,6 +14,15 @@ add_library(borealis_core STATIC
         session/damage_queue.cpp
         session/session.cpp)
 
+# 平台层实现按目标平台编入：共享路径只见接口，ConPTY 句柄与 Win32 API 留在 src/platform/ 内
+# （裁决 7.11、架构 §2.2）。posix 侧等价实现待建，见 codespec/PLAN.md §8。
+if (WIN32)
+    target_sources(borealis_core PRIVATE
+            platform/win/conpty_connection.cpp
+            platform/win/local_terminal.cpp
+            platform/win/win_text.cpp)
+endif ()
+
 # 消费者统一配置（链接 aurora + C++20 + 共享 PCH + 统一告警），额外私有头目录为本仓公共头根。
 aurora_setup_consumer_target(borealis_core "${CMAKE_CURRENT_SOURCE_DIR}/../include")
 
