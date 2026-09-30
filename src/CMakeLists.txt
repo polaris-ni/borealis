@@ -10,7 +10,9 @@ add_library(borealis_core STATIC
         term/utf8.cpp
         term/charset.cpp
         term/terminal.cpp
-        grid/storage.cpp)
+        grid/storage.cpp
+        session/damage_queue.cpp
+        session/session.cpp)
 
 # 消费者统一配置（链接 aurora + C++20 + 共享 PCH + 统一告警），额外私有头目录为本仓公共头根。
 aurora_setup_consumer_target(borealis_core "${CMAKE_CURRENT_SOURCE_DIR}/../include")
