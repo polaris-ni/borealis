@@ -107,6 +107,41 @@ auto Storage::set_columns(std::size_t columns) -> void {
     }
 }
 
+auto Storage::set_rows(std::size_t rows) -> void {
+    if (rows == 0 || rows == rows_) {
+        return;
+    }
+    const std::size_t needed = rows + scrollback_limit_;
+    if (needed > buffer_.size()) {
+        relinearize(needed);
+    }
+    const std::size_t capacity = buffer_.size();
+    // 底部锚定下能留下的行：容量装不下时从最旧一端丢弃。
+    const std::size_t kept = std::min(lines_, rows + scrollback_limit_);
+    const std::size_t dropped = lines_ - kept;
+    // 历史不够填满新视口时，顶部补空白行——它们落在环中原本未使用的槽位上。
+    const std::size_t blanks = rows > kept ? rows - kept : 0;
+    zero_ = (zero_ + dropped + capacity - blanks) % capacity;
+    for (std::size_t index = 0; index < blanks; ++index) {
+        buffer_[(zero_ + index) % capacity].reset();
+    }
+    lines_ = kept + blanks;
+    rows_ = rows;
+}
+
+auto Storage::relinearize(std::size_t capacity) -> void {
+    std::vector<Row> laid_out;
+    laid_out.reserve(capacity);
+    for (std::size_t index = 0; index < lines_; ++index) {
+        laid_out.push_back(std::move(line(index)));
+    }
+    while (laid_out.size() < capacity) {
+        laid_out.emplace_back(columns_);
+    }
+    buffer_ = std::move(laid_out);
+    zero_ = 0;
+}
+
 auto Storage::clear() -> void {
     for (auto &row : buffer_) {
         row.reset();

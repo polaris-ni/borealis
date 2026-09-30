@@ -7,8 +7,8 @@
 // 上限 100,000（SPEC.FEAT.TERM.04），超出即覆盖最旧行。
 //
 // 本层只管**存储与滚动**，不解释终端语义（光标、滚动区域、插入删除归终端状态机）；
-// 宽度语义也由写入方负责（见 cell.h）。行数变化（PTY 尺寸同步）尚未定策略，
-// 见 `codespec/ARCHITECTURE.md` §4.5 与 `TODO(SPEC.FEAT.XFER.01)`。
+// 宽度语义也由写入方负责（见 cell.h）。行数变化见 `set_rows`：只移动窗口边界、
+// 历史自动收回或溢出（`SPEC.FEAT.XFER.01` 的存储层口径）。
 // ============================================================
 
 #include <cstddef>
@@ -107,12 +107,36 @@ class Storage {
     /// @param columns 新的列数。
     auto set_columns(std::size_t columns) -> void;
 
+    /// @brief 变更视口行数（PTY 尺寸同步的存储层前置，`SPEC.FEAT.XFER.01`）。
+    ///
+    /// 底部锚定：最后一行仍是同一行，行数增减只移动窗口边界——变高时从 scrollback
+    /// 顶部收回历史填满（逻辑效果同 `scroll_down`），变矮时视口顶行自然溢出进历史，
+    /// 超出容量则丢弃最旧；历史不足时在顶部补空白行。已有行不重排，与列宽的裁决 7.5
+    /// 同口径。
+    ///
+    /// 行号与内容的对应关系整体变了，本层不打行级脏：调用方须以整屏脏通知重建（架构 §3.4）。
+    ///
+    /// 代价：缓冲区物理容量按 `视口行数 + scrollback 容量` 计，且 scrollback 容量是需求的
+    /// 配置值而非「剩下的都归历史」，故**变高必然扩容**并顺带把环拉直，代价按现存行数计。
+    /// 变矮只动窗口边界，一行数据也不搬。resize 是去抖后的低频事件（`SPEC.FEAT.XFER.01`），
+    /// 不在滚动路径上。
+    /// @param rows 新的视口行数；0 视为无效尺寸，直接忽略。
+    auto set_rows(std::size_t rows) -> void;
+
     /// @brief 清空全部内容回到初始状态（主备屏切换、会话重设）。
     auto clear() -> void;
 
   private:
     /// @brief 行号 → 缓冲区物理下标。
     [[nodiscard]] auto physical(std::size_t index) const noexcept -> std::size_t;
+
+    /// @brief 把环按逻辑顺序拉直并扩容到 @p capacity（仅 `set_rows` 需要更多物理槽位时走）。
+    ///
+    /// 环形偏移对模数敏感，直接改 `buffer_` 大小会让跨旧边界那段的行号映射错位，
+    /// 故扩容前必须先把已有行按逻辑序归位。这是罕见路径（备屏 scrollback 为 0 时
+    /// 变高才触发），代价按现存行数计，不落在滚动路径上。
+    /// @param capacity 新的物理容量（行）。
+    auto relinearize(std::size_t capacity) -> void;
 
     std::vector<Row> buffer_;
     std::size_t columns_ = 0;
