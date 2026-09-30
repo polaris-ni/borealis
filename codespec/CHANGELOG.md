@@ -6,6 +6,18 @@
 
 ---
 
+## v0.17（2026-09-30）OSC 由整体吞掉改为结构化消费，`OSC 52` 写方向真落系统剪贴板（裁决 7.21）
+
+**动机**：`SPEC.FEAT.TERM.07` 的消费腿此前是状态机里的一句 `TODO(SPEC.FEAT.TERM.07)`——OSC 串按协议合法地不进气，但既不产生产物也不留痕迹，「标题没生效」这类排障无从下手。本批把 `0/2` 标题、`7` 工作目录、`8` 超链接、`52` 剪贴板、`133` 命令块一并改成消费成结构化产物；其中 `7` / `133` 本属 `SPEC.FEAT.INTEG.01/02`（P2/M4），按用户裁决只作**来源预埋**，`52` 按裁决真写系统剪贴板，并把整条腿在 PLAN.md 标为提前落地。形态上的关键约束来自架构 §3.4：状态机跑在会话读线程的网格锁内，锁内只能留存不能投递，而剪贴板是主线程的 IO。
+
+- **新增裁决 7.21**（五条）：① 产物形态是**状态快照 + 一个取走型动作**而非事件队列；② 超链接不进 `Cell` 主结构，走 `grid::Row` 侧表 + 有界链接表（`kMaxHyperlinks = 1024`，标识递增且永不复用，满表淘汰最旧，后果限定为「不可点」而非指向另一条 URL）；③ `OSC 52` 写方向按「锁内留存 → `Session::take_clipboard_write()` 合并取走 → 主线程 `ClipboardOutbox::drain()` 转调 Aurora `Clipboard::set_text`」落地，读方向 `52;c;?` 默认禁止但**回写空响应**；④ 提前落地范围与其「来源预埋」边界；⑤ 未消费命令号计入 `unhandled_count`，不得整体吞掉不留痕。
+- **本仓代码落地**：`include/borealis/term/osc.h`（`OscState`、`PromptMarker`、`kMaxHyperlinks`）、`src/term/osc.{h,cpp}`（OSC 字段切分与**严格** base64 解码——字母表外字符、截断、填充后载荷一律判非法，解出的字节再走一遍 `Utf8Decoder`）、`grid::Row` 的「列号 → `HyperlinkId`」侧表（`set` 即清链、`reset`/截断/整行搬移随行走）、`Terminal::do_osc` 的命令号派发与 `osc_state()` / `hyperlink_target()` / `take_clipboard_write()`、`Session` 的三处加锁访问器、`include/borealis/session/clipboard_outbox.h` + `src/session/clipboard_outbox.cpp`（全仓唯一触达 `aurora::Clipboard` 的翻译单元，公共头不含框架头）。`TODO(SPEC.FEAT.TERM.07)` 就此消除；`TODO(SPEC.FEAT.INTEG.01/02)`、`TODO(SPEC.FEAT.CONN.12)` 留在各自消费点。
+- **测试**：新增 `tests/unit/utest_terminal_osc.cpp`（19 例：`0/1/2` 标题、`7` 原文留存、`8` 区间括出与 params 段切分、覆盖/擦除清链、SGR 不截断区间、双宽只挂前半格、有界表淘汰后旧标识解析不出而历史格仍挂该标识、`52` 解码/合并/空载荷合法/三类非法载荷、`52;c;?` 的空应答、`133` 各边界与退出码、未识别命令号计数后链路照常、RIS 清零全部产物）；`tests/unit/utest_grid_storage.cpp` 补侧表 5 例；`tests/unit/utest_session.cpp` 补 4 例（含「字节 → 解码 → 解析 → 状态机 → 网格侧表 → 会话取值」的整链断言与多次写的合并语义）；`tests/integration/itest_terminal_scene.cpp` 的 OSC 断言从「标题串被吞」改为「不进网格且消费成状态」；新增 `tests/e2e/etest_osc_clipboard.cpp` 用真机 ConPTY 让 powershell 发出 `OSC 52`，回读系统剪贴板校验明文（断言素材是 base64，明文不经屏幕），并校验「取走即清空」与用例结束归还用户既有剪贴板内容——须在有窗口站/桌面的交互会话投放（裁决 7.19⑤）。CTest 共 15 项全绿（MSVC + Ninja）。
+- **代价与边界**：① 快照只留**最近一次**，`133` 的完整命令块区间（起止附着到网格行）须由 `SPEC.FEAT.INTEG.01` 落地时补结构，`7` 的目录继承与远端降级语义同归 `SPEC.FEAT.INTEG.02`；② 剪贴板只取最终值，「多次写各自生效」的追加型用法不在本档覆盖内；③ `OSC 52` 的三态授权（`SPEC.FEAT.CONN.12`）与 `OSC 4/10/110` 调色板族仍只计数不消费；④ 主线程 `drain()` 的调用点随帧调度接线（`TODO(SPEC.FEAT.RENDER.01)`），当前由消费方按帧轮询；⑤ 剪贴板是用户共享状态，e2e 用例先读回、结束原样归还。
+- 需求条目数量（66 条）、标识体系与优先级/阶段的**结构**均未变动；本次按裁决 7.21④ 只在 PLAN.md §3 的「阶段」列加子句级提前落地标注（`TERM.07`、`CONN.12`、`INTEG.01/02` 四行），并在 §8 现状表新增「OSC 消费 → 会话产物」一行。
+
+---
+
 ## v0.16（2026-09-30）码点宽度判定由框架交付，双宽占位与 combining 一并接线（裁决 7.20）
 
 **动机**：`SPEC.FEAT.TERM.08` 的宽度腿此前只到「机制可用」——状态机经注入接缝取格数，但生产侧挂的是「一律单宽」的缺省实现，CJK 双宽占位不生效，combining 更是无处可去。按裁决 7.13 类别 ①（影响渲染链路的框架缺口）**本仓不等不绕**，判定表须先在 Aurora 侧以公共 API 落地；而落地时实测出一个规格书没写到的分叉：Ambiguous 区间**包含**组合区段（U+0300–U+036F 一类），于是「先判宽度还是先判零宽」成了会决定正确性的选择，连同零宽码点在网格里怎么存一起回写成裁决 7.20。

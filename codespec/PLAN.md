@@ -47,7 +47,7 @@
 | `SPEC.FEAT.TERM.04` | Scrollback 回滚 | P0 | M1 |
 | `SPEC.FEAT.TERM.05` | 滚动区域与光标控制 | P0 | M1 |
 | `SPEC.FEAT.TERM.06` | 鼠标上报 | P1 | M2 |
-| `SPEC.FEAT.TERM.07` | OSC 集成 | P1 | M2 |
+| `SPEC.FEAT.TERM.07` | OSC 集成 | P1 | M2；**状态机消费腿提前落地**（裁决 7.21④，含 OSC 52 写方向真机落系统剪贴板），标题→标签名→窗口标题栏的 UI 消费链路仍留 M2 |
 | `SPEC.FEAT.TERM.08` | 宽字符 | P0 | M1 |
 | `SPEC.FEAT.TERM.09` | 字符编码 | P1 | M3；UTF-8 基线腿随 M1（本地终端默认编码，是 M1 出口判据「中文可输入可显示」的必需前置），编码可配与 GB18030 等其余腿留 M3 |
 | `SPEC.FEAT.RENDER.01` | 等宽网格渲染 | P0 | M1 |
@@ -85,7 +85,7 @@
 | `SPEC.FEAT.CONN.09` | 凭据安全存储 | P1 | M3 |
 | `SPEC.FEAT.CONN.10` | 密钥管理器 | P2 | M3 |
 | `SPEC.FEAT.CONN.11` | 会话日志 | P2 | M4 |
-| `SPEC.FEAT.CONN.12` | 剪贴板访问授权 | P2 | M4 |
+| `SPEC.FEAT.CONN.12` | 剪贴板访问授权 | P2 | M4；`OSC 52` 写方向的「默认允许」档已随 `SPEC.FEAT.TERM.07` 的提前腿落地（裁决 7.21③），读方向三态授权仍留 M4 |
 | `SPEC.FEAT.PREF.01` | 主题 | P1 | M2 |
 | `SPEC.FEAT.PREF.02` | 设置面板 | P1 | M2 |
 | `SPEC.FEAT.PREF.03` | 持久化 | P0 | M1 |
@@ -93,8 +93,8 @@
 | `SPEC.FEAT.PREF.05` | i18n | P2 | M4 |
 | `SPEC.FEAT.PREF.06` | 零配置可用 | P0 | M1 |
 | `SPEC.FEAT.PREF.07` | 配置韧性 | P1 | M2 |
-| `SPEC.FEAT.INTEG.01` | OSC 133 命令块 | P2 | M4 |
-| `SPEC.FEAT.INTEG.02` | OSC 7 工作目录 | P2 | M4 |
+| `SPEC.FEAT.INTEG.01` | OSC 133 命令块 | P2 | M4；`OSC 133` 的边界标记与退出码来源已预埋（裁决 7.21④），命令块区间附着到网格行与其消费行为仍留 M4 |
+| `SPEC.FEAT.INTEG.02` | OSC 7 工作目录 | P2 | M4；`OSC 7` 的目录原文来源已预埋（裁决 7.21④），新标签/分屏继承与远端语义下的降级仍留 M4 |
 | `SPEC.FEAT.INTEG.03` | 系统通知 | P3 | M5 |
 | `SPEC.FEAT.INTEG.04` | CLI 启动参数 | P2 | M4 |
 | `SPEC.NF.PERF.01` | 输入延迟 | P0 | M1 |
@@ -175,7 +175,7 @@
 | 阶段 | 状态 | 依据与剩余项 |
 |:---|:---|:---|
 | **M0 框架补强** | 部分落地 | G1 的宽度判定腿已在 Aurora 主仓以公共 API 落地并带单测（`unicode_cell_width`，裁决 7.20）；G1 余下两腿（批量文本 run 原语、等宽整像素 cell 度量）与 G2 未落地。按 §2 的阻塞粒度，余下缺口不构成 M1 的整体前置 |
-| **M1 单终端 MVP（Windows）** | 部分落地 | 已落地（纯逻辑层均可脱离 UI 独立单测；平台层为 Windows 侧真机 e2e）：`SPEC.FEAT.TERM.01` 的 VT 解析器与字符集切换映射、`SPEC.FEAT.TERM.09` 的 UTF-8 双向编解码（M1 基线腿）、`SPEC.FEAT.TERM.04` 的 scrollback 环形存储、**终端状态机**（`SPEC.FEAT.TERM.01` 的 Print/Execute/ESC/CSI 显示内核与私有模式登记、`SPEC.FEAT.TERM.02` 的 16/256/真彩色、`SPEC.FEAT.TERM.03` 的主备屏、`SPEC.FEAT.TERM.05` 的光标与滚动区域/擦除/插删/制表位；`SPEC.FEAT.TERM.08` 的宽度与双宽占位、combining 并入腿（判定表随 G1 第三腿闭合））、**会话层**（架构 §7.2 粒度拍板后的 `session::Connection` 基础接口与 `ConnectionEvents` 反向通道、`session::Session` 组合解码/状态机/网格与写通道、`session::DamageQueue` 的有界背压队列：`SPEC.NF.PERF.06` 的合并而非丢弃与单帧预算让出、`SPEC.NF.RELI.01` 的水位/合并/让出计数、`SPEC.FEAT.TERM.01` 的 DA1/DSR 应答回写、`SPEC.FEAT.XFER.01` 的尺寸下发腿）、**`SPEC.FEAT.CONN.01` 的本地终端 Windows 腿**（`conn::LocalTerminalSpec` + 连接工厂、`platform::ConptyConnection` 的伪终端创建/挂载/读写/关停、默认 shell 探测链、PTY 环境注入与 profile 覆盖，实现口径见裁决 7.19）。未开工：`SPEC.FEAT.CONN.01` 的 POSIX 腿（`$SHELL` 探测 + `forkpty` 同口径）、`SPEC.FEAT.TERM.07` 的 OSC 消费（状态机内当前整体吞掉，留 `TODO(SPEC.FEAT.TERM.07)`）、`SPEC.FEAT.RENDER.01–04`、`SPEC.FEAT.WS.01` `SPEC.FEAT.WS.02`、`SPEC.FEAT.INTERACT.01`、`SPEC.FEAT.XFER.01` 的去抖与 UI 侧尺寸来源、`SPEC.FEAT.PREF.03` `SPEC.FEAT.PREF.06` |
+| **M1 单终端 MVP（Windows）** | 部分落地 | 已落地（纯逻辑层均可脱离 UI 独立单测；平台层为 Windows 侧真机 e2e）：`SPEC.FEAT.TERM.01` 的 VT 解析器与字符集切换映射、`SPEC.FEAT.TERM.09` 的 UTF-8 双向编解码（M1 基线腿）、`SPEC.FEAT.TERM.04` 的 scrollback 环形存储、**终端状态机**（`SPEC.FEAT.TERM.01` 的 Print/Execute/ESC/CSI 显示内核与私有模式登记、`SPEC.FEAT.TERM.02` 的 16/256/真彩色、`SPEC.FEAT.TERM.03` 的主备屏、`SPEC.FEAT.TERM.05` 的光标与滚动区域/擦除/插删/制表位；`SPEC.FEAT.TERM.08` 的宽度与双宽占位、combining 并入腿（判定表随 G1 第三腿闭合））、**会话层**（架构 §7.2 粒度拍板后的 `session::Connection` 基础接口与 `ConnectionEvents` 反向通道、`session::Session` 组合解码/状态机/网格与写通道、`session::DamageQueue` 的有界背压队列：`SPEC.NF.PERF.06` 的合并而非丢弃与单帧预算让出、`SPEC.NF.RELI.01` 的水位/合并/让出计数、`SPEC.FEAT.TERM.01` 的 DA1/DSR 应答回写、`SPEC.FEAT.XFER.01` 的尺寸下发腿）、**`SPEC.FEAT.CONN.01` 的本地终端 Windows 腿**（`conn::LocalTerminalSpec` + 连接工厂、`platform::ConptyConnection` 的伪终端创建/挂载/读写/关停、默认 shell 探测链、PTY 环境注入与 profile 覆盖，实现口径见裁决 7.19）、**OSC 消费腿**（`SPEC.FEAT.TERM.07` 的状态机侧消费提前落地，裁决 7.21：`0/2` 标题、`7` 目录原文、`8` 超链接区间与有界链接表、`52` 写方向经主线程落系统剪贴板、`133` 边界与退出码，未识别命令号计入留痕；`OSC 7` / `133` 只是 `SPEC.FEAT.INTEG.01/02` 的来源预埋，其消费行为仍留 M4）。未开工：`SPEC.FEAT.CONN.01` 的 POSIX 腿（`$SHELL` 探测 + `forkpty` 同口径）、`SPEC.FEAT.RENDER.01–04`、`SPEC.FEAT.WS.01` `SPEC.FEAT.WS.02`、`SPEC.FEAT.INTERACT.01`、`SPEC.FEAT.XFER.01` 的去抖与 UI 侧尺寸来源、`SPEC.FEAT.PREF.03` `SPEC.FEAT.PREF.06` |
 | **M2–M5** | 未开工 | 排期不变 |
 
 **M1 待接接缝**（已落地模块之间尚未打通处；表中顺序即建议的开工顺序）：
@@ -183,7 +183,8 @@
 | 接缝 | 现状 | 说明 |
 |:---|:---|:---|
 | 解码 → 解析 → 状态机 → 网格 | 已打通 | 集成用例 `tests/integration/itest_terminal_scene.cpp` 以真实形态的首帧输出驱动全链路（字节流 → 解码 → 解析 → 网格内容），断言落在框线码点、SGR 色值与来源、OSC 吞掉、主备屏互不污染。**`ESC(0` 的框线效果就此有端到端证据**（`SPEC.FEAT.TERM.01` 验收判据腿） |
-| 状态机 → 会话回写 | 已打通 | 终端属性与光标位置查询（DA1、DSR）经会话写通道回写：状态机经注入的 `term::ResponseSink` 在锁内登记应答、会话出锁后编码写入连接（架构 §3.4、§5.2，裁决 7.18③ 定下只报档位 62）。单元用例 `tests/unit/utest_session.cpp` 以 `Connection` 替身驱动全链路并断言回写字节。余下 OSC 0/2/7/8/52/133 的消费仍未开工，当前按协议整体吞掉不留痕（`TODO(SPEC.FEAT.TERM.07)`） |
+| 状态机 → 会话回写 | 已打通 | 终端属性与光标位置查询（DA1、DSR）经会话写通道回写：状态机经注入的 `term::ResponseSink` 在锁内登记应答、会话出锁后编码写入连接（架构 §3.4、§5.2，裁决 7.18③ 定下只报档位 62）。单元用例 `tests/unit/utest_session.cpp` 以 `Connection` 替身驱动全链路并断言回写字节。OSC 各命令的消费见下一行 |
+| OSC 消费 → 会话产物 | 已打通（`SPEC.FEAT.TERM.07` 提前落地） | 状态机把 `OSC 0/2/7/8/52/133` 消费成结构化产物（`term::OscState` 快照 + 有界链接表 + `take_clipboard_write()` 取走语义，形态与理由见裁决 7.21），会话侧以加锁访问器透出；`OSC 52` 写方向由 `session::ClipboardOutbox::drain()` 在主线程转调 Aurora `Clipboard::set_text` 真落系统剪贴板，读方向 `52;c;?` 回写空响应。单测 `tests/unit/utest_terminal_osc.cpp` 定点驱动每条命令，e2e `tests/e2e/etest_osc_clipboard.cpp` 用真机 ConPTY + powershell 发出 OSC 52 并回读剪贴板。余下的是消费方：标题上标签名/窗口标题栏、超链接的 hover 与点击、133 的命令块区间 |
 | 会话 → 平台连接 | 已打通（Windows 腿） | `conn::make_local_terminal_connection` 造出 `platform::ConptyConnection` 并交予 `session::Session`，读线程把伪终端管道的原始字节喂进「解码 → 解析 → 状态机 → 网格」整条链；端到端证据是 `tests/e2e/etest_local_terminal.cpp`（真实 shell 的输出上屏、键入往返、突发输出的队列水位、关闭后进程终结且内容保留）。四处 Win32 实现口径见裁决 7.19。余下的是帧调度通知（提交入队后经 `au::post_to_main` 唤醒主线程排帧，架构 §3.2），随上屏层接，当前消费方按帧轮询 `has_damage()` |
 | 网格行数变化 | 已定并落地（PTY 下发已接线，UI 侧来源未接） | 策略按裁决 7.17 收敛：移动窗口边界、底部锚定，历史自动收回或溢出；存储层 `Storage::set_rows`、状态机 `Terminal::resize` 与会话层 `Session::resize`（含连接侧下发与整屏脏通知）三层已串通并带单测，连接侧下发由 `platform::ConptyConnection::resize` 走 `ResizePseudoConsole`（真机 e2e 覆盖尺寸变更后流不中断）。余下的是**尺寸由 UI 侧何处来**与去抖合并（`SPEC.FEAT.XFER.01`），随渲染层那一棒接 |
 | 宽度判定 | 已接线（框架真判定） | 状态机经注入的 `WidthPolicy` 取格数、自身不查表（架构 §6.3）；生产实现 `term::UnicodeWidthPolicy` 转调 Aurora `unicode_cell_width`（0 / 1 / 2 三档 + Ambiguous 入参，裁决 7.20），零宽码点并入网格行的组合标记侧表。验收证据：`tests/integration/itest_unicode_width.cpp` 以真实字节流跑全链路，断言 CJK 双宽占位与延续格、同一份含 Ambiguous 输出在两种口径下的列位一致、行末整体换行不留半格、combining 不占格不推进光标。`SingleWidthPolicy` 退为测试用常数注入值（不受 Unicode 版本影响的用例），桩判定仍用于状态机自身的机制类单测 |
