@@ -7,18 +7,35 @@
 // 区间；§4.6：行级记录左右列界，避免整行重绘。
 //
 // 脏区间按**闭开区间**保存（right 为最后一个脏列 + 1）；无脏时 `dirty_right_ <= dirty_left_`。
+//
+// 零宽码点（组合符号与格式字符）不进 `Cell`——它们不独立占格，塞进主结构就是为低频属性
+// 抬高整屏常驻内存（架构 §4.1 的侧表口径）。本层按「基础格列号 → 并入序列」存一张行内侧表，
+// 于是标记随行移动（滚动、变宽、reset 都是整行操作），且 `Cell` 大小不变。
 // ============================================================
 
+#include <algorithm>
 #include <cstddef>
+#include <span>
 #include <vector>
 
 #include "borealis/grid/cell.h"
 
 namespace borealis::grid {
 
-/// @brief 一行定宽 cell，带脏区间与占用上界。
+/// @brief 并入某基础格的一个零宽码点。
+struct CombiningMark {
+    std::size_t column = 0;     ///< 所并入的基础格列号。
+    char32_t code_point = 0;    ///< 零宽码点本身（判定侧已确认它不独立占格）。
+};
+
+/// @brief 一行定宽 cell，带脏区间、占用上界与组合标记侧表。
 class Row {
   public:
+    /// @brief 单个基础格可携带的组合标记上限。
+    ///
+    /// 会话字节流是不可信输入：连续投喂零宽码点不得让一行无限膨胀，超上限的标记直接丢弃。
+    static constexpr std::size_t kMaxCombiningMarksPerCell = 8U;
+
     /// @brief 构造一行空白 cell。
     /// @param columns 列数。
     explicit Row(std::size_t columns) : cells_(columns) {}
@@ -37,10 +54,14 @@ class Row {
     [[nodiscard]] auto cell(std::size_t column) const noexcept -> const Cell & { return cells_[column]; }
 
     /// @brief 写入一个 cell 并登记脏区间与占用上界。
+    ///
+    /// 写入即视为「这个基础格换了内容」，其组合标记一并作废——否则旧字符的零宽码点会跟着
+    /// 新字形一起上屏。
     /// @param column 列号，须 < `columns()`。
     /// @param value 待写入的 cell。
     auto set(std::size_t column, const Cell &value) noexcept -> void {
         cells_[column] = value;
+        clear_combining(column);
         mark_dirty(column);
     }
 
@@ -64,6 +85,37 @@ class Row {
         dirty_ = true;
         dirty_left_ = 0;
         dirty_right_ = cells_.size();
+    }
+
+    /// @brief 把一个零宽码点并入 @p column 的基础格，并标脏该格。
+    ///
+    /// 超出 `kMaxCombiningMarksPerCell` 的标记被丢弃（不入侧表、也不报错）：判定与并入次序
+    /// 归调用方（`borealis::term`），本层只保证「有界」与「随行移动」。
+    /// @param column 基础格列号，须 < `columns()`。
+    /// @param code_point 零宽码点。
+    auto attach_combining(std::size_t column, char32_t code_point) -> void {
+        const auto run = combining_run(column);
+        if (run.size() >= kMaxCombiningMarksPerCell) {
+            return;
+        }
+        // 插在同列游程末尾并保持按列号升序——equal_range 的正确性全靠这个序。
+        const auto at = std::ranges::upper_bound(combining_, column, {}, &CombiningMark::column);
+        combining_.insert(at, CombiningMark{column, code_point});
+        mark_dirty(column);
+    }
+
+    /// @brief 取并入 @p column 基础格的零宽码点（按并入先后序）。
+    /// @param column 基础格列号。
+    /// @return 该格的标记区间；无标记时为空。
+    [[nodiscard]] auto combining(std::size_t column) const noexcept -> std::span<const CombiningMark> {
+        return combining_run(column);
+    }
+
+    /// @brief 丢弃并入 @p column 基础格的全部零宽码点。
+    /// @param column 基础格列号。
+    auto clear_combining(std::size_t column) noexcept -> void {
+        const auto [begin, end] = std::ranges::equal_range(combining_, column, {}, &CombiningMark::column);
+        combining_.erase(begin, end);
     }
 
     /// @brief 是否有未消费的脏区。
@@ -96,6 +148,7 @@ class Row {
         for (auto &cell : cells_) {
             cell.reset();
         }
+        combining_.clear();
         occupancy_ = 0;
         dirty_ = false;
         dirty_left_ = 0;
@@ -107,6 +160,10 @@ class Row {
     /// @param columns 新的列数。
     auto resize(std::size_t columns) -> void {
         cells_.resize(columns);
+        // 截断掉的基础格连同其零宽码点一起消失：标记只能挂在还存在的基础格上。
+        // 侧表按列号升序，故首个越界标记之后全部越界。
+        combining_.erase(std::ranges::lower_bound(combining_, columns, {}, &CombiningMark::column),
+                         combining_.end());
         if (occupancy_ > columns) {
             occupancy_ = columns;
         }
@@ -122,7 +179,20 @@ class Row {
     }
 
   private:
+    /// @brief 并入 @p column 基础格的标记区间（侧表按列号升序，故同列必连续）。
+    [[nodiscard]] auto combining_run(std::size_t column) const noexcept -> std::span<const CombiningMark> {
+        const auto [begin, end] = std::ranges::equal_range(combining_, column, {}, &CombiningMark::column);
+        return std::span<const CombiningMark>{begin, static_cast<std::size_t>(end - begin)};
+    }
+
+    /// @brief 并入 @p column 基础格的标记区间（可变版，供插入与擦除）。
+    [[nodiscard]] auto combining_run(std::size_t column) noexcept -> std::span<CombiningMark> {
+        const auto [begin, end] = std::ranges::equal_range(combining_, column, {}, &CombiningMark::column);
+        return std::span<CombiningMark>{begin, static_cast<std::size_t>(end - begin)};
+    }
+
     std::vector<Cell> cells_;
+    std::vector<CombiningMark> combining_;
     std::size_t occupancy_ = 0;
     std::size_t dirty_left_ = 0;
     std::size_t dirty_right_ = 0;
