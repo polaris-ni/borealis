@@ -18,12 +18,14 @@
 #include "borealis/vt/parser.h"
 #include "borealis/vt/sequence.h"
 #include "framework/aurora_test.h"
+#include "support/fixture_text.h"
 #include "support/paths.h"
 
 namespace borealis::test_cases::itest_decode_parse {
 
 namespace {
 
+using borealis::testing::fixtures::unescape;
 using borealis::term::CodePointSink;
 using borealis::term::Utf8Decoder;
 using borealis::vt::Parser;
@@ -67,49 +69,6 @@ class ParserFeeder final : public CodePointSink, public SequenceSink {
     Parser parser;
     std::vector<Event> events;
 };
-
-/// @brief 夹具转义还原：`\e` `\a` `\n` `\r` `\t` `\\` `\xNN`。
-/// @param text 夹具文本（全 ASCII）。
-/// @return 原始字节。
-auto unescape(std::string_view text) -> std::string {
-    std::string out;
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        if (text[i] != '\\' || i + 1 >= text.size()) {
-            out += text[i];
-            continue;
-        }
-        const char esc = text[i + 1];
-        ++i;
-        switch (esc) {
-            case 'e':
-                out += '\x1B';
-                break;
-            case 'a':
-                out += '\x07';
-                break;
-            case 'n':
-                out += '\n';
-                break;
-            case 'r':
-                out += '\r';
-                break;
-            case 't':
-                out += '\t';
-                break;
-            case '\\':
-                out += '\\';
-                break;
-            case 'x':
-                out += static_cast<char>(std::stoul(std::string{text.substr(i + 1, 2)}, nullptr, 16));
-                i += 2;
-                break;
-            default:
-                out += esc;
-                break;
-        }
-    }
-    return out;
-}
 
 /// @brief 统计满足谓词的事件数。
 template <typename Predicate>
