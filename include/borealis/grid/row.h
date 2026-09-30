@@ -8,13 +8,14 @@
 //
 // 脏区间按**闭开区间**保存（right 为最后一个脏列 + 1）；无脏时 `dirty_right_ <= dirty_left_`。
 //
-// 零宽码点（组合符号与格式字符）不进 `Cell`——它们不独立占格，塞进主结构就是为低频属性
-// 抬高整屏常驻内存（架构 §4.1 的侧表口径）。本层按「基础格列号 → 并入序列」存一张行内侧表，
-// 于是标记随行移动（滚动、变宽、reset 都是整行操作），且 `Cell` 大小不变。
+// 零宽码点（组合符号与格式字符）与超链接都不进 `Cell`——前者不独立占格、后者只在少数行上
+// 出现，塞进主结构就是为低频属性抬高整屏常驻内存（架构 §4.1 的侧表口径）。本层按列号升序
+// 各存一张行内侧表，于是它们随行移动（滚动、变宽、reset 都是整行操作），且 `Cell` 大小不变。
 // ============================================================
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <vector>
 
@@ -28,7 +29,19 @@ struct CombiningMark {
     char32_t code_point = 0;    ///< 零宽码点本身（判定侧已确认它不独立占格）。
 };
 
-/// @brief 一行定宽 cell，带脏区间、占用上界与组合标记侧表。
+/// @brief 超链接的标识：由 `borealis::term` 的链接表分配，网格只存数字。
+using HyperlinkId = std::uint32_t;
+
+/// @brief 「无超链接」标识：侧表里不为其留表项，链接表也不分配 0 号。
+inline constexpr HyperlinkId kNoHyperlink = 0;
+
+/// @brief 某格所挂的超链接。
+struct HyperlinkMark {
+    std::size_t column = 0;          ///< 格列号。
+    HyperlinkId link_id = kNoHyperlink;  ///< 链接标识。
+};
+
+/// @brief 一行定宽 cell，带脏区间、占用上界，以及零宽标记与超链接两张侧表。
 class Row {
   public:
     /// @brief 单个基础格可携带的组合标记上限。
@@ -55,13 +68,15 @@ class Row {
 
     /// @brief 写入一个 cell 并登记脏区间与占用上界。
     ///
-    /// 写入即视为「这个基础格换了内容」，其组合标记一并作废——否则旧字符的零宽码点会跟着
-    /// 新字形一起上屏。
+    /// 写入即视为「这个基础格换了内容」，其组合标记与超链接一并作废——否则旧字符的零宽码点
+    /// 与旧链接会跟着新字形一起上屏。挂链接的写入方（`borealis::term`）随后自行补
+    /// `set_hyperlink`。
     /// @param column 列号，须 < `columns()`。
     /// @param value 待写入的 cell。
     auto set(std::size_t column, const Cell &value) noexcept -> void {
         cells_[column] = value;
         clear_combining(column);
+        clear_hyperlink(column);
         mark_dirty(column);
     }
 
@@ -118,6 +133,34 @@ class Row {
         combining_.erase(begin, end);
     }
 
+    /// @brief 给某格挂上超链接（或改挂另一个），并标脏该格。
+    ///
+    /// 一列至多一条表项：`kNoHyperlink` 即摘除，摘除本身不改内容故不额外标脏。
+    /// @param column 列号，须 < `columns()`。
+    /// @param link_id 链接标识，`kNoHyperlink` 表示无链接。
+    auto set_hyperlink(std::size_t column, HyperlinkId link_id) -> void {
+        if (link_id == kNoHyperlink) {
+            clear_hyperlink(column);
+            return;
+        }
+        const auto at = std::ranges::lower_bound(hyperlinks_, column, {}, &HyperlinkMark::column);
+        if (at != hyperlinks_.end() && at->column == column) {
+            at->link_id = link_id;
+        } else {
+            // 侧表按列号升序，插入点即 lower_bound 位置。
+            hyperlinks_.insert(at, HyperlinkMark{column, link_id});
+        }
+        mark_dirty(column);
+    }
+
+    /// @brief 取某格所挂的超链接。
+    /// @param column 列号。
+    /// @return 链接标识；无链接时为 `kNoHyperlink`。
+    [[nodiscard]] auto hyperlink(std::size_t column) const noexcept -> HyperlinkId {
+        const auto at = std::ranges::lower_bound(hyperlinks_, column, {}, &HyperlinkMark::column);
+        return at != hyperlinks_.end() && at->column == column ? at->link_id : kNoHyperlink;
+    }
+
     /// @brief 是否有未消费的脏区。
     [[nodiscard]] auto dirty() const noexcept -> bool { return dirty_; }
 
@@ -149,6 +192,7 @@ class Row {
             cell.reset();
         }
         combining_.clear();
+        hyperlinks_.clear();
         occupancy_ = 0;
         dirty_ = false;
         dirty_left_ = 0;
@@ -160,10 +204,12 @@ class Row {
     /// @param columns 新的列数。
     auto resize(std::size_t columns) -> void {
         cells_.resize(columns);
-        // 截断掉的基础格连同其零宽码点一起消失：标记只能挂在还存在的基础格上。
-        // 侧表按列号升序，故首个越界标记之后全部越界。
+        // 截断掉的基础格连同其零宽码点与超链接一起消失：两张侧表都只能挂在还存在的基础格上。
+        // 侧表按列号升序，故首个越界项之后全部越界。
         combining_.erase(std::ranges::lower_bound(combining_, columns, {}, &CombiningMark::column),
                          combining_.end());
+        hyperlinks_.erase(std::ranges::lower_bound(hyperlinks_, columns, {}, &HyperlinkMark::column),
+                          hyperlinks_.end());
         if (occupancy_ > columns) {
             occupancy_ = columns;
         }
@@ -191,8 +237,20 @@ class Row {
         return std::span<CombiningMark>{begin, static_cast<std::size_t>(end - begin)};
     }
 
+    /// @brief 摘除某格的超链接（写入 cell 时调用：旧链接不得跟着新字形上屏）。
+    auto clear_hyperlink(std::size_t column) noexcept -> void {
+        if (hyperlinks_.empty()) {
+            return;  // 绝大多数行没有链接：先挡掉，免得每格写入都做一次二分
+        }
+        const auto at = std::ranges::lower_bound(hyperlinks_, column, {}, &HyperlinkMark::column);
+        if (at != hyperlinks_.end() && at->column == column) {
+            hyperlinks_.erase(at);
+        }
+    }
+
     std::vector<Cell> cells_;
     std::vector<CombiningMark> combining_;
+    std::vector<HyperlinkMark> hyperlinks_;
     std::size_t occupancy_ = 0;
     std::size_t dirty_left_ = 0;
     std::size_t dirty_right_ = 0;

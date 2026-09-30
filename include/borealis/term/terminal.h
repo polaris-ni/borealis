@@ -11,19 +11,24 @@
 // DA1/DSR 查询应答，应答经 `ResponseSink` 交给会话写通道）、
 // `SPEC.FEAT.TERM.02`（16/256/真彩色，色值与来源分开存）、`SPEC.FEAT.TERM.03`（主备屏）、
 // `SPEC.FEAT.TERM.05`（滚动区域、光标定位/保存恢复/可见性、擦除与插删、制表位）、
+// `SPEC.FEAT.TERM.07`（OSC 0/2/7/8/52/133 的消费，结果形态见 `term/osc.h`）、
 // `SPEC.FEAT.TERM.08` 的占位机制（格数由注入的 WidthPolicy 给出，本模块不查表）。
 // ============================================================
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
+#include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
 #include "borealis/grid/cell.h"
 #include "borealis/grid/storage.h"
 #include "borealis/term/charset.h"
+#include "borealis/term/osc.h"
 #include "borealis/term/width.h"
 #include "borealis/vt/parser.h"
 #include "borealis/vt/sequence.h"
@@ -120,6 +125,25 @@ class Terminal final : public vt::SequenceSink {
     /// @param sink 应答接收端，生命周期由调用方保证，且不短于本终端；传 nullptr 即摘除。
     auto set_response_sink(ResponseSink *sink) noexcept -> void { response_sink_ = sink; }
 
+    /// @brief OSC 消费留下的状态快照（标题、工作目录、命令块边界）。
+    [[nodiscard]] auto osc_state() const noexcept -> const OscState & { return osc_state_; }
+
+    /// @brief 解析网格里某个超链接标识的目标。
+    ///
+    /// 链接表有界（`kMaxHyperlinks`），标识**永不复用**：解析不出即表示该链接已被淘汰规则回收，
+    /// 读取方按「不可点」处理，而不是指向另一条 URL。
+    /// @param link_id 网格格子上挂的标识（`grid::Row::hyperlink`）。
+    /// @return URI 原文；无对应链接时为 `std::nullopt`。
+    [[nodiscard]] auto hyperlink_target(grid::HyperlinkId link_id) const
+        -> std::optional<std::u32string>;
+
+    /// @brief 取走待写入系统剪贴板的文本（`OSC 52` 写方向）。
+    ///
+    /// 状态机跑在会话读线程的网格锁内，剪贴板是主线程的 IO，故这里只留存、不落地（架构 §3.4）：
+    /// 取走即清空，同一段输入里的多次写只留最后一份（合并而非丢弃）。
+    /// @return 待写文本；无待写请求时为 `std::nullopt`（空文本是合法请求，故用 has_value 判别）。
+    auto take_clipboard_write() -> std::optional<std::u32string>;
+
     /// @brief 变更视口尺寸（PTY 尺寸同步下发，`SPEC.FEAT.XFER.01`）。
     ///
     /// 主备屏同步改尺寸：列宽变更不 reflow（裁决 7.5），行数变更只移动窗口边界、
@@ -152,6 +176,11 @@ class Terminal final : public vt::SequenceSink {
                              grid::ColorSource &source) -> bool;
     auto set_dec_mode(std::span<const vt::Param> params, bool enable, bool private_mode) -> void;
     auto set_alternate_screen(std::int32_t mode, bool enable) -> void;
+
+    auto do_osc(const vt::Sequence &seq) -> void;
+    auto apply_hyperlink(std::u32string_view args) -> void;
+    auto apply_clipboard(std::u32string_view args) -> void;
+    auto apply_prompt_marker(std::u32string_view args) -> void;
 
     /// @brief 在光标处写入一个 cell（含双宽延续格与「覆盖后半格」的清理）。
     auto write_cell(char32_t code_point, std::uint8_t width) -> void;
@@ -206,6 +235,12 @@ class Terminal final : public vt::SequenceSink {
     std::size_t region_bottom_ = 0;
     AmbiguousWidth ambiguous_ = AmbiguousWidth::Narrow;
     ResponseSink *response_sink_ = nullptr;
+    OscState osc_state_{};                                    ///< OSC 消费留下的状态快照（架构 §5.4）。
+    std::map<grid::HyperlinkId, std::u32string> hyperlinks_;  ///< 标识 → URI；满则淘汰最旧一条。
+    /// 链接标识递增分配且**永不复用**：复用会让 scrollback 里的旧链接指向另一条 URL。
+    grid::HyperlinkId next_hyperlink_id_ = 1;
+    grid::HyperlinkId current_hyperlink_ = grid::kNoHyperlink;  ///< 笔上挂着的链接（`OSC 8` 区间）。
+    std::optional<std::u32string> clipboard_write_;  ///< 待写剪贴板文本：锁内留存、主线程取走落地。
     bool pending_wrap_ = false;  ///< 已在行末落字、下一个可打印字符须先换行（DECAWM 的延迟换行）。
     bool full_screen_dirty_ = false;
 };

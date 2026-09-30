@@ -8,13 +8,15 @@
 // 主线程按帧取走提交、在短临界区内把权威网格的最新值并进本地副本（架构 §3.4）。
 //
 // 一把 `mutex_` 护住状态机与解码器：临界区窗口正比于本次输入的字节量，锁内**不做 IO**
-// ——查询应答（DSR/DA1）先在锁内登记，出锁后才写连接。写队列同样在锁外：主线程的取用顺序
+// ——查询应答（DSR/DA1）先在锁内登记，出锁后才写连接；`OSC 52` 的剪贴板写同构，锁内只留存、
+// 由主线程取走后落地。写队列同样在锁外：主线程的取用顺序
 // 是「先取队列、再读网格」，反过来就会与读线程构成 ABBA 死锁。
 // ============================================================
 
 #include <cstddef>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -87,6 +89,23 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
 
     /// @brief 非法字节序列计数（`SPEC.NF.RELI.01`：与背压水位同面板）。
     [[nodiscard]] auto decode_stats() const -> term::DecodeStats;
+
+    /// @brief OSC 消费留下的状态快照：标题、工作目录、命令块边界（`SPEC.FEAT.TERM.07`）。
+    ///
+    /// 标签名与窗口标题的优先级（OSC 标题覆盖标签名、手动重命名优先）归工作区层判定，会话只给来源。
+    [[nodiscard]] auto osc_state() const -> term::OscState;
+
+    /// @brief 解析网格格子上挂的超链接标识（`SPEC.FEAT.TERM.07` 的 OSC 8 腿）。
+    /// @param link_id 标识，取自 `grid::Row::hyperlink`。
+    /// @return URI 原文；已被淘汰或无链接时为 `std::nullopt`（按「不可点」处理）。
+    [[nodiscard]] auto hyperlink_target(grid::HyperlinkId link_id) const
+        -> std::optional<std::u32string>;
+
+    /// @brief 取走待写入系统剪贴板的文本（`OSC 52` 写方向，`SPEC.FEAT.CONN.12` 默认允许档）。
+    ///
+    /// 取走语义与查询应答同构：状态机在锁内只留存，剪贴板是主线程的 IO，由 `ClipboardOutbox`
+    /// 在帧边界取走并落地（架构 §3.2、§3.4）。
+    auto take_clipboard_write() -> std::optional<std::u32string>;
 
     /// @brief 在短临界区内读权威网格、光标与模式（架构 §3.4：锁内只取值，不绘制）。
     ///

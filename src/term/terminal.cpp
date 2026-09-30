@@ -9,10 +9,13 @@
 #include "borealis/term/terminal.h"
 
 #include <algorithm>
+#include <limits>
 #include <span>
 #include <string>
+#include <utility>
 
 #include "borealis/term/charset.h"
+#include "osc.h"
 
 namespace borealis::term {
 
@@ -90,8 +93,7 @@ auto Terminal::on_sequence(const vt::Sequence &seq) -> void {
             do_csi(seq);
             break;
         case vt::SequenceKind::Osc:
-            // TODO(SPEC.FEAT.TERM.07): OSC 0/2/7/8/52/133 的消费未开工。必须在此整体吞下——
-            // 落到 default 或当成文本会让标题串直接上屏。
+            do_osc(seq);
             break;
         case vt::SequenceKind::DcsHook:
         case vt::SequenceKind::DcsPut:
@@ -675,6 +677,125 @@ auto Terminal::set_alternate_screen(std::int32_t mode, bool enable) -> void {
     full_screen_dirty_ = true;
 }
 
+auto Terminal::do_osc(const vt::Sequence &seq) -> void {
+    const auto command = osc::split_command(seq.data);
+    if (!command.has_value()) {
+        ++osc_state_.unhandled_count;
+        return;  // 连命令号都拆不出来的串同样留痕：整体吞掉会让「标题没生效」这类排障无从下手
+    }
+    const auto &[code, args] = *command;
+    switch (code) {
+        case 0:  // 图标名 + 标题两字段的老形态：只认标题（图标名连 xterm 自己都不再呈现）
+        case 2:
+            osc_state_.title.assign(args);
+            break;
+        case 1:  // 仅图标名：消费掉，不上屏也不留状态
+            break;
+        case 7:
+            // URI 原样留存：`file://host/path` 的 host 归属判定与目录继承是 shell 集成的事。
+            // TODO(SPEC.FEAT.INTEG.02): 新标签/分屏继承当前会话目录，SSH 会话在远端目录语义下
+            // 降级为不继承。
+            osc_state_.working_directory.assign(args);
+            break;
+        case 8:
+            apply_hyperlink(args);
+            break;
+        case 52:
+            apply_clipboard(args);
+            break;
+        case 133:
+            apply_prompt_marker(args);
+            break;
+        default:
+            // 未消费的命令号（`4`/`10`/`110` 那一族调色板与颜色设置）计数进可观测面板，
+            // 不中断解析（架构 §5.5）。
+            ++osc_state_.unhandled_count;
+            break;
+    }
+}
+
+auto Terminal::apply_hyperlink(std::u32string_view args) -> void {
+    // `8;<params>;<uri>`：URI 自身可含 `;`，故只切第一刀，其后的全部内容是 URI。
+    const auto fields = osc::split_first(args, U';');
+    // params 段（`id=` 一类）不参与标识分配：同 id 归组只服务 hover 与点击高亮，等有消费者再做。
+    if (!fields.found || fields.tail.empty()) {
+        current_hyperlink_ = grid::kNoHyperlink;  // `8;;` 与光杆 `8` 都是「链接区间到此结束」
+        return;
+    }
+    if (hyperlinks_.size() >= kMaxHyperlinks) {
+        hyperlinks_.erase(hyperlinks_.begin());  // 标识递增，故 begin() 就是最旧一条
+    }
+    const auto link_id = next_hyperlink_id_++;
+    hyperlinks_.emplace(link_id, std::u32string{fields.tail});
+    current_hyperlink_ = link_id;
+}
+
+auto Terminal::apply_clipboard(std::u32string_view args) -> void {
+    // `52;<Pc>[;<Pc>…;<Pd>]`：剪贴板编号可以多段给出，载荷恒在最后一段（base64 表里没有 `;`）。
+    const auto fields = osc::split_last(args, U';');
+    const auto payload = fields.found ? fields.tail : args;
+    if (payload == U"?") {
+        // 读方向默认禁止（`SPEC.FEAT.CONN.12`）：回写空响应而非静默无响应，否则远端程序等不到
+        // 答复会一直挂着。
+        // TODO(SPEC.FEAT.CONN.12): 三态授权（禁止/允许/每次询问）落地后，「允许」档在此把本地
+        // 剪贴板内容回写成 `OSC 52 ; <Pc> ; <base64>`。
+        emit_response(U"\x1B]52;c;\x07");
+        return;
+    }
+    const auto text = osc::decode_base64(payload);
+    if (!text.has_value()) {
+        return;  // 载荷非法就不写：把一份错内容塞进用户剪贴板比不写更糟
+    }
+    // 锁内只留存，剪贴板落地归主线程（架构 §3.4）；同段输入的多次写只留最后一份。
+    clipboard_write_ = std::move(*text);
+    ++osc_state_.clipboard_write_requests;
+}
+
+auto Terminal::apply_prompt_marker(std::u32string_view args) -> void {
+    // `133;<A|B|C|D|P>[;<该种自己的参数>]`
+    // TODO(SPEC.FEAT.INTEG.01): 命令块要附着到网格行上（「复制上一命令的全部输出」、失败命令
+    // 高亮），当前只留最近一次边界；`P` 段的 `Cwd=` 与 OSC 7 同源，也在那一棒统一解析。
+    const auto fields = osc::split_first(args, U';');
+    const auto marker = fields.head.empty() ? U'\0' : fields.head.front();
+    switch (marker) {
+        case U'A':
+            osc_state_.prompt_marker = PromptMarker::PromptStart;
+            break;
+        case U'B':
+            osc_state_.prompt_marker = PromptMarker::PromptEnd;
+            break;
+        case U'C':
+            osc_state_.prompt_marker = PromptMarker::CommandStart;
+            break;
+        case U'D':
+            osc_state_.prompt_marker = PromptMarker::CommandExecuted;
+            osc_state_.command_exit_code =
+                osc::decimal(fields.tail, std::numeric_limits<std::int32_t>::max());
+            break;
+        case U'P':
+            osc_state_.prompt_marker = PromptMarker::OutputStart;
+            break;
+        default:
+            ++osc_state_.unhandled_count;
+            break;
+    }
+}
+
+auto Terminal::hyperlink_target(grid::HyperlinkId link_id) const -> std::optional<std::u32string> {
+    if (link_id == grid::kNoHyperlink) {
+        return std::nullopt;
+    }
+    const auto found = hyperlinks_.find(link_id);
+    return found == hyperlinks_.end() ? std::nullopt
+                                      : std::optional<std::u32string>{found->second};
+}
+
+auto Terminal::take_clipboard_write() -> std::optional<std::u32string> {
+    auto text = std::move(clipboard_write_);
+    clipboard_write_.reset();
+    return text;
+}
+
 auto Terminal::write_cell(char32_t code_point, std::uint8_t width) -> void {
     auto &row = buffer().visible_line(cursor_.row);
     // 落在双宽字符的后半格上时连前半格一起清掉，否则残留半格错位（SPEC.FEAT.TERM.08 验收线）。
@@ -686,6 +807,11 @@ auto Terminal::write_cell(char32_t code_point, std::uint8_t width) -> void {
     cell.width = width;
     cell.flags = pen_.flags & ~static_cast<grid::CellFlags>(grid::kFlagWideContinuation);
     row.set(cursor_.column, cell);
+    // 链接挂在笔上而不是 cell 的 SGR 属性里（`CSI m` 不清链接）：区间只由 `OSC 8` 括出。
+    // 双宽字符只挂前半格——延续格本就既不停留也不承载内容。
+    if (current_hyperlink_ != grid::kNoHyperlink) {
+        row.set_hyperlink(cursor_.column, current_hyperlink_);
+    }
     if (width >= 2U && cursor_.column + 1 < columns()) {
         grid::Cell continuation = pen_;
         continuation.code_point = 0;
@@ -854,6 +980,11 @@ auto Terminal::reset_to_default() -> void {
     region_top_ = 0;
     region_bottom_ = main_.visible_rows() - 1;
     ambiguous_ = AmbiguousWidth::Narrow;
+    osc_state_ = {};
+    hyperlinks_.clear();
+    next_hyperlink_id_ = 1;  // 网格已清空，标识可以从头分配
+    current_hyperlink_ = grid::kNoHyperlink;
+    clipboard_write_.reset();
     pending_wrap_ = false;
     parser_.reset();
     set_tab_stops_default();

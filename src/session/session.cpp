@@ -68,6 +68,22 @@ auto Session::decode_stats() const -> term::DecodeStats {
     return decoder_.stats();
 }
 
+auto Session::osc_state() const -> term::OscState {
+    const std::lock_guard lock{mutex_};
+    return terminal_.osc_state();
+}
+
+auto Session::hyperlink_target(grid::HyperlinkId link_id) const -> std::optional<std::u32string> {
+    const std::lock_guard lock{mutex_};
+    return terminal_.hyperlink_target(link_id);
+}
+
+auto Session::take_clipboard_write() -> std::optional<std::u32string> {
+    // 与查询应答同一套「锁内留存、锁外 IO」：这里取出的是状态机在 feed 期间攒下的待写文本。
+    const std::lock_guard lock{mutex_};
+    return terminal_.take_clipboard_write();
+}
+
 auto Session::on_bytes(std::span<const std::byte> bytes) -> void { ingest(bytes, false); }
 
 auto Session::on_closed() -> void { ingest({}, true); }
