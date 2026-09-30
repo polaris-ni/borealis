@@ -2,8 +2,8 @@
 /// 目标单元: include/borealis/term/terminal.h（解码 → 解析 → 网格 的端到端接缝）
 /// 测试说明: 回放真实形态的一帧分屏画面（tests/fixtures/vt/scene_tmux_frame.txt），走完整链路
 ///           「字节 → UTF-8 解码 → VT 解析 → 终端状态机 → 网格」，断言 SPEC.FEAT.TERM.01 的
-///           验收线（框线字符不得显示为乱码字母）、提示符的 SGR 颜色落格、OSC 标题串被吞而
-///           非上屏、非法字节后链路持续、主备屏互不污染（SPEC.FEAT.TERM.03）。
+///           验收线（框线字符不得显示为乱码字母）、提示符的 SGR 颜色落格、OSC 标题串不上屏而
+///           消费成状态（SPEC.FEAT.TERM.07）、非法字节后链路持续、主备屏互不污染（SPEC.FEAT.TERM.03）。
 ///
 ///           本用例把宽度判定挂生产的 `UnicodeWidthPolicy`：框线由 `ESC ( 0` 映射而来，其宽度按
 ///           映射前的 ASCII 字母判定，故整帧仍是单宽排布（SPEC.FEAT.TERM.08、裁决 7.15 的场景分工）。
@@ -98,7 +98,7 @@ AURORA_TEST_CASE(scene_frame_paints_box_lines_not_letters) {
                          std::uint32_t{U'p'});
 }
 
-AURORA_TEST_CASE(scene_prompt_colors_and_swallowed_osc) {
+AURORA_TEST_CASE(scene_prompt_colors_and_osc_title_consumed_into_state) {
     const std::string scene = load_scene();
     AURORA_TEST_REQUIRE_MSG(!scene.empty(), "fixture unreadable: tests/fixtures/vt/scene_tmux_frame.txt");
     UnicodeWidthPolicy width_policy;
@@ -109,8 +109,10 @@ AURORA_TEST_CASE(scene_prompt_colors_and_swallowed_osc) {
     AURORA_TEST_CHECK_EQ(text_of(grid, 3, 12), std::string("user:~/proj$"));
     AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(grid.visible_line(3).cell(12).code_point),
                          std::uint32_t{U' '});  // 提示符的尾随空格也要落格
-    // OSC 0 的标题串不得上屏：其后各行仍为空。
+    // `OSC 0` 的标题串不进网格：其后各行仍为空；消费的去向是状态快照（SPEC.FEAT.TERM.07）。
     AURORA_TEST_CHECK_EQ(text_of(grid, 4, 20), std::string(""));
+    AURORA_TEST_CHECK(terminal.osc_state().title == U"user@host: ~/proj");
+    AURORA_TEST_CHECK_EQ(terminal.osc_state().unhandled_count, std::size_t{0});
 
     // 提示符的 SGR 必须按来源分开存：索引色留索引，真彩色留 0xRRGGBB（SPEC.FEAT.TERM.02）。
     AURORA_TEST_CHECK_EQ(grid.visible_line(3).cell(0).foreground, std::uint32_t{0x50FA7B});

@@ -1,9 +1,11 @@
 /// 测试类型: unit
 /// 目标单元: include/borealis/session/session.h
 /// 测试说明: 会话层的读侧接线（字节 → 解码 → 状态机 → 网格 → 脏行提交）与写侧通道
-///           （文本编码下发、尺寸下发、DSR/DA1 应答回写），以及对端退出时的解码收尾与
-///           非法字节替换（SPEC.FEAT.TERM.01 查询响应、SPEC.FEAT.TERM.09 双向编码、
-///            SPEC.FEAT.XFER.01 尺寸同步、SPEC.FEAT.WS.01 存活判定、架构 §3.3/§7.2）。
+///           （文本编码下发、尺寸下发、DSR/DA1 应答回写、OSC 52 读方向应答）、OSC 消费产物
+///           的会话侧取值（标题 / 工作目录 / 超链接 / 剪贴板待写合并），以及对端退出时的
+///           解码收尾与非法字节替换（SPEC.FEAT.TERM.01 查询响应、SPEC.FEAT.TERM.07 OSC 消费、
+///           SPEC.FEAT.TERM.09 双向编码、SPEC.FEAT.XFER.01 尺寸同步、SPEC.FEAT.WS.01 存活判定、
+///           架构 §3.3/§7.2）。
 
 #include <cstddef>
 #include <cstdint>
@@ -244,6 +246,46 @@ AURORA_TEST_CASE(alive_tracks_the_connection) {
     AURORA_TEST_CHECK_TRUE(fixture.session->alive());
     fixture.session->close();
     AURORA_TEST_CHECK_FALSE(fixture.session->alive());
+}
+
+AURORA_TEST_CASE(osc_title_and_directory_readable_through_session) {
+    auto fixture = make_session();
+    fixture.connection->deliver("\x1B]0;window title\x07\x1B]7;file://hostA/srv\x07");
+    const auto state = fixture.session->osc_state();
+    AURORA_TEST_CHECK(state.title == U"window title");
+    AURORA_TEST_CHECK(state.working_directory == U"file://hostA/srv");
+}
+
+AURORA_TEST_CASE(osc_hyperlink_travels_the_whole_chain_to_the_grid) {
+    // 字节 → 解码 → 解析 → 状态机 → 网格侧表 → 会话取值：整条链都要能解析出目标。
+    auto fixture = make_session();
+    fixture.connection->deliver("\x1B]8;;https://example.test/a\x07link");
+    grid::HyperlinkId link_id = 0;
+    fixture.session->read([&link_id](Storage &grid, Cursor, const TermModes &) {
+        link_id = grid.visible_line(0).hyperlink(0);
+    });
+    AURORA_TEST_CHECK_EQ(link_id, grid::HyperlinkId{1});
+    const auto target = fixture.session->hyperlink_target(link_id);
+    AURORA_TEST_CHECK(target.has_value());
+    AURORA_TEST_CHECK(*target == U"https://example.test/a");
+}
+
+AURORA_TEST_CASE(osc_52_writes_in_one_batch_merge_before_the_main_thread_drains) {
+    auto fixture = make_session();
+    fixture.connection->deliver("\x1B]52;c;aGVsbG8=\x07\x1B]52;c;d29ybGQ=\x07");
+    AURORA_TEST_CHECK_EQ(fixture.session->osc_state().clipboard_write_requests, 2U);
+
+    const auto pending = fixture.session->take_clipboard_write();
+    AURORA_TEST_CHECK(pending.has_value());
+    AURORA_TEST_CHECK(*pending == U"world");  // 只把最终值交给主线程，旧值不再落地
+    AURORA_TEST_CHECK_FALSE(fixture.session->take_clipboard_write().has_value());
+}
+
+AURORA_TEST_CASE(osc_52_read_request_answers_through_write_channel) {
+    auto fixture = make_session();
+    fixture.connection->deliver("\x1B]52;c;?\x07");
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\x1B]52;c;\x07"));
+    AURORA_TEST_CHECK_FALSE(fixture.session->take_clipboard_write().has_value());
 }
 
 }  // namespace borealis::test_cases::utest_session

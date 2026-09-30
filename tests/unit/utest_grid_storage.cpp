@@ -3,8 +3,9 @@
 /// 测试说明: 环形缓冲存储的滚动语义（不搬移行数据、溢出覆盖最旧）、区域滚动只动带内行、
 ///           容量上下限、列宽变更不 reflow、行数变更的窗口边界语义、行的脏区间与占用上界、
 ///           组合标记侧表（并入序、脏标记、覆盖即清除、上限、截断与整行搬移）、
-///           清空复位（架构 §4.1 / §4.2 / §4.3 / §4.5 / §4.6，SPEC.FEAT.TERM.04、SPEC.FEAT.TERM.08、
-///           SPEC.FEAT.XFER.01 前置）。
+///           超链接侧表（一列一项、覆盖即清除、脏标记、截断与整行搬移）、
+///           清空复位（架构 §4.1 / §4.2 / §4.3 / §4.5 / §4.6，SPEC.FEAT.TERM.04、SPEC.FEAT.TERM.07、
+///           SPEC.FEAT.TERM.08、SPEC.FEAT.XFER.01 前置）。
 
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +24,7 @@ using borealis::grid::Cell;
 using borealis::grid::kFlagBold;
 using borealis::grid::kFlagWideContinuation;
 using borealis::grid::kMaxScrollbackLimit;
+using borealis::grid::kNoHyperlink;
 using borealis::grid::Row;
 using borealis::grid::Storage;
 
@@ -258,6 +260,74 @@ AURORA_TEST_CASE(marks_travel_with_the_whole_row) {
     AURORA_TEST_CHECK(marks_of(storage.visible_line(2), 0).empty());  // 腾空的行不带残留
     storage.visible_line(2).set(0, marker(U'C'));
     AURORA_TEST_CHECK_EQ(text_of(storage.visible_line(2)), std::string("C   "));
+}
+
+AURORA_TEST_CASE(hyperlink_ids_are_one_per_column) {
+    // 侧表按列存：同一列改挂即覆盖，不得留下第二条表项。
+    Row row{4};
+    row.set_hyperlink(1, 7);
+    row.set_hyperlink(1, 9);
+    row.set_hyperlink(3, 7);
+
+    AURORA_TEST_CHECK_EQ(row.hyperlink(1), 9U);
+    AURORA_TEST_CHECK_EQ(row.hyperlink(3), 7U);
+    AURORA_TEST_CHECK_EQ(row.hyperlink(0), kNoHyperlink);
+    AURORA_TEST_CHECK_EQ(row.hyperlink(2), kNoHyperlink);
+
+    row.set_hyperlink(1, kNoHyperlink);
+    AURORA_TEST_CHECK_EQ(row.hyperlink(1), kNoHyperlink);
+    AURORA_TEST_CHECK_EQ(row.hyperlink(3), 7U);  // 摘除只动本列
+}
+
+AURORA_TEST_CASE(writing_a_cell_drops_its_hyperlink) {
+    // 擦除与覆盖写入都要把旧链接带走，否则空格里还挂着上一个 URL。
+    Row row{4};
+    row.set(2, marker(U'X'));
+    row.set_hyperlink(2, 5);
+    row.clear_dirty();
+
+    row.set(2, marker(U'Y'));
+
+    AURORA_TEST_CHECK_EQ(row.hyperlink(2), kNoHyperlink);
+    AURORA_TEST_CHECK_TRUE(row.dirty());  // 覆盖本身要重绘
+}
+
+AURORA_TEST_CASE(hyperlink_marks_its_cell_dirty) {
+    // 挂链接是可见变更（下划线），漏标脏就会让增量重绘只画字形不画链接。
+    Row row{4};
+    row.set(1, marker(U'A'));
+    row.clear_dirty();
+
+    row.set_hyperlink(1, 3);
+
+    AURORA_TEST_CHECK_TRUE(row.dirty());
+    AURORA_TEST_CHECK_EQ(row.dirty_left(), 1U);
+    AURORA_TEST_CHECK_EQ(row.dirty_right(), 2U);
+}
+
+AURORA_TEST_CASE(row_reset_and_resize_discard_hyperlinks) {
+    Storage storage(6, 2, 0);
+    auto &row = storage.visible_line(0);
+    row.set_hyperlink(1, 4);
+    row.set_hyperlink(5, 4);
+
+    row.resize(3);  // 变窄截断：越界的表项连同其基础格一起消失
+    AURORA_TEST_CHECK_EQ(row.hyperlink(1), 4U);
+    AURORA_TEST_CHECK_EQ(row.hyperlink(2), kNoHyperlink);
+
+    row.reset();
+    AURORA_TEST_CHECK_EQ(row.hyperlink(1), kNoHyperlink);
+}
+
+AURORA_TEST_CASE(hyperlinks_travel_with_the_whole_row) {
+    Storage storage(4, 3, 0);
+    storage.visible_line(1).set_hyperlink(0, 11);
+    storage.visible_line(2).set_hyperlink(2, 22);
+
+    storage.scroll_region_up(1, 2, 1);
+
+    AURORA_TEST_CHECK_EQ(storage.visible_line(1).hyperlink(2), 22U);
+    AURORA_TEST_CHECK_EQ(storage.visible_line(2).hyperlink(0), kNoHyperlink);
 }
 
 AURORA_TEST_CASE(clear_returns_to_initial_state) {
