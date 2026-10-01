@@ -7,7 +7,7 @@
 
 ---
 
-## 0 六项议题的拍板结果（D1~D5 已于 2026-10-01 问答定下，本稿正文按此改写；D6 待拍板）
+## 0 六项议题的拍板结果（2026-10-01 问答全部定下，本稿正文按此改写）
 
 | # | 议题 | 候选 | 结论 | 影响面 |
 |:---|:---|:---|:---|:---|
@@ -16,7 +16,7 @@
 | D3 | 主线程本地副本的归属域 | ① `session` 域新增纯逻辑件（`session::ScreenMirror`）；② `ui` 域新增同名件；③ 副本直接由 `TerminalView` 持有、不抽件 | **①** | 副本的输入是「权威网格 + 脏行提交」，与 `DamageQueue`/`Session` 同一话题，归 session 域可全量单测（`grid::Storage` 侧无框架依赖）；选③ 则副本合并逻辑只能在像素层验，回归面变大 |
 | D4 | 装饰线与光标的粗细口径 | ① 一律「1 物理像素」= `1.0F / scale` dp，下划线贴基线下方、删除线取 ascent 中点；② 用 `Painter::draw_line`（AA 圆帽） | **①** | `draw_line` 是抗锯齿线，半透边缘会让 1px 规则在暗底上发灰；`fill_rect` 落在整 dp 坐标上，与网格边界天然对齐。粗细不随字号放大是本条的**刻意选择**，需在 §9 验收里写清 |
 | D5 | 本棒是否画 scrollback 偏移 | ① 恒画视口（偏移 0），滚动随后续棒接；② 现在就接滚轮与 `ScrollViewport` | **②**（扩了本棒范围） | 正文按②改写，边界见 §1「做/不做」与 §6.1：**鼠标上报模式下的滚轮转发**（`SPEC.FEAT.TERM.06`）不属本棒，以一句口径 + `TODO` 留痕，不做半截实现 |
-| D6 | **回看态遇到新输出怎么锚定**（D5② 带出的新未决项） | ① **距底恒定**：新输出时把窗口推到 `offset_y = max_offset() - back_rows`，画面随输出上移、始终「距底 N 行」；不需要改 `Storage`；② **绝对行锚定**：画面内容不动（`offset_y` 不动），要真做到需在 `grid::Storage` 增一个「已溢出/已覆盖的最旧行数」单调计数（公共头 + 单测 + 文档回写），否则 scrollback 饱和后逻辑行号整体左移一格，画面会逐行漂移；③ **回看时收到输出就跳回底部**（放弃回看态） | **①** | ① 零改动、语义自洽（「距底 N 行」正是 §6.1 派生量 `back_rows` 的定义），代价是读历史时新行会把内容顶走，长输出下看不清固定片段；② 是 xterm/Windows Terminal 的常见手感，但要动存储层公共头，且「锚定」在选区到来前（`SPEC.FEAT.INTERACT.02`）没有别的消费者，属为未来需求先付代价；③ 实现最省但等于没有回看，与 D5② 的意图相反，列出只为完备 |
+| D6 | **回看态遇到新输出怎么锚定**（D5② 带出的新未决项） | ① **距底恒定**：新输出时把窗口推到 `offset_y = max_offset() - back_rows`，画面随输出上移、始终「距底 N 行」；不需要改 `Storage`；② **绝对行锚定**：画面内容不动（`offset_y` 不动），要真做到需在 `grid::Storage` 增一个「已溢出/已覆盖的最旧行数」单调计数（公共头 + 单测 + 文档回写），否则 scrollback 饱和后逻辑行号整体左移一格，画面会逐行漂移；③ **回看时收到输出就跳回底部**（放弃回看态） | **①**（2026-10-01 拍板） | ① 零改动、语义自洽（「距底 N 行」正是 §6.1 派生量 `back_rows` 的定义），代价是读历史时新行会把内容顶走，长输出下看不清固定片段——该代价经裁决接受，若日后要换成②，改动面收敛在 `on_scroll` 之外的一处每帧推窗，且须同时动 `grid::Storage` 公共头；② 是 xterm/Windows Terminal 的常见手感，但在选区到来前（`SPEC.FEAT.INTERACT.02`）没有别的消费者，属为未来需求先付代价；③ 实现最省但等于没有回看，与 D5② 的意图相反 |
 
 ---
 
@@ -25,7 +25,7 @@
 - **做**：终端视口控件的绘制主路径（网格 → 色带 → 文本 run → 装饰 → 光标）、整格几何与 dp 换算的消费、尺寸来源（`SPEC.FEAT.XFER.01` 的 UI 侧取值腿，不含去抖）、跨线程帧唤醒与剪贴板排帧、**scrollback 滚轮回看（D5 选②：自管行偏移 + 钳制 + 偏移变化即整屏脏）**、`HeadlessSurface` 两帧像素差分的验收用例。
 - **不做**（各归其棒，本稿不留半成品接缝）：文本选择与选区着色（`SPEC.FEAT.INTERACT.02`）、IME preedit 绘制与候选窗定位（`SPEC.FEAT.INTERACT.06`）、键映射与字节发送（`SPEC.FEAT.INTERACT.01`）、字号/字体可配（`SPEC.FEAT.RENDER.02`）、DPI 变更后的度量与字形缓存重建（`SPEC.FEAT.RENDER.05`）、尺寸去抖合并（裁决 7.23④）、吞吐基准与时间门禁（`SPEC.NF.PERF.02`，本仓 task #36）。
 - **D5 选② 带出的两条明确边界**（本棒只留口径与 `TODO`，不实装）：
-  1. **回看态遇到新输出的锚定语义**：这是 D5 选② 才出现的问题（回看画面 + 后台仍在产出行），本稿不自行择一，做成未决项 **D6**（§0 表末行 + §6.1 末条），其中一条候选要改 `grid::Storage` 公共头。
+  1. **回看态遇到新输出的锚定语义**：这是 D5 选② 才出现的问题（回看画面 + 后台仍在产出行），已按 **D6①「距底恒定」** 拍板（§0 表末行、实现式见 §6.1），不改 `grid::Storage` 公共头。
   2. **鼠标上报模式下的滚轮**：`SPEC.FEAT.TERM.06` 的上报模式与 alternate scroll（DECSET 1007）要求滚轮**转发给应用**而非本地回看，本棒不做该分派（键映射与字节发送不在本棒），故 `on_scroll` 里以 `TODO(SPEC.FEAT.TERM.06): 上报模式与备屏 alternate scroll 优先于本地回看` 标一处，代码路径恒走本地回看。
 
 ---
@@ -146,7 +146,16 @@ clip = p.clip_bounds()                                    // 全局逻辑 dp，�
 - **备屏（`SPEC.FEAT.TERM.03`）天然不可滚**：备屏 scrollback 容量为 0，`content_h == viewport_h` → `max_offset() == 0`，无需特判。
 - 无惯性/动量：一步一格是刻意选择，`ScrollGlide` 的 150ms 吸附属框架 `Scroll` 路径，本层不引。
 - **鼠标上报模式下的滚轮**（`SPEC.FEAT.TERM.06` 的转发与 alternate scroll）不在本棒，`on_scroll` 开头留一处 `TODO(SPEC.FEAT.TERM.06): 上报模式与备屏 alternate scroll 优先于本地回看`，代码路径恒走本地回看。
-- **回看态遇到新输出的锚定语义 = 本稿新增的未决项 D6**（§0 表末行）。它决定「画完之后再看新行，画面动不动」，且其中一条候选要改 `grid::Storage` 的公共头，故必须先拍板再动代码，不在稿中自行择一。
+- **回看态遇到新输出：距底恒定（D6 已拍板①）**。`back_rows` 是用户意图，内核的 `offset_y` 只是它在当前 `total` 下的投影，故每帧拿到新的 `total_lines()` 后重投影一次：
+
+```
+每帧起头（读到 total 之后）：
+    back_rows    = max_offset_prev - round(offset_y)      // 上一帧的距底行数（用户意图）
+    content_h    = total;  viewport_h = rows              // max_offset 随之变
+    offset_y     = clamp_offset(max_offset_now - back_rows, 0.0F, 1.0F, content_h, viewport_h)
+```
+
+  效果：贴底态（`back_rows = 0`）随输出滚动，回看态则画面整体上移、始终「距底 N 行」。代价明写在 §0 表末行——长输出下固定片段会被顶走；日后若改取②（绝对行锚定），改动面就是这三行去掉重投影，外加 `grid::Storage` 公共头补一个「已覆盖最旧行数」的单调计数（scrollback 饱和后逻辑行号整体左移，不补偿就会逐行漂移）。
 
 ---
 
@@ -182,7 +191,7 @@ clip = p.clip_bounds()                                    // 全局逻辑 dp，�
 | 单帧只重绘变更行（`SPEC.FEAT.RENDER.01`） | `itest_render_viewport.cpp`（新增，纯逻辑 + headless） | `au::HeadlessSurface`（`AURORA_BACKEND_HEADLESS` 默认 ON，实测）连渲两帧：第一帧全量、第二帧只喂一行输出，用 `HeadlessSurface::data()` 的 RGBA8 做全像素差分，断言差异像素**只落在那一行的高度带内**；另一例断言 `clip_bounds()` 之外的行不被画（局部帧形态） |
 | 属性渲染（`SPEC.FEAT.RENDER.03`） | 同上 | 断言色带矩形覆盖该 run 的整格盒、颜色等于 `ui::resolve` 的输出（与 `utest_palette` 的纯逻辑值逐字段一致） |
 | 光标三形态（`SPEC.FEAT.RENDER.04`） | 同上 | 喂 `CSI 1..6 SP q` 后断言光标像素的**位置**（块=整格、下划线=底部规则、竖线=左沿），失焦态断言描边四边 |
-| 滚轮回看（D5②，`SPEC.FEAT.TERM.04` 的回滚可用性） | `utest_screen_mirror.cpp`（纯逻辑）+ `itest_render_viewport.cpp`（像素） | 逻辑层：§4 的偏移换算（脏行 `v` → 屏幕行 `v+k`、越界丢弃）、偏移变化整窗重建、`clamp` 到 `[0, total-rows]`；像素层：连渲三帧「满屏 → 上滚 k 行 → 回到底」，断言中间帧的差异覆盖全部行（整屏脏成立）且首屏与末屏**逐位相同**（回到底必得原样），并断言备屏下 `max_offset()==0`（滚不动） |
+| 滚轮回看（D5②，`SPEC.FEAT.TERM.04` 的回滚可用性） | `utest_screen_mirror.cpp`（纯逻辑）+ `itest_render_viewport.cpp`（像素） | 逻辑层：§4 的偏移换算（脏行 `v` → 屏幕行 `v+back`、越界丢弃）、偏移变化整窗重建、`clamp` 到 `[0, total-rows]`；像素层：连渲三帧「满屏 → 上滚 k 行 → 回到底」，断言中间帧的差异覆盖全部行（整屏脏成立）且首屏与末屏**逐位相同**（回到底必得原样），并断言备屏下 `max_offset()==0`（滚不动）；D6① 单独一条：回看态再喂一行输出，断言画面上移一行且「距底行数」不变（贴底态则画面随输出滚动，同一判据的两个端点） |
 | 列位与字形对齐（`SPEC.FEAT.TERM.08` 的像素延伸） | 同上 | 沿用 `tests/integration/itest_unicode_width.cpp` 的同一段含 CJK / Ambiguous / combining 的素材（若需共享则提为 `tests/fixtures/term/` 夹具，与既有 `utf8_cases.tsv` 同目录），断言双宽格占两格宽、combining 不额外推进列（叠字是否显形依赖框架 shaping，像素判据只到「不破坏网格」） |
 | 尺寸来源（`SPEC.FEAT.XFER.01` UI 腿） | `utest_screen_mirror.cpp` + 控件层一条 | 断言 85 dp ÷ 8 px 的取整与 `make_geometry` 一致；控件侧断言尺寸变化时 `Session::resize` 收到同一行列数（替身连接记录） |
 | 帧唤醒（D2） | 一条 e2e（投放交互桌面，裁决 7.19⑤） | 真机 ConPTY 会话里让子进程延迟输出，断言无键盘输入时窗口也被唤醒并排帧（`frame_count()` 递增），关掉唤醒即不复现 |

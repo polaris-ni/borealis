@@ -226,7 +226,7 @@
 
   <!-- ============ F. 回看偏移与行换算 ============ -->
   <rect class="panel" x="40" y="1150" width="1480" height="272"/>
-  <text class="ptitle" x="60" y="1178">F. 回看偏移与行换算（D5 选②；锚定语义待拍板 = D6）</text>
+  <text class="ptitle" x="60" y="1178">F. 回看偏移与行换算（D5 选②；锚定按 D6①「距底恒定」）</text>
 
   <text class="lbls" x="90" y="1200">逻辑行轴（0 = 最旧，末 5 行 = 视口）</text>
 
@@ -247,7 +247,7 @@
   <text class="lbls" x="90" y="1280" fill="#b3541e">橙虚线框 = 回看窗（back_rows = 2）：画绝对行 total−rows−2 起的 rows 行；绿括号 = 贴底窗（back_rows = 0）</text>
   <text class="lbls" x="90" y="1304">备屏（SPEC.FEAT.TERM.03）：scrollback 容量 0 → max_offset = 0 → 滚不动，无需特判</text>
   <text class="lbls" x="90" y="1328">本棒不做：鼠标上报模式下的滚轮转发与 alternate scroll（SPEC.FEAT.TERM.06）→ on_scroll 开头留一处 TODO</text>
-  <text class="lbls" x="90" y="1352">D6 三条候选（距底恒定 / 绝对行锚定 / 来输出即跳回底部）见文本稿 §0 表末行；第二条要改 grid::Storage 公共头</text>
+  <text class="lbls" x="90" y="1352">D6① 已拍板：每帧把 offset_y 重投影为 max_offset_now − back_rows → 画面随输出上移、恒距底 N 行，不改 grid::Storage</text>
 
   <text class="lbls" x="790" y="1200">屏幕行（on_paint 画的 rows 行，此处 rows = 5）</text>
   <g stroke="#b6bccb" stroke-width="1">
