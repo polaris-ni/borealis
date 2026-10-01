@@ -2,6 +2,7 @@
 
 > 状态：**待评审**。评审通过后本稿内容并入 `codespec/ARCHITECTURE.md` §9（渲染接入与视口）并从 `codespec/` 删除本文件；未通过则按批注整改后再评审。
 > 配图：`codespec/RENDER_VIEWPORT.draft.svg`（A 控件盒解剖 / B 层叠顺序 / C 脏行过滤 / D 光标三形态 / E 帧唤醒时序 / F 回看偏移与行换算）。
+> 像素目标稿另见 `codespec/RENDER_UI.draft.md`：本稿定「代码怎么写」，那份定「上屏后长什么样、按什么判据算做对了」。
 > 前置已闭合：G1 三腿（裁决 7.20 / 7.22）、取用形态（裁决 7.23）、纯逻辑两块（`ui::palette`、`ui::cell_layout`，CHANGELOG v0.20）、DECSCUSR 状态机侧（CHANGELOG v0.21）。
 > 框架侧 API 一律按 2026-10-01 实测签名书写，未实测的推断在文末 §11 单独标注。
 
@@ -206,7 +207,7 @@ clip = p.clip_bounds()                                    // 全局逻辑 dp，�
 ## 10 评审通过后随代码一起的回写项
 
 1. `AGENTS.md` §2 的 `ui/` 行补 `src/ui/terminal_view.{h,cpp}` 与 `session/screen_mirror.h`，§6「尚无」条目里 `include/borealis/ui/terminal_view.h（绘制侧控件的公共头）` 改为私有头形态（D1）。
-2. `ARCHITECTURE.md` §9.2 追加「控件形态与绘制序列」小节（本稿 §3/§6/§7 的正文），§9.5 补记 D5② 的实际形态（内核量以「行」为单位、不声明 `overflow_strategy(Scroll)` 的理由、`remaining_y` 上冒），§3.2/§7 的唤醒描述按 §8 的注入形态补一句；随后删除本 `.draft.md` 与配图，或把配图移入正式文档引用路径。
+2. `ARCHITECTURE.md` §9.2 追加「控件形态与绘制序列」小节（本稿 §3/§6/§7 的正文），§9.5 补记 D5② 的实际形态（内核量以「行」为单位、不声明 `overflow_strategy(Scroll)` 的理由、`remaining_y` 上冒），§3.2/§7 的唤醒描述按 §8 的注入形态补一句；`RENDER_UI.draft.md` 的 V1~V27 判据折进 §9.2 的验收段（并作为像素用例的断言清单）；随后删除本 `.draft.md` 与 `RENDER_UI.draft.md` 两份配图，或把配图移入正式文档引用路径。
 3. `SPECIFICATIONS.md` §7 新增裁决（若 D1/D2/D3 中任一项选了非推荐项，须写成裁决而非只在代码里体现）；`CHANGELOG.md` 记 v0.22；`PLAN.md` §8 的 M1 现状与待接接缝表按落地结果更新（`SPEC.FEAT.RENDER.01/03/04` 从「未开工」改为「绘制主路径已落，余 …」）。
 4. `src/session/session.cpp` 的 `TODO(SPEC.FEAT.RENDER.01)` 在唤醒接线后消除，其注释里残留的 `au::post_to_main` 表述按裁决 7.23ⓒ 一并改掉（该符号只在 `aurora::detail` 下存在，不属消费方的长期依赖面）；若闪烁频率仍内置，则新增 `TODO(SPEC.FEAT.PREF.02)` 一处。
 
