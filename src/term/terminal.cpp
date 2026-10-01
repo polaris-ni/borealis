@@ -50,6 +50,22 @@ auto append_decimal(std::u32string &out, std::size_t value) -> void {
     }
 }
 
+/// @brief DECSCUSR 的形态档：3/4 下划线、5/6 竖线，其余（1/2）为块。
+/// @param style `CSI Ps SP q` 的 Ps，调用方保证在 1..6 之内。
+/// @return 对应形态。
+[[nodiscard]] constexpr auto cursor_shape_for(std::int32_t style) noexcept -> CursorShape {
+    switch (style) {
+        case 3:
+        case 4:
+            return CursorShape::Underline;
+        case 5:
+        case 6:
+            return CursorShape::Bar;
+        default:
+            return CursorShape::Block;
+    }
+}
+
 }  // namespace
 
 Terminal::Terminal(std::size_t columns, std::size_t rows, std::size_t scrollback_limit,
@@ -380,6 +396,20 @@ auto Terminal::do_csi(const vt::Sequence &seq) -> void {
             cursor_ = modes_.alternate_screen ? saved_alt_ : saved_main_;
             pending_wrap_ = false;
             break;
+        case U'q': {  // DECSCUSR
+            // 中间字节必须是空格：`CSI q`（无中间字节）与带其它中间字节的写法不是本序列，按未识别忽略。
+            if (seq.intermediates.empty() || seq.intermediates.back() != U' ') {
+                break;
+            }
+            const auto style = vt::param_or(params, 0, 0);
+            // 档位表照 xterm：1/2 块、3/4 下划线、5/6 竖线，奇数闪烁、偶数静止。
+            const bool defined = style >= 1 && style <= 6;
+            // `CSI 0 q` 与越界档位整档回落默认闪烁块，而不是保留旧值——设备发未定义档位通常意在复位，
+            // 留着上一档会让形态取决于历史输入。
+            modes_.cursor_shape = defined ? cursor_shape_for(style) : CursorShape::Block;
+            modes_.cursor_blinking = !defined || (style % 2) == 1;
+            break;
+        }
         case U'I':  // HTS：在光标列设定制表位（SPEC.FEAT.TERM.05 的制表位三项之一）
             if (cursor_.column < tab_stops_.size()) {
                 tab_stops_[cursor_.column] = true;

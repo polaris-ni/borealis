@@ -12,7 +12,8 @@
 // `SPEC.FEAT.TERM.02`（16/256/真彩色，色值与来源分开存）、`SPEC.FEAT.TERM.03`（主备屏）、
 // `SPEC.FEAT.TERM.05`（滚动区域、光标定位/保存恢复/可见性、擦除与插删、制表位）、
 // `SPEC.FEAT.TERM.07`（OSC 0/2/7/8/52/133 的消费，结果形态见 `term/osc.h`）、
-// `SPEC.FEAT.TERM.08` 的占位机制（格数由注入的 WidthPolicy 给出，本模块不查表）。
+// `SPEC.FEAT.TERM.08` 的占位机制（格数由注入的 WidthPolicy 给出，本模块不查表）、
+// `SPEC.FEAT.RENDER.04` 的状态机前置（DECSCUSR 光标形态与闪烁档；形态绘制归渲染侧）。
 // ============================================================
 
 #include <array>
@@ -41,6 +42,13 @@ struct Cursor {
     std::size_t column = 0;
 };
 
+/// @brief 光标形态（`SPEC.FEAT.RENDER.04` 的三形态，DECSCUSR 的形态档）。
+enum class CursorShape : std::uint8_t {
+    Block,      ///< 实心块。
+    Underline,  ///< 下划线。
+    Bar,        ///< 竖线。
+};
+
 /// @brief 终端模式的当前取值，DECSET/DECRST 与 ESC 指派的可观察结果。
 struct TermModes {
     bool cursor_key_app = false;   ///< `?1` DECCKM：方向键发 SS3 而非 CSI。
@@ -53,6 +61,8 @@ struct TermModes {
     bool focus_reporting = false;  ///< `?1004`。
     bool application_keypad = false; ///< `ESC =` / `ESC >`。
     bool utf8_received = false;    ///< `ESC % G` / `ESC % @`：接收侧字符集口径。
+    CursorShape cursor_shape = CursorShape::Block; ///< `CSI Ps SP q` DECSCUSR 的形态档。
+    bool cursor_blinking = true;   ///< DECSCUSR 的闪烁档；失焦降级归渲染侧，不在此表达。
 };
 
 /// @brief DECSTBM 滚动区域（视口内行号，闭区间）。
