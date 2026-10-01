@@ -1,14 +1,19 @@
 /// 测试类型: unit
 /// 目标单元: include/borealis/ui/cell_layout.h + src/ui/cell_layout.cpp
 /// 测试说明: 整格像素度量按 scale 换算成 dp 步长（含非整除缩放的取整容差、「装不满也给一格」与
-///           不可用度量的空网格）、行列数即尺寸的 UI 侧来源（SPEC.FEAT.XFER.01）、run 按样式全等
-///           合并且色带与文本共用同一批切分边界（裁决 7.23②）、双宽延续格不进文本但保留列宽、
-///           combining 随基础码点并进同段文本（裁决 7.23ⓑ）、空格与不可见段的丢弃与底色保留、
-///           下划线空格段仍需交给绘制侧（SPEC.FEAT.RENDER.01、SPEC.FEAT.TERM.08）。
+///           不可用度量的空网格）、行列数即尺寸的 UI 侧来源且先扣视口内边距（SPEC.FEAT.XFER.01、
+///           裁决 7.25②）、run 按样式全等合并且色带与文本共用同一批切分边界（裁决 7.23②）、
+///           双宽延续格不进文本但保留列宽、combining 随基础码点并进同段文本（裁决 7.23ⓑ）、
+///           空格与不可见段的丢弃与底色保留、下划线空格段仍需交给绘制侧
+///           （SPEC.FEAT.RENDER.01、SPEC.FEAT.TERM.08）、三档下划线与删除线的落笔矩形吸附物理像素
+///           且波浪相位跨 run 连续（SPEC.FEAT.RENDER.03、裁决 7.28④）。
 
+#include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "borealis/grid/cell.h"
 #include "borealis/grid/row.h"
@@ -25,15 +30,18 @@ using borealis::grid::CellFlags;
 using borealis::grid::ColorSource;
 using borealis::grid::kFlagBold;
 using borealis::grid::kFlagHidden;
-using borealis::grid::kFlagUnderline;
 using borealis::grid::kFlagWideContinuation;
 using borealis::grid::Row;
+using borealis::grid::UnderlineStyle;
 using borealis::ui::CellPixels;
+using borealis::ui::decoration_rects;
+using borealis::ui::GridGeometry;
 using borealis::ui::layout_row;
 using borealis::ui::LogicalSize;
 using borealis::ui::make_geometry;
 using borealis::ui::PaletteSpec;
 using borealis::ui::rect_for;
+using borealis::ui::Rect;
 using borealis::ui::RgbaColor;
 using borealis::ui::StyleRun;
 
@@ -69,10 +77,29 @@ auto at(const std::vector<StyleRun> &runs, std::size_t index) -> const StyleRun 
     return index < runs.size() ? runs[index] : kEmpty;
 }
 
+/// @brief 取第 @p index 个矩形；越界返回空矩形，同理让失败落在断言上。
+auto rect_at(const std::vector<Rect> &rects, std::size_t index) -> Rect {
+    return index < rects.size() ? rects[index] : Rect{};
+}
+
+/// @brief 造一段只带下划线档位的 run（装饰线判据只需列区间与笔形）。
+auto ruled_run(std::size_t first, std::size_t last, UnderlineStyle style) -> StyleRun {
+    StyleRun run{};
+    run.first_column = first;
+    run.last_column = last;
+    run.paint.underline = style;
+    return run;
+}
+
+/// @brief 8 px × 16 px、基线 12 px 的格在 2× 缩放下即 4 dp × 8 dp、基线 6 dp，1 px = 0.5 dp。
+auto square_geometry() -> GridGeometry {
+    return make_geometry(CellPixels{8, 16, 12}, 2.0, LogicalSize{800.0, 800.0}, 0.0);
+}
+
 }  // namespace
 
 AURORA_TEST_CASE(geometry_divides_pixel_metrics_by_scale) {
-    const auto geometry = make_geometry(CellPixels{8, 16, 12}, 2.0, LogicalSize{80.0, 80.0});
+    const auto geometry = make_geometry(CellPixels{8, 16, 12}, 2.0, LogicalSize{80.0, 80.0}, 0.0);
     AURORA_TEST_CHECK_NEAR(geometry.cell_width, 4.0, 1.0e-9);
     AURORA_TEST_CHECK_NEAR(geometry.cell_height, 8.0, 1.0e-9);
     AURORA_TEST_CHECK_NEAR(geometry.ascent, 6.0, 1.0e-9);
@@ -81,7 +108,7 @@ AURORA_TEST_CASE(geometry_divides_pixel_metrics_by_scale) {
 }
 
 AURORA_TEST_CASE(geometry_counts_whole_cells_and_keeps_at_least_one) {
-    const auto geometry = make_geometry(CellPixels{8, 16, 12}, 2.0, LogicalSize{85.0, 8.0});
+    const auto geometry = make_geometry(CellPixels{8, 16, 12}, 2.0, LogicalSize{85.0, 8.0}, 0.0);
     AURORA_TEST_CHECK_EQ(geometry.columns, 21U);  // 85 dp 装 21 个 4 dp 格，余数不成格
     AURORA_TEST_CHECK_EQ(geometry.rows, 1U);      // 不足一格高仍给一格，否则整屏无处可画
 }
@@ -90,28 +117,49 @@ AURORA_TEST_CASE(geometry_tolerates_non_terminating_scale) {
     // 7 px 与 14 px 在 1.5× 下都是无限二进制小数，可视宽由同一次除法反乘回来，
     // 比值会差出 1e-15 量级；无容差就少算一整列一整行。
     const auto side = 30.0 * (7.0 / 1.5);
-    const auto geometry = make_geometry(CellPixels{7, 14, 11}, 1.5, LogicalSize{side, side});
+    const auto geometry = make_geometry(CellPixels{7, 14, 11}, 1.5, LogicalSize{side, side}, 0.0);
     AURORA_TEST_CHECK_EQ(geometry.columns, 30U);
     AURORA_TEST_CHECK_EQ(geometry.rows, 15U);
 }
 
 AURORA_TEST_CASE(geometry_is_empty_when_metrics_or_viewport_are_unusable) {
-    const auto no_font = make_geometry(CellPixels{0, 0, 0}, 1.0, LogicalSize{800.0, 600.0});
+    const auto no_font = make_geometry(CellPixels{0, 0, 0}, 1.0, LogicalSize{800.0, 600.0}, 4.0);
     AURORA_TEST_CHECK_EQ(no_font.columns, 0U);
     AURORA_TEST_CHECK_EQ(no_font.rows, 0U);
+    AURORA_TEST_CHECK_NEAR(no_font.padding, 4.0, 1.0e-9);  // 无效度量时内边距与缩放仍要留住供排障
 
-    const auto minimized = make_geometry(CellPixels{8, 16, 12}, 1.0, LogicalSize{0.0, 0.0});
+    const auto minimized = make_geometry(CellPixels{8, 16, 12}, 1.0, LogicalSize{0.0, 0.0}, 0.0);
     AURORA_TEST_CHECK_EQ(minimized.columns, 0U);
     AURORA_TEST_CHECK_EQ(minimized.rows, 0U);
 }
 
 AURORA_TEST_CASE(rect_maps_row_and_column_bounds_to_dp) {
-    const auto geometry = make_geometry(CellPixels{8, 16, 12}, 2.0, LogicalSize{80.0, 80.0});
+    const auto geometry = make_geometry(CellPixels{8, 16, 12}, 2.0, LogicalSize{80.0, 80.0}, 0.0);
     const auto rect = rect_for(geometry, 2U, 1U, 4U);
     AURORA_TEST_CHECK_NEAR(rect.x, 4.0, 1.0e-9);
     AURORA_TEST_CHECK_NEAR(rect.y, 16.0, 1.0e-9);
     AURORA_TEST_CHECK_NEAR(rect.width, 12.0, 1.0e-9);
     AURORA_TEST_CHECK_NEAR(rect.height, 8.0, 1.0e-9);
+}
+
+AURORA_TEST_CASE(viewport_padding_shrinks_the_grid_and_shifts_the_origin) {
+    // 4 dp × 8 dp 的格放进 80 dp × 80 dp：无内边距是 20×10，四周各扣 8 dp 即 64×64 → 16×8。
+    const auto geometry = make_geometry(CellPixels{8, 16, 12}, 2.0, LogicalSize{80.0, 80.0}, 8.0);
+    AURORA_TEST_CHECK_EQ(geometry.columns, 16U);
+    AURORA_TEST_CHECK_EQ(geometry.rows, 8U);
+    AURORA_TEST_CHECK_NEAR(geometry.cell_width, 4.0, 1.0e-9);  // 步长不含内边距，只原点含
+
+    const auto rect = rect_for(geometry, 0U, 0U, 1U);
+    AURORA_TEST_CHECK_NEAR(rect.x, 8.0, 1.0e-9);
+    AURORA_TEST_CHECK_NEAR(rect.y, 8.0, 1.0e-9);
+    AURORA_TEST_CHECK_NEAR(rect.width, 4.0, 1.0e-9);
+}
+
+AURORA_TEST_CASE(padding_that_leaves_no_room_gives_an_empty_grid) {
+    // 内边距吃掉整块可视区时不硬塞一格：那一格会画到窗口外，与「窗口最小化」同形。
+    const auto geometry = make_geometry(CellPixels{8, 16, 12}, 2.0, LogicalSize{80.0, 80.0}, 40.0);
+    AURORA_TEST_CHECK_EQ(geometry.columns, 0U);
+    AURORA_TEST_CHECK_EQ(geometry.rows, 0U);
 }
 
 AURORA_TEST_CASE(blank_row_produces_nothing) {
@@ -243,15 +291,40 @@ AURORA_TEST_CASE(bare_underline_on_blanks_still_reaches_the_painter) {
     const auto spec = themed();
     Row row{3U};
     Cell ruled{};
-    ruled.flags = kFlagUnderline;  // 空格加下划线：无字形但有装饰，段必须留下
+    ruled.underline = UnderlineStyle::Curly;  // 空格加下划线：无字形但有装饰，段必须留下
     put(row, 0U, ruled);
 
     const auto runs = layout_row(row, spec);
     AURORA_TEST_REQUIRE_EQ(runs.size(), 1U);
     AURORA_TEST_CHECK_TRUE(at(runs, 0).text.empty());
-    AURORA_TEST_CHECK_TRUE(at(runs, 0).paint.underline);
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(at(runs, 0).paint.underline),
+                         static_cast<std::uint32_t>(UnderlineStyle::Curly));
     AURORA_TEST_CHECK_EQ(at(runs, 0).first_column, 0U);
     AURORA_TEST_CHECK_EQ(at(runs, 0).last_column, 1U);
+}
+
+AURORA_TEST_CASE(underline_style_change_splits_the_row) {
+    const auto spec = themed();
+    Row row{3U};
+    Cell single{};
+    single.code_point = U'a';
+    single.underline = UnderlineStyle::Single;
+    Cell doubled{};
+    doubled.code_point = U'b';
+    doubled.underline = UnderlineStyle::Double;
+    put(row, 0U, single);
+    put(row, 1U, single);
+    put(row, 2U, doubled);
+
+    // 三档可辨的前提是档位参与合并判据：单线与双线同色同字体也不得并进一段（裁决 7.28）。
+    const auto runs = layout_row(row, spec);
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 2U);
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(at(runs, 0).paint.underline),
+                         static_cast<std::uint32_t>(UnderlineStyle::Single));
+    AURORA_TEST_CHECK_EQ(at(runs, 0).last_column, 2U);
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(at(runs, 1).paint.underline),
+                         static_cast<std::uint32_t>(UnderlineStyle::Double));
+    AURORA_TEST_CHECK_EQ(at(runs, 1).first_column, 2U);
 }
 
 AURORA_TEST_CASE(plain_background_band_survives_without_text) {
@@ -264,6 +337,92 @@ AURORA_TEST_CASE(plain_background_band_survives_without_text) {
     AURORA_TEST_CHECK_EQ(at(runs, 0).first_column, 1U);
     AURORA_TEST_CHECK_EQ(at(runs, 0).last_column, 2U);
     AURORA_TEST_CHECK_TRUE(at(runs, 0).text.empty());
+}
+
+AURORA_TEST_CASE(single_underline_is_one_physical_pixel_below_the_baseline) {
+    const auto geometry = square_geometry();  // 基线 6 dp、1 px = 0.5 dp
+    const auto rects = decoration_rects(geometry, 0U, ruled_run(1U, 3U, UnderlineStyle::Single));
+    AURORA_TEST_REQUIRE_EQ(rects.size(), 1U);
+    AURORA_TEST_CHECK_NEAR(rect_at(rects, 0).x, 4.0, 1.0e-9);
+    AURORA_TEST_CHECK_NEAR(rect_at(rects, 0).y, 6.5, 1.0e-9);
+    AURORA_TEST_CHECK_NEAR(rect_at(rects, 0).width, 8.0, 1.0e-9);
+    AURORA_TEST_CHECK_NEAR(rect_at(rects, 0).height, 0.5, 1.0e-9);
+}
+
+AURORA_TEST_CASE(double_underline_is_two_one_pixel_lines_with_a_one_pixel_gap) {
+    const auto geometry = square_geometry();
+    const auto rects = decoration_rects(geometry, 0U, ruled_run(0U, 2U, UnderlineStyle::Double));
+    AURORA_TEST_REQUIRE_EQ(rects.size(), 2U);
+    AURORA_TEST_CHECK_NEAR(rect_at(rects, 0).y, 6.5, 1.0e-9);  // 基线 +1px
+    AURORA_TEST_CHECK_NEAR(rect_at(rects, 1).y, 7.5, 1.0e-9);  // 基线 +3px，间距与线宽同为 1px
+    AURORA_TEST_CHECK_NEAR(rect_at(rects, 0).height, 0.5, 1.0e-9);
+    AURORA_TEST_CHECK_NEAR(rect_at(rects, 1).height, 0.5, 1.0e-9);
+    AURORA_TEST_CHECK_NEAR(rect_at(rects, 1).y + rect_at(rects, 1).height, 8.0, 1.0e-9);  // 不越出格底
+}
+
+AURORA_TEST_CASE(curly_underline_oscillates_once_per_four_pixels) {
+    const auto geometry = square_geometry();
+    const auto rects = decoration_rects(geometry, 0U, ruled_run(0U, 1U, UnderlineStyle::Curly));
+    AURORA_TEST_REQUIRE_EQ(rects.size(), 8U);  // 一格 8 物理像素，逐像素列一段
+    const std::array<double, 4> expected{7.0, 7.5, 7.0, 6.5};
+    for (std::size_t index = 0; index < rects.size(); ++index) {
+        AURORA_TEST_CHECK_NEAR(rect_at(rects, index).x, static_cast<double>(index) * 0.5, 1.0e-9);
+        AURORA_TEST_CHECK_NEAR(rect_at(rects, index).width, 0.5, 1.0e-9);
+        AURORA_TEST_CHECK_NEAR(rect_at(rects, index).height, 0.5, 1.0e-9);
+        AURORA_TEST_CHECK_NEAR(rect_at(rects, index).y, expected[index % 4U], 1.0e-9);
+    }
+}
+
+AURORA_TEST_CASE(curly_phase_anchored_to_the_row_not_the_run) {
+    // 7 px 宽的格在 1.5× 下不是 4 的整数倍，列边界处相位会推进；锚在 run 左沿就让
+    // 波形在样式切换处抖动一下（判据见裁决 7.28④）。
+    const auto geometry = make_geometry(CellPixels{7, 14, 11}, 1.5, LogicalSize{800.0, 800.0}, 0.0);
+    const auto first = decoration_rects(geometry, 0U, ruled_run(0U, 1U, UnderlineStyle::Curly));
+    const auto second = decoration_rects(geometry, 0U, ruled_run(1U, 2U, UnderlineStyle::Curly));
+    AURORA_TEST_REQUIRE_EQ(first.size(), 7U);
+    AURORA_TEST_REQUIRE_EQ(second.size(), 7U);
+    // 基线 = 11 px；波浪中心 = 基线 +2px，相位 0..3 的偏移为 0、+1、0、−1。
+    // 基线 11 px，波浪中心 = 基线 +2px = 13 px。
+    AURORA_TEST_CHECK_NEAR(rect_at(first, 0).y, 13.0 / 1.5, 1.0e-9);   // 相位 0 → 中心
+    AURORA_TEST_CHECK_NEAR(rect_at(first, 6).y, 13.0 / 1.5, 1.0e-9);   // 相位 2 → 中心
+    AURORA_TEST_CHECK_NEAR(rect_at(second, 0).y, 12.0 / 1.5, 1.0e-9);  // 相位 3 → 中心 −1px，接着上一段推进
+    AURORA_TEST_CHECK_NEAR(rect_at(second, 1).y, 13.0 / 1.5, 1.0e-9);  // 回相位 0
+}
+
+AURORA_TEST_CASE(decoration_edges_snap_to_physical_pixels) {
+    const auto geometry = make_geometry(CellPixels{7, 14, 11}, 1.5, LogicalSize{800.0, 800.0}, 4.0);
+    std::vector<StyleRun> runs{ruled_run(1U, 4U, UnderlineStyle::Single),
+                               ruled_run(1U, 4U, UnderlineStyle::Curly)};
+    runs[1].paint.strike = true;
+    for (const auto &run : runs) {
+        for (const auto &rect : decoration_rects(geometry, 3U, run)) {
+            // 1px 规则落在小数 dp 上会被抗锯齿糊成发灰的 2px，故四边必须整像素（视觉稿 D4①）。
+            AURORA_TEST_CHECK_NEAR(rect.x * 1.5, std::round(rect.x * 1.5), 1.0e-9);
+            AURORA_TEST_CHECK_NEAR(rect.y * 1.5, std::round(rect.y * 1.5), 1.0e-9);
+            AURORA_TEST_CHECK_NEAR(rect.width * 1.5, std::round(rect.width * 1.5), 1.0e-9);
+            AURORA_TEST_CHECK_NEAR(rect.height * 1.5, 1.0, 1.0e-9);
+        }
+    }
+}
+
+AURORA_TEST_CASE(strike_runs_through_the_middle_of_the_line_box) {
+    const auto geometry = square_geometry();
+    auto run = ruled_run(0U, 2U, UnderlineStyle::Single);
+    run.paint.strike = true;
+    const auto rects = decoration_rects(geometry, 1U, run);
+    AURORA_TEST_REQUIRE_EQ(rects.size(), 2U);  // 一行同时有下划线与删除线：两段各一笔
+    AURORA_TEST_CHECK_NEAR(rect_at(rects, 0).y, 14.5, 1.0e-9);  // 行顶 8 + 基线 6 + 1px
+    AURORA_TEST_CHECK_NEAR(rect_at(rects, 1).y, 11.0, 1.0e-9);  // 行顶 8 + 基线 × 0.5
+}
+
+AURORA_TEST_CASE(plain_and_hidden_runs_produce_no_decoration) {
+    const auto geometry = square_geometry();
+    AURORA_TEST_CHECK_TRUE(decoration_rects(geometry, 0U, ruled_run(0U, 2U, UnderlineStyle::None)).empty());
+
+    auto concealed = ruled_run(0U, 1U, UnderlineStyle::Single);
+    concealed.paint.strike = true;
+    concealed.paint.hidden = true;  // `SGR 8` 只隐去字形与装饰，底色色带另由绘制侧铺
+    AURORA_TEST_CHECK_TRUE(decoration_rects(geometry, 0U, concealed).empty());
 }
 
 }  // namespace borealis::test_cases::utest_cell_layout

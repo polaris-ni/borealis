@@ -2,7 +2,8 @@
 /// 目标单元: include/borealis/ui/palette.h + src/ui/palette.cpp
 /// 测试说明: 调色板三段索引（主题档 / 6×6×6 立方 / 24 阶灰）、色值与来源的合成、
 ///           bold-is-bright 只作用于前 8 色档、暗淡向底色靠拢、反色与合成次序、
-///           不可见保留底色、光标色不参与格合成（裁决 7.25③），
+///           不可见保留底色、光标色不参与格合成（裁决 7.25③）、下划线档位原样抵达绘制意图
+///           且不参与色合成（裁决 7.28），
 ///           以及 WCAG 对比度与最小对比度的整数插值口径
 ///           （SPEC.FEAT.RENDER.03，架构 §9.2）。
 
@@ -39,6 +40,7 @@ using borealis::grid::kFlagDim;
 using borealis::grid::kFlagHidden;
 using borealis::grid::kFlagNone;
 using borealis::grid::kFlagReverse;
+using borealis::grid::UnderlineStyle;
 using borealis::ui::contrast_ratio;
 using borealis::ui::enforce_contrast;
 using borealis::ui::palette_color;
@@ -234,6 +236,22 @@ AURORA_TEST_CASE(cursor_color_never_reaches_cell_paint) {
     // 反向守卫：同样的位置换成前景色就必须改变绘制意图，否则上一条断言是空转。
     spec.default_foreground = *spec.cursor_color;
     AURORA_TEST_CHECK_NE(resolve(cell, spec).foreground, baseline.foreground);
+}
+
+AURORA_TEST_CASE(underline_style_passes_through_without_touching_colors) {
+    const auto spec = themed();
+    auto cell = glyph(U'a');
+    const auto plain = resolve(cell, spec);
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(plain.underline),
+                         static_cast<std::uint32_t>(UnderlineStyle::None));
+
+    // 档位只决定笔形、不参与色合成；它必须原样抵达绘制意图，否则三档在屏上不可辨（裁决 7.28）。
+    cell.underline = UnderlineStyle::Double;
+    const auto ruled = resolve(cell, spec);
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(ruled.underline),
+                         static_cast<std::uint32_t>(UnderlineStyle::Double));
+    AURORA_TEST_CHECK_EQ(ruled.foreground, plain.foreground);
+    AURORA_TEST_CHECK_EQ(ruled.background, plain.background);
 }
 
 }  // namespace borealis::test_cases::utest_palette

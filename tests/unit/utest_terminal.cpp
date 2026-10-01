@@ -2,7 +2,7 @@
 /// 目标单元: include/borealis/term/terminal.h
 /// 测试说明: 终端状态机的语义解释——打印与自动换行、C0 执行与制表位、滚动区域与区域内/整屏
 ///           滚动（含 scrollback 相互作用）、IL/DL/ICH/DCH/ECH、ED/EL、SGR（16/256/真彩与
-///           两种子参数写法）、DEC 私有模式登记、字符集指派、主备屏、宽字符占位与
+///           两种子参数写法、下划线四档的编码映射见裁决 7.28）、DEC 私有模式登记、字符集指派、主备屏、宽字符占位与
 ///           Ambiguous 覆盖口径、DECSCUSR 光标形态档位、RIS 复位、尺寸变更与整屏脏标记
 ///           （SPEC.FEAT.TERM.01 / .02 / .03 / .05 / .08，SPEC.FEAT.XFER.01 与
 ///           SPEC.FEAT.RENDER.04 的状态机前置）。
@@ -10,6 +10,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
+#include <utility>
 
 #include "borealis/grid/cell.h"
 #include "borealis/grid/storage.h"
@@ -23,6 +25,7 @@ namespace {
 
 using borealis::grid::ColorSource;
 using borealis::grid::Storage;
+using borealis::grid::UnderlineStyle;
 using borealis::term::AmbiguousWidth;
 using borealis::term::CursorShape;
 using borealis::term::SingleWidthPolicy;
@@ -274,6 +277,42 @@ AURORA_TEST_CASE(sgr_extended_colors_both_notations) {
     AURORA_TEST_CHECK_EQ(cell_at(term, 0, 3).background, std::uint32_t{99});
     AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 3).background_source),
                          static_cast<std::uint32_t>(ColorSource::Palette));
+}
+
+AURORA_TEST_CASE(sgr_underline_styles_follow_the_measured_mapping) {
+    auto term = make_terminal(narrow_only);
+    // 编码映射照裁决 7.28①②：`4:0` 是关、`4:2` 是双线、`4:3` 是波浪，`21` 取 ECMA-48 的双线；
+    // dotted 与 dashed 需求未覆盖，按单线呈现且不进枚举（7.28③）。
+    const std::pair<std::u32string_view, UnderlineStyle> table[] = {
+        {U"\x1B[4m", UnderlineStyle::Single},      {U"\x1B[4:0m", UnderlineStyle::None},
+        {U"\x1B[4:1m", UnderlineStyle::Single},    {U"\x1B[4:2m", UnderlineStyle::Double},
+        {U"\x1B[4:3m", UnderlineStyle::Curly},     {U"\x1B[4:4m", UnderlineStyle::Single},
+        {U"\x1B[4:5m", UnderlineStyle::Single},    {U"\x1B[21m", UnderlineStyle::Double},
+        {U"\x1B[24m", UnderlineStyle::None},       {U"\x1B[m", UnderlineStyle::None},
+    };
+    for (std::size_t column = 0; column < 10U; ++column) {
+        term.feed(table[column].first);
+        term.feed(U"x");
+        AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, column).underline),
+                             static_cast<std::uint32_t>(table[column].second));
+    }
+}
+
+AURORA_TEST_CASE(sgr_underline_clear_leaves_the_rest_of_the_pen) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B[1;31;4m\x1B[24m");  // 关下划线只关下划线：粗体与前景仍在这支笔上
+    term.feed(U"a");
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 0).underline),
+                         static_cast<std::uint32_t>(UnderlineStyle::None));
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 0).flags),
+                         static_cast<std::uint32_t>(borealis::grid::kFlagBold));
+    AURORA_TEST_CHECK_EQ(cell_at(term, 0, 0).foreground, std::uint32_t{1});
+
+    term.feed(U"\x1B[4:3m\x1B[0m");  // `SGR 0` 连档位一起复位
+    term.feed(U"b");
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 1).underline),
+                         static_cast<std::uint32_t>(UnderlineStyle::None));
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 1).flags), std::uint32_t{0});
 }
 
 AURORA_TEST_CASE(dec_private_modes_are_registered) {
