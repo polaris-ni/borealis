@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1180" viewBox="0 0 1560 1180" font-family="Cascadia Code, Consolas, Noto Sans CJK SC, sans-serif">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .panel { fill: #fbfbfd; stroke: #c9ccd6; stroke-width: 1.5; }
+      .title { font-size: 26px; fill: #14161a; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #5a6070; }
+      .ptitle { font-size: 18px; fill: #14161a; font-weight: 700; }
+      .lbl { font-size: 14px; fill: #2a2e38; }
+      .lbls { font-size: 12px; fill: #5a6070; }
+      .mono { font-size: 12px; fill: #1c4fa1; }
+      .cell { fill: #eef1f7; stroke: #b6bccb; stroke-width: 1; }
+      .cellbg { fill: #2b3550; }
+      .dirty { fill: #dfe6f2; opacity: 0.75; }
+      .accent { fill: #1b7f5a; }
+      .accents { font-size: 11px; fill: #1b7f5a; }
+      .warn { fill: #b3541e; }
+      .arrow { stroke: #44506b; stroke-width: 2; fill: none; marker-end: url(#ah); }
+      .lane { fill: #f2f4f9; stroke: #b6bccb; stroke-width: 1.2; }
+      .dim { stroke: #1b7f5a; stroke-width: 1.5; fill: none; }
+    </style>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#44506b"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1560" height="1180"/>
+  <text class="title" x="40" y="44">上屏层第一棒（SPEC.FEAT.RENDER.01 / 03 / 04 主路径）设计图</text>
+  <text class="subtitle" x="40" y="70">评审稿 · 2026-10-01 · 配套文本 codespec/RENDER_VIEWPORT.draft.md · 几何单位：逻辑 dp（Painter 侧），整格度量来自 monospace_cell 的物理像素</text>
+
+  <!-- ============ A. 控件盒与网格原点 ============ -->
+  <rect class="panel" x="40" y="92" width="700" height="300"/>
+  <text class="ptitle" x="60" y="120">A. 控件盒与网格原点</text>
+
+  <rect x="70" y="138" width="470" height="152" fill="none" stroke="#8892a6" stroke-width="2" stroke-dasharray="6 4"/>
+
+  <g>
+    <rect class="cell" x="86" y="158" width="60" height="40"/>
+    <rect class="cell" x="146" y="158" width="60" height="40"/>
+    <rect class="cell" x="206" y="158" width="60" height="40"/>
+    <rect class="cell" x="266" y="158" width="60" height="40"/>
+    <rect class="cell" x="326" y="158" width="60" height="40"/>
+    <rect class="cell" x="86" y="198" width="60" height="40"/>
+    <rect class="cell" x="146" y="198" width="60" height="40"/>
+    <rect class="cell" x="206" y="198" width="60" height="40"/>
+    <rect class="cell" x="266" y="198" width="60" height="40"/>
+    <rect class="cell" x="326" y="198" width="60" height="40"/>
+    <rect class="cell" x="86" y="238" width="60" height="40"/>
+    <rect class="cell" x="146" y="238" width="60" height="40"/>
+    <rect class="cell" x="206" y="238" width="60" height="40"/>
+    <rect class="cell" x="266" y="238" width="60" height="40"/>
+    <rect class="cell" x="326" y="238" width="60" height="40"/>
+  </g>
+
+  <line x1="86" y1="158" x2="86" y2="278" class="dim"/>
+  <text class="mono" x="92" y="154">(0,0)</text>
+
+  <path class="dim" d="M 86 296 h 60"/>
+  <path class="dim" d="M 86 292 v 8"/>
+  <path class="dim" d="M 146 292 v 8"/>
+  <text class="accents" x="152" y="304">cell_width</text>
+
+  <path class="dim" d="M 396 158 v 40"/>
+  <path class="dim" d="M 392 158 h 8"/>
+  <path class="dim" d="M 392 198 h 8"/>
+  <text class="accents" x="404" y="182">cell_height</text>
+
+  <text class="lbls" x="560" y="162">dp 步长</text>
+  <text class="mono" x="560" y="180">cell_px / scale</text>
+  <text class="lbls" x="560" y="208">行列数</text>
+  <text class="mono" x="560" y="226">可视 dp ÷ dp 步长</text>
+  <text class="lbls" x="560" y="252">向下取整；</text>
+  <text class="lbls" x="560" y="268">装不满一格仍给一格</text>
+  <text class="lbls" x="560" y="296">一个参考 Font</text>
+  <text class="lbls" x="560" y="312">取一次度量</text>
+
+  <text class="lbls" x="70" y="330">on_paint 的 bounds：全局逻辑 dp，原点 = 内容盒左上角（与 widget 树同坐标系）</text>
+  <text class="lbls" x="70" y="350">ascent（基线）与行高同源：由同一次 monospace_cell 给出，与绘制侧首行 snap 口径一致</text>
+  <text class="lbls" x="70" y="370">行位 = row × cell_height，列位 = col × cell_width（整像素格 ÷ scale 得 dp 步长）</text>
+
+  <!-- ============ B. 一帧层叠 ============ -->
+  <rect class="panel" x="780" y="92" width="740" height="300"/>
+  <text class="ptitle" x="800" y="120">B. 一帧的层叠顺序（on_paint 内）</text>
+
+  <g>
+    <polygon points="800,160 1120,160 1160,135 840,135" fill="#dfe6f2" stroke="#8892a6"/>
+    <polygon points="800,215 1120,215 1160,190 840,190" fill="#cfe3d8" stroke="#8892a6"/>
+    <polygon points="800,270 1120,270 1160,245 840,245" fill="#f0e2cf" stroke="#8892a6"/>
+    <polygon points="800,325 1120,325 1160,300 840,300" fill="#e8d3e0" stroke="#8892a6"/>
+    <text class="lbl" x="808" y="153">① 整屏底色 fill_rect（主题默认背景）</text>
+    <text class="lbl" x="808" y="208">② 逐 run 色带 fill_rect（背景非默认者）</text>
+    <text class="lbl" x="808" y="263">③ 每行一次 draw_text_runs</text>
+    <text class="lbl" x="808" y="318">④ 装饰线 + 光标块 fill_rect</text>
+  </g>
+
+  <text class="lbls" x="1180" y="153">一屏一次，覆盖</text>
+  <text class="lbls" x="1180" y="170">clip 与可见行交集</text>
+  <text class="lbls" x="1180" y="208">边界取自 StyleRun，</text>
+  <text class="lbls" x="1180" y="225">与文本共用同一批切分</text>
+  <text class="lbls" x="1180" y="263">TextRun.box 只读 origin；</text>
+  <text class="lbls" x="1180" y="280">combining 已在 run 文本内</text>
+  <text class="lbls" x="1180" y="318">框架无装饰线原语，</text>
+  <text class="lbls" x="1180" y="335">1 物理像素 = 1/scale dp</text>
+
+  <!-- ============ C. 脏行过滤 ============ -->
+  <rect class="panel" x="40" y="412" width="700" height="308"/>
+  <text class="ptitle" x="60" y="440">C. 脏行过滤：clip_bounds() 与提交行区间取交集</text>
+
+  <rect x="90" y="458" width="360" height="240" fill="#f6f7fa" stroke="#b6bccb"/>
+  <rect class="dirty" x="90" y="458" width="360" height="40"/>
+  <rect class="dirty" x="90" y="538" width="360" height="40"/>
+  <rect class="dirty" x="90" y="618" width="360" height="40"/>
+  <rect class="dirty" x="90" y="658" width="360" height="40"/>
+  <rect x="88" y="498" width="364" height="160" fill="none" stroke="#b3541e" stroke-width="2.5" stroke-dasharray="8 5"/>
+  <text class="mono" x="250" y="521" fill="#b3541e">clip_bounds()（局部帧）</text>
+
+  <g font-size="11px" fill="#5a6070">
+    <text x="60" y="483">r0</text>
+    <text x="60" y="523">r1</text>
+    <text x="60" y="563">r2</text>
+    <text x="60" y="603">r3</text>
+    <text x="60" y="643">r4</text>
+    <text x="60" y="683">r5</text>
+  </g>
+
+  <text class="lbl" x="100" y="483">skip：clip 外（脏）</text>
+  <text class="lbl" x="100" y="523">skip：本帧不脏</text>
+  <text class="lbl" x="100" y="563">画：clip 内 + 脏</text>
+  <text class="lbl" x="100" y="603">skip：本帧不脏</text>
+  <text class="lbl" x="100" y="643">画：clip 内 + 脏</text>
+  <text class="lbl" x="100" y="683">skip：clip 外（脏）</text>
+
+  <text class="lbls" x="470" y="472">判据（两条都过才画一行）：</text>
+  <text class="mono" x="470" y="494">row_box ∩ clip ≠ ∅</text>
+  <text class="mono" x="470" y="514">row ∈ 本帧提交行集</text>
+  <text class="lbls" x="470" y="544">整屏脏（滚动 / 主备屏 /</text>
+  <text class="lbls" x="470" y="562">resize）→ 行集 = 全可见行</text>
+  <text class="lbls" x="470" y="592">框架只把裁剪盒压进 Painter，</text>
+  <text class="lbls" x="470" y="610">bounds 仍是全量（裁决 7.23 ⓐ），</text>
+  <text class="lbls" x="470" y="628">跳过窗外行是本层的责任</text>
+  <text class="lbls" x="470" y="662">代价：每帧的 fill 与 runs</text>
+  <text class="lbls" x="470" y="680">只落在「clip ∩ 脏」的少数行</text>
+
+  <!-- ============ D. 光标形态 ============ -->
+  <rect class="panel" x="780" y="412" width="740" height="308"/>
+  <text class="ptitle" x="800" y="440">D. 光标三形态（DECSCUSR 已落，本棒负责画）</text>
+
+  <text class="lbls" x="800" y="470">块 Block</text>
+  <rect class="cellbg" x="880" y="452" width="42" height="26"/>
+  <text x="886" y="471" font-size="15px" fill="#ffffff">s</text>
+  <rect class="cell" x="926" y="452" width="42" height="26"/>
+  <text class="lbls" x="880" y="500">闪烁：off 相不画</text>
+
+  <text class="lbls" x="1040" y="470">下划线</text>
+  <rect class="cell" x="1120" y="452" width="42" height="26"/>
+  <text x="1126" y="471" font-size="15px" fill="#1b2233">s</text>
+  <rect x="1120" y="474" width="42" height="3" fill="#2b3550"/>
+  <rect class="cell" x="1166" y="452" width="42" height="26"/>
+  <rect x="1166" y="474" width="42" height="3" fill="#2b3550" opacity="0.25"/>
+  <text class="lbls" x="1120" y="500">底部 1~2 物理像素</text>
+
+  <text class="lbls" x="1300" y="470">竖线 Bar</text>
+  <rect class="cell" x="1380" y="452" width="42" height="26"/>
+  <text x="1392" y="471" font-size="15px" fill="#1b2233">s</text>
+  <rect x="1380" y="452" width="4" height="26" fill="#2b3550"/>
+  <rect class="cell" x="1426" y="452" width="42" height="26"/>
+  <rect x="1426" y="452" width="4" height="26" fill="#2b3550" opacity="0.25"/>
+  <text class="lbls" x="1380" y="500">格左沿，不遮字形</text>
+
+  <text class="lbls" x="800" y="540">失焦降级</text>
+  <rect class="cell" x="880" y="526" width="42" height="26"/>
+  <rect x="880" y="526" width="42" height="26" fill="none" stroke="#2b3550" stroke-width="2"/>
+  <text x="886" y="545" font-size="15px" fill="#1b2233">s</text>
+  <text class="lbls" x="880" y="572">空心描边、静止</text>
+
+  <text class="lbls" x="1040" y="540">闪烁相位</text>
+  <text class="mono" x="1120" y="536">on = (t − t0) / 500ms</text>
+  <text class="lbls" x="1120" y="556">取奇偶相位；由 Widget::tick</text>
+  <text class="lbls" x="1120" y="574">(now) 驱动，不新起线程</text>
+
+  <text class="lbls" x="1330" y="540">不可见 / 反色</text>
+  <text class="lbls" x="1330" y="560">hidden 时三态都不显</text>
+  <text class="lbls" x="1330" y="578">块形以反色重画格子串</text>
+
+  <text class="lbls" x="800" y="616">档位来源：TermModes.cursor_shape / cursor_blinking（DECSCUSR 已落进状态机）</text>
+  <text class="lbls" x="800" y="638">本棒节奏：闪烁 500ms 内置并挂 TODO(SPEC.FEAT.PREF.02)；可配面随设置面板那一棒</text>
+  <text class="lbls" x="800" y="660">光标行若不在本帧脏行集内，单独把该行并入绘制（与选区随滚动同一条路径）</text>
+  <text class="lbls" x="800" y="682">块形三段式：先画字形 → 画块 fill_rect → 按反色重画该格子串，避免实心块遮字</text>
+
+  <!-- ============ E. 帧唤醒时序 ============ -->
+  <rect class="panel" x="40" y="740" width="1480" height="392"/>
+  <text class="ptitle" x="60" y="768">E. 一帧的生命周期与跨线程唤醒（裁决 7.23 ⓒ；消除 TODO(SPEC.FEAT.RENDER.01)）</text>
+
+  <rect class="lane" x="70" y="782" width="440" height="290"/>
+  <text class="lbl" x="86" y="800" font-weight="700">会话读线程</text>
+  <rect class="lane" x="560" y="782" width="420" height="290"/>
+  <text class="lbl" x="576" y="800" font-weight="700">Session（锁 + 队列）</text>
+  <rect class="lane" x="1030" y="782" width="450" height="290"/>
+  <text class="lbl" x="1046" y="800" font-weight="700">主线程（Application / Window / TerminalView）</text>
+
+  <rect class="cell" x="90" y="812" width="380" height="26"/>
+  <text class="lbl" x="100" y="829">① 连接收到字节，喂解码 → 解析 → 状态机</text>
+  <rect class="cell" x="580" y="850" width="380" height="26"/>
+  <text class="lbl" x="590" y="867">② 行区间合并后 push 进 DamageQueue</text>
+  <rect x="580" y="888" width="380" height="26" fill="#cfe3d8" stroke="#b6bccb"/>
+  <text class="lbl" x="590" y="905">③ 确有提交才 request_wake()（线程安全）</text>
+  <rect class="cell" x="1050" y="926" width="380" height="26"/>
+  <text class="lbl" x="1060" y="943">④ 帧循环被唤醒 → set_on_frame 回调</text>
+  <rect class="cell" x="1050" y="964" width="380" height="26"/>
+  <text class="lbl" x="1060" y="981">⑤ drain_damage() + read() 临界区并入副本</text>
+  <rect class="cell" x="1050" y="1002" width="380" height="26"/>
+  <text class="lbl" x="1060" y="1019">⑥ mark_needs_paint() → on_layout / on_paint</text>
+  <rect class="cell" x="1050" y="1040" width="380" height="26"/>
+  <text class="lbl" x="1060" y="1057">⑦ 帧尾取走 OSC 52 剪贴板并 drain()</text>
+
+  <path class="arrow" d="M 470 825 H 525 V 863 H 578"/>
+  <path class="arrow" d="M 770 876 V 886"/>
+  <path class="arrow" d="M 960 901 H 1005 V 939 H 1048"/>
+  <path class="arrow" d="M 1240 952 V 962"/>
+  <path class="arrow" d="M 1240 990 V 1000"/>
+  <path class="arrow" d="M 1240 1028 V 1038"/>
+
+  <text class="lbls" x="90" y="1096">锁纪律不变：读线程锁内只登记应答与留存剪贴板文本，出锁才写连接（架构 §3.4）；取用顺序固定「先取队列、再读网格」，反向即与读线程构成 ABBA 死锁。</text>
+  <text class="lbls" x="90" y="1116">③ 的唤醒句柄由装配层注入（本稿决策 D2），Session 公共头只含 &lt;functional&gt;，不含框架头。</text>
+
+  <text class="lbls" x="40" y="1158">本棒不含：文本选择、IME preedit、键映射、scrollback 滚轮浏览、尺寸去抖、字体可配与 DPI 重建（各归其棒，见文本稿 §1）。</text>
+</svg>
