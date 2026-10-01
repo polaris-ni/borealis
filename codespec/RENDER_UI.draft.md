@@ -96,7 +96,7 @@
 | # | 差距 | 实现须达到 | 处置 |
 |:---|:---|:---|:---|
 | G-1 | `ui::CellPaint` 只有 `underline: bool`，状态机未解析 `SGR 21 / 4:3 / 4:4` | 双线 / 波浪线有可判定的笔形（见 U4） | 待拍板 U4 |
-| G-2 | `render::Font{family,size_pt,weight}` 无斜体位，`draw_text_runs` 不收 `TextLayoutOpts` | 斜体能经批量入口送出（见 U5） | 待拍板 U5（属渲染链路缺口，按 AGENTS.md §5 第 1 条优先在 Aurora 侧补公共 API + 单测） |
+| G-2 | **2026-10-01 实测修正**：斜体能力在框架已具备——`render::TextLayoutOpts` 含 `italic`（FreeType shear 实现），`FontEngine::draw_text_runs` 静态入口与逐片段 `Painter::draw_text` 的带 opts 重载都收它；缺的只是公共批量入口 `Painter::draw_text_runs(span)` 不透出 opts / 抗锯齿档位，`render::TextRun` 亦无 opts 位 | 斜体能经批量入口送出 | 框架侧补透传已派发（登记为 `SPECIFICATIONS.md` 附录 A.2 的 **G13**，处置见裁决 7.24）；本棒按已定的 U5 过渡形态走 |
 | G-3 | `PaletteSpec` 无光标色字段 | 光标色来源唯一且可配（见 U3） | 待拍板 U3 |
 | G-4 | 内置字体只有 Cascadia Code 常规面 | 随包附 Bold / Italic / BoldItalic 面，否则 `SGR 1` 只剩 bold-is-bright 一条线索 | 第二棒 `SPEC.FEAT.RENDER.02` 的字体范围，本棒先锁判据 |
 | G-5 | 框线/块元素在 Cascadia 常规面里的覆盖未走查 | 框线必须来自等宽单格面，不得被比例 CJK 面承接（否则 V17 破） | 走查项，随本棒真机比对 |
@@ -111,7 +111,7 @@
 - **U2 视口内边距**：① 0 dp（贴边，同 A 图）② 四周 4 dp（更像现代终端，但首行不再贴顶，且 dp 取整要保证不破坏格边界）。
 - **U3 光标色来源**：① 固定取 `default_foreground`（零配置）② `PaletteSpec` 增 `cursor_color`（可选字段，缺省回落 ①）。
 - **U4 双线 / 波浪下划线是否本棒落地**：① 本棒一并做（需扩 `CellPaint` 为档位枚举 + 状态机解析 `SGR 21 / 4:3 / 4:4`）② 只做单线，双线/波浪按 `SPEC.FEAT.RENDER.03` 的原文列为延后子项。
-- **U5 斜体的送出口**：① 本棒斜体走逐片段 `draw_text` + `TextLayoutOpts`（混合入口，批量收益略降）② 先在 Aurora 侧给批量入口补排版选项（按 AGENTS.md §5 第 1 条走公共 API + 单测 + 文档回写，本棒等这一腿）。
+- **U5 斜体的送出口**（**2026-10-01 已定**，依据用户「撞到的框架缺口先打桩、待框架侧完成后接入」的指令与原候选 ①②的合并）：本棒斜体与字距走逐片段 `Painter::draw_text` 的带 `TextLayoutOpts` 重载——框架公共 API 当下就能表达斜体，故「桩」只打在**入口的合并**上（绘制 TU 内按「是否带排版选项」分流两段，段数与像素判据不变），而不是把 `SGR 3` 画成不斜。批量入口透传 opts 的缺口已在 Aurora 侧派发补全（附录 A.2 G13、裁决 7.24），落地后撤销分流、全部并入批量路径。代价：斜体所在的段拿不到批量收益，含斜体的行按段数逐片段落笔。
 
 ---
 
