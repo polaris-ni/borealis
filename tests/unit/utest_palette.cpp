@@ -2,7 +2,8 @@
 /// 目标单元: include/borealis/ui/palette.h + src/ui/palette.cpp
 /// 测试说明: 调色板三段索引（主题档 / 6×6×6 立方 / 24 阶灰）、色值与来源的合成、
 ///           bold-is-bright 只作用于前 8 色档、暗淡向底色靠拢、反色与合成次序、
-///           不可见保留底色，以及 WCAG 对比度与最小对比度的整数插值口径
+///           不可见保留底色、光标色不参与格合成（裁决 7.25③），
+///           以及 WCAG 对比度与最小对比度的整数插值口径
 ///           （SPEC.FEAT.RENDER.03，架构 §9.2）。
 
 #include <cstddef>
@@ -219,6 +220,20 @@ AURORA_TEST_CASE(min_contrast_switch_gates_the_lift) {
     spec.min_contrast = 7.0;
     const auto lifted = resolve(cell, spec);
     AURORA_TEST_CHECK_GE(contrast_ratio(lifted.foreground, lifted.background), 7.0);
+}
+
+AURORA_TEST_CASE(cursor_color_never_reaches_cell_paint) {
+    auto spec = themed();
+    const auto cell = glyph(U'a');
+    const auto baseline = resolve(cell, spec);
+
+    // 光标色是整屏取用、不属任何一格（裁决 7.25③）：接进 resolve 就等于让一格的内容决定光标颜色。
+    spec.cursor_color = RgbaColor{255U, 0U, 128U};
+    AURORA_TEST_CHECK_EQ(resolve(cell, spec), baseline);
+
+    // 反向守卫：同样的位置换成前景色就必须改变绘制意图，否则上一条断言是空转。
+    spec.default_foreground = *spec.cursor_color;
+    AURORA_TEST_CHECK_NE(resolve(cell, spec).foreground, baseline.foreground);
 }
 
 }  // namespace borealis::test_cases::utest_palette
