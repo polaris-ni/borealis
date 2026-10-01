@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1180" viewBox="0 0 1560 1180" font-family="Cascadia Code, Consolas, Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1470" viewBox="0 0 1560 1470" font-family="Cascadia Code, Consolas, Noto Sans CJK SC, sans-serif">
   <defs>
     <style>
       .bg { fill: #ffffff; }
@@ -224,5 +224,68 @@
   <text class="lbls" x="90" y="1096">锁纪律不变：读线程锁内只登记应答与留存剪贴板文本，出锁才写连接（架构 §3.4）；取用顺序固定「先取队列、再读网格」，反向即与读线程构成 ABBA 死锁。</text>
   <text class="lbls" x="90" y="1116">③ 的唤醒句柄由装配层注入（本稿决策 D2），Session 公共头只含 &lt;functional&gt;，不含框架头。</text>
 
-  <text class="lbls" x="40" y="1158">本棒不含：文本选择、IME preedit、键映射、scrollback 滚轮浏览、尺寸去抖、字体可配与 DPI 重建（各归其棒，见文本稿 §1）。</text>
+  <!-- ============ F. 回看偏移与行换算 ============ -->
+  <rect class="panel" x="40" y="1150" width="1480" height="272"/>
+  <text class="ptitle" x="60" y="1178">F. 回看偏移与行换算（D5 选②；锚定语义待拍板 = D6）</text>
+
+  <text class="lbls" x="90" y="1200">逻辑行轴（0 = 最旧，末 5 行 = 视口）</text>
+
+  <g stroke="#b6bccb" stroke-width="1">
+    <rect x="90" y="1212" width="352" height="24" fill="#d8dbe4"/>
+    <rect x="442" y="1212" width="160" height="24" fill="#eef1f7"/>
+  </g>
+  <g stroke="#c7ccd8" stroke-width="1">
+    <path d="M 122 1212 v 24"/><path d="M 154 1212 v 24"/><path d="M 186 1212 v 24"/><path d="M 218 1212 v 24"/>
+    <path d="M 250 1212 v 24"/><path d="M 282 1212 v 24"/><path d="M 314 1212 v 24"/><path d="M 346 1212 v 24"/>
+    <path d="M 378 1212 v 24"/><path d="M 410 1212 v 24"/><path d="M 474 1212 v 24"/><path d="M 506 1212 v 24"/>
+    <path d="M 538 1212 v 24"/><path d="M 570 1212 v 24"/>
+  </g>
+  <rect x="378" y="1208" width="160" height="32" fill="none" stroke="#b3541e" stroke-width="2.5" stroke-dasharray="7 5"/>
+  <path d="M 442 1252 h 160 M 442 1248 v 8 M 602 1248 v 8" stroke="#1b7f5a" stroke-width="2" fill="none"/>
+  <text class="lbls" x="90" y="1256">scrollback 段（只读，历史不再变）</text>
+
+  <text class="lbls" x="90" y="1280" fill="#b3541e">橙虚线框 = 回看窗（back_rows = 2）：画绝对行 total−rows−2 起的 rows 行；绿括号 = 贴底窗（back_rows = 0）</text>
+  <text class="lbls" x="90" y="1304">备屏（SPEC.FEAT.TERM.03）：scrollback 容量 0 → max_offset = 0 → 滚不动，无需特判</text>
+  <text class="lbls" x="90" y="1328">本棒不做：鼠标上报模式下的滚轮转发与 alternate scroll（SPEC.FEAT.TERM.06）→ on_scroll 开头留一处 TODO</text>
+  <text class="lbls" x="90" y="1352">D6 三条候选（距底恒定 / 绝对行锚定 / 来输出即跳回底部）见文本稿 §0 表末行；第二条要改 grid::Storage 公共头</text>
+
+  <text class="lbls" x="790" y="1200">屏幕行（on_paint 画的 rows 行，此处 rows = 5）</text>
+  <g stroke="#b6bccb" stroke-width="1">
+    <rect x="790" y="1210" width="200" height="26" fill="#dfe6f2"/>
+    <rect x="790" y="1236" width="200" height="26" fill="#dfe6f2"/>
+    <rect x="790" y="1262" width="200" height="26" fill="#eef1f7"/>
+    <rect x="790" y="1288" width="200" height="26" fill="#eef1f7"/>
+    <rect x="790" y="1314" width="200" height="26" fill="#eef1f7"/>
+  </g>
+  <g font-size="12px" fill="#2a2e38">
+    <text x="800" y="1227">i=0 ← 绝对行 total−7</text>
+    <text x="800" y="1253">i=1 ← 绝对行 total−6</text>
+    <text x="800" y="1279">i=2 ← 视口行 v=0</text>
+    <text x="800" y="1305">i=3 ← 视口行 v=1</text>
+    <text x="800" y="1331">i=4 ← 视口行 v=2</text>
+  </g>
+  <text class="lbls" x="790" y="1362" fill="#b3541e">光标在 v=4 → 屏幕行 6 ≥ rows → 本帧不画光标</text>
+
+  <g font-size="11px" fill="#5a6070">
+    <text x="1000" y="1227">i &lt; back ← scrollback 段</text>
+    <text x="1000" y="1253">i ≥ back ← 视口行 v = i − back</text>
+    <text x="1000" y="1279">脏行 v 并入屏幕行 v + back</text>
+    <text x="1000" y="1305">v + back ≥ rows → 画不到也不并</text>
+  </g>
+
+  <g font-size="11px" fill="#5a6070">
+    <text x="1220" y="1200">内核量一律以「行」为单位：</text>
+    <text x="1220" y="1218">step = 1，content_h = total，</text>
+    <text x="1220" y="1236">viewport_h = rows</text>
+    <text x="1220" y="1262" class="mono">offset_y ∈ [0, total − rows]（距顶）</text>
+    <text x="1220" y="1280" class="mono">back_rows = max_offset − offset_y</text>
+    <text x="1220" y="1306">delta_y 正 = 向上滚 = offset_y 减小</text>
+    <text x="1220" y="1324">= back_rows 增大（露出更旧的行）</text>
+    <text x="1220" y="1350">back_rows 变了 → 整窗重建</text>
+    <text x="1220" y="1368">+ mark_needs_paint（架构 §9.5）</text>
+    <text x="1220" y="1394">不声明 overflow_strategy(Scroll)：</text>
+    <text x="1220" y="1412">框架会把 offset_y 当 dp 平移 bounds</text>
+  </g>
+
+  <text class="lbls" x="40" y="1450">本棒不含：文本选择、IME preedit、键映射、尺寸去抖、字体可配与 DPI 重建（各归其棒，见文本稿 §1）。</text>
 </svg>
