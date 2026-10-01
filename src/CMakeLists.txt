@@ -6,6 +6,9 @@
 # ============================================================
 
 add_library(borealis_core STATIC
+        config/settings.cpp
+        config/store.cpp
+        config/themes.cpp
         vt/parser.cpp
         term/utf8.cpp
         term/charset.cpp

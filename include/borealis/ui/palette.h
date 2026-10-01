@@ -13,6 +13,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 
 #include "borealis/grid/cell.h"
 
@@ -35,6 +36,12 @@ struct PaletteSpec {
     RgbaColor default_foreground{};     ///< 前景未指定时使用的颜色。
     RgbaColor default_background{};     ///< 背景未指定时使用的颜色。
 
+    /// @brief 光标色；空表示未配，绘制侧回落 `default_foreground`（裁决 7.25③）。
+    ///
+    /// 用 `optional` 而非零值默认：黑色光标是合法配置，与「没配」必须可区分。
+    /// `resolve` 不参与它——一格的光标色不取决于该格内容，故它只经视口层取用。
+    std::optional<RgbaColor> cursor_color;
+
     /// @brief 「粗体渲染为亮色」（`SPEC.FEAT.RENDER.03` 的可配开关）。
     ///
     /// 开启后，带粗体标志且前景取自**前 8 色**时改取其后 8 色的亮色档（索引 +8）。
@@ -47,6 +54,12 @@ struct PaletteSpec {
     ///
     /// 只在 `min_contrast_enabled` 为真时参与合成。
     double min_contrast = 1.0;
+
+    /// @brief 逐字段全等比较：配置往返（写盘再读回）的判据（`SPEC.FEAT.PREF.03`）。
+    ///
+    /// C++20 不会为类隐式声明 `==`，故此处必须显式 default——`config::Settings` 的默认比较
+    /// 依赖它，缺了它整份配置的等值判定会被静默删除。
+    [[nodiscard]] constexpr auto operator==(const PaletteSpec &other) const noexcept -> bool = default;
 };
 
 /// @brief 一格合成后的绘制意图：最终前景/背景与影响笔形的标志。
