@@ -15,7 +15,9 @@ add_library(borealis_core STATIC
         grid/storage.cpp
         session/clipboard_outbox.cpp
         session/damage_queue.cpp
-        session/session.cpp)
+        session/session.cpp
+        ui/cell_layout.cpp
+        ui/palette.cpp)
 
 # 平台层实现按目标平台编入：共享路径只见接口，ConPTY 句柄与 Win32 API 留在 src/platform/ 内
 # （裁决 7.11、架构 §2.2）。posix 侧等价实现待建，见 codespec/PLAN.md §8。
