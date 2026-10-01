@@ -300,13 +300,16 @@ G1 的三腿均已在 Aurora 侧以公共 API 落地（宽度判定见裁决 7.2
 monospace_cell(font, scale) → {cell_width_px, cell_height_px, ascent_px}   ← 物理像素
 TextRun.box.origin / Painter 几何                                           ← 逻辑 dp
 
-cell(col,row) 的落笔原点 = { col * cell_width_px / scale,  row * cell_height_px / scale }
-视口列/行数 = 窗口逻辑尺寸 ÷ (cell_px / scale)          ← SPEC.FEAT.XFER.01 的尺寸来源
+cell(col,row) 的落笔原点 = { pad_dp + col * cell_width_px / scale,  pad_dp + row * cell_height_px / scale }
+视口列/行数 = (可视 dp − 2 * pad_dp) ÷ (cell_px / scale)   ← SPEC.FEAT.XFER.01 的尺寸来源；pad 见裁决 7.25②
 ```
 
+- **视口内边距 `pad` 缺省四周 4 dp、可配为 0**（裁决 7.25②）：偏移取整 dp、格宽取整 px，故 125%/150% 缩放下的 5/6 px 偏移不破坏网格边界；`ui::make_geometry` 须先扣内边距再除格宽（差距清单 G-8）。
 - 同一视口只用**一个参考 `Font`** 取一次度量：字重切换可带来 1px advance 差，故粗体只换 weight、不换格宽。
 - run 按「前景/背景/字体三者全等」在行内合并，色带矩形与文本片段**共用同一批切分边界**（裁决 7.23②）。
 - 一帧的层叠顺序：本地可见区副本 → 色带 `fill_rect` → 每行一次 `draw_text_runs`（combining 随同 run 文本并字）→ 下划线/删除线/光标块。
+- **下划线为档位枚举**（none/single/double/wavy，裁决 7.25④）：双线＝基线 +1px 与 +3px 两条 1px 线，波浪＝4 列一周期逐列 ±1px 折线，两者都以 `fill_rect` 在应用侧合成（裁决 7.13① 的公共 API 组合，非私改渲染路径）。
+- **光标色取自 `PaletteSpec.cursor_color`，缺省回落 `default_foreground`**（裁决 7.25③）；回看态在视口右侧画 2 dp 位置指示条一块（裁决 7.25①）。
 - 局部帧只压裁剪栈而 `on_paint` 收全量 bounds，故脏行过滤按 `Painter::clip_bounds()` 自行跳过窗外行（裁决 7.23ⓐ）。
 - 视口滚动状态只有一个「起始行偏移」，走 `Widget` 内置的 `ScrollViewport` 内核而非框架 `Scroll` 容器（§9.5）。
 - 唯一触达 `au::Painter` / `au::Widget` 的实现收口在 `src/ui/terminal_view.cpp` 一个翻译单元；`cell_layout` 与 `palette` 为无框架依赖的纯逻辑，可全量单测。
@@ -365,19 +368,32 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 
 ### 11.1 主题与字体
 
-内置配色 + 自定义 16 色重映射，跟随 Aurora `Theme` / `ThemeScope`（`SPEC.FEAT.PREF.01`）；默认字体内置 Cascadia Code（裁决 7.3），经 `register_font_memory` 装载。**Cascadia Code 不含汉字字形**，故须配 CJK 缺字回退链（框架缺字链回退能力，见 `SPECIFICATIONS.md` 附录 A.1）：默认回退至系统等宽 CJK 字体，顺序可配；回退字形仍按 `SPEC.FEAT.TERM.08` 占两格，不得因回退破坏网格对齐（`SPEC.FEAT.RENDER.02`、裁决 7.16）。
+内置配色 + 自定义 16 色重映射，跟随 Aurora `Theme` / `ThemeScope`（`SPEC.FEAT.PREF.01`）。**首版即落 ≥8 套预置，缺省 Dracula**（另含 Nord / Solarized Dark / One Dark / Gruvbox Dark / Monokai / Campbell / Tokyo Night，裁决 7.26②）；每套预置给 16 色 + 默认前景/背景 + 光标色，色值表归 `borealis::config`，`ui::PaletteSpec` 只消费合成后的最终值。**UI chrome 不随终端主题切换**（裁决 7.25⑪）：标签栏/侧栏/状态栏固定一套 token，主题结构预留可选的 chrome 覆盖字段而缺省不覆盖。默认字体内置 Cascadia Code（裁决 7.3），经 `register_font_memory` 装载。**Cascadia Code 不含汉字字形**，故须配 CJK 缺字回退链（框架缺字链回退能力，见 `SPECIFICATIONS.md` 附录 A.1）：默认回退至系统等宽 CJK 字体，顺序可配；回退字形仍按 `SPEC.FEAT.TERM.08` 占两格，不得因回退破坏网格对齐（`SPEC.FEAT.RENDER.02`、裁决 7.16）。
 
 ### 11.2 命令、快捷键与面板
 
-复用框架 `CommandRegistry` 与 `CommandPalette`；**全部 UI 动作一律注册为 Command，快捷键绑定以 Command 为锚**（与 `SPEC.FEAT.WS.07`、`SPEC.FEAT.PREF.04` 统一）。
+复用框架 `CommandRegistry` 与 `CommandPalette`；**全部 UI 动作一律注册为 Command，快捷键绑定以 Command 为锚**（与 `SPEC.FEAT.WS.07`、`SPEC.FEAT.PREF.04` 统一）。命令 id 一律 ASCII 英文入框架，**中/英词条由本仓 `StringTable` 的「命令 id → 词条」映射表维护**（裁决 7.25⑬、`SPEC.FEAT.PREF.05`），面板渲染时按当前语言查表；新增命令须同步词条。
 
 ### 11.3 持久化与韧性
 
 经 Aurora `Preferences` 落 JSON，schema 带版本号；写入原子化（临时文件 + 重命名）；启动校验失败则备份为 `*.corrupt-<时间戳>` 并回落默认配置启动，**绝不静默清空**（`SPEC.FEAT.PREF.03`、`SPEC.FEAT.PREF.07`）。版本升级迁移策略待定（首版仅预留版本号字段），见 §16 F。
 
+本节的执行形态由裁决 7.26 定死四处：**①存储**＝单文件 `borealis.json`（`Preferences::default_config_dir()`）+ 按域 `group()` 嵌套 + 顶层 `schema_version`，框架元数据在 `__aurora_preference_meta__` 下、对应用侧的 `keys()`/`get()` 不可见，故自校验只看用户数据树（附录 A.2 G7）。**②原子写不在本仓重造**——`Preferences::flush()` 已实现「`<file>.lock` 跨进程 advisory 锁 + 临时文件 + 原子 `rename`」，本仓只负责提交时机。**③降级线提前到首版**（`SPEC.FEAT.PREF.07` 的该腿随 M1 落）：缺键 / 类型不符 / 域外 → 回落默认并记诊断，未知键只记录不报错；JSON 解析失败（经 `last_load_error()`）或 `schema_version` 高于本仓支持 → **先备份 `*.corrupt-<epoch 秒>` 再回落默认**，备份必须早于任何 `flush`，否则「不静默清空」只剩口号；「显著提示」以 `LoadOutcome` 公共出口交 UI 侧，对话框落点 `TODO(SPEC.FEAT.PREF.07)`；快照回滚与导出导入留原分期。**④首启不写盘**：首次启动只在内存得到全量默认值，用户第一次变更才 `flush`。凭据一律不入 schema（§12.1）。
+
 ### 11.4 i18n
 
 经 Aurora `StringTable`（`SPEC.FEAT.PREF.05`）。
+
+### 11.5 界面层的绑定量（四屏草图收口，裁决 7.25）
+
+`codespec/UI_OVERVIEW.draft.md` 的 N1~N8 落到实现侧的六条绑定行为，作为 `src/ui/` 与像素用例的对照表（完整尺寸与颜色表仍在该稿 §2）：
+
+- **侧栏缺省折叠**，展开态入配置并记住（N1，与 `SPEC.FEAT.PREF.06` 零配置可用同口径）。
+- **窄标签态状态角标优先于连接类型图标**，且只在非活动标签上让位（N2）。
+- **状态栏每项一个开关**入 `borealis::config`，缺省全开；宽度不足时按注册次序从右向左省略，被省略项进右键菜单，不压缩字号（N3）。
+- **pane 底部角标仅分屏态显示**（N4）。
+- **设置页实时预览复用终端视口的真实绘制路径**（N5，依赖 `SPEC.FEAT.RENDER.01`）。
+- **右键菜单单层 + 分隔线分区，低频簇（复制语义三开关、连接类动作）收二级子菜单**，一级可视项 ≤10（N7）。
 
 ---
 
@@ -451,6 +467,6 @@ Windows 便携 zip + 安装包；Linux tar 通用 + AppImage；产物含第三�
 |:---|:---|:---|:---|
 | C | 多击语义接入方式 | 等框架 G2 落地后接入 / 应用侧自算（违反框架统一口径，不推荐） | 随 G2 推进确定 |
 | E | 单实例转交通道（§3.1） | Windows 命名管道 / 本地 socket / `WM_COPYDATA` 定位既有窗口 | 待拍板——随 `SPEC.FEAT.INTEG.04` 开工 |
-| F | 配置 schema 版本升级策略（§11.3） | 启动时逐版本迁移链 / 拒绝旧版本并提示导出导入 | 待拍板——随首个 schema 变更裁决 |
+| F | 配置 schema 版本升级策略（§11.3） | 启动时逐版本迁移链 / 拒绝旧版本并提示导出导入 | 待拍板——随首个 schema 变更裁决。**首版行为已定**（裁决 7.26③）：`schema_version` 高于本仓支持时不迁移，直接备份 + 回落默认；迁移链形态仍未决 |
 
 > 本清单随评审收敛；每项拍板后写入正文对应章节并从本表移除。

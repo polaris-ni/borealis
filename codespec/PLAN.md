@@ -25,8 +25,8 @@
 | 阶段 | 主题 | 涉及需求 | 出口判据 |
 |:---|:---|:---|:---|
 | **M0 框架补强** | Aurora 侧前置：框架缺口 G1（**已闭合，2026-10-01**）、G2（见 SPECIFICATIONS.md 附录 A.2） | — | 网格/批量文本绘制原语、等宽整像素 cell 度量、East Asian Width 宽度判定、多击语义均以公共 API 进框架并带单测；网格吞吐基准入框架 `tools/bench`（G1 已按此交付两行观测项）。原「并挂性能回归门禁（劣化 >10% 即 FAIL）」经实测改判：批量绘制的时间收益落在环境抖动内、无可锁阈值，守门改由像素级「整批 vs 逐片段全像素差分为 0」的用例承担（裁决 7.22③）；余下未落地项为 **G2 与 G13**（批量入口的排版选项透传），连同观察池里的 G9 / G11，四条的补全分工与实测复核结论见裁决 7.24 |
-| **M1 单终端 MVP（Windows）** | 多标签 + 任意分屏的本地终端 | `SPEC.FEAT.TERM.01–05`、`SPEC.FEAT.TERM.08`、`SPEC.FEAT.RENDER.01–04`、`SPEC.FEAT.INTERACT.01`、`SPEC.FEAT.INTERACT.02`（流式拖拽/矩形块基本面）、`SPEC.FEAT.INTERACT.03`、`SPEC.FEAT.INTERACT.06`、`SPEC.FEAT.WS.01–02`、`SPEC.FEAT.XFER.01`、`SPEC.FEAT.CONN.01`、`SPEC.FEAT.PREF.03`、`SPEC.FEAT.PREF.06`、`SPEC.NF.PERF.01`、`SPEC.NF.PERF.02`、`SPEC.NF.PERF.06`、`SPEC.NF.PLAT.01`（仅 Windows 侧） | 本人日常替换 Windows Terminal 本地会话；多标签与任意方向/深度/比例/pane 数的分屏可用；**中文可输入可显示**（输入法与 CJK 字形回退）；窗口连续 resize 后 TUI 不错位；高频输出不卡死、内存不无界增长；VT 序列回放夹具进 CI 且真机手工签收通过 |
-| **M2 工作区打磨 + Linux 等价** | 搜索/选择/设置/面板/分发，并补齐 Linux | `SPEC.FEAT.TERM.06–07`、`SPEC.FEAT.INTERACT.02`（双击/三击等其余）、`SPEC.FEAT.INTERACT.04`、`SPEC.FEAT.RENDER.05`、`SPEC.FEAT.WS.04–07`（`SPEC.FEAT.WS.05` 的 SSH 重连腿随 M3）、`SPEC.FEAT.WS.10`、`SPEC.FEAT.PREF.01–02`、`SPEC.FEAT.PREF.04`、`SPEC.FEAT.PREF.07`、`SPEC.NF.PERF.03–05`、`SPEC.NF.RELI.01`、`SPEC.NF.PKG.01`、`SPEC.NF.PLAT.01`（Linux 等价补齐） | 搜索 + 文本选择 + 主题 + 命令面板全流程；性能/内存/空闲 CPU 指标达标；配置损坏可降级启动；产出可分发安装包；Linux 侧同批功能与指标达标（含缩放上报腿与 PTY/默认 shell 探测） |
+| **M1 单终端 MVP（Windows）** | 多标签 + 任意分屏的本地终端 | `SPEC.FEAT.TERM.01–05`、`SPEC.FEAT.TERM.08`、`SPEC.FEAT.RENDER.01–04`、`SPEC.FEAT.INTERACT.01`、`SPEC.FEAT.INTERACT.02`（流式拖拽/矩形块基本面）、`SPEC.FEAT.INTERACT.03`、`SPEC.FEAT.INTERACT.06`、`SPEC.FEAT.WS.01–02`、`SPEC.FEAT.XFER.01`、`SPEC.FEAT.CONN.01`、`SPEC.FEAT.PREF.03`、`SPEC.FEAT.PREF.06`、`SPEC.FEAT.PREF.01` 的预置配色腿、`SPEC.FEAT.PREF.07` 的损坏降级腿（后两条的提前由裁决 7.26②④ 定）、`SPEC.NF.PERF.01`、`SPEC.NF.PERF.02`、`SPEC.NF.PERF.06`、`SPEC.NF.PLAT.01`（仅 Windows 侧） | 本人日常替换 Windows Terminal 本地会话；多标签与任意方向/深度/比例/pane 数的分屏可用；**中文可输入可显示**（输入法与 CJK 字形回退）；窗口连续 resize 后 TUI 不错位；高频输出不卡死、内存不无界增长；VT 序列回放夹具进 CI 且真机手工签收通过 |
+| **M2 工作区打磨 + Linux 等价** | 搜索/选择/设置/面板/分发，并补齐 Linux | `SPEC.FEAT.TERM.06–07`、`SPEC.FEAT.INTERACT.02`（双击/三击等其余）、`SPEC.FEAT.INTERACT.04`、`SPEC.FEAT.RENDER.05`、`SPEC.FEAT.WS.04–07`（`SPEC.FEAT.WS.05` 的 SSH 重连腿随 M3）、`SPEC.FEAT.WS.10`、`SPEC.FEAT.PREF.01`（色值表已随配置层提前，本阶段做主题切换入口与亮/暗 chrome 适配）、`SPEC.FEAT.PREF.04`、`SPEC.FEAT.PREF.07` 的快照回滚与本地导出导入（损坏降级腿已随配置层提前）、`SPEC.NF.PERF.03–05`、`SPEC.NF.RELI.01`、`SPEC.NF.PKG.01`、`SPEC.NF.PLAT.01`（Linux 等价补齐） | 搜索 + 文本选择 + 主题 + 命令面板全流程；性能/内存/空闲 CPU 指标达标；配置损坏可降级启动；产出可分发安装包；Linux 侧同批功能与指标达标（含缩放上报腿与 PTY/默认 shell 探测） |
 | **M3 远程连接** | SSH + 档案 + SFTP + 凭据安全 | `SPEC.FEAT.CONN.02–04`、`SPEC.FEAT.CONN.07–10`、`SPEC.FEAT.TERM.09`、`SPEC.FEAT.WS.05`（SSH 断线重连腿） | SSH 日常运维全流程（密钥/agent/known_hosts/重连/隧道）；非 UTF-8 输出正确显示；配置目录明文凭据审计（自动化用例）通过 |
 | **M4 扩展连接与集成打磨** | 串口/Telnet/日志/系统集成 | `SPEC.FEAT.INTERACT.05`、`SPEC.FEAT.WS.03`、`SPEC.FEAT.WS.08–09`、`SPEC.FEAT.WS.11`、`SPEC.FEAT.CONN.05–06`、`SPEC.FEAT.CONN.11–12`、`SPEC.FEAT.PREF.05`、`SPEC.FEAT.INTEG.01–02`、`SPEC.FEAT.INTEG.04` | 嵌入式串口调试场景可用（含发送行尾序列配置、**中文按 GB18030 编码发送**）；重启恢复工作区；OSC 133 / OSC 7 集成可用；剪贴板访问授权三态生效 |
 | **M5 观察池** | 依赖框架缺口或低频 | 见 §5（未排期项）与 §6（未关闭缺口） | 按缺口关闭情况与真实使用频率择期排期，不设固定时间 |
@@ -36,6 +36,8 @@
 **M0 → M1 的阻塞粒度**（2026-10-01 口径，供开工排序用）：M0 不是 M1 的整体前置。**G1 三腿已全部闭合（2026-10-01 实测）**：`SPEC.FEAT.RENDER.01` `SPEC.FEAT.RENDER.03` `SPEC.FEAT.RENDER.05` 与 `SPEC.FEAT.TERM.08` 的框架前置就此解除（宽度判定腿的判据见裁决 7.20，绘制两腿见裁决 7.22；原缺口形态与闭合过程的完整表述保留在附录 A.2 的 G1 行）。余下 **G2 阻塞 `SPEC.FEAT.INTERACT.02` 的双击/三击腿**；G13（批量入口的排版选项透传）**不构成第一棒的阻塞**——斜体与字距走逐片段 `Painter::draw_text` 的带 opts 重载即可交付，框架侧透传落地后撤销该分流（裁决 7.24④）。M1 的其余项（终端逻辑层、键盘映射、UI 容器、PTY 与尺寸同步、配置）不依赖框架缺口，可在 M0 未关闭期间推进。
 
 **M1 渲染腿的棒内序**（2026-10-01 裁决 7.23④）：**第一棒＝上屏主路径**——`SPEC.FEAT.RENDER.01`（等宽网格 + 脏行重绘 + 视口自管）、`SPEC.FEAT.RENDER.03`（SGR 属性合成，含 bold-is-bright 与最小对比度）、`SPEC.FEAT.RENDER.04`（光标三形态与闪烁），交付到「本地会话输出看得见、光标跟手」即止；`SPEC.NF.PERF.02` 的吞吐基准随第一棒建，**并挂时间门禁**（劣化 >10% 即 FAIL，与裁决 7.22③ 的改判不冲突：那里锁的是框架批量入口的相对收益，这里锁的是本仓上屏层的每帧成本）。**第二棒＝`SPEC.FEAT.RENDER.02` 字体族**（系统枚举 + 内置 Cascadia + CJK 缺字回退链）与缩放变更后的度量/字形缓存重建，因第一棒取系统等宽字体即可上屏、回退链的验收只在含汉字会话里才成立。文本选择（`SPEC.FEAT.INTERACT.02`）、键盘映射（`SPEC.FEAT.INTERACT.01`）与尺寸去抖（`SPEC.FEAT.XFER.01` 的 UI 侧来源）属交互层，不在渲染两棒内。
+
+**配置层与面板的棒位**（2026-10-02 裁决 7.26 追加）：`borealis::config`（`SPEC.FEAT.PREF.03` + `SPEC.FEAT.PREF.06` + 提前落地的 ≥8 套预置色值与损坏降级线）**排在渲染第一棒之前**——第一棒的像素判据需要具体色值，而 `ui::PaletteSpec` 的 16 色与前/背景当前全零初始化，没有主题表就没有可判定的目标像素。`SPEC.FEAT.PREF.02` 设置面板按裁决 7.26⑦ **前置**到上屏两棒之后紧接着做。
 
 ---
 
@@ -88,13 +90,13 @@
 | `SPEC.FEAT.CONN.10` | 密钥管理器 | P2 | M3 |
 | `SPEC.FEAT.CONN.11` | 会话日志 | P2 | M4 |
 | `SPEC.FEAT.CONN.12` | 剪贴板访问授权 | P2 | M4；`OSC 52` 写方向的「默认允许」档已随 `SPEC.FEAT.TERM.07` 的提前腿落地（裁决 7.21③），读方向三态授权仍留 M4 |
-| `SPEC.FEAT.PREF.01` | 主题 | P1 | M2 |
-| `SPEC.FEAT.PREF.02` | 设置面板 | P1 | M2 |
+| `SPEC.FEAT.PREF.01` | 主题 | P1 | M2；**≥8 套预置配色的色值表随配置层提前**（裁决 7.26②，上屏第一棒须有可判定的色值，缺省 Dracula）；主题切换入口与亮/暗 chrome 适配仍留 M2 |
+| `SPEC.FEAT.PREF.02` | 设置面板 | P1 | **前置**：紧跟上屏层之后做（裁决 7.26⑦），含裁决 7.25⑧ 的状态栏条目入口、裁决 7.25⑩ 的真实绘制路径预览与主题切换 |
 | `SPEC.FEAT.PREF.03` | 持久化 | P0 | M1 |
 | `SPEC.FEAT.PREF.04` | 快捷键系统 | P1 | M2 |
-| `SPEC.FEAT.PREF.05` | i18n | P2 | M4 |
+| `SPEC.FEAT.PREF.05` | i18n | P2 | M4；「命令 id → 中/英词条」的映射表口径已由裁决 7.25⑬ 定死，词条本体随本条 |
 | `SPEC.FEAT.PREF.06` | 零配置可用 | P0 | M1 |
-| `SPEC.FEAT.PREF.07` | 配置韧性 | P1 | M2 |
+| `SPEC.FEAT.PREF.07` | 配置韧性 | P1 | M2；**损坏降级线（备份 `*.corrupt-<时间戳>` + 回落默认 + 显著提示）随配置层提前**（裁决 7.26④）；快照回滚与本地导出导入留 M2 |
 | `SPEC.FEAT.INTEG.01` | OSC 133 命令块 | P2 | M4；`OSC 133` 的边界标记与退出码来源已预埋（裁决 7.21④），命令块区间附着到网格行与其消费行为仍留 M4 |
 | `SPEC.FEAT.INTEG.02` | OSC 7 工作目录 | P2 | M4；`OSC 7` 的目录原文来源已预埋（裁决 7.21④），新标签/分屏继承与远端语义下的降级仍留 M4 |
 | `SPEC.FEAT.INTEG.03` | 系统通知 | P3 | M5 |
@@ -188,10 +190,10 @@
 | 解码 → 解析 → 状态机 → 网格 | 已打通 | 集成用例 `tests/integration/itest_terminal_scene.cpp` 以真实形态的首帧输出驱动全链路（字节流 → 解码 → 解析 → 网格内容），断言落在框线码点、SGR 色值与来源、OSC 吞掉、主备屏互不污染。**`ESC(0` 的框线效果就此有端到端证据**（`SPEC.FEAT.TERM.01` 验收判据腿） |
 | 状态机 → 会话回写 | 已打通 | 终端属性与光标位置查询（DA1、DSR）经会话写通道回写：状态机经注入的 `term::ResponseSink` 在锁内登记应答、会话出锁后编码写入连接（架构 §3.4、§5.2，裁决 7.18③ 定下只报档位 62）。单元用例 `tests/unit/utest_session.cpp` 以 `Connection` 替身驱动全链路并断言回写字节。OSC 各命令的消费见下一行 |
 | OSC 消费 → 会话产物 | 已打通（`SPEC.FEAT.TERM.07` 提前落地） | 状态机把 `OSC 0/2/7/8/52/133` 消费成结构化产物（`term::OscState` 快照 + 有界链接表 + `take_clipboard_write()` 取走语义，形态与理由见裁决 7.21），会话侧以加锁访问器透出；`OSC 52` 写方向由 `session::ClipboardOutbox::drain()` 在主线程转调 Aurora `Clipboard::set_text` 真落系统剪贴板，读方向 `52;c;?` 回写空响应。单测 `tests/unit/utest_terminal_osc.cpp` 定点驱动每条命令，e2e `tests/e2e/etest_osc_clipboard.cpp` 用真机 ConPTY + powershell 发出 OSC 52 并回读剪贴板。余下的是消费方：标题上标签名/窗口标题栏、超链接的 hover 与点击、133 的命令块区间 |
-| 会话 → 平台连接 | 已打通（Windows 腿） | `conn::make_local_terminal_connection` 造出 `platform::ConptyConnection` 并交予 `session::Session`，读线程把伪终端管道的原始字节喂进「解码 → 解析 → 状态机 → 网格」整条链；端到端证据是 `tests/e2e/etest_local_terminal.cpp`（真实 shell 的输出上屏、键入往返、突发输出的队列水位、关闭后进程终结且内容保留）。四处 Win32 实现口径见裁决 7.19。余下的是帧调度通知（提交入队后经 `au::post_to_main` 唤醒主线程排帧，架构 §3.2），随上屏层接，当前消费方按帧轮询 `has_damage()` |
+| 会话 → 平台连接 | 已打通（Windows 腿） | `conn::make_local_terminal_connection` 造出 `platform::ConptyConnection` 并交予 `session::Session`，读线程把伪终端管道的原始字节喂进「解码 → 解析 → 状态机 → 网格」整条链；端到端证据是 `tests/e2e/etest_local_terminal.cpp`（真实 shell 的输出上屏、键入往返、突发输出的队列水位、关闭后进程终结且内容保留）。四处 Win32 实现口径见裁决 7.19。余下的是帧调度通知（提交入队后由提交侧 `Window::surface().request_wake()` 唤醒主线程、在 `Application::set_on_frame` 里排空自有队列，裁决 7.23ⓒ，架构 §3.2），随上屏层接，当前消费方按帧轮询 `has_damage()` |
 | 网格行数变化 | 已定并落地（PTY 下发已接线，UI 侧来源未接） | 策略按裁决 7.17 收敛：移动窗口边界、底部锚定，历史自动收回或溢出；存储层 `Storage::set_rows`、状态机 `Terminal::resize` 与会话层 `Session::resize`（含连接侧下发与整屏脏通知）三层已串通并带单测，连接侧下发由 `platform::ConptyConnection::resize` 走 `ResizePseudoConsole`（真机 e2e 覆盖尺寸变更后流不中断）。余下的是**尺寸由 UI 侧何处来**与去抖合并（`SPEC.FEAT.XFER.01`），随渲染层那一棒接 |
 | 宽度判定 | 已接线（框架真判定） | 状态机经注入的 `WidthPolicy` 取格数、自身不查表（架构 §6.3）；生产实现 `term::UnicodeWidthPolicy` 转调 Aurora `unicode_cell_width`（0 / 1 / 2 三档 + Ambiguous 入参，裁决 7.20），零宽码点并入网格行的组合标记侧表。验收证据：`tests/integration/itest_unicode_width.cpp` 以真实字节流跑全链路，断言 CJK 双宽占位与延续格、同一份含 Ambiguous 输出在两种口径下的列位一致、行末整体换行不留半格、combining 不占格不推进光标。`SingleWidthPolicy` 退为测试用常数注入值（不受 Unicode 版本影响的用例），桩判定仍用于状态机自身的机制类单测 |
 
 **验证现状**（2026-09-30）：MSVC + Ninja 全量构建通过；CTest 全绿共 13 项——解析器 / UTF-8 / 字符集 / 网格存储（含组合标记侧表）/ 终端状态机 / 宽度判定口径 / 背压队列 / 会话八个单元用例，加「解码→解析」「全链路回放首帧」「宽度判定端到端（含 Ambiguous 双口径与 combining）」三个集成用例、框架自检，以及本仓首个真机 e2e `etest_local_terminal`（Windows 侧 ConPTY，8 个用例）。**e2e 的运行环境是硬前提**：宿主须能访问窗口站与桌面，无控制台的受限上下文里子进程的伪终端初始化会失败，该环境下的失败不代表实现有误（裁决 7.19⑤）。**仍未真机走查、无像素级验收**：M1 出口判据中的「替换 Windows Terminal 日常使用」「窗口连续 resize 后 `vim`/`tmux`/`htop` 不错位」均未验证——二者的前置（渲染层与 UI 侧尺寸来源）未落地，字节链路虽已由真实 PTY 驱动，但没有上屏路径就没有用户可见的行为。
 
-**待裁决**：`codespec/ARCHITECTURE.md` §16 的 A（会话抽象粒度）已于 2026-09-30 拍板为「基础接口 + 能力接口组合」并写入该文档 §7.2（同时作为裁决 7.18 记入需求侧）；D（网格所有权与主线程读取方式）已于 2026-09-30 收敛为「后台权威 + 主线程增量快照脏 cell」并写入该文档 §3.4，终端状态机与会话层据此落地，整屏位移以「整屏脏」标记通知副本重建。余下 B（视口是否复用框架 `Scroll`）、E（单实例转交通道）、F（配置 schema 迁移）仍待拍板。
+**待裁决**：`codespec/ARCHITECTURE.md` §16 的 A（会话抽象粒度）已于 2026-09-30 拍板为「基础接口 + 能力接口组合」并写入该文档 §7.2（同时作为裁决 7.18 记入需求侧）；D（网格所有权与主线程读取方式）已于 2026-09-30 收敛为「后台权威 + 主线程增量快照脏 cell」并写入该文档 §3.4，终端状态机与会话层据此落地，整屏位移以「整屏脏」标记通知副本重建；B（视口是否复用框架 `Scroll`）已于 2026-10-01 拍板为**自管**（裁决 7.23①，该文档 §9.5）。余下 E（单实例转交通道）待 `SPEC.FEAT.INTEG.04` 开工时拍板；F（配置 schema 迁移链）仍未决，但首版行为已由裁决 7.26③ 定死——`schema_version` 高于本仓支持时不做迁移，直接备份 + 回落默认。视觉稿的 `U1~U5` 与四屏草图的 `N1~N8` 已于 2026-10-02 全部收口（裁决 7.25），`src/ui/` 的实现约束解除。
