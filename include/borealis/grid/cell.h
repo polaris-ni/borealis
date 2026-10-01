@@ -21,7 +21,6 @@ enum : std::uint16_t {
     kFlagBold = 1U << 0,
     kFlagDim = 1U << 1,
     kFlagItalic = 1U << 2,
-    kFlagUnderline = 1U << 3,
     kFlagBlink = 1U << 4,
     kFlagReverse = 1U << 5,
     kFlagHidden = 1U << 6,
@@ -32,6 +31,18 @@ enum : std::uint16_t {
 
 /// @brief 标志位掩码类型。
 using CellFlags = std::uint16_t;
+
+/// @brief 下划线笔形档位（`SPEC.FEAT.RENDER.03` 的单 / 双 / 波浪三档，加「无」共四值）。
+///
+/// 三档不是布尔能表达的，而 dotted / dashed 不在需求内、按单线呈现（裁决 7.28③），
+/// 故枚举停在四档；档位有独立取值域，不塞进位掩码——那会让「四档互斥」这条不变量
+/// 只能靠调用方维持。
+enum class UnderlineStyle : std::uint8_t {
+    None,   ///< 无下划线（`SGR 4:0` / `24` / `0`）。
+    Single, ///< 单线（`SGR 4` / `4:1`；`4:4` dotted 与 `4:5` dashed 亦归本档）。
+    Double, ///< 双线（`SGR 4:2`，`SGR 21` 按 ECMA-48 亦归本档，见裁决 7.28②）。
+    Curly,  ///< 波浪线（`SGR 4:3`）。
+};
 
 /// @brief 颜色的来源，决定合成时怎么解释 `foreground` / `background` 的位。
 ///
@@ -56,6 +67,7 @@ struct Cell {
     std::uint8_t width = 1;
     ColorSource foreground_source = ColorSource::Default;
     ColorSource background_source = ColorSource::Default;
+    UnderlineStyle underline = UnderlineStyle::None;  ///< 占本结构既有的对齐空档，`sizeof` 不变（架构 §4.7）。
 
     /// @brief 该格是否为双宽字符的延续格（不承载字符、不被光标停留）。
     [[nodiscard]] auto is_wide_continuation() const noexcept -> bool {
@@ -71,6 +83,7 @@ struct Cell {
         width = 1;
         foreground_source = ColorSource::Default;
         background_source = ColorSource::Default;
+        underline = UnderlineStyle::None;
     }
 };
 

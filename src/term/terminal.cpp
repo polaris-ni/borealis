@@ -66,6 +66,22 @@ auto append_decimal(std::u32string &out, std::size_t value) -> void {
     }
 }
 
+/// @brief `SGR 4:x` 子参数的下划线笔形（映射与取舍见裁决 7.28①③）。
+/// @param code 子参数值；`SGR 4` 的平参数写法由调用方按 1 传入。
+/// @return 对应档位；dotted(4)、dashed(5) 与域外码都落单线。
+[[nodiscard]] constexpr auto underline_style_for(std::int32_t code) noexcept -> grid::UnderlineStyle {
+    switch (code) {
+        case 0:
+            return grid::UnderlineStyle::None;
+        case 2:
+            return grid::UnderlineStyle::Double;
+        case 3:
+            return grid::UnderlineStyle::Curly;
+        default:
+            return grid::UnderlineStyle::Single;
+    }
+}
+
 }  // namespace
 
 Terminal::Terminal(std::size_t columns, std::size_t rows, std::size_t scrollback_limit,
@@ -502,9 +518,12 @@ auto Terminal::apply_sgr(const vt::Sequence &seq) -> void {
             case 3:
                 pen_.flags |= grid::kFlagItalic;
                 break;
-            case 4:
-                pen_.flags |= grid::kFlagUnderline;
+            case 4: {
+                // 笔形只在子参数写法里出现（`4:0`…`4:5`）；平参数 `CSI 4 m` 即单线。
+                const auto &param = seq.params[index];
+                pen_.underline = underline_style_for(param.sub.size() > 1U ? param.sub[1] : 1);
                 break;
+            }
             case 5:
             case 6:
                 pen_.flags |= grid::kFlagBlink;
@@ -519,8 +538,11 @@ auto Terminal::apply_sgr(const vt::Sequence &seq) -> void {
                 pen_.flags |= grid::kFlagStrike;
                 break;
             case 21:
+                // ECMA-48 的双线；xterm 把 21 实现成「关粗体」是它的历史分歧，标准写法是 22（裁决 7.28②）。
+                pen_.underline = grid::UnderlineStyle::Double;
+                break;
             case 53:
-                break;  // 双下划线与 overline 未建模
+                break;  // overline 未建模
             case 22:
                 pen_.flags &= ~static_cast<grid::CellFlags>(grid::kFlagBold | grid::kFlagDim);
                 break;
@@ -528,7 +550,7 @@ auto Terminal::apply_sgr(const vt::Sequence &seq) -> void {
                 pen_.flags &= ~grid::kFlagItalic;
                 break;
             case 24:
-                pen_.flags &= ~grid::kFlagUnderline;
+                pen_.underline = grid::UnderlineStyle::None;
                 break;
             case 25:
                 pen_.flags &= ~grid::kFlagBlink;

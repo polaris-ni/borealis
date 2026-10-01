@@ -5,8 +5,8 @@
 // ------------------------------------------------------------
 // 架构 §9.2 的取用形态细则：框架只收「合成后的最终值」，列起点、跨格与切分边界都在本层。
 // 格宽取自 `render::FontEngine::monospace_cell`（物理像素），而 `Painter` 的几何是逻辑 dp，
-// 故这里唯一的算术是 ÷ scale；把它放在无框架依赖的一层，是为了让 dp/px 这条最容易算错的
-// 换算能进单测（AGENTS.md §4.4 第 20 条）。
+// 故这里的算术只有三样：÷ scale 换算、内边距从可视尺寸里扣除、装饰线边界吸附物理像素。
+// 把它放在无框架依赖的一层，是为了让 dp/px 这条最容易算错的换算能进单测（AGENTS.md §4.4 第 20 条）。
 //
 // run 切分按裁决 7.23②「样式全等合并到行」：一行内相邻格的前景/背景/字体三者全等才并入同
 // 一片段，**色带矩形与文本片段共用同一批切分边界**，故本层只交出一张 run 表，不再另存色带表。
@@ -45,6 +45,8 @@ struct GridGeometry {
     double cell_width = 0.0;   ///< 单格宽（dp）。
     double cell_height = 0.0;  ///< 单格高（dp）。
     double ascent = 0.0;       ///< 行盒顶 → 基线（dp），下划线与光标块的落笔基准。
+    double scale = 1.0;        ///< device pixel ratio；装饰线宽按 1 物理像素 = `1 / scale` dp（裁决 7.28④）。
+    double padding = 0.0;      ///< 视口四周内边距（dp，裁决 7.25②），落笔原点含它。
 };
 
 /// @brief 一段矩形（逻辑 dp），与框架 `Rect` 逐字段对应。
@@ -59,16 +61,19 @@ struct Rect {
 ///
 /// 行列数按**向下取整**（装不下一整格就不画它），至少给 1×1；`SPEC.FEAT.XFER.01` 的
 /// 「尺寸的 UI 侧来源」就是这个数——它交给 `Session::resize` 前须经工作区层的去抖合并。
+/// 行列数按「(可视 dp − 四周内边距) ÷ 格宽」计（裁决 7.25②），内边距不入格子步长、只入原点。
 /// @param metrics 单格物理像素度量。
 /// @param scale device pixel ratio（物理像素 / 逻辑 dp）。
-/// @param viewport 可视区逻辑尺寸（dp）。
+/// @param viewport 可视区逻辑尺寸（dp），含内边距所占的边带。
+/// @param padding_dp 视口四周内边距（dp），可配为 0。
 /// @return 该帧的网格几何；度量为 0 或尺寸为 0（窗口最小化是真实输入）时行列数为 0。
-[[nodiscard]] auto make_geometry(const CellPixels &metrics, double scale, const LogicalSize &viewport) noexcept
-    -> GridGeometry;
+[[nodiscard]] auto make_geometry(const CellPixels &metrics, double scale, const LogicalSize &viewport,
+                                 double padding_dp) noexcept -> GridGeometry;
 
 /// @brief 第 @p row 行、`[first_column, last_column)` 列区间的矩形（逻辑 dp）。
 ///
 /// 行号是**绘制行号**（视口内 0 基）：滚动偏移由调用方在取行时折算，几何本身不含历史行。
+/// 原点含视口内边距（裁决 7.25②），故色带、装饰线与光标块共用同一套落笔坐标。
 /// @param geometry 本帧网格几何。
 /// @param row 绘制行号。
 /// @param first_column 区间左界（含）。
@@ -88,6 +93,20 @@ struct StyleRun {
     std::string text;
     CellPaint paint{};
 };
+
+/// @brief 一段 run 的装饰线落笔矩形（下划线三档 + 删除线），逻辑 dp。
+///
+/// 线宽恒为 **1 物理像素** = `1 / scale` dp，且四边都吸附到物理像素边界——落在小数 dp 上会让
+/// 抗锯齿把 1px 规则糊成发灰的 2px（视觉稿 D4①）。落点以基线为基准：单线在基线 +1px，
+/// 双线在 +1px 与 +3px，波浪以 4 物理像素为周期在 +2px 上下各偏 1px，删除线取基线 × 0.5
+/// （裁决 7.28④）。波浪的周期相位锚在**该列网格的绝对像素 x**（不含内边距），于是相邻 run
+/// 在切分边界处波形连续——run 的切分随样式而变（裁决 7.23②），锚在 run 左沿就会随样式抖动。
+/// @param geometry 本帧网格几何。
+/// @param row 绘制行号（视口内 0 基）。
+/// @param run `layout_row` 产出的一段；`hidden` 段不产装饰（`SGR 8` 只隐去字形与装饰）。
+/// @return 逐段 `fill_rect` 的矩形表；无装饰时为空。
+[[nodiscard]] auto decoration_rects(const GridGeometry &geometry, std::size_t row, const StyleRun &run)
+    -> std::vector<Rect>;
 
 /// @brief 把一行切成按样式全等合并的 run 表（既供色带矩形，也供文本片段）。
 ///

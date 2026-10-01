@@ -127,7 +127,7 @@ auto resolve(const grid::Cell &cell, const PaletteSpec &spec) -> CellPaint {
     CellPaint paint{};
     paint.bold = (cell.flags & grid::kFlagBold) != 0U;
     paint.italic = (cell.flags & grid::kFlagItalic) != 0U;
-    paint.underline = (cell.flags & grid::kFlagUnderline) != 0U;
+    paint.underline = cell.underline;
     paint.strike = (cell.flags & grid::kFlagStrike) != 0U;
     paint.hidden = (cell.flags & grid::kFlagHidden) != 0U;
 

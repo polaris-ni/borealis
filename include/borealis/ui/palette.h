@@ -71,7 +71,7 @@ struct CellPaint {
     RgbaColor background{};
     bool bold = false;      ///< SGR 1：换字重（不改格宽，见架构 §9.2）。
     bool italic = false;    ///< SGR 3。
-    bool underline = false; ///< SGR 4。
+    grid::UnderlineStyle underline = grid::UnderlineStyle::None;  ///< SGR 4 及其子参数（裁决 7.28①）。
     bool strike = false;    ///< SGR 9。
     bool hidden = false;    ///< SGR 8：文本与装饰都不画，底色仍有效。
 
