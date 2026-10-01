@@ -286,13 +286,13 @@ SFTP（`SPEC.FEAT.CONN.04`）、隧道（`SPEC.FEAT.CONN.08`）、公钥推送�
 
 只消费 Aurora 公共 API；不私改渲染路径。用公共 API 组合出的应用侧控件**不属于私改**（裁决 7.13）。
 
-### 9.2 G1 就绪前的过渡形态（**决策**）
+### 9.2 G1 就绪后的取用形态（**决策**，2026-10-01 更新）
 
-Aurora 目前**尚无等宽网格 / 批量文本绘制原语**：`Painter::draw_text` 为字符串粒度（2026-09-29 实测；框架现状以 Aurora 当日活动分支为准，`SPECIFICATIONS.md` 附录 A 为某一时点复核结论）。过渡方案（**适用条件**：按 `PLAN.md` §2，M0 完成前应用侧不开工，故本节仅为 G1 交付延期时的预研备路径，非常规路径）：
+G1 的三腿均已在 Aurora 侧以公共 API 落地（宽度判定见裁决 7.20，绘制两腿见裁决 7.22）：`render::FontEngine::monospace_cell` 给整像素单格度量、`Painter::draw_text_runs` 给批量同属性片段绘制、`aurora::unicode_cell_width` 给占格数。因此：
 
-- 应用侧**自绘 cell 网格**：自管视口 + 脏行 diff，用现有 `Painter::draw_text` 按 cell 位逐格 / 逐行绘制；
-- 绘制层做**接缝隔离**并标 `TODO(SPEC.FEAT.RENDER.01)`，G1 落地后**只替换绘制后端**，不动模型与交互层；
-- **已知代价**：短期渲染吞吐大概率达不到 `SPEC.NF.PERF.02` 的 45 fps 指标，验收时须显式标注该偏差，不得以「应该更快」结项。
+- 渲染层**直接消费这两个原语**：按 `monospace_cell` 定列位与行位，把一行按样式切成 `TextRun` 数组一次提交；
+- 本节此前的「应用侧自绘 cell 网格 + 逐格 `draw_text`」过渡形态（G1 交付延期时的预研备路径）**不再启用**；
+- 网格模型、脏行 diff、颜色合成（含 SGR 属性、bold-is-bright、最小对比度）**仍留在应用侧**，原语只收合成后的最终值——这一条边界不因原语落地而改变。
 
 ### 9.3 G1 就绪后的替换接缝
 
@@ -300,7 +300,7 @@ Aurora 目前**尚无等宽网格 / 批量文本绘制原语**：`Painter::draw_
 
 ### 9.4 dp 与物理像素的 cell 度量
 
-Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成物理分辨率字形，二者解耦（Aurora 主仓 `codespec/ARCHITECTURE.md` §8.2）。终端须保证 **cell 尺寸整像素对齐与网格边界吸附**，字形缓存按 DPI 分档失效重建（`SPEC.FEAT.RENDER.05`）。
+Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成物理分辨率字形，二者解耦（Aurora 主仓 `codespec/ARCHITECTURE.md` §8.2）。终端须保证 **cell 尺寸整像素对齐与网格边界吸附**，字形缓存按 DPI 分档失效重建（`SPEC.FEAT.RENDER.05`）。该整像素单格尺寸自 2026-10-01 起由框架给出：`render::FontEngine::monospace_cell(f, scale)` 返回物理像素的 `{cell_width_px, cell_height_px, ascent_px}`，其中行高与基线与绘制侧首行 pen 的 snap 口径同源，故按它排布的多行文本与实绘像素对齐；应用侧不再自行把 dp 度量乘 scale 后取整（那会得到小数列宽并逐列累积成半格错位），但**列起点、跨格与换行的排布策略仍在本仓**（裁决 7.22②）。
 
 ### 9.5 与框架 Scroll 滑窗的关系（**待定**）
 
@@ -419,7 +419,7 @@ Windows 便携 zip + 安装包；Linux tar 通用 + AppImage；产物含第三�
 
 | 缺口 | 现状 | 影响 |
 |:---|:---|:---|
-| G1 网格 / 批量文本绘制原语 + 整像素 cell 度量 + East Asian Width 判定 | **三腿之一已闭合（2026-09-30）**：宽度判定以 Aurora 公共 API `unicode_cell_width` 交付（裁决 7.20）；绘制两腿仍未落地——`Painter::draw_text` 为字符串粒度，无 cell 网格与批量 run | 绘制按 §9.2 以应用侧自绘过渡，接缝隔离待替换；宽度腿已接真表，状态机与网格层不再挂单宽缺省（§6.3） |
+| G1 网格 / 批量文本绘制原语 + 整像素 cell 度量 + East Asian Width 判定 | **三腿全部闭合（2026-10-01 实测）**：宽度判定 = Aurora `unicode_cell_width`（裁决 7.20）；批量文本 run = `Painter::draw_text_runs(std::span<const render::TextRun>)`；整像素单格度量 = `render::FontEngine::monospace_cell` → `render::CellMetrics`（形态、逐位一致判据与「时间门禁改判为像素级回归」见裁决 7.22） | 绘制层直接按 §9.2 消费两原语，应用侧自绘过渡备路径不再启用；网格模型、脏行 diff 与颜色合成仍在本仓；宽度腿已接真表，状态机与网格层不再挂单宽缺省（§6.3） |
 | G2 `MouseEvent` 多击语义 | 未落地：事件头无 `click_count` 一类字段 | 双击 / 三击能力延后；流式与矩形选择不受阻 |
 
 > 框架现状以 Aurora **当日活动分支实测**为准；上表的绘制原语两腿为 2026-09-29 实测结论，宽度判定一腿为 2026-09-30 在 Aurora 当日活动分支落地的实测结论；可能随上游提交变化，复用前须复验。
