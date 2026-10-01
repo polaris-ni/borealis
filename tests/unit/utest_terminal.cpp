@@ -3,8 +3,9 @@
 /// 测试说明: 终端状态机的语义解释——打印与自动换行、C0 执行与制表位、滚动区域与区域内/整屏
 ///           滚动（含 scrollback 相互作用）、IL/DL/ICH/DCH/ECH、ED/EL、SGR（16/256/真彩与
 ///           两种子参数写法）、DEC 私有模式登记、字符集指派、主备屏、宽字符占位与
-///           Ambiguous 覆盖口径、RIS 复位、尺寸变更与整屏脏标记
-///           （SPEC.FEAT.TERM.01 / .02 / .03 / .05 / .08，SPEC.FEAT.XFER.01 前置）。
+///           Ambiguous 覆盖口径、DECSCUSR 光标形态档位、RIS 复位、尺寸变更与整屏脏标记
+///           （SPEC.FEAT.TERM.01 / .02 / .03 / .05 / .08，SPEC.FEAT.XFER.01 与
+///           SPEC.FEAT.RENDER.04 的状态机前置）。
 
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +24,7 @@ namespace {
 using borealis::grid::ColorSource;
 using borealis::grid::Storage;
 using borealis::term::AmbiguousWidth;
+using borealis::term::CursorShape;
 using borealis::term::SingleWidthPolicy;
 using borealis::term::Terminal;
 using borealis::term::WidthPolicy;
@@ -325,6 +327,56 @@ AURORA_TEST_CASE(save_and_restore_cursor) {
     AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{3});
 }
 
+AURORA_TEST_CASE(decscusr_maps_style_levels) {
+    auto term = make_terminal(narrow_only);
+    // 默认即「闪烁块」，故每一档都先从已知态偏离再断言，否则测到的是缺省值而非序列效果。
+    term.feed(U"\x1B[2 q");  // 静止块
+    AURORA_TEST_CHECK_EQ(term.modes().cursor_shape, CursorShape::Block);
+    AURORA_TEST_CHECK_FALSE(term.modes().cursor_blinking);
+
+    term.feed(U"\x1B[3 q");  // 闪烁下划线
+    AURORA_TEST_CHECK_EQ(term.modes().cursor_shape, CursorShape::Underline);
+    AURORA_TEST_CHECK_TRUE(term.modes().cursor_blinking);
+
+    term.feed(U"\x1B[4 q");  // 静止下划线
+    AURORA_TEST_CHECK_EQ(term.modes().cursor_shape, CursorShape::Underline);
+    AURORA_TEST_CHECK_FALSE(term.modes().cursor_blinking);
+
+    term.feed(U"\x1B[5 q");  // 闪烁竖线
+    AURORA_TEST_CHECK_EQ(term.modes().cursor_shape, CursorShape::Bar);
+    AURORA_TEST_CHECK_TRUE(term.modes().cursor_blinking);
+
+    term.feed(U"\x1B[6 q");  // 静止竖线
+    AURORA_TEST_CHECK_EQ(term.modes().cursor_shape, CursorShape::Bar);
+    AURORA_TEST_CHECK_FALSE(term.modes().cursor_blinking);
+
+    term.feed(U"\x1B[1 q");  // 闪烁块
+    AURORA_TEST_CHECK_EQ(term.modes().cursor_shape, CursorShape::Block);
+    AURORA_TEST_CHECK_TRUE(term.modes().cursor_blinking);
+
+    // 缺省 Ps 与显式 0 同义（xterm：按标准复位成闪烁块），越界档位同理——不得停在上一档。
+    term.feed(U"\x1B[6 q\x1B[ q");
+    AURORA_TEST_CHECK_EQ(term.modes().cursor_shape, CursorShape::Block);
+    AURORA_TEST_CHECK_TRUE(term.modes().cursor_blinking);
+    term.feed(U"\x1B[5 q\x1B[9 q");
+    AURORA_TEST_CHECK_EQ(term.modes().cursor_shape, CursorShape::Block);
+    AURORA_TEST_CHECK_TRUE(term.modes().cursor_blinking);
+}
+
+AURORA_TEST_CASE(decscusr_needs_space_intermediate) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B[3 q");
+    // 空格中间字节是 DECSCUSR 的识别标志：缺了它 `CSI 5 q` 是别的序列（我们未识别即忽略），
+    // 若照单全收，任何以 q 结尾的未实现序列都会改掉光标形态。
+    term.feed(U"\x1B[5q");
+    AURORA_TEST_CHECK_EQ(term.modes().cursor_shape, CursorShape::Underline);
+    AURORA_TEST_CHECK_TRUE(term.modes().cursor_blinking);
+    // 带私有前缀的写法 xterm 一并接受。
+    term.feed(U"\x1B[?6 q");
+    AURORA_TEST_CHECK_EQ(term.modes().cursor_shape, CursorShape::Bar);
+    AURORA_TEST_CHECK_FALSE(term.modes().cursor_blinking);
+}
+
 AURORA_TEST_CASE(dec_special_graphics_paints_box_lines) {
     // `ESC ( 0` 之后的 lqqk 必须变成箱线码点，`ESC ( B` 之后恢复字母（SPEC.FEAT.TERM.01 验收线）。
     auto term = make_terminal(narrow_only);
@@ -418,12 +470,14 @@ AURORA_TEST_CASE(single_width_policy_keeps_cjk_in_one_cell) {
 
 AURORA_TEST_CASE(ris_restores_power_on_state) {
     auto term = make_terminal(narrow_only);
-    term.feed(U"AAA\r\nBBB\x1B[?7l\x1B[1m\x1B[2;3r");
+    term.feed(U"AAA\r\nBBB\x1B[?7l\x1B[1m\x1B[2;3r\x1B[5 q");
     term.feed(U"\033c");
     AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string(""));
     AURORA_TEST_CHECK_TRUE(term.modes().auto_wrap);
     AURORA_TEST_CHECK_EQ(term.scroll_region().bottom, std::size_t{2});
     AURORA_TEST_CHECK_EQ(term.cursor().row, std::size_t{0});
+    AURORA_TEST_CHECK_EQ(term.modes().cursor_shape, CursorShape::Block);
+    AURORA_TEST_CHECK_TRUE(term.modes().cursor_blinking);
     term.feed(U"X");
     AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 0).flags), std::uint32_t{0});
 }
