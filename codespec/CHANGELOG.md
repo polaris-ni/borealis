@@ -6,6 +6,17 @@
 
 ---
 
+## v0.21（2026-10-01）DECSCUSR 光标形态进状态机：`SPEC.FEAT.RENDER.04` 的最后一块纯逻辑前置
+
+**动机**：`SPEC.FEAT.RENDER.04` 的三形态写明「随 DECSCUSR 切换」，而状态机此前不解释 `CSI Ps SP q`——编辑器与 shell 换提示符时的光标形态请求会静默落到「未识别终结符」分支被忽略，绘制侧再怎么画也只有块状。v0.20 的边界⑤把这一笔单独列为绘制棒之前的前置项，本批就是它；落完之后渲染第一棒在状态机侧不再有欠账。
+
+- **状态机侧（`include/borealis/term/terminal.h` + `src/term/terminal.cpp`）**：新增 `term::CursorShape`（`Block` / `Underline` / `Bar`）与 `TermModes` 的 `cursor_shape`、`cursor_blinking` 两字段。`do_csi` 的 `q` 分支以**空格中间字节为识别标志**——缺了它 `CSI 5q` 是另一条序列，照单全收的话任何以 `q` 结尾的未实现序列都会改掉光标形态；带私有前缀的 `CSI ? Ps SP q` 一并接受（xterm 同口径）。档位表照 xterm：1/2 块、3/4 下划线、5/6 竖线，奇数闪烁、偶数静止；**缺省 Ps、显式 0 与越界档位整档回落默认闪烁块，而不是保留旧值**——设备发出未定义档位通常意在复位，留着上一档会让形态取决于历史输入。`reset_to_default()`（`ESC c`）随 `modes_ = {}` 一并复位，无需额外分支。会话侧零改动：`Session` 把整份 `TermModes` 交给读取回调，新字段自动抵达未来的绘制方。
+- **测试**：`tests/unit/utest_terminal.cpp` 新增 2 例（六档形态与闪烁逐档断言、缺省与越界档位的回落、空格中间字节的识别标志与私有前缀写法）并给既有的 RIS 复位用例补上光标形态两条断言。非 e2e 的 15 项全绿（MSVC + Ninja）；e2e 两项里 `etest_local_terminal` 绿，`etest_osc_clipboard` 仍停在 `OpenClipboard` 返 5，成因与判定见 v0.20，与本批无关。
+- **代价与边界**：① 本批只表达**意图**，不画光标：形态与闪烁的像素呈现、以及 `SPEC.FEAT.RENDER.04` 的「可配置闪烁频率」与「失焦降级为空心/静止」全在绘制棒，闪烁节奏按裁决 7.23④ 由框架既有的 `Widget::tick(now)` 驱动，不新起线程；② 闪烁档只随 DECSCUSR 变，`CSI ? 12 h`（DEC 光标闪烁开关）一类未实现也未建模，遇到即维持当前档；③ 未知 Ps 的回落选择是本仓自定的实现细节——`SPEC.FEAT.RENDER.04` 未规定越界行为，改成「保留旧值」须同时动测试。
+- 需求条目数量（66 条）、标识体系、优先级与分期结构均未变动；本次是裁决 7.23④ 第一棒的状态机收尾，`SPEC.FEAT.RENDER.04` 的语义未改，只把「随 DECSCUSR 切换」变成状态机里可观察的取值。
+
+---
+
 ## v0.20（2026-10-01）上屏层两块纯逻辑前置落地：颜色合成与整格几何 / run 切分（SPEC.FEAT.RENDER.01、SPEC.FEAT.RENDER.03）
 
 **动机**：裁决 7.23 把上屏主路径分成两半——无框架依赖的算式，与唯一触达 `au::Painter` / `au::Widget` 的绘制翻译单元。先把前者落定，是因为最容易算错的两处（SGR 颜色的合成次序、`monospace_cell` 物理像素与 `TextRun` 逻辑 dp 的换算）都必须钉在测试里，而不是等绘制侧接上后从像素反推；后者只剩层叠顺序与裁剪过滤。
