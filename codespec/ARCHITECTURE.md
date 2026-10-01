@@ -308,7 +308,7 @@ cell(col,row) 的落笔原点 = { pad_dp + col * cell_width_px / scale,  pad_dp 
 - 同一视口只用**一个参考 `Font`** 取一次度量：字重切换可带来 1px advance 差，故粗体只换 weight、不换格宽。
 - run 按「前景/背景/字体三者全等」在行内合并，色带矩形与文本片段**共用同一批切分边界**（裁决 7.23②）。
 - 一帧的层叠顺序：本地可见区副本 → 色带 `fill_rect` → 每行一次 `draw_text_runs`（combining 随同 run 文本并字）→ 下划线/删除线/光标块。
-- **下划线为档位枚举**（none/single/double/wavy，裁决 7.25④）：双线＝基线 +1px 与 +3px 两条 1px 线，波浪＝4 列一周期逐列 ±1px 折线，两者都以 `fill_rect` 在应用侧合成（裁决 7.13① 的公共 API 组合，非私改渲染路径）。
+- **下划线为档位枚举**（none/single/double/curly，裁决 7.25④；SGR 编码映射按 7.28 实测修正：`4`/`4:1` 单、`4:2` 与 `21` 双、`4:3` 波浪、`4:0`/`24` 关，dotted/dashed 按单线）：双线＝基线 +1px 与 +3px 两条 1px 线，波浪＝4 物理像素一周期逐像素列 ±1px 折线（相位锚在该行绝对像素 x），两者都以 `fill_rect` 在应用侧合成（裁决 7.13① 的公共 API 组合，非私改渲染路径）。
 - **光标色取自 `PaletteSpec.cursor_color`，缺省回落 `default_foreground`**（裁决 7.25③）；回看态在视口右侧画 2 dp 位置指示条一块（裁决 7.25①）。
 - 局部帧只压裁剪栈而 `on_paint` 收全量 bounds，故脏行过滤按 `Painter::clip_bounds()` 自行跳过窗外行（裁决 7.23ⓐ）。
 - 视口滚动状态只有一个「起始行偏移」，走 `Widget` 内置的 `ScrollViewport` 内核而非框架 `Scroll` 容器（§9.5）。
