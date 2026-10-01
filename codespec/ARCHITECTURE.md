@@ -74,8 +74,8 @@ Borealis 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨�
 
 Aurora 的硬不变量要求 widget 树、状态订阅与重绘调度只在主线程，`State::set` 仅限主线程调用（Aurora 主仓 `codespec/ARCHITECTURE.md` §3.1 与 §11）。因此：
 
-- **后台线程一律不触达 UI 状态与 widget**；跨线程结果须经 `au::async` / `post_to_main` / `Task::set_main_poster` 回投主线程后再写状态。
-- 回投后需唤醒帧循环（Aurora `Surface` 提供的后台投递唤醒入口），否则空闲帧被脏区决策跳过会饿死投递队列。
+- **后台线程一律不触达 UI 状态与 widget**；跨线程结果须回投主线程后再写状态。
+- 回投后需唤醒帧循环，否则空闲帧被脏区决策跳过会饿死投递队列。**本仓的取用形态**（2026-10-01 实测，裁决 7.23ⓒ）：会话提交侧经本仓自己持有的 `Window` 调 `surface().request_wake()`（Aurora 头文件明写该入口线程安全），回调体只入本仓自有队列；主线程侧在 `Application::set_on_frame` 的帧回调里排空该队列并标脏。不依赖 `aurora::detail::post_to_main`——它在 `detail` 命名空间下，虽可由 `Task<T>::set_main_poster` 安装成进程级投递器，但消费方不长期依赖 `detail` 符号。
 
 ### 3.3 输出路径（会话 → 屏幕）
 
@@ -294,6 +294,23 @@ G1 的三腿均已在 Aurora 侧以公共 API 落地（宽度判定见裁决 7.2
 - 本节此前的「应用侧自绘 cell 网格 + 逐格 `draw_text`」过渡形态（G1 交付延期时的预研备路径）**不再启用**；
 - 网格模型、脏行 diff、颜色合成（含 SGR 属性、bold-is-bright、最小对比度）**仍留在应用侧**，原语只收合成后的最终值——这一条边界不因原语落地而改变。
 
+**取用形态细则**（2026-10-01 裁决 7.23，随渲染层落地）：
+
+```
+monospace_cell(font, scale) → {cell_width_px, cell_height_px, ascent_px}   ← 物理像素
+TextRun.box.origin / Painter 几何                                           ← 逻辑 dp
+
+cell(col,row) 的落笔原点 = { col * cell_width_px / scale,  row * cell_height_px / scale }
+视口列/行数 = 窗口逻辑尺寸 ÷ (cell_px / scale)          ← SPEC.FEAT.XFER.01 的尺寸来源
+```
+
+- 同一视口只用**一个参考 `Font`** 取一次度量：字重切换可带来 1px advance 差，故粗体只换 weight、不换格宽。
+- run 按「前景/背景/字体三者全等」在行内合并，色带矩形与文本片段**共用同一批切分边界**（裁决 7.23②）。
+- 一帧的层叠顺序：本地可见区副本 → 色带 `fill_rect` → 每行一次 `draw_text_runs`（combining 随同 run 文本并字）→ 下划线/删除线/光标块。
+- 局部帧只压裁剪栈而 `on_paint` 收全量 bounds，故脏行过滤按 `Painter::clip_bounds()` 自行跳过窗外行（裁决 7.23ⓐ）。
+- 视口滚动状态只有一个「起始行偏移」，走 `Widget` 内置的 `ScrollViewport` 内核而非框架 `Scroll` 容器（§9.5）。
+- 唯一触达 `au::Painter` / `au::Widget` 的实现收口在 `src/ui/terminal_view.cpp` 一个翻译单元；`cell_layout` 与 `palette` 为无框架依赖的纯逻辑，可全量单测。
+
 ### 9.3 G1 就绪后的替换接缝
 
 网格模型、脏行策略与颜色合成（含 SGR 属性、bold-is-bright、最小对比度）**留在应用侧**；框架原语只接收合成后的最终值。故替换面收敛在绘制后端一层。
@@ -302,9 +319,11 @@ G1 的三腿均已在 Aurora 侧以公共 API 落地（宽度判定见裁决 7.2
 
 Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成物理分辨率字形，二者解耦（Aurora 主仓 `codespec/ARCHITECTURE.md` §8.2）。终端须保证 **cell 尺寸整像素对齐与网格边界吸附**，字形缓存按 DPI 分档失效重建（`SPEC.FEAT.RENDER.05`）。该整像素单格尺寸自 2026-10-01 起由框架给出：`render::FontEngine::monospace_cell(f, scale)` 返回物理像素的 `{cell_width_px, cell_height_px, ascent_px}`，其中行高与基线与绘制侧首行 pen 的 snap 口径同源，故按它排布的多行文本与实绘像素对齐；应用侧不再自行把 dp 度量乘 scale 后取整（那会得到小数列宽并逐列累积成半格错位），但**列起点、跨格与换行的排布策略仍在本仓**（裁决 7.22②）。
 
-### 9.5 与框架 Scroll 滑窗的关系（**待定**）
+### 9.5 与框架 Scroll 滑窗的关系（**已拍板**，2026-10-01，原 §16 B）
 
-框架 `Scroll` 有内容坐标离屏滑窗缓冲（`overscan` 默认 1.0，共三屏厚），纯滚动帧可一次 blit。终端自管脏行后是否复用该滑窗、还是自管视口，尚未拍板。注意 Aurora 不变量：`Scroll` **不得无条件置** `RelayoutBoundary`，否则脏冒泡被截断、离屏缓冲恒为骨架——若复用须避开此坑。
+终端视口与 scrollback 一律由本仓**自管**，不复用框架 `Scroll` 容器：`Scroll` 是「容器持有单一子控件 + overscan 滑窗一次 blit」的形态，其视口高度无公共 getter、只有 150ms `ScrollGlide` 吸附而无惯性滚动，且整屏 blit 与终端的「行级脏 + 权威网格在后台读线程」两条前提正交；本项先前的评审还记有一条框架不变量——`Scroll` 不得无条件置 `RelayoutBoundary`，否则脏冒泡被截断、离屏缓冲恒为骨架——自管形态一并绕开它。取而用之的是 `Widget` 内置的 `ScrollViewport` 内核（`offset_y` / `content_h` / `clamp_offset` / `max_offset`），终端的滚动状态收敛为一个**起始行偏移**；偏移变化即整屏脏重建，选区随滚动跟随由此表达。
+
+**反哺通道**：自管过程沉淀出的、去掉终端字样后仍成立的通用件（例如「按行偏移的视口裁剪与位置恢复」），按裁决 7.13① 与附录 A.3 以 Aurora 公共 API 形态反哺，本仓只消费公共头；不满足该判据的留在本仓应用侧。
 
 ### 9.6 交互阻塞项
 
@@ -430,7 +449,6 @@ Windows 便携 zip + 安装包；Linux tar 通用 + AppImage；产物含第三�
 
 | # | 议题 | 候选方案 | 状态 |
 |:---|:---|:---|:---|
-| B | 终端视口是否复用框架 `Scroll` 离屏滑窗（§9.5） | 复用（须避开 `RelayoutBoundary` 坑）/ 自管视口 | 待拍板 |
 | C | 多击语义接入方式 | 等框架 G2 落地后接入 / 应用侧自算（违反框架统一口径，不推荐） | 随 G2 推进确定 |
 | E | 单实例转交通道（§3.1） | Windows 命名管道 / 本地 socket / `WM_COPYDATA` 定位既有窗口 | 待拍板——随 `SPEC.FEAT.INTEG.04` 开工 |
 | F | 配置 schema 版本升级策略（§11.3） | 启动时逐版本迁移链 / 拒绝旧版本并提示导出导入 | 待拍板——随首个 schema 变更裁决 |

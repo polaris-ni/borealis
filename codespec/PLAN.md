@@ -35,6 +35,8 @@
 
 **M0 → M1 的阻塞粒度**（2026-10-01 口径，供开工排序用）：M0 不是 M1 的整体前置。**G1 三腿已全部闭合（2026-10-01 实测）**：`SPEC.FEAT.RENDER.01` `SPEC.FEAT.RENDER.03` `SPEC.FEAT.RENDER.05` 与 `SPEC.FEAT.TERM.08` 的框架前置就此解除（宽度判定腿的判据见裁决 7.20，绘制两腿见裁决 7.22；原缺口形态与闭合过程的完整表述保留在附录 A.2 的 G1 行）。余下 **G2 阻塞 `SPEC.FEAT.INTERACT.02` 的双击/三击腿**。M1 的其余项（终端逻辑层、键盘映射、UI 容器、PTY 与尺寸同步、配置）不依赖框架缺口，可在 M0 未关闭期间推进。
 
+**M1 渲染腿的棒内序**（2026-10-01 裁决 7.23④）：**第一棒＝上屏主路径**——`SPEC.FEAT.RENDER.01`（等宽网格 + 脏行重绘 + 视口自管）、`SPEC.FEAT.RENDER.03`（SGR 属性合成，含 bold-is-bright 与最小对比度）、`SPEC.FEAT.RENDER.04`（光标三形态与闪烁），交付到「本地会话输出看得见、光标跟手」即止；`SPEC.NF.PERF.02` 的吞吐基准随第一棒建，**并挂时间门禁**（劣化 >10% 即 FAIL，与裁决 7.22③ 的改判不冲突：那里锁的是框架批量入口的相对收益，这里锁的是本仓上屏层的每帧成本）。**第二棒＝`SPEC.FEAT.RENDER.02` 字体族**（系统枚举 + 内置 Cascadia + CJK 缺字回退链）与缩放变更后的度量/字形缓存重建，因第一棒取系统等宽字体即可上屏、回退链的验收只在含汉字会话里才成立。文本选择（`SPEC.FEAT.INTERACT.02`）、键盘映射（`SPEC.FEAT.INTERACT.01`）与尺寸去抖（`SPEC.FEAT.XFER.01` 的 UI 侧来源）属交互层，不在渲染两棒内。
+
 ---
 
 ## 3 需求优先级总表（权威映射）
@@ -50,11 +52,11 @@
 | `SPEC.FEAT.TERM.07` | OSC 集成 | P1 | M2；**状态机消费腿提前落地**（裁决 7.21④，含 OSC 52 写方向真机落系统剪贴板），标题→标签名→窗口标题栏的 UI 消费链路仍留 M2 |
 | `SPEC.FEAT.TERM.08` | 宽字符 | P0 | M1 |
 | `SPEC.FEAT.TERM.09` | 字符编码 | P1 | M3；UTF-8 基线腿随 M1（本地终端默认编码，是 M1 出口判据「中文可输入可显示」的必需前置），编码可配与 GB18030 等其余腿留 M3 |
-| `SPEC.FEAT.RENDER.01` | 等宽网格渲染 | P0 | M1 |
-| `SPEC.FEAT.RENDER.02` | 字体 | P0 | M1 |
-| `SPEC.FEAT.RENDER.03` | 属性渲染 | P0 | M1 |
-| `SPEC.FEAT.RENDER.04` | 光标 | P0 | M1 |
-| `SPEC.FEAT.RENDER.05` | 缩放适配 | P1 | M2 |
+| `SPEC.FEAT.RENDER.01` | 等宽网格渲染 | P0 | M1 **第一棒**（裁决 7.23④） |
+| `SPEC.FEAT.RENDER.02` | 字体 | P0 | M1 **第二棒**（字体枚举 + 内置 Cascadia + CJK 缺字回退链；第一棒取系统等宽即可上屏，裁决 7.23④） |
+| `SPEC.FEAT.RENDER.03` | 属性渲染 | P0 | M1 **第一棒**（裁决 7.23④） |
+| `SPEC.FEAT.RENDER.04` | 光标 | P0 | M1 **第一棒**（裁决 7.23④） |
+| `SPEC.FEAT.RENDER.05` | 缩放适配 | P1 | M2；与 `SPEC.FEAT.RENDER.02` 同棒接缩放变更后的度量与字形缓存重建（裁决 7.23④） |
 | `SPEC.FEAT.INTERACT.01` | 键盘映射 | P0 | M1 |
 | `SPEC.FEAT.INTERACT.02` | 文本选择 | P1 | M1（流式拖拽/矩形块基本面，`SPEC.FEAT.INTERACT.03` 选区复制的前置）+ M2（双击/三击等其余） |
 | `SPEC.FEAT.INTERACT.03` | 复制粘贴 | P0 | M1 |
