@@ -14,11 +14,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "borealis/grid/row.h"
 #include "borealis/ui/palette.h"
+#include "borealis/ui/selection.h"
 
 namespace borealis::ui {
 
@@ -81,6 +83,19 @@ struct Rect {
 /// @return 覆盖该行该列区间的矩形，高度为整格高。
 [[nodiscard]] auto rect_for(const GridGeometry &geometry, std::size_t row, std::size_t first_column,
                             std::size_t last_column) noexcept -> Rect;
+
+/// @brief 指针落点（逻辑 dp，控件本地坐标）对应的那一格。
+///
+/// 行号是**绘制行号**（视口内 0 基），与 `rect_for` 同一坐标空间；回看偏移由调用方在取行时折算。
+/// 越界一律**钳位**而非丢事件：框架在按下时 `SetCapture`，拖选出窗口后仍持续收到 Move，此刻
+/// 要的是「选区继续长到边界」，返回空值就会让选区在窗口边缘内缩一格。四周内边距带也归最近的一格，
+/// 理由相同——拖到内边距上就是想把选区推到行首/行尾。
+/// @param geometry 本帧网格几何。
+/// @param x 落点横坐标（dp，可负）。
+/// @param y 落点纵坐标（dp，可负）。
+/// @return 钳到网格内的格子；行列数为 0（度量为 0 或窗口最小化）时为空值。
+[[nodiscard]] auto cell_at_point(const GridGeometry &geometry, double x, double y) noexcept
+    -> std::optional<GridCellPos>;
 
 /// @brief 一段样式全等的行内区间：色带、字形与装饰共用它的边界。
 ///

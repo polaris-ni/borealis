@@ -1,8 +1,8 @@
 // ============================================================
 // 整格几何与行内 run 切分（src/ui/cell_layout.cpp）
 // ------------------------------------------------------------
-// 本文件只做两件算得清的事：像素格度量 ÷ scale 换成 dp 步长，以及按样式全等把一行切成 run。
-// 不含框架类型，故 dp/px 换算与切分边界都能全量单测（架构 §9.2）。
+// 本文件只做三件算得清的事：像素格度量 ÷ scale 换成 dp 步长、指针 dp 落点折回格子序号，以及按样式
+// 全等把一行切成 run。不含框架类型，故 dp/px 换算与切分边界都能全量单测（架构 §9.2）。
 // ============================================================
 
 #include "borealis/ui/cell_layout.h"
@@ -10,6 +10,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 #include "borealis/term/utf8.h"
@@ -59,6 +60,18 @@ constexpr std::array<int, 4> kCurlyOffsets{0, 1, 0, -1};
                 static_cast<double>(width_px) / scale, static_cast<double>(height_px) / scale};
 }
 
+/// @brief 沿一个轴取格子序号：先 floor，再钳进 `[0, count - 1]`。
+/// @note 钳位必须发生在转成无符号**之前**：拖出窗口左/上沿给的是负 dp，负浮点转 `std::size_t`
+///       是未定义行为，而不是「回绕成一个很大的列号」那种看似能跑的巧合。
+[[nodiscard]] auto cell_index(double offset_dp, double step_dp, std::size_t count) noexcept -> std::size_t {
+    const auto raw = std::floor(offset_dp / step_dp);
+    if (raw < 0.0) {
+        return 0U;
+    }
+    const auto last = static_cast<double>(count - 1U);
+    return raw > last ? count - 1U : static_cast<std::size_t>(raw);
+}
+
 }  // namespace
 
 auto make_geometry(const CellPixels &metrics, double scale, const LogicalSize &viewport,
@@ -84,6 +97,15 @@ auto rect_for(const GridGeometry &geometry, std::size_t row, std::size_t first_c
     const auto right = geometry.padding + static_cast<double>(last_column) * geometry.cell_width;
     return Rect{left, geometry.padding + static_cast<double>(row) * geometry.cell_height, right - left,
                 geometry.cell_height};
+}
+
+auto cell_at_point(const GridGeometry &geometry, double x, double y) noexcept -> std::optional<GridCellPos> {
+    // 行列数与步长任一为 0 就没有可定位的格子：这既是窗口最小化的真实形态，也让下面的除法不成立。
+    if (geometry.columns == 0U || geometry.rows == 0U || geometry.cell_width <= 0.0 || geometry.cell_height <= 0.0) {
+        return std::nullopt;
+    }
+    return GridCellPos{.row = cell_index(y - geometry.padding, geometry.cell_height, geometry.rows),
+                       .column = cell_index(x - geometry.padding, geometry.cell_width, geometry.columns)};
 }
 
 auto decoration_rects(const GridGeometry &geometry, std::size_t row, const StyleRun &run) -> std::vector<Rect> {
