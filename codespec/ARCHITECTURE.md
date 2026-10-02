@@ -390,7 +390,9 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 
 `PasteNewlinePolicy` 的定义自 `config/settings.h` 迁入本件（配置侧改为 `using term::PasteNewlinePolicy`，与 `term::CursorShape` 同口径），`term::LineEnding{Lf, Cr, Crlf}` 是串口 `line_ending`（`SPEC.FEAT.CONN.05`，默认 LF）的代码侧形态。
 
-**余下未落**：鼠标按下/拖动/抬起 → 格子坐标的换算与选区状态机（框架侧原语已具备：`Widget::on_pointer_event(MouseEvent &)` 是虚钩子、事件带 `position` / `local_position` / `button` / `click_count`，Win32 在 Press 时 `SetCapture` 使拖出窗口仍收 Move/Release）、选区高亮的绘制层（`ui::rect_for` 已能按行列区间出矩形）、剪贴板写入与 copy-on-select / 右键三态（`Clipboard::get_text` / `set_text`、`Modifier::context_menu` + `MenuItem`、`Dialog` 均在公共 API 上）、`Session::copy_text`（计划 / 待建：在既有短临界区内取文本后交回主线程）、多行警告的对话框与逐行排期（计划本身已由 `term::plan_paste` 给出）。**列模式（Alt+拖拽）与 Ctrl+滚轮缩放两腿被 G18 挡住**：`MouseEvent` / `ScrollEvent` 不携带修饰键位（附录 A.2，裁决 7.33⑧），本仓不自造替代判定。另有一条显式欠项：scrollback 饱和后新输出把最旧行挤出，其余行的存储索引整体减一，仍活着的选区因此相对内容下移一行——消除须给存储加单调行号，随界面腿一并处理（裁决 7.32②）。
+**已落地的落点换算（2026-10-02）**：`ui::cell_at_point(geometry, x_dp, y_dp) -> std::optional<GridCellPos>`（在 `ui/cell_layout.h`，与 `rect_for` 同一坐标空间、同为**绘制行号**）。它收的是框架给的逻辑 dp，出的是 `ui::selection.h` 已有的 `GridCellPos`，于是界面腿只剩「事件 → 本函数 → 推进 anchor/focus → `row_spans`」。口径只有一条值得记：**越界钳位而非丢事件**——框架在 Press 时 `SetCapture`，拖出窗口后 Move 仍持续到达，此刻返回空值会让选区在窗口边缘内缩一格；内边距带同理归最近格。行列数为 0（字体未就绪、窗口最小化）才是空值。放这一层的原因与 `make_geometry` 同一条：dp/px 换算是本仓最容易算错的算术，须能脱开界面单测（§9.2）。
+
+**余下未落**：选区状态机（按下/拖动/抬起 的 anchor/focus 推进、随新输出的失效与保持、copy-on-select 的时机；框架侧原语已具备——`Widget::on_pointer_event(MouseEvent &)` 是虚钩子、事件带 `position` / `local_position` / `button` / `click_count`，Win32 在 Press 时 `SetCapture` 使拖出窗口仍收 Move/Release，落点换算已由上件给出）、选区高亮的绘制层（`ui::rect_for` 已能按行列区间出矩形，缺的是高亮配色与失焦态）、剪贴板写入与右键三态（`Clipboard::get_text` / `set_text`、`Modifier::context_menu` + `MenuItem`、`Dialog` 均在公共 API 上）、`Session::copy_text`（计划 / 待建：在既有短临界区内取文本后交回主线程）、多行警告的对话框与按块排期（计划本身已由 `term::plan_paste` 给出）。**列模式（Alt+拖拽）与 Ctrl+滚轮缩放两腿被 G18 挡住**：`MouseEvent` / `ScrollEvent` 不携带修饰键位（附录 A.2，裁决 7.33⑧），本仓不自造替代判定。另有一条显式欠项：scrollback 饱和后新输出把最旧行挤出，其余行的存储索引整体减一，仍活着的选区因此相对内容下移一行——消除须给存储加单调行号，随界面腿一并处理（裁决 7.32②）。
 
 ### 10.3 搜索
 
