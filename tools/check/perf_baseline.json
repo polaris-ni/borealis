@@ -13,7 +13,8 @@
     "cmake_build_type": "RelWithDebInfo",
     "build_config": "optimized",
     "build": "msvc-bench preset (Ninja + MSVC, RelWithDebInfo), default config (dracula, Cascadia 14pt)",
-    "supersedes": "The first capture on this date ran the Debug default preset and reported cat 90.7 fps / scroll 7.15 ms / full redraw 12.5 ms / 0.68 MB/s. It did not record the optimization level, so numbers that looked like product cost were describing /Od /RTC1 code. Superseded rather than rewritten in place: a benchmark reference has to say which build produced it."
+    "supersedes": "Two generations. (1) The first capture on this date ran the Debug default preset and reported cat 90.7 fps / scroll 7.15 ms / full redraw 12.5 ms / 0.68 MB/s. It did not record the optimization level, so numbers that looked like product cost were describing /Od /RTC1 code. (2) The first optimized capture (cat 736.828 fps / ingest 20.627 MB/s) predates G19, the framework-side single-width short-circuit inside aurora::unicode_cell_width; that primitive sits in the write chain, so the whole ladder moved together (chain 25.9 -> 41.1 MB/s). Superseded rather than rewritten in place: a benchmark reference has to say which build and which framework produced it.",
+    "invocations": "Three independent gate invocations of three bench processes each; each reference below is the median of that invocation's three medians"
   },
   "max_regression_percent": 10,
   "ungated": [
@@ -31,12 +32,12 @@
     },
     {
       "metric": "chain_mb_per_s",
-      "observed": [25.905, 26.260, 25.383],
+      "observed": [40.439, 41.533, 41.069],
       "reason": "Attribution rung: the producer chain alone (decode, parse, state machine, grid) with no session, no lock and no queue. Moving one rung usually moves its neighbours, so the product-facing rate is locked on cat_mb_per_s (B-7) instead. Only present with --write-side."
     },
     {
       "metric": "ingest_mb_per_s",
-      "observed": [25.808, 24.253, 23.688],
+      "observed": [31.383, 31.615, 40.610],
       "reason": "Attribution rung: the same corpus through Session (lock, dirty-row scan, damage queue) while the main thread drains the queue without painting; the gap to chain_mb_per_s is the session-side cost. Only present with --write-side."
     }
   ],
@@ -45,60 +46,60 @@
       "id": "B-1",
       "metric": "cat_fps",
       "direction": "higher",
-      "reference": 736.828,
+      "reference": 755.213,
       "relative": true,
       "absolute_min": 45.0,
-      "note": "SPEC.NF.PERF.02's named metric: 10 MB fed through cat must hold >= 45 fps."
+      "note": "SPEC.NF.PERF.02's named metric: 10 MB fed through cat must hold >= 45 fps. Post-G19 capture: 749.806 / 755.213 / 773.022 across three invocations (3.1% span)."
     },
     {
       "id": "B-2",
       "metric": "full_redraw_ms",
       "direction": "lower",
-      "reference": 1.262,
+      "reference": 1.220,
       "relative": false,
       "absolute_max": 100.0,
-      "note": "Three capture runs spanned 1.244-1.355 ms (8.8%): a 10% relative window would leave almost no room for background load, so only the requirement's absolute line judges it. A whole-screen paint regression also shows up in B-3 / B-5."
+      "note": "Three capture runs spanned 1.244-1.355 ms (8.8%): a 10% relative window would leave almost no room for background load, so only the requirement's absolute line judges it. A whole-screen paint regression also shows up in B-3 / B-5. Post-G19 the three invocations read 1.220 / 1.220 / 1.260 (3.3%), still not enough samples to reopen a relative line on a tail-free single metric."
     },
     {
       "id": "B-3",
       "metric": "scroll_frame_ms_mean",
       "direction": "lower",
-      "reference": 1.263219,
+      "reference": 1.262,
       "relative": true,
-      "note": "One row dirty per frame: the cheapest view of the per-frame cost of dirty-row filtering, run splitting and colour resolution. Capture spread 1.2%."
+      "note": "One row dirty per frame: the cheapest view of the per-frame cost of dirty-row filtering, run splitting and colour resolution. Capture spread 1.2%; the post-G19 re-capture read 1.261 / 1.304 / 1.262 across three invocations (3.4% span, adverse side 3.3%)."
     },
     {
       "id": "B-4",
       "metric": "scroll_frame_ms_p95",
       "direction": "lower",
-      "reference": 1.4689,
+      "reference": 1.483,
       "relative": true,
-      "note": "Tail of B-3; capture spread 2.7%, so the tail is worth locking."
+      "note": "Tail of B-3; capture spread 2.7%, so the tail is worth locking. Post-G19 re-capture 1.433 / 1.501 / 1.483 (4.7% span, adverse side 1.2%)."
     },
     {
       "id": "B-5",
       "metric": "cat_frame_ms_mean",
       "direction": "lower",
-      "reference": 1.357168,
+      "reference": 1.324,
       "relative": true,
-      "note": "Frame cost while the 10 MB feed is in flight (whole-viewport dirty plus a concurrent producer thread). Capture spread 5.3%."
+      "note": "Frame cost while the 10 MB feed is in flight (whole-viewport dirty plus a concurrent producer thread). Capture spread 5.3%; post-G19 re-capture 1.324 / 1.334 / 1.294 (3.1% span, adverse side 0.8%)."
     },
     {
       "id": "B-6",
       "metric": "cat_frame_ms_p95",
       "direction": "lower",
-      "reference": 1.6155,
+      "reference": 1.629,
       "relative": false,
       "absolute_max": 22.222,
-      "note": "Tail of B-5 with an 18.7% capture spread -- too wide for a 10% relative line. Judged instead against the requirement's own frame budget (1000 / 45 fps), so a periodic long frame that would drop under 45 fps reads red even while the mean looks healthy."
+      "note": "Tail of B-5 with a wide capture spread (18.7% then, 9.4% on the post-G19 re-capture: 1.513-1.655) -- too wide for a 10% relative line. Judged instead against the requirement's own frame budget (1000 / 45 fps), so a periodic long frame that would drop under 45 fps reads red even while the mean looks healthy."
     },
     {
       "id": "B-7",
       "metric": "cat_mb_per_s",
       "direction": "higher",
-      "reference": 20.627,
+      "reference": 28.888,
       "relative": true,
-      "note": "Ingestion throughput. The first capture left it out on the belief that a write-side defect pinned it (gating a defect would freeze it in as the contract); that belief was a Debug-build artifact -- the optimized rate is 20.6 MB/s. Raw single runs are NOT stable (a five-run probe spanned 19.2-21.3, 10.3%), which is exactly why the gate judges the median of three: across four independent gate invocations the medians were 20.495 / 20.589 / 20.627 / 20.909, a 2% spread, so a 10% relative line means something rather than reading red at random. This number is not named by SPEC.NF.PERF.02: it catches write-side regressions that frame-time gates cannot see, since a slower producer simply yields fewer frames."
+      "note": "Ingestion throughput. The first capture left it out on the belief that a write-side defect pinned it (gating a defect would freeze it in as the contract); that belief was a Debug-build artifact -- the optimized rate is 20.6 MB/s, and after G19 landed in the framework the post-capture rate is 28.9 MB/s. Raw single runs are NOT stable (a five-run probe spanned 19.2-21.3, 10.3%), which is exactly why the gate judges the median of three: the three invocations behind this reference read 27.334 / 28.888 / 31.420, a 14.2% peak-to-peak span but only 5.4% on the adverse side (a higher-is-better metric can only fail downward), so the 10% relative line still has headroom. This number is not named by SPEC.NF.PERF.02: it catches write-side regressions that frame-time gates cannot see, since a slower producer simply yields fewer frames."
     }
   ]
 }
