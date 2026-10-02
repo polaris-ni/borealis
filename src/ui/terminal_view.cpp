@@ -93,6 +93,7 @@ constexpr double kIndicatorMinLengthDp = 12.0;
         .control = (e.modifiers & aurora::ModifierKey::Control) != 0U,
         .alt = (e.modifiers & aurora::ModifierKey::Alt) != 0U,
         .meta = (e.modifiers & aurora::ModifierKey::Meta) != 0U,
+        .num_lock = (e.modifiers & aurora::ModifierKey::NumLock) != 0U,
     };
 }
 
@@ -235,24 +236,34 @@ auto TerminalView::wants_navigation_keys() const -> bool { return true; }
 
 auto TerminalView::wants_activation_keys() const -> bool { return true; }
 
+auto TerminalView::wants_tab_keys() const -> bool { return true; }
+
 auto TerminalView::on_key_event(aurora::KeyEvent &e) -> void {
-    // TODO(SPEC.FEAT.INTERACT.01): `Tab` 与 Alt 系组合到不了这里——派发器把 Tab 当焦点遍历无条件
-    // 消费（无控件优先钩子），Win32 后端对 `WM_SYSKEY*` 只推进修饰态不派发。两者登记为附录 A.2
-    // 的 G14 / G15，本仓不自造绕过（裁决 7.13①）。
     if (e.action != aurora::KeyAction::Down) {
         return;  // 抬起无按键释放语义（kitty 协议属延后观察项），留着让宿主继续处理
     }
-    const auto bytes = term::encode_key(to_key_press(e), modes_snapshot());
+    const auto press = to_key_press(e);
+    const auto bytes = term::encode_key(press, modes_snapshot());
     if (!bytes) {
         return;  // 本层不编码：可打印形态归文本通道，无遗留编码的组合归快捷键层
     }
     session_->send_bytes(std::as_bytes(std::span<const char>{bytes->data(), bytes->size()}));
     e.is_handled = true;
+    // NumLock 开着的小键盘键必有紧随其后的 `WM_CHAR`（Windows 不看 `DECKPAM`），而本层已把它发成
+    // SS3 数值族或导航形态——文本通道那一条是同一物理键的第二次落地，吞掉一次。
+    if (term::is_keypad(press.sym) && press.num_lock) {
+        swallow_next_text_ = true;
+    }
 }
 
 auto TerminalView::on_text_input(aurora::TextInputEvent &e) -> void {
     // TODO(SPEC.FEAT.INTERACT.06): 输入法上屏走 `on_text_composition` 的 `committed`，本入口只覆盖
     // 直接按键产生的文本；preedit 就地绘制与候选窗定位随那一棒接。
+    if (swallow_next_text_) {
+        swallow_next_text_ = false;
+        e.is_handled = true;  // 已由按键通道发过，此处消费但不写会话
+        return;
+    }
     session_->send_text(to_code_points(e.text));
     e.is_handled = true;
 }

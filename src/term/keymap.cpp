@@ -104,6 +104,59 @@ struct SpecialForm {
     }
 }
 
+/// @brief 应用模式（DECKPAM）下小键盘数值与运算键的 SS3 字母；无遗留形态者返回 0。
+///
+/// 表照 PuTTY `format_numeric_keypad_key` 的 xterm-funky 档：`0`–`9` 是 `p`–`y`、小数点 `n`、
+/// `/` `o`、`*` `j`、`-` `m`，而 `+` 覆盖的位置在 VT100 上是**两个**键，故由 Shift 二选一。
+/// SS3 形态没有修饰参数位，故除 Shift 外的修饰不参与编码——丢掉比自造形态诚实。
+[[nodiscard]] auto app_keypad_letter(KeySym sym, bool shift) noexcept -> char32_t {
+    const int code = static_cast<int>(sym);
+    if (code >= static_cast<int>(KeySym::KP_0) && code <= static_cast<int>(KeySym::KP_9)) {
+        return static_cast<char32_t>('p' + (code - static_cast<int>(KeySym::KP_0)));
+    }
+    switch (sym) {
+        case KeySym::KP_Decimal: return U'n';
+        case KeySym::KP_Divide: return U'o';
+        case KeySym::KP_Multiply: return U'j';
+        case KeySym::KP_Subtract: return U'm';
+        case KeySym::KP_Add: return shift ? U'l' : U'k';
+        default: return 0;
+    }
+}
+
+/// @brief 小键盘的导航语义形态；无导航语义（或该键此刻归文本通道）时返回空。
+///
+/// 导航区六键与 NumLock 无关（物理位本就是导航键）；数字阵只在 NumLock 关闭时才有导航语义，
+/// 开着就是数字——那档的字符由文本通道给出，本层不发以免同一键上屏两次。`KP_Begin` 与分隔符、
+/// 四则运算键没有遗留导航形态，返回空即不发。
+[[nodiscard]] auto keypad_navigation_form(KeySym sym, bool num_lock) noexcept -> std::optional<SpecialForm> {
+    switch (sym) {
+        case KeySym::KP_Insert: return SpecialForm{.tilde = 2};
+        case KeySym::KP_Delete: return SpecialForm{.tilde = 3};
+        case KeySym::KP_Prior: return SpecialForm{.tilde = 5};
+        case KeySym::KP_Next: return SpecialForm{.tilde = 6};
+        case KeySym::KP_Home: return SpecialForm{.base = LetterBase::App, .letter = U'H'};
+        case KeySym::KP_End: return SpecialForm{.base = LetterBase::App, .letter = U'F'};
+        default: break;
+    }
+    if (num_lock) {
+        return std::nullopt;
+    }
+    switch (sym) {
+        case KeySym::KP_0: return SpecialForm{.tilde = 2};
+        case KeySym::KP_1: return SpecialForm{.base = LetterBase::App, .letter = U'F'};
+        case KeySym::KP_2: return SpecialForm{.base = LetterBase::App, .letter = U'B'};
+        case KeySym::KP_3: return SpecialForm{.tilde = 6};
+        case KeySym::KP_4: return SpecialForm{.base = LetterBase::App, .letter = U'D'};
+        case KeySym::KP_6: return SpecialForm{.base = LetterBase::App, .letter = U'C'};
+        case KeySym::KP_7: return SpecialForm{.base = LetterBase::App, .letter = U'H'};
+        case KeySym::KP_8: return SpecialForm{.base = LetterBase::App, .letter = U'A'};
+        case KeySym::KP_9: return SpecialForm{.tilde = 5};
+        case KeySym::KP_Decimal: return SpecialForm{.tilde = 3};
+        default: return std::nullopt;
+    }
+}
+
 /// @brief 不带 Ctrl 时的回车 / Tab / 退格 / Esc 形态；其余键返回空。
 [[nodiscard]] auto plain_form(KeySym sym, bool shift) -> std::optional<std::string> {
     switch (sym) {
@@ -189,12 +242,25 @@ auto encode_key(const KeyPress &press, const TermModes &modes) -> std::optional<
     const bool alt = press.alt || press.meta;
     const int mask = 1 + (press.shift ? 1 : 0) + (alt ? 2 : 0) + (press.control ? 4 : 0);
 
-    if (press.control) {
-        // Ctrl+Alt（含 Meta）系无遗留编码，且这类组合正是 UI 快捷键的常用档：交回框架的快捷键层
-        // （它在派发到控件之前拦截），冲突由用户改绑裁决——`SPEC.FEAT.INTERACT.01`、架构 §9.6。
-        if (alt) {
-            return std::nullopt;
+    // Ctrl+Alt（含 Meta）系无遗留编码，且这类组合正是 UI 快捷键的常用档：交回框架的快捷键层
+    // （它在派发到控件之前拦截），冲突由用户改绑裁决——`SPEC.FEAT.INTERACT.01`、架构 §9.6。
+    if (press.control && alt) {
+        return std::nullopt;
+    }
+
+    if (is_keypad(press.sym)) {
+        if (const auto nav = keypad_navigation_form(press.sym, press.num_lock)) {
+            return encode_special(*nav, mask, modes);  // 导航语义与主键盘同形，修饰走掩码参数
         }
+        const char32_t letter =
+            modes.application_keypad ? app_keypad_letter(press.sym, press.shift) : U'\0';
+        if (letter == U'\0') {
+            return std::nullopt;  // 常规模式的数字与运算键归文本通道，应用模式也无遗留形态者同理
+        }
+        return std::string{kEscape, 'O', static_cast<char>(letter)};
+    }
+
+    if (press.control) {
         if (const auto form = special_form(press.sym)) {
             return encode_special(*form, mask, modes);  // Ctrl+方向键一类走带参数的 CSI 形态
         }
@@ -219,6 +285,11 @@ auto encode_key(const KeyPress &press, const TermModes &modes) -> std::optional<
         return std::nullopt;  // 无 Alt/Meta 的可打印键归文本通道（真实大小写与布局只有它知道）
     }
     return std::nullopt;
+}
+
+auto is_keypad(KeySym sym) noexcept -> bool {
+    const int code = static_cast<int>(sym);
+    return code >= static_cast<int>(KeySym::KP_Insert) && code <= static_cast<int>(KeySym::KP_9);
 }
 
 }  // namespace borealis::term

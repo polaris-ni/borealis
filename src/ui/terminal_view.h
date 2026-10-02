@@ -91,6 +91,9 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief Enter/Space 先给键盘入口：否则派发器直接调用 `activate()`，终端收不到回车。
     [[nodiscard]] auto wants_activation_keys() const -> bool override;
 
+    /// @brief Tab 先给键盘入口：否则派发器把它当焦点遍历消费，终端永远收不到制表符（vim 一类靠它）。
+    [[nodiscard]] auto wants_tab_keys() const -> bool override;
+
     /// @brief 挂载时向运行中的 `Scheduler` 注册闪烁周期（无 App 运行时不注册）。
     auto on_mount(const aurora::BuildContext &ctx) -> void override;
 
@@ -117,7 +120,8 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 行列数真变了才下发给会话；0 行或 0 列（窗口最小化）不下发。
     auto request_grid_size() -> void;
 
-    /// @brief 取模式快照（短临界区内只取值）：按键编码要按 DECCKM 决定方向键走 SS3 还是 CSI。
+    /// @brief 取模式快照（短临界区内只取值）：按键编码要按 DECCKM 定方向键走 SS3 还是 CSI，按
+    ///        DECKPAM 定小键盘发数值族还是让位文本通道。
     [[nodiscard]] auto modes_snapshot() -> term::TermModes;
 
     /// @brief 每帧重投影（裁决 D6①「距底恒定」）：返回本次生效的距底行数。
@@ -153,6 +157,9 @@ class TerminalView final : public aurora::LeafWidget {
     bool blink_on_ = true;
     aurora::TimerHandle blink_timer_;
     session::Size requested_size_{};  ///< 上次下发的行列，避免每次布局都重发。
+    /// @brief 一次性吞掉紧随其后的文本事件：应用模式的小键盘数字已由按键通道发成 SS3，而 Windows
+    ///        无论 `DECKPAM` 都给同一物理键再发一条 `WM_CHAR`（`term::is_keypad` 的判据）。
+    bool swallow_next_text_ = false;
 };
 
 }  // namespace borealis::ui
