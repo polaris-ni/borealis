@@ -1,7 +1,8 @@
 /// 测试类型: unit
 /// 目标单元: include/borealis/grid/storage.h + row.h + cell.h
 /// 测试说明: 环形缓冲存储的滚动语义（不搬移行数据、溢出覆盖最旧）、区域滚动只动带内行、
-///           容量上下限、列宽变更不 reflow、行数变更的窗口边界语义、行的脏区间与占用上界、
+///           容量上下限、列宽变更不 reflow、行数变更的窗口边界语义、顶边位移计数
+///           （选区漂移补偿的输入，裁决 7.38⑤ / 7.39）、行的脏区间与占用上界、
 ///           组合标记侧表（并入序、脏标记、覆盖即清除、上限、截断与整行搬移）、
 ///           超链接侧表（一列一项、覆盖即清除、脏标记、截断与整行搬移）、
 ///           清空复位（架构 §4.1 / §4.2 / §4.3 / §4.5 / §4.6，SPEC.FEAT.TERM.04、SPEC.FEAT.TERM.07、
@@ -510,6 +511,77 @@ AURORA_TEST_CASE(set_rows_zero_is_ignored) {
 
     AURORA_TEST_CHECK_EQ(storage.visible_rows(), std::size_t{3});
     AURORA_TEST_CHECK_EQ(row_head(storage, 0), 'A');
+}
+
+AURORA_TEST_CASE(dropped_lines_counts_only_saturated_overflow) {
+    // 未满时的上滚只是往底部加行，既有内容的行号一个也没动，故不记位移。
+    Storage storage(4, 2, 1);
+    AURORA_TEST_CHECK_EQ(storage.dropped_lines(), std::int64_t{0});
+
+    storage.scroll_up(1);
+    AURORA_TEST_CHECK_EQ(storage.total_lines(), std::size_t{3});
+    AURORA_TEST_CHECK_EQ(storage.dropped_lines(), std::int64_t{0});
+
+    // 此刻容量（视口 2 + 历史 1）已满，再来一行就挤掉最旧那行。
+    storage.scroll_up(1);
+    AURORA_TEST_CHECK_EQ(storage.dropped_lines(), std::int64_t{1});
+    storage.scroll_up(5);
+    AURORA_TEST_CHECK_EQ(storage.dropped_lines(), std::int64_t{6});
+}
+
+AURORA_TEST_CASE(dropped_lines_tracks_the_top_edge_not_the_window) {
+    // 收回历史只是把窗口上界退回去，内容与行号的对应没变（裁决 7.38⑤ 要的正是这个量）。
+    Storage storage(4, 2, 3);
+    storage.scroll_up(2);
+    storage.scroll_down(1);
+    AURORA_TEST_CHECK_EQ(storage.dropped_lines(), std::int64_t{0});
+
+    // 无历史可收回时顶部凭空出一行空白＝内容整体下移一行，位移为负。
+    Storage blank(4, 2, 0);
+    blank.scroll_down(1);
+    AURORA_TEST_CHECK_EQ(blank.dropped_lines(), std::int64_t{-1});
+}
+
+AURORA_TEST_CASE(dropped_lines_accounts_for_row_count_changes) {
+    // 变矮而历史装得下：没有行被丢弃，顶边不动。
+    Storage storage(4, 3, 5);
+    storage.set_rows(2);
+    AURORA_TEST_CHECK_EQ(storage.dropped_lines(), std::int64_t{0});
+
+    // 变矮且无处安放最旧行：从顶端丢一行，顶边前进一行。
+    Storage tight(2, 3, 0);
+    tight.set_rows(2);
+    AURORA_TEST_CHECK_EQ(tight.dropped_lines(), std::int64_t{1});
+
+    // 变高且历史不够：顶部补的那几行空白把内容整体下推（与 row_head 的实测位移同源）。
+    Storage alt(4, 2, 0);
+    alt.visible_line(0).set(0, marker(U'A'));
+    alt.visible_line(1).set(0, marker(U'B'));
+    alt.set_rows(4);
+    AURORA_TEST_CHECK_EQ(alt.dropped_lines(), std::int64_t{-2});
+    AURORA_TEST_CHECK_EQ(row_head(alt, 0), ' ');
+    AURORA_TEST_CHECK_EQ(row_head(alt, 2), 'A');
+}
+
+AURORA_TEST_CASE(clear_counts_every_stored_line_as_gone) {
+    // 清空后的行不是被清掉的那些行：顶边一次性推进现存行数，令旧选区整体折算到顶端之外。
+    Storage storage(3, 2, 2);
+    storage.scroll_up(3);
+    AURORA_TEST_REQUIRE_EQ(storage.total_lines(), std::size_t{4});
+    const auto before = storage.dropped_lines();
+
+    storage.clear();
+
+    AURORA_TEST_CHECK_EQ(storage.dropped_lines(), before + 4);
+    AURORA_TEST_CHECK_EQ(storage.total_lines(), std::size_t{2});
+}
+
+AURORA_TEST_CASE(region_scroll_does_not_move_the_top_edge) {
+    // 带内位移无法由单一全局偏移表达（带外行不动），故不记（裁决 7.39③ 的已知欠项）。
+    Storage storage(4, 4, 2);
+    storage.scroll_region_up(1, 2, 1);
+    storage.scroll_region_down(1, 3, 2);
+    AURORA_TEST_CHECK_EQ(storage.dropped_lines(), std::int64_t{0});
 }
 
 }  // namespace borealis::test_cases::utest_grid_storage
