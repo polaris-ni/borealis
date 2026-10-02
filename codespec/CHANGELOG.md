@@ -6,6 +6,21 @@
 
 ---
 
+## v0.37（2026-10-03）选区界面腿的纯逻辑前置：顶边位移计数、漂移折算件与双击选词（`SPEC.FEAT.INTERACT.02`、`SPEC.FEAT.TERM.04`，裁决 7.39）
+
+**动机**：裁决 7.38⑤ 把「scrollback 溢出时选区跟着内容走」判成界面腿落地前必须消除的欠项，而它需要的不是选区侧多写一条 if——存储要能回答「同一份内容的行号整体走了多远」，主线程那份副本要能在没有锁的情况下拿到那个读数（副本与权威网格只在 `apply` 的临界区内见面）。本棒先把这两件前置和双击选词一起做成纯逻辑件，界面腿的选区状态机于是只剩「事件 → 格子 → anchor/focus → `row_spans`」一条直线，不含任何需要现场推导的口径。
+
+- **`grid::Storage::dropped_lines()`：带符号的顶边净位移**（`feat(grid)`，7.39①）。动顶边的四条路径逐一记账——`scroll_up` 溢出 +1、`set_rows` 的溢出 +dropped 与顶部补空白 −blanks、`scroll_down` 无历史可收回时 −1；`clear()` 按现存行数一次性推进（7.39②，使旧选区折算到顶端之外而非贴着新缓冲继续高亮）；`scroll_region_*` 的带内位移**不记**，其不可由单一全局偏移表达的理由与消除落点作为显式欠项入 7.39③。原 7.38⑤ 写的「单调只增」据此修订：只记挤出的话，后两条路径会让选区朝反方向错位，且窗口反复变高变矮时误差累积不归零。
+- **`session::ScreenMirror` 携带读数**（`feat(session)`，7.39⑤）：`apply()` 在既有临界区顶部快照权威网格的 `dropped_lines()`，整窗重建与逐行并入两条路径共用同一入口故都带出；新增访问器是主线程唯一取数点，界面腿每帧折算零新增锁（架构 §3.4）。
+- **`ui::translate_selection_rows`**（`feat(ui)`）：两端行号各减差值，单端越界钳到 0，**整段被推出顶端时塌成两端重合**——复用 7.32③ 既有的「单击即无选区」判据而不新增空选区状态，故 `ui::Selection` / `row_spans` 的 API 与既有 13 例零改动。7.38 代价条款预告的「贴顶空选区锚点 + 复制空文本」就此改为「作废」（复制出一串空白与指着别人的内容都不如什么都不选）。
+- **`ui::word_span_at`（双击选词）**：界定符串是 UTF-8 原文并**按整码点比较**——`é` 的续字节与 `©` 的编码相撞，逐字节判定会选错词，故复用 `term::Utf8Decoder`（严格 UTF-8，半截序列按替换字符收尾）而非自造解码。空格与制表恒断点；双宽延续格按其**基础格**判定，整字符要么全入选区要么全不选（7.32② 同口径）。缺省界定符集不抄进测试，直取 `config::TerminalSettings{}` 的真实键值。
+- **一处口径冲突按规则 11 回写，未择一静默实现**：已提交的 7.38③ 末句「界内为空（点的是界定符本身）时只选那一个界定符格——与 xterm 一致」、`include/borealis/config/settings.h` 注释「界内为空即每个界定符各自成词」、本实现的「落点在断点上即不成选区」是三种互不一致的表述。裁决 **7.39④** 取后者并给理由（xterm 那条是把落点处的非字组扩张成一整段，而本仓未写入的列全是空格填充，行宽可达数百列，照搬就会选中整行填充并经 `copy_text` 复制出一串空白；「扩到相邻字」由拖拽承担而非双击），同时订正 `settings.h` 的表述为「空集＝只有空格与制表断词」（`a=b` 双击选中整段），并把 7.38⑤ 的「单调只增」与其代价条款各以修订形态入 7.39①②；旧编号旧条款一律原文保留。
+- **验收**：`utest_grid_storage` **36 例**（+5：四条路径各自记账、变高补空白的负项、`clear()` 推进全部现存行、region scroll 不动顶边）、`utest_screen_mirror` **10 例**（+1：两条并入路径都带出读数并与存储对齐）、`utest_selection` **24 例**（+11：选词 7 条含整码点比较与双宽两半同解、折算 3 条含塌成单击、加一条真实溢出的端到端证人——`Storage{4,2,2}` 饱和滚动后不折算复制到 `"   "`、按 `dropped_lines()` 折算后复制回当初选中的 `"kee"`）。非 e2e 通道 **23 项全绿**（用例并入既有三套件，CTest 项数不变）。
+- **变异自证三条**：① 删 `breaks_word` 的「延续格重定向到基础格」→ `word_span_at_does_not_lean_on_the_continuation_of_a_wide_break` 与 `word_span_at_selects_a_whole_wide_glyph_from_either_half` 双红；② 删 `translate_selection_rows` 的塌合分支 → `translate_collapses_a_selection_that_drifted_entirely_off` 独红；③ 删 `clear()` 的顶边推进 → `clear_counts_every_stored_line_as_gone` 独红。① 还顺带抓到一处**空转正的测试 helper**：既有的 `put_wide` 把延续格码点留成空格，而生产形态（`src/term/terminal.cpp`）写的是 `code_point = 0`，于是「按基础格判定」这条分支删掉也测不到——新增按生产形态造格的 helper 后该分支才有证人。三次注入改回即全绿。
+- 文档回写：`SPECIFICATIONS.md` §7 增裁决 7.39（五条口径 + 代价）、`SPEC.FEAT.INTERACT.02` 的指针补齐、版本脚注 v0.36 → v0.37；`AGENTS.md` §6 的存储、会话副本与选区三条回填；`UI_SELECTION.draft.md` §4 的「scrollback 溢出时选区漂移」一行标记为已由本件消除。**界面腿本体未开工**：选区状态机接线、高亮绘制（`layout_row` 的选中区间入参）、`Session::copy_text` 与右键三态、`HeadlessSurface` 的两帧像素差分随下一棒落地。
+
+---
+
 ## v0.36（2026-10-03）选区界面腿的口径裁决与选区色/界定符入配置（`SPEC.FEAT.INTERACT.02`、`SPEC.FEAT.INTERACT.03`、`SPEC.FEAT.PREF.01`，裁决 7.38）
 
 **动机**：`SPEC.FEAT.INTERACT.02` 的界面腿是当时唯一没有框架依赖的下一棒，而它的七个视觉决策点（`codespec/UI_SELECTION.draft.md` §3 的 D1~D7）与四条实现口径（色值来源、选词界定符、滚动漂移补偿、copy-on-select 时机）都还没有定论。人离开数小时并授权「口径不确定时取最优解并回写裁决」，故本轮先自拍再落码，而不是把棒停在等人拍板上。

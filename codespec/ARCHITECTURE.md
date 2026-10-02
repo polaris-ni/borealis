@@ -385,6 +385,7 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 
 - **选区存存储行序，不存副本行序**。权威网格由后台读线程持有（§3.4），跨可见区的复制只能在会话锁内按 `grid::Storage::line` 的索引取行；主线程 `session::ScreenMirror` 的行号随回看偏移变，选区若存它就在滚动时漂移。于是「选区随 scrollback 滚动跟随」由坐标空间表达，本件无状态、不含框架类型也不含 `config` 类型（后者会成 `config ⇄ ui` 模块环），三项复制变换以 `ui::CopyOptions` 表达、由调用方从 `config::TerminalSettings` 搬值。
 - **文本口径**：行以 LF 分隔且剪贴板侧不翻译（行尾的唯一决策点留在粘贴策略与串口 `line_ending`）；选区左界落在双宽延续格上时整字符纳入，延续格永不产第二个字符；越界行（历史已溢出）不产文本也不补空行。
+- **漂移补偿的基准是存储的顶边位移，而不是副本行号**（2026-10-03，裁决 7.39）：`grid::Storage::dropped_lines()` 给出**带符号的顶边净位移**（同一份内容的行号整体走了多远），四条动顶边的路径记账、`clear()` 按现存行数一次性推进，`scroll_region_*` 的带内位移不记（带内搬移无法由单一全局偏移表达，是在册欠项）。该读数的快照由 `session::ScreenMirror` 在既有临界区内带出——副本与权威网格只能在此见面，主线程拿不到锁也读不到存储，故折算基准必须由副本携带；主线程每帧拿两次读数之差交 `ui::translate_selection_rows` 平移选区两端行号，零新增同步点。
 - **变换次序固定**为「剥 tmux 细线制表符 → 剥行尾空白 → 合并反斜杠续行」，前一步的产物是后一步的判据。
 
 **已落地的粘贴件（2026-10-02，裁决 7.33）**：`term::plan_paste`（`include/borealis/term/paste.h` + `src/term/paste.cpp`）把「剪贴板文本 + `?2004` 是否为真 + 三项可配口径」折算成发送计划 `PastePlan{line_breaks, multiline, bracketed, chunks}`——**它不持时间也不碰 IO**，`PasteChunk::delay` 只是数值，排期由主线程的绘制侧控件用框架 `Scheduler::set_timeout` 兑现（§3.2 的「回调里不做阻塞」纪律）。三条要点：

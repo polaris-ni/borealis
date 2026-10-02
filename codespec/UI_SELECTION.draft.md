@@ -87,6 +87,8 @@
 4. `src/ui/terminal_view.cpp` 尚无 `on_pointer_event` 覆写：按下/拖动/抬起 → `ui::cell_at_point` → anchor/focus 推进的状态机未落（落点换算已落，见架构 §10.2）。
 5. 剪贴板写入与 copy-on-select 未落；`Session::copy_text`（会话短临界区内取文本交回主线程）未落。
 
+**落地状态与两处对原稿的修正（2026-10-03，裁决 7.39）**：条目 1 已随裁决 7.38② 落地（`ui::PaletteSpec` 的可缺省 `selection_color` + 八套主题各值 + 配置覆盖，未配回落同色板 `basic[8]`）。条目 2~5 是界面腿本体，其前置中本稿未列的一条**已落**：scrollback 溢出时的选区漂移由 `grid::Storage::dropped_lines()`（带符号顶边位移）+ `session::ScreenMirror` 的读数快照 + `ui::translate_selection_rows` 三件消除，整段被推出顶端时选区**塌成单击即作废**（7.39①②⑤）；DECSTBM 带内滚动的位移不补偿，登记为显式欠项（7.39③）。另有一处**对原稿建议项的改判**：双击与三击的落点若是空格、制表或界定符本身，`ui::word_span_at` 回空而**不扩到相邻字**——本仓未写入的列全是空格填充，扩张等于选中整行填充并经 `copy_text` 复制出一串空白，理由与代价见 7.39④。
+
 ---
 
 ## 5 验收判据（拍板并实现后）
