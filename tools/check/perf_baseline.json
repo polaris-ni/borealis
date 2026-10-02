@@ -1,0 +1,82 @@
+{
+  "scenario": "borealis_render_throughput",
+  "source": "Local time-class gate -- machine load, compiler and background processes move these numbers; NOT in CTest (AGENTS.md 4.4 rule 21: bench, not assertion). Run tools/check/check_perf_gates.ps1 to judge a build against this file.",
+  "note": "The absolute lines come from SPEC.NF.PERF.02 (cat 10 MB >= 45 fps; full redraw <= 100 ms) and the relative line (max_regression_percent) is that requirement's own 'regression > 10% is FAIL'. Metric keys are exactly those the bench writes under \"metrics\" in its --json= output. direction names the better side. A gate with relative=false is judged only by its absolute line.",
+  "capture": {
+    "date": "2026-10-02",
+    "runs": 3,
+    "aggregation": "median across runs -- the same rule the gate applies, so a reference and a reading are comparable",
+    "window_dp": [960, 640],
+    "grid": [24, 73],
+    "backend": "headless_software_painter",
+    "build": "msvc preset (Ninja + MSVC), default config (dracula, Cascadia 14pt)"
+  },
+  "max_regression_percent": 10,
+  "ungated": [
+    {
+      "metric": "cat_mb_per_s",
+      "observed": [0.677, 0.707, 0.702],
+      "reason": "Ingestion throughput, not per-frame render cost. It is currently limited by the write side (each fed chunk re-scans the whole viewport for dirty rows), which is a known defect under investigation; gating it here would freeze that defect in as the contract. Render cost under the same load is gated by B-5 / B-6."
+    },
+    {
+      "metric": "scroll_fps",
+      "reason": "Derivative of scroll_frame_ms_mean (1000 / mean); gating both would double-count one signal."
+    },
+    {
+      "metric": "cat_frames",
+      "reason": "Count of measured frames, a sample-size diagnostic rather than a cost."
+    }
+  ],
+  "gates": [
+    {
+      "id": "B-1",
+      "metric": "cat_fps",
+      "direction": "higher",
+      "reference": 90.685,
+      "relative": true,
+      "absolute_min": 45.0,
+      "note": "SPEC.NF.PERF.02's named metric: 10 MB fed through cat must hold >= 45 fps."
+    },
+    {
+      "id": "B-2",
+      "metric": "full_redraw_ms",
+      "direction": "lower",
+      "reference": 12.483,
+      "relative": false,
+      "absolute_max": 100.0,
+      "note": "The three capture runs spanned 9.8-15.1 ms (54%), wider than a 10% window, so a relative line here would read red on environment jitter. Only the requirement's absolute line judges it."
+    },
+    {
+      "id": "B-3",
+      "metric": "scroll_frame_ms_mean",
+      "direction": "lower",
+      "reference": 7.148368,
+      "relative": true,
+      "note": "One row dirty per frame: the cheapest view of the per-frame cost of dirty-row filtering, run splitting and colour resolution."
+    },
+    {
+      "id": "B-4",
+      "metric": "scroll_frame_ms_p95",
+      "direction": "lower",
+      "reference": 8.0877,
+      "relative": true,
+      "note": "Tail of B-3; unusually stable in the capture (8.03-8.14 ms), so the tail is worth locking."
+    },
+    {
+      "id": "B-5",
+      "metric": "cat_frame_ms_mean",
+      "direction": "lower",
+      "reference": 11.027217,
+      "relative": true,
+      "note": "Frame cost while the 10 MB feed is in flight (whole-viewport dirty plus concurrent producer thread)."
+    },
+    {
+      "id": "B-6",
+      "metric": "cat_frame_ms_p95",
+      "direction": "lower",
+      "reference": 15.6935,
+      "relative": true,
+      "note": "Tail under load; the capture spanned 13.5-16.8 ms, so median aggregation matters here."
+    }
+  ]
+}
