@@ -23,6 +23,7 @@ add_library(borealis_core STATIC
         session/session.cpp
         ui/cell_layout.cpp
         ui/palette.cpp
+        ui/selection.cpp
         ui/terminal_view.cpp)
 
 # 平台层实现按目标平台编入：共享路径只见接口，ConPTY 句柄与 Win32 API 留在 src/platform/ 内
