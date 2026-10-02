@@ -1,8 +1,9 @@
 /// 测试类型: unit
 /// 目标单元: include/borealis/config/settings.h + store.h，src/config/{settings,store,themes}.cpp
 /// 测试说明: 全量默认值的自洽（缺省主题即色值来源）、首启不写盘（裁决 7.26⑤）、
-///           四分类全量往返等值（读写键名漂移的自动守卫，含「未配光标色」与「配了黑色」可区分，
-///           裁决 7.25③）、缺键/类型不符/域外的回落与留痕、色值段损坏时随**文件内主题名**回落，
+///           四分类全量往返等值（读写键名漂移的自动守卫，含「未配光标色/选区色」与「配了黑色」
+///           可区分，裁决 7.25③ 与 7.38②；含选词界定符缺省集的不变量，裁决 7.38③）、
+///           缺键/类型不符/域外的回落与留痕、色值段损坏时随**文件内主题名**回落，
 ///           以及 `SPEC.FEAT.PREF.07` 的损坏降级线（先备份再回落，裁决 7.26④）
 ///           与落盘形态（单文件 + 按域嵌套 + 顶层 `schema_version`，覆盖表用数组形态避开框架的
 ///           点号路径模型，且无凭据字段，裁决 7.26⑥）。
@@ -84,6 +85,7 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     next.appearance.palette.default_foreground = RgbaColor{12U, 232U, 160U};
     next.appearance.palette.default_background = RgbaColor{31U, 29U, 45U};
     next.appearance.palette.cursor_color = RgbaColor{255U, 0U, 128U};
+    next.appearance.palette.selection_color = RgbaColor{60U, 120U, 40U};
     next.appearance.palette.bold_is_bright = true;
     next.appearance.palette.min_contrast_enabled = true;
     next.appearance.palette.min_contrast = 7.5;
@@ -118,6 +120,8 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     next.terminal.trim_pasted_trailing_space = true;
     next.terminal.smart_line_join = true;
     next.terminal.strip_tmux_border_chars = true;
+    // 刻意含反斜杠与空格：选词界定符是「原始字符集」形态，转义漏一侧就会在读回时静默变样。
+    next.terminal.word_delimiters = "-/. \\";
 
     next.connection.local_shell = "pwsh.exe";
     next.connection.startup_directory = "work-dir";
@@ -171,6 +175,10 @@ AURORA_TEST_CASE(defaults_are_the_first_launch_shape) {
                            theme_palette(kDefaultThemeName).default_foreground);
     AURORA_TEST_CHECK_TRUE(defaults.appearance.palette.cursor_color == theme_palette(kDefaultThemeName).cursor_color);
     AURORA_TEST_REQUIRE(defaults.appearance.palette.cursor_color.has_value());
+    // 选区色同样由主题表派生，本文件不另存一份（裁决 7.38②）。
+    AURORA_TEST_CHECK_TRUE(defaults.appearance.palette.selection_color ==
+                           theme_palette(kDefaultThemeName).selection_color);
+    AURORA_TEST_REQUIRE(defaults.appearance.palette.selection_color.has_value());
     // 开关与阈值不随主题：缺省关闭，但阈值预置成 WCAG AA 的正文档，开了就立刻起作用。
     AURORA_TEST_CHECK_FALSE(defaults.appearance.palette.bold_is_bright);
     AURORA_TEST_CHECK_FALSE(defaults.appearance.palette.min_contrast_enabled);
@@ -195,6 +203,20 @@ AURORA_TEST_CASE(defaults_are_the_first_launch_shape) {
     AURORA_TEST_CHECK_EQ(defaults.terminal.encoding, "UTF-8");
     AURORA_TEST_CHECK_TRUE(defaults.terminal.right_click == RightClickAction::ContextMenu);
     AURORA_TEST_CHECK_FALSE(defaults.terminal.copy_on_select);
+
+    // 缺省界定符是 ASCII 可见标点全集（裁决 7.38③）。判据取其不变量而不是逐字符抄一遍默认值：
+    // 这张表是数据而非诊断文案，抄表就等于把默认值本身当断言。
+    const auto &delimiters = defaults.terminal.word_delimiters;
+    AURORA_TEST_CHECK_EQ(delimiters.size(), 32U);
+    for (const char character : delimiters) {
+        const bool never_a_delimiter = (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+                                       (character >= '0' && character <= '9') || character == ' ' || character == '\t';
+        AURORA_TEST_CHECK_MSG(!never_a_delimiter, std::string(1, character));
+    }
+    // 路径与标识符里的分隔位必须在集内：双击 `C:\dir\file.txt` 选中的是一段而非整条。
+    for (const char character : {':', '\\', '/', '.', '-', '_'}) {
+        AURORA_TEST_CHECK_MSG(delimiters.find(character) != std::string::npos, std::string(1, character));
+    }
 
     AURORA_TEST_CHECK_TRUE(defaults.connection.local_shell.empty());
     AURORA_TEST_CHECK_EQ(defaults.connection.ssh.port, 22);
@@ -345,15 +367,34 @@ AURORA_TEST_CASE(damaged_palette_falls_back_to_the_theme_named_in_the_file) {
     AURORA_TEST_CHECK_TRUE(appearance.palette.default_background == nord.default_background);
     // cursor 段缺失＝「没写」，随本文件点名的主题色并留痕；只有显式 null 才是「未配」（下一用例）。
     AURORA_TEST_CHECK_TRUE(appearance.palette.cursor_color == nord.cursor_color);
+    AURORA_TEST_CHECK_TRUE(appearance.palette.selection_color == nord.selection_color);
     AURORA_TEST_CHECK_NEAR(appearance.palette.min_contrast, 4.5, 0.001);  // 开关类回落随默认值
 
     const auto &rejected = store.report().rejected_keys;
     AURORA_TEST_CHECK_TRUE(holds(rejected, "appearance.palette.basic"));
     for (std::string_view key : {"appearance.palette.foreground", "appearance.palette.background",
-                                 "appearance.palette.cursor", "appearance.palette.bold_is_bright",
-                                 "appearance.palette.min_contrast_enabled", "appearance.palette.min_contrast"}) {
+                                 "appearance.palette.cursor", "appearance.palette.selection",
+                                 "appearance.palette.bold_is_bright", "appearance.palette.min_contrast_enabled",
+                                 "appearance.palette.min_contrast"}) {
         AURORA_TEST_CHECK_MSG(holds(rejected, key), std::string{key});
     }
+}
+
+AURORA_TEST_CASE(explicit_null_selection_falls_back_to_bright_black_at_use) {
+    const auto file = make_path("selection_null.json");
+    // 用户显式清空选区色（`null` 而非缺键）＝点名「未配」，装载侧不留痕（裁决 7.25③ 的同一形态）。
+    write_file(file, R"({"schema_version": 1, "appearance": {"theme": "monokai", "palette": {"selection": null}}})");
+
+    const Store store{file};
+    const auto &palette = store.settings().appearance.palette;
+    AURORA_TEST_CHECK_FALSE(palette.selection_color.has_value());
+    AURORA_TEST_CHECK_TRUE(!holds(store.report().rejected_keys, "appearance.palette.selection"));
+
+    // 「未配」的取用形态由 `ui::selection_color` 定死为该色板的 basic[8]（裁决 7.38②）。取 monokai
+    // 而不是缺省主题，证明回落线跟着用户点名的主题走：整份文件其余键都按默认，唯有主题被点名。
+    const auto monokai = theme_palette("monokai");
+    AURORA_TEST_CHECK_TRUE(borealis::ui::selection_color(palette) == monokai.basic[8]);
+    AURORA_TEST_CHECK_NE(palette.selection_color, monokai.selection_color);
 }
 
 AURORA_TEST_CASE(unreadable_json_is_backed_up_before_defaulting) {

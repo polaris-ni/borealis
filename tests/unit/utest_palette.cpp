@@ -2,13 +2,15 @@
 /// 目标单元: include/borealis/ui/palette.h + src/ui/palette.cpp
 /// 测试说明: 调色板三段索引（主题档 / 6×6×6 立方 / 24 阶灰）、色值与来源的合成、
 ///           bold-is-bright 只作用于前 8 色档、暗淡向底色靠拢、反色与合成次序、
-///           不可见保留底色、光标色不参与格合成（裁决 7.25③）、下划线档位原样抵达绘制意图
+///           不可见保留底色、光标色不参与格合成（裁决 7.25③）、选区色的回落档与失焦各半混合
+///           （裁决 7.38②）、下划线档位原样抵达绘制意图
 ///           且不参与色合成（裁决 7.28），
 ///           以及 WCAG 对比度与最小对比度的整数插值口径
 ///           （SPEC.FEAT.RENDER.03，架构 §9.2）。
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include "borealis/grid/cell.h"
@@ -43,10 +45,12 @@ using borealis::grid::kFlagReverse;
 using borealis::grid::UnderlineStyle;
 using borealis::ui::contrast_ratio;
 using borealis::ui::enforce_contrast;
+using borealis::ui::mix_half;
 using borealis::ui::palette_color;
 using borealis::ui::PaletteSpec;
 using borealis::ui::resolve;
 using borealis::ui::RgbaColor;
+using borealis::ui::selection_color;
 
 /// @brief 一套可预测的主题：16 基本色按索引递增，默认前景白、默认背景黑。
 auto themed() -> PaletteSpec {
@@ -252,6 +256,53 @@ AURORA_TEST_CASE(underline_style_passes_through_without_touching_colors) {
                          static_cast<std::uint32_t>(UnderlineStyle::Double));
     AURORA_TEST_CHECK_EQ(ruled.foreground, plain.foreground);
     AURORA_TEST_CHECK_EQ(ruled.background, plain.background);
+}
+
+AURORA_TEST_CASE(selection_color_falls_back_to_bright_black_when_unset) {
+    auto spec = themed();
+
+    // 未配（配置里的显式 null）时取 basic[8] 而不是算式：该档恒存在、恒与底色拉开一档（裁决 7.38②）。
+    AURORA_TEST_CHECK_EQ(selection_color(spec), RgbaColor{8U, 8U, 8U});
+
+    // 黑色选中底是合法配置，「零值即未配」的哨兵会让它静默变成回落档——故字段是 optional。
+    spec.selection_color = RgbaColor{0U, 0U, 0U};
+    AURORA_TEST_CHECK_EQ(selection_color(spec), RgbaColor{0U, 0U, 0U});
+
+    // 反向守卫：挪动回落槽就必须跟着变，否则前两条只是在比写死的同一个数。
+    spec.selection_color = std::nullopt;
+    spec.basic[8] = RgbaColor{99U, 99U, 99U};
+    AURORA_TEST_CHECK_EQ(selection_color(spec), RgbaColor{99U, 99U, 99U});
+}
+
+AURORA_TEST_CASE(selection_color_does_not_participate_in_cell_resolution) {
+    const auto spec = themed();
+    const auto cell = glyph(U'a');
+    const auto baseline = resolve(cell, spec);
+
+    // 一格属不属于选区是区间级事实、不是该格的内容（裁决 7.32②），故它不得进逐格合成。
+    auto recolored = spec;
+    recolored.selection_color = RgbaColor{200U, 30U, 30U};
+    AURORA_TEST_CHECK_EQ(resolve(cell, recolored), baseline);
+
+    // 反向守卫：同一位置换成前景色就必须改变绘制意图。
+    recolored.default_foreground = RgbaColor{200U, 30U, 30U};
+    AURORA_TEST_CHECK_NE(resolve(cell, recolored).foreground, baseline.foreground);
+}
+
+AURORA_TEST_CASE(mix_half_is_channelwise_floor_of_two_colors) {
+    const RgbaColor selection{0x44U, 0x47U, 0x5AU, 255U};
+    const RgbaColor background{0x28U, 0x2AU, 0x36U, 255U};
+
+    // 失焦态的算式只在这里定义一次（裁决 7.38① D3、②）：各半、向下取整，dracula 对底色的三个通道。
+    AURORA_TEST_CHECK_EQ(mix_half(selection, background), RgbaColor{0x36U, 0x38U, 0x48U, 255U});
+
+    // 奇数通道向下取整，且 alpha 走同一条混合而不是恒 255。
+    AURORA_TEST_CHECK_EQ(mix_half(RgbaColor{1U, 1U, 1U, 1U}, RgbaColor{2U, 3U, 4U, 5U}),
+                         RgbaColor{1U, 2U, 2U, 3U});
+
+    // 混合后必须比原选区色更接近底色，否则「失焦」在屏上看不出来。
+    AURORA_TEST_CHECK_LT(contrast_ratio(mix_half(selection, background), background),
+                         contrast_ratio(selection, background));
 }
 
 }  // namespace borealis::test_cases::utest_palette

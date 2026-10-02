@@ -78,6 +78,10 @@ AURORA_TEST_CASE(every_theme_carries_readable_colors) {
         // 光标色必须落定：主题表是色值唯一来源，「未配」只能由用户显式清空（裁决 7.25③）。
         AURORA_TEST_CHECK_MSG(spec.cursor_color.has_value(), name);
 
+        // 选区色同理，且必须与底色可辨——同色就等于选区在屏上不存在（裁决 7.38②）。
+        AURORA_TEST_CHECK_MSG(spec.selection_color.has_value(), name);
+        AURORA_TEST_CHECK_MSG(spec.selection_color != spec.default_background, name);
+
         // 开关不属色值，表里一律留缺省，避免主题表成为开关的第二真值源。
         AURORA_TEST_CHECK_MSG(!spec.bold_is_bright, name);
         AURORA_TEST_CHECK_MSG(!spec.min_contrast_enabled, name);
