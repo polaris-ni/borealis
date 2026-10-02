@@ -8,7 +8,9 @@
 ///           双宽延续格不进文本但保留列宽、combining 随基础码点并进同段文本（裁决 7.23ⓑ）、
 ///           空格与不可见段的丢弃与底色保留、下划线空格段仍需交给绘制侧
 ///           （SPEC.FEAT.RENDER.01、SPEC.FEAT.TERM.08）、三档下划线与删除线的落笔矩形吸附物理像素
-///           且波浪相位跨 run 连续（SPEC.FEAT.RENDER.03、裁决 7.28④）。
+///           且波浪相位跨 run 连续（SPEC.FEAT.RENDER.03、裁决 7.28④）、
+///           选中列区间把底色换成传入色并按 `min_contrast` 重合成前景、空区间与二参形态逐字段相同、
+///           行尾空白与双宽延续格都随所在区间上底色（SPEC.FEAT.INTERACT.02、裁决 7.38① D1①）。
 
 #include <array>
 #include <cmath>
@@ -37,6 +39,7 @@ using borealis::grid::Row;
 using borealis::grid::UnderlineStyle;
 using borealis::ui::CellPixels;
 using borealis::ui::cell_at_point;
+using borealis::ui::contrast_ratio;
 using borealis::ui::decoration_rects;
 using borealis::ui::GridGeometry;
 using borealis::ui::layout_row;
@@ -46,6 +49,7 @@ using borealis::ui::PaletteSpec;
 using borealis::ui::rect_for;
 using borealis::ui::Rect;
 using borealis::ui::RgbaColor;
+using borealis::ui::RowSpan;
 using borealis::ui::StyleRun;
 
 /// @brief 默认前景白、默认背景黑（与 `themed` 用例里的调色板档区分开）。
@@ -93,6 +97,14 @@ auto ruled_run(std::size_t first, std::size_t last, UnderlineStyle style) -> Sty
     run.paint.underline = style;
     return run;
 }
+
+/// @brief 本行的选中列区间；行号不参与本件的算术（配对哪一行由调用方决定）。
+auto span(std::size_t first, std::size_t last) -> RowSpan {
+    return RowSpan{.row = 0U, .first_column = first, .last_column = last};
+}
+
+/// @brief 选区底色槽的取值（与主题的 `basic[8]` 拉开一档即可，本件不关心它从哪来）。
+constexpr RgbaColor kSelected{40U, 40U, 120U};
 
 /// @brief 8 px × 16 px、基线 12 px 的格在 2× 缩放下即 4 dp × 8 dp、基线 6 dp，1 px = 0.5 dp。
 auto square_geometry() -> GridGeometry {
@@ -345,6 +357,111 @@ AURORA_TEST_CASE(plain_background_band_survives_without_text) {
     AURORA_TEST_CHECK_EQ(at(runs, 0).first_column, 1U);
     AURORA_TEST_CHECK_EQ(at(runs, 0).last_column, 2U);
     AURORA_TEST_CHECK_TRUE(at(runs, 0).text.empty());
+}
+
+AURORA_TEST_CASE(selected_span_recolors_its_columns_and_splits_the_run) {
+    const auto spec = themed();
+    Row row{5U};
+    put(row, 0U, U'a');
+    put(row, 1U, U'b');
+    put(row, 2U, red_background(U'c'));  // SGR 底色在选中段被选区槽整体盖掉（裁决 7.38① D1①）
+    put(row, 3U, red_background(U'd'));
+    put(row, 4U, U'e');
+
+    const auto runs = layout_row(row, spec, span(1U, 4U), kSelected);
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 3U);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).last_column, 1U);
+    AURORA_TEST_CHECK_EQ(at(runs, 1).first_column, 1U);
+    AURORA_TEST_CHECK_EQ(at(runs, 1).last_column, 4U);  // 三段同底色并成一跑，切分边界仍是列区间
+    AURORA_TEST_CHECK_EQ(at(runs, 2).first_column, 4U);
+    AURORA_TEST_CHECK_EQ(at(runs, 2).last_column, 5U);
+
+    AURORA_TEST_CHECK_EQ(at(runs, 1).paint.background, kSelected);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).paint.background, spec.default_background);
+    AURORA_TEST_CHECK_EQ(at(runs, 2).paint.background, spec.default_background);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).text, std::string{"a"});
+    AURORA_TEST_CHECK_EQ(at(runs, 1).text, std::string{"bcd"});  // 文本不受底色替换影响
+    AURORA_TEST_CHECK_EQ(at(runs, 2).text, std::string{"e"});
+}
+
+AURORA_TEST_CASE(empty_selection_span_is_the_unselected_row) {
+    // 末行区间 `[0, 0)` 是真实形态：焦点落在下一行第 0 列时该行没有选中格。
+    const auto spec = themed();
+    Row row{4U};
+    put(row, 0U, U'a');
+    put(row, 1U, red_background(U'b'));
+    put(row, 2U, U'c');
+    put(row, 3U, U'd');
+
+    const auto plain = layout_row(row, spec);
+    const auto selected = layout_row(row, spec, span(2U, 2U), kSelected);
+    AURORA_TEST_REQUIRE_EQ(selected.size(), plain.size());
+    for (std::size_t index = 0; index < plain.size(); ++index) {
+        AURORA_TEST_CHECK_EQ(at(selected, index).first_column, at(plain, index).first_column);
+        AURORA_TEST_CHECK_EQ(at(selected, index).last_column, at(plain, index).last_column);
+        AURORA_TEST_CHECK_EQ(at(selected, index).text, at(plain, index).text);
+        AURORA_TEST_CHECK_EQ(at(selected, index).paint, at(plain, index).paint);
+    }
+}
+
+AURORA_TEST_CASE(selection_band_covers_the_trailing_blanks_of_the_row) {
+    // 中间行的区间是整行，行尾空白格也要上底色——高亮是一块矩形而不是逐字形点缀。
+    const auto spec = themed();
+    Row row{4U};
+    put(row, 0U, U'a');
+
+    const auto runs = layout_row(row, spec, span(0U, 4U), kSelected);
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 1U);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).first_column, 0U);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).last_column, 4U);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).paint.background, kSelected);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).text, std::string{"a   "});
+}
+
+AURORA_TEST_CASE(min_contrast_recomposes_the_foreground_only_inside_the_selection) {
+    auto spec = themed();
+    const RgbaColor same_as_text{255U, 255U, 255U};  // 选中底 == 默认前景：不重合成就看不见
+    Row row{2U};
+    put(row, 0U, U'a');
+    put(row, 1U, U'b');
+
+    spec.min_contrast_enabled = false;
+    const auto off = layout_row(row, spec, span(0U, 2U), same_as_text);
+    AURORA_TEST_REQUIRE_EQ(off.size(), 1U);
+    AURORA_TEST_CHECK_EQ(at(off, 0).paint.background, same_as_text);
+    AURORA_TEST_CHECK_EQ(at(off, 0).paint.foreground, spec.default_foreground);  // 开关关着时前景不动
+
+    spec.min_contrast_enabled = true;
+    spec.min_contrast = 4.5;
+    const auto on = layout_row(row, spec, span(0U, 1U), same_as_text);
+    AURORA_TEST_REQUIRE_EQ(on.size(), 2U);  // 只有第 0 列被重合成，两段前景不同色故切开
+    AURORA_TEST_CHECK_NE(at(on, 0).paint.foreground, spec.default_foreground);
+    AURORA_TEST_CHECK_GE(contrast_ratio(at(on, 0).paint.foreground, same_as_text), 4.5 - 1.0e-9);
+    AURORA_TEST_CHECK_EQ(at(on, 1).paint.foreground, spec.default_foreground);  // 未选段仍是默认前景
+}
+
+AURORA_TEST_CASE(wide_base_and_continuation_inside_a_selection_stay_one_run) {
+    const auto spec = themed();
+    Row row{3U};
+
+    Cell base{};
+    base.code_point = U'\x4E2D';
+    base.width = 2U;
+    put(row, 0U, base);
+
+    Cell continuation{};
+    continuation.flags = static_cast<CellFlags>(kFlagWideContinuation);
+    continuation.width = 0U;
+    put(row, 1U, continuation);
+
+    put(row, 2U, U'x');
+
+    const auto runs = layout_row(row, spec, span(0U, 2U), kSelected);
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 2U);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).last_column, 2U);  // 延续格跟基础格同段，双宽字形整块上底色
+    AURORA_TEST_CHECK_EQ(at(runs, 0).paint.background, kSelected);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).text, std::string{"\xE4\xB8\xAD"});
+    AURORA_TEST_CHECK_EQ(at(runs, 1).paint.background, spec.default_background);
 }
 
 AURORA_TEST_CASE(single_underline_is_one_physical_pixel_below_the_baseline) {
