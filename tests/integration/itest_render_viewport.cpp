@@ -538,6 +538,35 @@ AURORA_TEST_CASE(italic_runs_go_through_the_batch_entry) {
 #endif
 }
 
+AURORA_TEST_CASE(block_cursor_redraw_keeps_the_italic_slant) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.set_focused(true);
+    // 同一行相邻两格、同一字形、一正一斜，块形光标逐帧移到其上：两格带子的底色都是光标色、
+    // 字形墨色都是该格的合成底色，相位只差一个整格宽，于是唯一变量是光标重画那一次有没有带上斜体
+    // opts（不带则该格与正体那格逐位相同）。
+    h.feed("\x1b[3;2HA\x1b[3mA\x1b[23m\x1b[3;2H");
+    const auto on_upright = h.pixels();
+    h.feed("\x1b[3;3H");
+    const auto on_italic = h.pixels();
+
+    // 块形确实落了笔：否则两格只剩 ③ 的底图，本例的判据会因另一条路径空转。
+    const auto &cursor_ink = *h.palette().cursor_color;
+    AURORA_TEST_REQUIRE_MSG(h.sample(on_upright, borealis::ui::rect_for(h.geometry(), 2U, 1U, 2U), 0.5, 0.9) ==
+                                cursor_ink,
+                            "the block cursor did not reach the upright cell");
+    AURORA_TEST_REQUIRE_MSG(h.sample(on_italic, borealis::ui::rect_for(h.geometry(), 2U, 2U, 3U), 0.5, 0.9) ==
+                                cursor_ink,
+                            "the block cursor did not reach the italic cell");
+
+    AURORA_TEST_CHECK_MSG(Harness::count_diff(h.cell_band(on_upright, 2U, 1U), h.cell_band(on_italic, 2U, 2U)) > 0U,
+                          "the cell under the block cursor lost its italic slant (redraw dropped the layout opts)");
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
 AURORA_TEST_CASE(cursor_shapes_and_focus_state_land_on_their_cells) {
 #ifdef AURORA_BACKEND_HEADLESS
     Harness h;
