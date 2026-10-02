@@ -6,6 +6,17 @@
 
 ---
 
+## v0.35（2026-10-03）下一棒排期前的框架面复核：G22 入册与后端不对称的机制修正（`SPEC.FEAT.RENDER.02`、`SPEC.FEAT.INTERACT.01`，裁决 7.37）
+
+**动机**：给「字体族 / 设置面板 / 选区界面腿」排期之前，须逐条读 Aurora 公共头确认框架面——按记忆断言现状会把已经能做的事判成等框架，也会把「不可分」误写成「无原始码」而把任务书派错方向。
+
+- **新登记 G22**（附录 A.2、`PLAN.md` §6）：框架没有「列出可用字体族」的公共入口（`register_*` / `resolve_faces` 全部要先知道 family 名，系统字体目录扫描藏在实现内），故 `SPEC.FEAT.RENDER.02` 的「系统等宽字体枚举」腿与 `SPEC.FEAT.PREF.02` 的字体族下拉无数据源。首版按需求已定的那一半交付（内置 Cascadia Code 为默认 + 可配回退链），枚举腿待回货接并以 `TODO(SPEC.FEAT.RENDER.02)` 留痕；**不复制框架的字体扫描、不手写族名表**（`AGENTS.md` §5 第 2 条）。
+- **机制修正**（7.36②(f) 与附录 A.1 / A.2 的叙述，旧编号旧条款保留）：原文「Win32 与 GLFW 无对应原始码」不准确——GLFW 确无 `KP_*` 导航常量（两区在库内已合并成同一组 `GLFW_KEY_*`）；Win32 是两区**共用同一组 `VK`**、来处只在 `lParam` 扫描码里，其映射表自陈六键中只有 `Home` 真可分（主键盘 `0x47` / 小键盘 `E0 4E`），其余恒给主键码；`VK_INSERT` 只在注释里出现、没有 `case` 分支，X11 / Wayland 的 keysym 表未收录主键盘 Insert 的 `0xFF63`。**结论与影响面不变**，但 G20 的任务书必须按「共用码位不可分」写，否则对方会在 `wParam` 上找区分依据而白跑一趟。
+- **已核实不构成缺口的框架面**写进裁决 7.37③：字形缓存按 DPI 失效重建（`GlyphAtlas::clear()` + `FontEngine::shape_cache_clear()`）、preedit 就地绘制与候选窗定位（`display_caret_x` / `hit_test_char_inclusive` 带 scale、`set_composition_caret_provider` 喂 `ImmSetCandidateWindow`）、表单控件（`checkbox` / `switch` / `slider` / `dropdown` / `form` / `pickers` / `dialog` / `toast` / `popup`）；`WS.01` 的拖拽重排与逐标签图标/角标、`WS.02` 的嵌套分屏与方向键焦点路由属可组合的交互体验，按 §5 第 1 条留本仓。
+- 文档回写：`SPECIFICATIONS.md` 附录 A.2 增 G22 行、§7 增裁决 7.37 并补齐追加分组；`PLAN.md` §6 增 G22 行；`AGENTS.md` §6 现状同步；版本脚注 v0.34 → v0.35。**本条只动文档，未改代码**（非 e2e 通道仍 23 项全绿，未重跑构建）。
+
+---
+
 ## v0.34（2026-10-02）键盘与 DPI 回货接线、吞吐复验与两条新登记缺口（`SPEC.FEAT.INTERACT.01`、`SPEC.NF.PERF.02`，裁决 7.36）
 
 **动机**：裁决 7.30⑤ / 7.31③ / 7.33⑧ / 7.35⑤ 先后派发给 Aurora 侧的六条缺口（G14–G19）在同一天全部回货。当时立的分工是「编码层先把字节形态写对，回货接的是派发侧」，本棒即那次接线，外加两套复验（真机尺寸腿、优化档吞吐），并把复验过程中新撞到的两条如实登记。
