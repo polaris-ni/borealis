@@ -65,8 +65,8 @@ constexpr int kWindowHeight = 640;
 
 /// @brief 本次二进制的优化档标记，写进 JSON 供门禁核对。
 ///
-/// 基准判的是产品成本，而 `/Od /RTC1` 的 Debug 构建把写链放大约 30 倍（实测灌入 0.7 MB/s 对
-/// RelWithDebInfo 的 25 MB/s），同名的两个读数会得出相反的结论。门禁因此要求样本与基线的
+/// 基准判的是产品成本，而 `/Od /RTC1` 的 Debug 构建把写链放大 20–30 倍（同一条命令行：灌入
+/// 0.7 MB/s 对 20.6、纯链 1.1 对 25.9），同名的两个读数会得出相反的结论。门禁因此要求样本与基线的
 /// 该标记一致，而不是让人去猜构建目录是怎么配出来的。
 #if defined(_DEBUG)
 constexpr const char *kBuildConfig = "debug";

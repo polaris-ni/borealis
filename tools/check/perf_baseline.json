@@ -1,7 +1,7 @@
 {
   "scenario": "borealis_render_throughput",
   "source": "Local time-class gate -- machine load, compiler and background processes move these numbers; NOT in CTest (AGENTS.md 4.4 rule 21: bench, not assertion). Run tools/check/check_perf_gates.ps1 to judge a build against this file.",
-  "note": "The absolute lines come from SPEC.NF.PERF.02 (cat 10 MB >= 45 fps; full redraw <= 100 ms) and the relative line (max_regression_percent) is that requirement's own 'regression > 10% is FAIL'. Metric keys are exactly those the bench writes under \"metrics\" in its --json= output. direction names the better side. A gate with relative=false is judged only by its absolute line.",
+  "note": "The absolute lines come from SPEC.NF.PERF.02 (cat 10 MB >= 45 fps; full redraw <= 100 ms) and the relative line (max_regression_percent) is that requirement's own 'regression > 10% is FAIL'. Metric keys are exactly those the bench writes under \"metrics\" in its --json= output. direction names the better side. A gate with relative=false is judged only by its absolute line. capture.build_config belongs to the measurement contract: the gate FAILs on a sample from a different optimization level, because a Debug build inflates the write chain by 20-30x and its readings describe the compiler flags rather than the product.",
   "capture": {
     "date": "2026-10-02",
     "runs": 3,
@@ -9,15 +9,14 @@
     "window_dp": [960, 640],
     "grid": [24, 73],
     "backend": "headless_software_painter",
-    "build": "msvc preset (Ninja + MSVC), default config (dracula, Cascadia 14pt)"
+    "preset": "msvc-bench",
+    "cmake_build_type": "RelWithDebInfo",
+    "build_config": "optimized",
+    "build": "msvc-bench preset (Ninja + MSVC, RelWithDebInfo), default config (dracula, Cascadia 14pt)",
+    "supersedes": "The first capture on this date ran the Debug default preset and reported cat 90.7 fps / scroll 7.15 ms / full redraw 12.5 ms / 0.68 MB/s. It did not record the optimization level, so numbers that looked like product cost were describing /Od /RTC1 code. Superseded rather than rewritten in place: a benchmark reference has to say which build produced it."
   },
   "max_regression_percent": 10,
   "ungated": [
-    {
-      "metric": "cat_mb_per_s",
-      "observed": [0.677, 0.707, 0.702],
-      "reason": "Ingestion throughput, not per-frame render cost. It is currently limited by the write side (each fed chunk re-scans the whole viewport for dirty rows), which is a known defect under investigation; gating it here would freeze that defect in as the contract. Render cost under the same load is gated by B-5 / B-6."
-    },
     {
       "metric": "scroll_fps",
       "reason": "Derivative of scroll_frame_ms_mean (1000 / mean); gating both would double-count one signal."
@@ -25,6 +24,20 @@
     {
       "metric": "cat_frames",
       "reason": "Count of measured frames, a sample-size diagnostic rather than a cost."
+    },
+    {
+      "metric": "cat_wall_ms",
+      "reason": "Derivative of cat_mb_per_s (bytes / wall); same signal counted twice."
+    },
+    {
+      "metric": "chain_mb_per_s",
+      "observed": [25.905, 26.260, 25.383],
+      "reason": "Attribution rung: the producer chain alone (decode, parse, state machine, grid) with no session, no lock and no queue. Moving one rung usually moves its neighbours, so the product-facing rate is locked on cat_mb_per_s (B-7) instead. Only present with --write-side."
+    },
+    {
+      "metric": "ingest_mb_per_s",
+      "observed": [25.808, 24.253, 23.688],
+      "reason": "Attribution rung: the same corpus through Session (lock, dirty-row scan, damage queue) while the main thread drains the queue without painting; the gap to chain_mb_per_s is the session-side cost. Only present with --write-side."
     }
   ],
   "gates": [
@@ -32,7 +45,7 @@
       "id": "B-1",
       "metric": "cat_fps",
       "direction": "higher",
-      "reference": 90.685,
+      "reference": 736.828,
       "relative": true,
       "absolute_min": 45.0,
       "note": "SPEC.NF.PERF.02's named metric: 10 MB fed through cat must hold >= 45 fps."
@@ -41,42 +54,51 @@
       "id": "B-2",
       "metric": "full_redraw_ms",
       "direction": "lower",
-      "reference": 12.483,
+      "reference": 1.262,
       "relative": false,
       "absolute_max": 100.0,
-      "note": "The three capture runs spanned 9.8-15.1 ms (54%), wider than a 10% window, so a relative line here would read red on environment jitter. Only the requirement's absolute line judges it."
+      "note": "Three capture runs spanned 1.244-1.355 ms (8.8%): a 10% relative window would leave almost no room for background load, so only the requirement's absolute line judges it. A whole-screen paint regression also shows up in B-3 / B-5."
     },
     {
       "id": "B-3",
       "metric": "scroll_frame_ms_mean",
       "direction": "lower",
-      "reference": 7.148368,
+      "reference": 1.263219,
       "relative": true,
-      "note": "One row dirty per frame: the cheapest view of the per-frame cost of dirty-row filtering, run splitting and colour resolution."
+      "note": "One row dirty per frame: the cheapest view of the per-frame cost of dirty-row filtering, run splitting and colour resolution. Capture spread 1.2%."
     },
     {
       "id": "B-4",
       "metric": "scroll_frame_ms_p95",
       "direction": "lower",
-      "reference": 8.0877,
+      "reference": 1.4689,
       "relative": true,
-      "note": "Tail of B-3; unusually stable in the capture (8.03-8.14 ms), so the tail is worth locking."
+      "note": "Tail of B-3; capture spread 2.7%, so the tail is worth locking."
     },
     {
       "id": "B-5",
       "metric": "cat_frame_ms_mean",
       "direction": "lower",
-      "reference": 11.027217,
+      "reference": 1.357168,
       "relative": true,
-      "note": "Frame cost while the 10 MB feed is in flight (whole-viewport dirty plus concurrent producer thread)."
+      "note": "Frame cost while the 10 MB feed is in flight (whole-viewport dirty plus a concurrent producer thread). Capture spread 5.3%."
     },
     {
       "id": "B-6",
       "metric": "cat_frame_ms_p95",
       "direction": "lower",
-      "reference": 15.6935,
+      "reference": 1.6155,
+      "relative": false,
+      "absolute_max": 22.222,
+      "note": "Tail of B-5 with an 18.7% capture spread -- too wide for a 10% relative line. Judged instead against the requirement's own frame budget (1000 / 45 fps), so a periodic long frame that would drop under 45 fps reads red even while the mean looks healthy."
+    },
+    {
+      "id": "B-7",
+      "metric": "cat_mb_per_s",
+      "direction": "higher",
+      "reference": 20.627,
       "relative": true,
-      "note": "Tail under load; the capture spanned 13.5-16.8 ms, so median aggregation matters here."
+      "note": "Ingestion throughput. The first capture left it out on the belief that a write-side defect pinned it (gating a defect would freeze it in as the contract); that belief was a Debug-build artifact -- the optimized rate is 20.6 MB/s with a 0.9% capture spread, stable enough to guard. This number is not named by SPEC.NF.PERF.02: it catches write-side regressions that frame-time gates cannot see, since a slower producer simply yields fewer frames."
     }
   ]
 }

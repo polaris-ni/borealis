@@ -17,15 +17,23 @@
   - Time-class gates are NOT in CTest: the numbers depend on machine load, compiler and
     background processes, so an assertion inside the test runner would read red on a busy
     machine. This script is the local/CI trend check.
+  - The bench must run on an OPTIMIZED build (cmake --preset msvc-bench -> build-bench/).
+    A Debug build inflates the write chain by 20-30x, so its readings describe the
+    compiler flags rather than the product. Both the bench JSON and the baseline file carry
+    a build_config marker and a mismatch is a hard FAIL -- comparing a Debug reading against
+    an optimized reference (or the other way round) is meaningless.
   - Idle frames are already excluded by the bench, and the benchmark measures the cost of
     the presentation layer itself (dirty-row filtering, run splitting, colour resolution,
     cursor three-pass), not how fast the far end can produce bytes.
-  - cat_mb_per_s is deliberately not gated (see the baseline file's "ungated" entries):
-    ingestion throughput is currently limited by a write-side defect, and locking it in
-    here would turn that defect into the contract.
+  - cat_mb_per_s (ingestion throughput) is gated as a regression guard, although
+    SPEC.NF.PERF.02 does not name a number for it: a slower producer would simply yield
+    fewer frames, which the frame-time gates cannot see. chain_mb_per_s and
+    ingest_mb_per_s stay ungated -- they are --write-side attribution rungs, and moving
+    one usually moves its neighbour.
 
 .PARAMETER BuildDir
-  Build directory containing tools/borealis_bench.exe (default "build").
+  Build directory containing tools/borealis_bench.exe (default "build-bench", i.e. the
+  optimized msvc-bench preset).
 
 .PARAMETER Exe
   Explicit bench executable; overrides the BuildDir-derived path.
@@ -47,10 +55,10 @@
   powershell -ExecutionPolicy Bypass -File tools/check/check_perf_gates.ps1 -Repeat 5
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File tools/check/check_perf_gates.ps1 -Json build/bench.json
+  powershell -ExecutionPolicy Bypass -File tools/check/check_perf_gates.ps1 -Json build-bench/bench.json
 #>
 param(
-    [string]$BuildDir = "build",
+    [string]$BuildDir = "build-bench",
     [string]$Exe = "",
     [string]$Json = "",
     [int]$Repeat = 3,
@@ -93,7 +101,10 @@ if ($Json -ne '') {
         $Exe = Join-Path $BuildDir 'tools/borealis_bench.exe'
     }
     if (-not (Test-Path $Exe)) {
-        Write-Host "FAIL  bench executable not found: $Exe (build it first, or pass -Exe)"
+        Write-Host "FAIL  bench executable not found: $Exe"
+        Write-Host "      build the optimized preset first (msvc-bench -> build-bench):"
+        Write-Host '        tools/msvc_env.bat cmake --preset msvc-bench'
+        Write-Host '        tools/msvc_env.bat cmake --build --preset msvc-bench --target borealis_bench'
         exit 1
     }
     if (-not (Test-Path $tmpDir)) {
@@ -117,6 +128,27 @@ if ($scenario -ne $cfg.scenario) {
     Write-Host "FAIL  sample scenario '$scenario' does not match baseline '$($cfg.scenario)'"
     exit 1
 }
+
+# The optimization level is part of the measurement contract: a Debug reading of the same
+# metric is roughly 30x off on the write side, so it must never be compared against an
+# optimized reference (or vice versa). Both sides carry an explicit marker.
+$wantConfig = $cfg.capture.build_config
+if ($null -eq $wantConfig) {
+    Write-Host "FAIL  baseline has no capture.build_config -- re-capture it (ruling 7.35)"
+    exit 1
+}
+foreach ($s in $samples) {
+    $got = $s.build_config
+    if ($null -eq $got) {
+        Write-Host "FAIL  a bench sample has no build_config -- rebuild borealis_bench from the current source"
+        exit 1
+    }
+    if ($got -ne $wantConfig) {
+        Write-Host "FAIL  bench build_config '$got' != baseline '$wantConfig' -- compare like with like"
+        exit 1
+    }
+}
+Write-Host "Build config: $wantConfig (matches baseline)"
 
 # ---- judge ------------------------------------------------------------------------------
 $failures = 0
