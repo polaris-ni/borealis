@@ -3,7 +3,8 @@
 /// 测试说明: 用无头帧缓冲对终端视口做**帧间像素差分**，验收 `SPEC.FEAT.RENDER.01` / `03` / `04`
 ///           的绘制契约：行列数由控件自身可视尺寸派生并下发（`SPEC.FEAT.XFER.01` 的 UI 取值腿）、
 ///           单帧像素差集只落在本帧提交行与光标行（含「上一帧光标行必须被重绘干净」）、SGR 色带
-///           与装饰线的落笔矩形、光标三形态与失焦降级、滚轮回看的整窗换源与回到底的逐位复现、
+///           与装饰线的落笔矩形、斜体经批量入口的整批 opts 送出（不得静默退化成正体）、光标三形态
+///           与失焦降级、滚轮回看的整窗换源与回到底的逐位复现、
 ///           回看态的「距底恒定」（裁决 D6①）、备屏不可滚、双宽与零宽的列位对齐。
 ///           像素一律比 RGBA 四通道含 alpha：Headless 帧底色是全透明黑 (0,0,0,0)，只比 RGB 会让
 ///           「画了个纯黑」与「什么都没画」混为一谈。
@@ -264,9 +265,14 @@ class Harness {
     [[nodiscard]] auto resize_count() const -> std::size_t { return connection_->resizes.size(); }
 
     /// @brief 前置条件：Headless 缩放为 1（dp 即像素），且网格容得下几行几列。
+    ///
+    /// 格宽须为整数：`cell_band` 靠「相邻两格的带子差一个整格宽」来保证亚像素相位一致，
+    /// 非整数格宽会让两格落在不同的取样相位上，两格对照就不只剩斜切这一个变量了。
     [[nodiscard]] auto preflight() const noexcept -> bool {
-        return scale_ == 1.0F && geometry_.rows > 3U && geometry_.columns > 6U && geometry_.cell_width >= 2.0 &&
-               geometry_.cell_height >= 3.0;
+        const auto integral_cell_width =
+            geometry_.cell_width == static_cast<double>(static_cast<std::size_t>(geometry_.cell_width));
+        return scale_ == 1.0F && geometry_.rows > 3U && geometry_.columns > 6U &&
+               geometry_.cell_width >= 2.0 && geometry_.cell_height >= 3.0 && integral_cell_width;
     }
 
     /// @brief 一行的整数像素带（行内容比较用），右缘剔掉回看指示条所占的边带。
@@ -278,6 +284,26 @@ class Harness {
         for (std::size_t y = top; y < top + static_cast<std::size_t>(geometry_.cell_height) && y < buffer_height();
              ++y) {
             for (std::size_t x = 0; x < right; ++x) {
+                const std::size_t index = (y * buffer_width() + x) * 4U;
+                out.insert(out.end(), px.begin() + static_cast<Pixels::difference_type>(index),
+                           px.begin() + static_cast<Pixels::difference_type>(index + 4U));
+            }
+        }
+        return out;
+    }
+
+    /// @brief 单个格的整数像素带（同底色下两格做对照用）。左上角与宽高都按格网取整，
+    ///        使相邻两格的带子处于同一亚像素相位——否则「格位置不同」本身就成了差异来源。
+    [[nodiscard]] auto cell_band(const Pixels &px, std::size_t row, std::size_t column) const -> Pixels {
+        Pixels out;
+        const std::size_t top = static_cast<std::size_t>(
+            origin_y_ + geometry_.padding + static_cast<double>(row) * geometry_.cell_height);
+        const std::size_t left = static_cast<std::size_t>(
+            origin_x_ + geometry_.padding + static_cast<double>(column) * geometry_.cell_width);
+        const std::size_t width = static_cast<std::size_t>(geometry_.cell_width);
+        const std::size_t height = static_cast<std::size_t>(geometry_.cell_height);
+        for (std::size_t y = top; y < top + height && y < buffer_height(); ++y) {
+            for (std::size_t x = left; x < left + width && x < buffer_width(); ++x) {
                 const std::size_t index = (y * buffer_width() + x) * 4U;
                 out.insert(out.end(), px.begin() + static_cast<Pixels::difference_type>(index),
                            px.begin() + static_cast<Pixels::difference_type>(index + 4U));
@@ -472,6 +498,41 @@ AURORA_TEST_CASE(underline_decoration_lands_on_the_shared_rects) {
         }
     }
     AURORA_TEST_REQUIRE_MSG(thin, "an underline-only run of spaces must still be decorated");
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(italic_runs_go_through_the_batch_entry) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    // 同一行两格、同一底色、同一字重，只差 `SGR 3`：底色让两格各自成一段（`layout_row` 按样式全等
+    // 切分），于是两格像素带之间只剩「有没有斜切」这一个变量。
+    //
+    // 刻意**不**用「同一格改两次、比两帧」的写法：加入斜体本身会改变 run 的切分（原本与空白并成一
+    // 段的一格独立成段），那种对照即便批量入口整个丢掉 opts 也仍给出非零差分——实测如此，判据空转。
+    h.feed("\x1b[?25l\x1b[3;2H\x1b[46mA\x1b[3mA\x1b[23m\x1b[49m");
+    const auto px = h.pixels();
+    // 两格都得有墨（文本是抗锯齿灰度，只断言「与格底色不同的像素存在」，不比具体色值）。
+    const auto cyan = h.palette().basic[6];
+    const auto count_ink = [&cyan](const Pixels &band) -> std::size_t {
+        std::size_t ink = 0U;
+        for (std::size_t i = 0; i + 3U < band.size(); i += 4U) {
+            if (band[i] != cyan.red || band[i + 1U] != cyan.green || band[i + 2U] != cyan.blue ||
+                band[i + 3U] != cyan.alpha) {
+                ++ink;
+            }
+        }
+        return ink;
+    };
+    const auto upright = h.cell_band(px, 2U, 1U);
+    const auto italic = h.cell_band(px, 2U, 2U);
+    AURORA_TEST_REQUIRE_MSG(count_ink(upright) > 0U, "the upright cell painted no glyph ink");
+    AURORA_TEST_REQUIRE_MSG(count_ink(italic) > 0U, "the italic cell painted no glyph ink");
+    // 斜切确实发生（批量入口收到了整批 opts）：两格的像素带不得逐位相同。丢掉 opts 时这里必为 0。
+    AURORA_TEST_CHECK_MSG(Harness::count_diff(upright, italic) > 0U,
+                          "the italic cell rendered byte-identical to the upright one (opts lost at the batch entry)");
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif
