@@ -72,6 +72,65 @@ constexpr std::array<int, 4> kCurlyOffsets{0, 1, 0, -1};
     return raw > last ? count - 1U : static_cast<std::size_t>(raw);
 }
 
+/// @brief run 切分的唯一实现；@p selection 有值时该列区间的底色换成 @p selected_background。
+///
+/// 底色替换发生在 `resolve` **之后**：一格属不属于选区是区间级事实而非该格的事实（裁决 7.32②），
+/// 而色值合成链（亮色档 → 暗淡 → 反色 → 最小对比度）只认该格自己。于是选中段的前景只在开了
+/// 最小对比度时才按新底色重合成，未选中段逐位等于无选区形态。
+std::vector<StyleRun> layout_selected(const grid::Row &row, const PaletteSpec &spec,
+                                      const std::optional<RowSpan> &selection,
+                                      const RgbaColor &selected_background) {
+    std::vector<StyleRun> runs;
+    StyleRun current{};
+    bool building = false;
+    bool has_glyph = false;  ///< 区间内出现过非空白码点：全空白的段不必交文本给绘制侧。
+
+    const auto flush = [&]() -> void {
+        if (!building) {
+            return;
+        }
+        if (!has_glyph || current.paint.hidden) {
+            current.text.clear();
+        }
+        if (worth_painting(current, has_glyph, spec)) {
+            runs.push_back(std::move(current));
+        }
+        current = StyleRun{};
+        building = false;
+        has_glyph = false;
+    };
+
+    for (std::size_t column = 0; column < row.columns(); ++column) {
+        const auto &cell = row.cell(column);
+        auto paint = resolve(cell, spec);
+        if (selection.has_value() && column >= selection->first_column && column < selection->last_column) {
+            paint.background = selected_background;
+            if (spec.min_contrast_enabled) {
+                paint.foreground = enforce_contrast(paint.foreground, paint.background, spec.min_contrast);
+            }
+        }
+        if (building && paint == current.paint) {
+            current.last_column = column + 1U;
+        } else {
+            flush();
+            current.paint = paint;
+            current.first_column = column;
+            current.last_column = column + 1U;
+            building = true;
+        }
+        if (cell.is_wide_continuation()) {
+            continue;  // 延续格不承载字符：文本里既没有它也不画豆腐块，宽度由基础格那一段占住
+        }
+        static_cast<void>(term::append_utf8(cell.code_point, current.text));
+        has_glyph = has_glyph || cell.code_point != U' ';
+        for (const auto &mark : row.combining(column)) {
+            static_cast<void>(term::append_utf8(mark.code_point, current.text));
+        }
+    }
+    flush();
+    return runs;
+}
+
 }  // namespace
 
 auto make_geometry(const CellPixels &metrics, double scale, const LogicalSize &viewport,
@@ -152,49 +211,12 @@ auto decoration_rects(const GridGeometry &geometry, std::size_t row, const Style
 }
 
 auto layout_row(const grid::Row &row, const PaletteSpec &spec) -> std::vector<StyleRun> {
-    std::vector<StyleRun> runs;
-    StyleRun current{};
-    bool building = false;
-    bool has_glyph = false;  ///< 区间内出现过非空白码点：全空白的段不必交文本给绘制侧。
+    return layout_selected(row, spec, std::nullopt, RgbaColor{});
+}
 
-    const auto flush = [&]() -> void {
-        if (!building) {
-            return;
-        }
-        if (!has_glyph || current.paint.hidden) {
-            current.text.clear();
-        }
-        if (worth_painting(current, has_glyph, spec)) {
-            runs.push_back(std::move(current));
-        }
-        current = StyleRun{};
-        building = false;
-        has_glyph = false;
-    };
-
-    for (std::size_t column = 0; column < row.columns(); ++column) {
-        const auto &cell = row.cell(column);
-        const auto paint = resolve(cell, spec);
-        if (building && paint == current.paint) {
-            current.last_column = column + 1U;
-        } else {
-            flush();
-            current.paint = paint;
-            current.first_column = column;
-            current.last_column = column + 1U;
-            building = true;
-        }
-        if (cell.is_wide_continuation()) {
-            continue;  // 延续格不承载字符：文本里既没有它也不画豆腐块，宽度由基础格那一段占住
-        }
-        static_cast<void>(term::append_utf8(cell.code_point, current.text));
-        has_glyph = has_glyph || cell.code_point != U' ';
-        for (const auto &mark : row.combining(column)) {
-            static_cast<void>(term::append_utf8(mark.code_point, current.text));
-        }
-    }
-    flush();
-    return runs;
+auto layout_row(const grid::Row &row, const PaletteSpec &spec, const RowSpan &selection,
+                const RgbaColor &selected_background) -> std::vector<StyleRun> {
+    return layout_selected(row, spec, selection, selected_background);
 }
 
 }  // namespace borealis::ui

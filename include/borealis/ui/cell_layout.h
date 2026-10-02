@@ -132,4 +132,19 @@ struct StyleRun {
 /// @return 列号升序的 run 表。
 [[nodiscard]] auto layout_row(const grid::Row &row, const PaletteSpec &spec) -> std::vector<StyleRun>;
 
+/// @brief 同上，但把 @p selection 这一列区间的底色换成 @p selected_background（裁决 7.38① D1①）。
+///
+/// 区间形态直接取 `row_spans` 的条目（只用它的两个列字段，行号是调用方用来配对这一行的），
+/// 于是**绘制与复制共用同一张区间表**（D5①）：选中段的右界截到网格列数、行尾空白格也上底色。
+/// 底色替换发生在 `resolve` 之后，故前景只在开了最小对比度时才按新底色重合成（`min_contrast`
+/// 关着时选中段的前景与未选段逐位相同）。失焦态不在本件：调用方按 D3① 传 `mix_half` 的结果，
+/// 本件只认「这个区间用这个底色」。
+/// @param row 网格中的一行。
+/// @param spec 调色板配置。
+/// @param selection 本行的选中列区间（闭开区间；两端相等即本行无选中格）。
+/// @param selected_background 选中格的底色。
+/// @return 列号升序的 run 表；选中段因底色不同而自成一跑（run 切分本就按样式全等，裁决 7.23②）。
+[[nodiscard]] auto layout_row(const grid::Row &row, const PaletteSpec &spec, const RowSpan &selection,
+                              const RgbaColor &selected_background) -> std::vector<StyleRun>;
+
 }  // namespace borealis::ui
