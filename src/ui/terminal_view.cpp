@@ -313,7 +313,9 @@ auto TerminalView::paint_cursor(aurora::Painter &p, const aurora::Rect &bounds, 
     const auto paint = resolve(cell, spec_);
     const std::string text = cell_text(row, cursor_.column);
     if (!paint.hidden && !text.empty()) {
-        p.draw_text(to_rect(box, bounds.origin), text, font_for(ref_font_, paint), to_color(paint.background));
+        auto opts = aurora::render::TextLayoutOpts{};
+        opts.italic = paint.italic;  // 与 ③ 的斜体判定同源，否则光标停在斜体格上会把那一格画成正体
+        p.draw_text(to_rect(box, bounds.origin), text, font_for(ref_font_, paint), to_color(paint.background), opts);
     }
 }
 
