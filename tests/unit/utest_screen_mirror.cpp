@@ -2,7 +2,8 @@
 /// 目标单元: include/borealis/session/screen_mirror.h
 /// 测试说明: 主线程可见区副本的并入与行号换算——首次整窗取、增量只并脏行、整屏脏与尺寸变更
 ///           与可见窗起点变更都触发整窗重建、侧表随行搬运、距底偏移下的脏行落点与越界丢弃、
-///           距底恒定推窗（裁决 7.23① 的 D6①）、偏移越界截断、脏标记一律被消费
+///           距底恒定推窗（裁决 7.23① 的 D6①）、偏移越界截断、脏标记一律被消费、
+///           顶边位移读数随两条并入路径一起快照（选区漂移补偿的基准，裁决 7.38⑤ / 7.39①）
 ///           （架构 §3.4 / §9.5，SPEC.FEAT.RENDER.01 的状态机前置）。
 
 #include <cstddef>
@@ -225,6 +226,27 @@ AURORA_TEST_CASE(consumed_rows_lose_their_dirty_marks) {
     mirror.apply(storage, one(0U, 0U, true), 0U);
     // 整屏脏走整窗重建，视口行的脏一并消费掉（否则下一帧还要重读一遍）。
     AURORA_TEST_CHECK_FALSE(storage.visible_line(2U).dirty());
+}
+
+AURORA_TEST_CASE(dropped_lines_snapshot_carried_by_both_merge_paths) {
+    auto storage = make_storage();
+    ScreenMirror mirror;
+    mirror.apply(storage, one(0U, 0U), 0U);
+    AURORA_TEST_CHECK_EQ(mirror.dropped_lines(), std::int64_t{0});
+
+    // 容量 13（视口 3 + 历史 10）：第 11 次推送起每多一行就挤掉最旧一行，顶边开始推进。
+    for (std::size_t index = 0; index < 12U; ++index) {
+        push_line(storage, static_cast<char>('A' + index));
+    }
+    // 整窗重建路径：可见窗起点随 total 走了，换源靠重建，读数也得跟着带出来。
+    mirror.apply(storage, std::span<const Damage>{}, 0U);
+    AURORA_TEST_CHECK_EQ(mirror.dropped_lines(), std::int64_t{2});
+
+    // 增量并入路径：再推一行后 total 没变（已饱和），本帧不重建，读数仍须刷新。
+    push_line(storage, 'Z');
+    mirror.apply(storage, one(2U, 2U), 0U);
+    AURORA_TEST_CHECK_EQ(mirror.dropped_lines(), std::int64_t{3});
+    AURORA_TEST_CHECK_EQ(mirror.dropped_lines(), storage.dropped_lines());
 }
 
 }  // namespace borealis::test_cases::utest_screen_mirror
