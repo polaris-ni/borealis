@@ -98,7 +98,7 @@
       "direction": "higher",
       "reference": 20.627,
       "relative": true,
-      "note": "Ingestion throughput. The first capture left it out on the belief that a write-side defect pinned it (gating a defect would freeze it in as the contract); that belief was a Debug-build artifact -- the optimized rate is 20.6 MB/s with a 0.9% capture spread, stable enough to guard. This number is not named by SPEC.NF.PERF.02: it catches write-side regressions that frame-time gates cannot see, since a slower producer simply yields fewer frames."
+      "note": "Ingestion throughput. The first capture left it out on the belief that a write-side defect pinned it (gating a defect would freeze it in as the contract); that belief was a Debug-build artifact -- the optimized rate is 20.6 MB/s. Raw single runs are NOT stable (a five-run probe spanned 19.2-21.3, 10.3%), which is exactly why the gate judges the median of three: across four independent gate invocations the medians were 20.495 / 20.589 / 20.627 / 20.909, a 2% spread, so a 10% relative line means something rather than reading red at random. This number is not named by SPEC.NF.PERF.02: it catches write-side regressions that frame-time gates cannot see, since a slower producer simply yields fewer frames."
     }
   ]
 }
