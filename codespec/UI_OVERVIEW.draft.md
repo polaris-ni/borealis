@@ -8,6 +8,7 @@
 > |:---|:---|
 > | `codespec/UI_OVERVIEW.draft.md` + 四屏 `UI_*.draft.svg/.png`（本稿） | 界面布局、控件形态、文案、需求落点 |
 > | `codespec/RENDER_UI.draft.md` + `RENDER_UI.draft.svg/.png` | 终端格子上屏后的像素判据（V1~V27）与差距清单（G-1~G-9） |
+> | `codespec/UI_SELECTION.draft.md` + `UI_SELECTION.draft.svg/.png` | 选区高亮的像素判据与 `selection` 色值来源（D1~D7 **待拍板**） |
 > | `codespec/RENDER_VIEWPORT.draft.md` | 上屏层的代码形态（widget 结构、绘制路径、接缝） |
 >
 > **状态**：评审已于 2026-10-02 收口，`§4` 的 N1~N8 全部给出结论并并入裁决 7.25；`src/ui/` 的实现约束就此解除。草图由一次性脚本生成后未入库，**入库的 SVG 源即事实来源**，后续修改直接改 SVG。
@@ -122,7 +123,8 @@
 ## 5 本轮未画的界面（需求已登记，避免被当成遗漏）
 
 - SFTP 双栏文件浏览（`SPEC.FEAT.CONN.04`）、SSH 隧道管理（`SPEC.FEAT.CONN.08`）、密钥管理器（`SPEC.FEAT.CONN.10`）——同属侧栏第二层，待本轮骨架定稿后一并出图。
-- 会话内搜索浮层 Ctrl+F（`SPEC.FEAT.INTERACT.04`）、文本选择与列模式（`SPEC.FEAT.INTERACT.02`）、输入法 preedit 就地渲染与候选窗定位（`SPEC.FEAT.INTERACT.06`）。
+- 会话内搜索浮层 Ctrl+F（`SPEC.FEAT.INTERACT.04`）、输入法 preedit 就地渲染与候选窗定位（`SPEC.FEAT.INTERACT.06`）。
+- 文本选择与列模式（`SPEC.FEAT.INTERACT.02`）的**选区高亮稿已出**（`codespec/UI_SELECTION.draft.md`），待 D1~D7 拍板；列模式的**触发位**（Alt+拖拽）仍被框架缺口 G18 挡住，该稿只定形态。
 - Quick Terminal 下拉式终端（`SPEC.FEAT.WS.12`，硬依赖 OS 级全局热键即框架缺口 G9）、会话恢复的恢复提示界面（`SPEC.FEAT.WS.11`）。
 - 多窗口与窗口布局记忆（`SPEC.FEAT.WS.03`）、单实例多标签转发（裁决 7.7）、CLI 启动参数（`SPEC.FEAT.INTEG.04`）。
 
