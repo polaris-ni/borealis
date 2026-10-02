@@ -75,7 +75,7 @@ Borealis 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨�
 Aurora 的硬不变量要求 widget 树、状态订阅与重绘调度只在主线程，`State::set` 仅限主线程调用（Aurora 主仓 `codespec/ARCHITECTURE.md` §3.1 与 §11）。因此：
 
 - **后台线程一律不触达 UI 状态与 widget**；跨线程结果须回投主线程后再写状态。
-- 回投后需唤醒帧循环，否则空闲帧被脏区决策跳过会饿死投递队列。**本仓的取用形态**（2026-10-01 实测，裁决 7.23ⓒ）：会话提交侧经本仓自己持有的 `Window` 调 `surface().request_wake()`（Aurora 头文件明写该入口线程安全），回调体只入本仓自有队列；主线程侧在 `Application::set_on_frame` 的帧回调里排空该队列并标脏。不依赖 `aurora::detail::post_to_main`——它在 `detail` 命名空间下，虽可由 `Task<T>::set_main_poster` 安装成进程级投递器，但消费方不长期依赖 `detail` 符号。
+- 回投后需唤醒帧循环，否则空闲帧被脏区决策跳过会饿死投递队列。**本仓的取用形态**（2026-10-01 实测、2026-10-02 已接线，裁决 7.23ⓒ）：会话提交侧经本仓自己持有的 `Window` 调 `surface().request_wake()`（Aurora 头文件明写该入口线程安全），回调体只入本仓自有队列；主线程侧在 `Application::set_on_frame` 的帧回调里排空该队列并标脏。不依赖 `aurora::detail::post_to_main`——它在 `detail` 命名空间下，虽可由 `Task<T>::set_main_poster` 安装成进程级投递器，但消费方不长期依赖 `detail` 符号。
 
 ### 3.3 输出路径（会话 → 屏幕）
 
@@ -84,10 +84,12 @@ PTY/连接 ──► 会话读线程 ──► 解码(会话编码) ──► VT
                                                                         │
                                             合成后的最终值 + 脏区摘要 ──┘
                                                         │
-                                            post_to_main 回投主线程 ──► 视口按脏区上屏
+                                            提交侧 request_wake 唤醒帧循环 ──► 主线程 on_frame 排空队列并按脏区上屏
 ```
 
 **决策**：解码、VT 解析与 grid 更新**均在后台读线程内完成**，主线程只接收「合成后的最终值 + 脏区摘要」并绘制。理由：与 Contour / Ghostty / Alacritty 封装一类主流做法一致，把高频解析与网格写入移出主线程，契合 Aurora 单线程 UI 不变量（后台不碰 `State`）。
+
+**已落地形态**（2026-10-02）：主线程侧的收口是 `Session::set_frame_wake` 注入的唤醒句柄（出锁后调、一轮批量输入只唤醒一次）+ `Application::set_on_frame` 帧回调里的 `TerminalView::on_frame()`；后者 `drain_damage()` → 在 `Session::read` 临界区把网格与脏区并入 `session::ScreenMirror` 的本地可见区副本 → 按需 `mark_needs_paint()`，同一回调还排 OSC 52 的剪贴板落地件与写回（裁决 7.21③）。取队列与读网格的先后固定为「先取队列、再读网格」，反序与读线程构成 ABBA 死锁。
 
 ### 3.4 网格同步策略
 
@@ -254,7 +256,7 @@ UTF-8 为本地终端与 SSH 默认；**串口默认 GB18030**（裁决 7.6）�
 
 ### 7.5 SSH 之上的子系统归属
 
-SFTP（`SPEC.FEAT.CONN.04`）、隧道（`SPEC.FEAT.CONN.08`）、公钥推送的执行通道（`SPEC.FEAT.CONN.10`）是 SSH 会话之上的附加通道，归 `borealis::conn`；档案与凭据句柄（`SPEC.FEAT.CONN.03` / `SPEC.FEAT.CONN.09`）归 `borealis::conn`，其持久化经 `borealis::config`；连接管理器 UI（`SPEC.FEAT.CONN.07`）归 `borealis::ui`；会话日志（`SPEC.FEAT.CONN.11`）由会话层落盘、路径配置归 `borealis::config`。系统通知（`SPEC.FEAT.INTEG.03`）依赖框架缺口 G11，属观察池，暂无落点。
+SFTP（`SPEC.FEAT.CONN.04`）、隧道（`SPEC.FEAT.CONN.08`）、公钥推送的执行通道（`SPEC.FEAT.CONN.10`）是 SSH 会话之上的附加通道，归 `borealis::conn`；档案与凭据句柄（`SPEC.FEAT.CONN.03` / `SPEC.FEAT.CONN.09`）归 `borealis::conn`，其持久化经 `borealis::config`；连接管理器 UI（`SPEC.FEAT.CONN.07`）归 `borealis::ui`；会话日志（`SPEC.FEAT.CONN.11`）由会话层落盘、路径配置归 `borealis::config`。系统通知（`SPEC.FEAT.INTEG.03`）的框架依赖已解除（G11 于 2026-10-02 以 `NotificationCenter` 公共 API 闭合，裁决 7.29④），落期仍在观察池，届时落点归 `borealis::session` 的 OSC 消费出口 + `borealis::ui` 的转发。
 
 ---
 
@@ -286,7 +288,7 @@ SFTP（`SPEC.FEAT.CONN.04`）、隧道（`SPEC.FEAT.CONN.08`）、公钥推送�
 
 只消费 Aurora 公共 API；不私改渲染路径。用公共 API 组合出的应用侧控件**不属于私改**（裁决 7.13）。
 
-### 9.2 G1 就绪后的取用形态（**决策**，2026-10-01 更新）
+### 9.2 视口控件的取用形态与绘制序列（**已落地**，2026-10-02 更新）
 
 G1 的三腿均已在 Aurora 侧以公共 API 落地（宽度判定见裁决 7.20，绘制两腿见裁决 7.22）：`render::FontEngine::monospace_cell` 给整像素单格度量、`Painter::draw_text_runs` 给批量同属性片段绘制、`aurora::unicode_cell_width` 给占格数。因此：
 
@@ -307,10 +309,10 @@ cell(col,row) 的落笔原点 = { pad_dp + col * cell_width_px / scale,  pad_dp 
 - **视口内边距 `pad` 缺省四周 4 dp、可配为 0**（裁决 7.25②）：偏移取整 dp、格宽取整 px，故 125%/150% 缩放下的 5/6 px 偏移不破坏网格边界；`ui::make_geometry` 须先扣内边距再除格宽（差距清单 G-8）。
 - 同一视口只用**一个参考 `Font`** 取一次度量：字重切换可带来 1px advance 差，故粗体只换 weight、不换格宽。
 - run 按「前景/背景/字体三者全等」在行内合并，色带矩形与文本片段**共用同一批切分边界**（裁决 7.23②）。
-- 一帧的层叠顺序：本地可见区副本 → 色带 `fill_rect` → 每行一次 `draw_text_runs`（combining 随同 run 文本并字）→ 下划线/删除线/光标块。
+- 一帧的层叠顺序（`src/ui/terminal_view.cpp` 的 `on_paint`，已落地）：① 整盒铺主题默认底色（每帧必铺，与「本帧有没有脏」无关）→ ② 色带 `fill_rect` → ③ 每行按「是否斜体」分两批 `draw_text_runs`（combining 随同 run 文本并字）→ ④ 下划线/删除线装饰 → ⑤ 光标与回看指示条。③ 的分批是因为框架批量入口的 `TextLayoutOpts` **整批共用**（裁决 7.29①），每行最多两次调用；⑤ 的块形光标走「先画字、后画块、再按该格合成底色重画该格子串一次」的三段式，**第三段必须带上与 ③ 同源的 `opts.italic`**，否则光标停在斜体格上会把那一格画成正体（该纪律由一条像素用例守住并以变异自证，见 `RENDER_VIEWPORT.draft.md` §9）。
 - **下划线为档位枚举**（none/single/double/curly，裁决 7.25④；SGR 编码映射按 7.28 实测修正：`4`/`4:1` 单、`4:2` 与 `21` 双、`4:3` 波浪、`4:0`/`24` 关，dotted/dashed 按单线）：双线＝基线 +1px 与 +3px 两条 1px 线，波浪＝4 物理像素一周期逐像素列 ±1px 折线（相位锚在该行绝对像素 x），两者都以 `fill_rect` 在应用侧合成（裁决 7.13① 的公共 API 组合，非私改渲染路径）。
 - **光标色取自 `PaletteSpec.cursor_color`，缺省回落 `default_foreground`**（裁决 7.25③）；回看态在视口右侧画 2 dp 位置指示条一块（裁决 7.25①）。
-- 局部帧只压裁剪栈而 `on_paint` 收全量 bounds，故脏行过滤按 `Painter::clip_bounds()` 自行跳过窗外行（裁决 7.23ⓐ）。
+- 局部帧只压裁剪栈而 `on_paint` 收全量 bounds，故绘制行集取 `[0, rows)` ∩ 按 `Painter::clip_bounds()` 折算的行区间（裁决 7.23ⓐ）。**这条纪律没有像素可观测面**：脏区上报走非虚的 `Widget::dirty_bounds()`（恒等于控件自身盒），控件无法把子矩形报成脏，故帧间差分观察不到窗外是否被画——像素用例刻意不断言它。
 - 视口滚动状态只有一个「起始行偏移」，走 `Widget` 内置的 `ScrollViewport` 内核而非框架 `Scroll` 容器（§9.5）。
 - 唯一触达 `au::Painter` / `au::Widget` 的实现收口在 `src/ui/terminal_view.cpp` 一个翻译单元；`cell_layout` 与 `palette` 为无框架依赖的纯逻辑，可全量单测。
 
@@ -328,9 +330,20 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 
 **反哺通道**：自管过程沉淀出的、去掉终端字样后仍成立的通用件（例如「按行偏移的视口裁剪与位置恢复」），按裁决 7.13① 与附录 A.3 以 Aurora 公共 API 形态反哺，本仓只消费公共头；不满足该判据的留在本仓应用侧。
 
+**已落地形态**（2026-10-02，绘制侧见 §9.2、副本侧见 `session/screen_mirror.h`）：
+
+- 内核量一律以**行**为单位而非 dp（`step = 1.0F`，一个滚轮单位 = 一行），免得浮点残差让取整少算一行；`offset_y` 是框架语义的「距顶行数」，本层绘制与副本换算只认派生量 `back_rows = max_offset() - round(offset_y)`（距底行数，0 = 贴底）。两个方向不同的量不得混用。
+- **不声明 `overflow_strategy(Scroll)`**：实测 `Widget::paint_content` 只在该策略下把 `offset_y` 当 **dp** 平移量加进 `on_paint` 的 `bounds.origin.y`，而本层的偏移是「取哪几行」的语义，平移会让首行画到盒外、底部留白且单位对不上。故保持默认 `Visible`，覆写 `wants_scroll()` 拿滚轮、`on_scroll()` 自己驱动内核，并把 clamp 吃不尽的余量写进 `e.remaining_y` 上冒给更浅的可滚动祖先（工作区分屏场景）。副作用记一句：基类 getter `scroll_offset_y()` 因此返回「距顶行数」而非 dp，本控件不对外暴露该语义。
+- **回看态遇新输出＝距底恒定**（裁决 D6①）：`back_rows` 是用户意图、`offset_y` 只是它在当前 `total` 下的投影，故每帧拿到新 `total_lines()` 后重投影一次再交副本；效果是可见窗整体向更早方向推一行（`row_band(grown, i) == row_band(again, i + 1)`），既非画面静止也非底部多一行。代价是长输出下固定片段会被顶走；若日后改取绝对行锚定，改动面是去掉这段重投影 + `grid::Storage` 补一个「已覆盖最旧行数」的单调计数。
+- **备屏天然不可滚**：`Terminal` 的备屏以 scrollback 容量 0 构造，故 `total_lines() == rows` → `max_offset() == 0` → clamp 恒回 0，无需特判（像素用例已断言备屏连滚 5 格两帧逐位相同）。
+- 无惯性 / 动量：一步一格是刻意选择，`ScrollGlide` 的 150ms 吸附属框架 `Scroll` 路径，本层不引。`SPEC.FEAT.TERM.06` 上报模式下的滚轮转发与 alternate scroll 尚未接入，代码处留 `TODO(SPEC.FEAT.TERM.06)`，当前恒走本地回看。
+
 ### 9.6 交互阻塞项
 
-文本选择的多击语义依赖框架 `click_count`（G2）。该字段当前缺失（2026-09-29 实测），故双击 / 三击相关能力在框架补齐前不可实现；**流式拖拽选择与矩形块选择不受此阻塞**。
+**渲染与文本选择链路当前无框架阻塞项**（2026-10-02）：G1（三腿）、G13（批量入口的排版选项）、G2（`click_count`）均已闭合，视口绘制主路径与多击选择的实现面全在公共 API 上；缺口清单的其余开放项（见 `SPECIFICATIONS.md` 附录 A.2）不在渲染层。
+
+- 多击语义直接用框架的 `MouseEvent::click_count`（派发层集中自算，裁决 7.29②），本仓不自算、不私挂分叉；阈值未接系统双击速度，跨平台手感一致而各平台各自的设置不生效，属框架侧刻意的取舍。
+- 视口滚动的取用口径见 §9.5；真机走查时要确认「鼠标须悬停在控件盒内才响应滚轮」（`wants_scroll()` 按命中链派发）符合终端软件的预期——部分终端是「焦点在窗口即响应」，那条差异属本仓交互层的选择而非框架缺陷。
 
 ---
 
@@ -342,8 +355,8 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 
 ### 10.2 选择与复制粘贴
 
-- 流式拖拽选择、矩形块选择：不受 G2 阻塞，可先行实现；
-- 双击选词 / 三击选行：**依赖 G2**，框架补齐后接入；
+- 流式拖拽选择、矩形块选择：可先行实现；
+- 双击选词 / 三击选行：框架侧 `click_count` 已闭合（G2，裁决 7.29②），实装随 `SPEC.FEAT.INTERACT.02` 那一棒，本仓不自算多击；
 - 复制语义三开关默认关闭，保留原样为默认；bracketed paste 激活时原样透传不节流（`SPEC.FEAT.INTERACT.03`）。
 
 ### 10.3 搜索
@@ -454,12 +467,14 @@ Windows 便携 zip + 安装包；Linux tar 通用 + AppImage；产物含第三�
 
 进框架的原语必须以 Aurora 公共 API 形式存在，本仓只消费公共头，**不长期持有框架分叉**。网格吞吐基准随框架原语一并贡献为 Aurora `tools/bench` 用例并挂性能回归门禁（见 `SPECIFICATIONS.md` 附录 A.3）。
 
-### 15.3 当前阻塞项（2026-09-29 实测，2026-09-30 复验）
+### 15.3 当前阻塞项（2026-09-29 实测起账，2026-09-30 / 2026-10-01 / 2026-10-02 三次复验）
 
 | 缺口 | 现状 | 影响 |
 |:---|:---|:---|
 | G1 网格 / 批量文本绘制原语 + 整像素 cell 度量 + East Asian Width 判定 | **三腿全部闭合（2026-10-01 实测）**：宽度判定 = Aurora `unicode_cell_width`（裁决 7.20）；批量文本 run = `Painter::draw_text_runs(std::span<const render::TextRun>)`；整像素单格度量 = `render::FontEngine::monospace_cell` → `render::CellMetrics`（形态、逐位一致判据与「时间门禁改判为像素级回归」见裁决 7.22） | 绘制层直接按 §9.2 消费两原语，应用侧自绘过渡备路径不再启用；网格模型、脏行 diff 与颜色合成仍在本仓；宽度腿已接真表，状态机与网格层不再挂单宽缺省（§6.3） |
-| G2 `MouseEvent` 多击语义 | 未落地：事件头无 `click_count` 一类字段 | 双击 / 三击能力延后；流式与矩形选择不受阻 |
+| G2 `MouseEvent` 多击语义 | **已闭合（2026-10-02 实测）**：`MouseEvent::click_count`（1..3，Release / Move 恒为 1）由 `EventDispatcher::dispatch_mouse` 在派发前集中判定，阈值是库内常量 500ms / 4dp（未接系统双击速度），形态与判据见裁决 7.29② | 双击 / 三击能力**不再受框架阻塞**，实装随 `SPEC.FEAT.INTERACT.02` 那一棒；本仓未自算多击 |
+| G9 OS 级全局热键 / G11 跨平台系统通知 | **均已闭合（2026-10-02 实测）**：`OsHotkeyRegistry` + `OsHotkeyHandle`（裁决 7.29③）、`NotificationCenter::notify` + 激活回传 + 「仅记录」测试后端（裁决 7.29④） | 两条的框架依赖解除；本仓消费者分别在 `SPEC.FEAT.WS.12` 与 `SPEC.FEAT.INTEG.03` 的落期上，未提前实装 |
+| G13 批量入口的排版选项 | **已闭合（2026-10-02 实测）**：`draw_text_runs` 另有 `(runs, opts)` / `(runs, aa_mode, opts)` 重载，opts 整批共用、框架刻意不做 per-run opts（裁决 7.29①） | §9.2 的逐片段分流已撤销，改按「是否斜体」分两批；像素用例以变异自证守住 |
 
 > 框架现状以 Aurora **当日活动分支实测**为准；上表的绘制原语两腿为 2026-09-29 实测结论，宽度判定一腿为 2026-09-30 在 Aurora 当日活动分支落地的实测结论；可能随上游提交变化，复用前须复验。
 
@@ -469,7 +484,6 @@ Windows 便携 zip + 安装包；Linux tar 通用 + AppImage；产物含第三�
 
 | # | 议题 | 候选方案 | 状态 |
 |:---|:---|:---|:---|
-| C | 多击语义接入方式 | 等框架 G2 落地后接入 / 应用侧自算（违反框架统一口径，不推荐） | 随 G2 推进确定 |
 | E | 单实例转交通道（§3.1） | Windows 命名管道 / 本地 socket / `WM_COPYDATA` 定位既有窗口 | 待拍板——随 `SPEC.FEAT.INTEG.04` 开工 |
 | F | 配置 schema 版本升级策略（§11.3） | 启动时逐版本迁移链 / 拒绝旧版本并提示导出导入 | 待拍板——随首个 schema 变更裁决。**首版行为已定**（裁决 7.26③）：`schema_version` 高于本仓支持时不迁移，直接备份 + 回落默认；迁移链形态仍未决 |
 
