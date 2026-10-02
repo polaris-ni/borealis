@@ -59,6 +59,14 @@ class ScreenMirror final {
     /// @brief 上次并入生效的距底行数：绘制侧的光标行换算要用同一个数。
     [[nodiscard]] auto back_rows() const noexcept -> std::size_t { return back_rows_; }
 
+    /// @brief 上次并入时可见窗顶在权威网格里的**绝对行号**（`grid::Storage::line` 的索引）。
+    ///
+    /// 选区端点按存储行序存（`ui/selection.h` 的坐标约定：副本行序随回看偏移漂移），而指针落点
+    /// 与绘制拿的是屏幕行，故屏幕行 i 与存储行 `window_top() + i` 的换算必须取本数——它是两者
+    /// 之间唯一的换算量。只在整窗重建时更新，而「窗口起点变了」本身就是重建的触发条件之一，
+    /// 故 `apply` 返回后它恒等于当前可见窗的起点。
+    [[nodiscard]] auto window_top() const noexcept -> std::size_t { return window_top_; }
+
     /// @brief 上次并入时权威网格的顶边位移读数（`grid::Storage::dropped_lines`）。
     ///
     /// 副本与权威网格只能在 `apply` 的临界区内见面，故漂移补偿的基准必须由副本带出来：绘制侧
