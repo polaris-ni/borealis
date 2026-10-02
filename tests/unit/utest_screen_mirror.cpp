@@ -3,7 +3,8 @@
 /// 测试说明: 主线程可见区副本的并入与行号换算——首次整窗取、增量只并脏行、整屏脏与尺寸变更
 ///           与可见窗起点变更都触发整窗重建、侧表随行搬运、距底偏移下的脏行落点与越界丢弃、
 ///           距底恒定推窗（裁决 7.23① 的 D6①）、偏移越界截断、脏标记一律被消费、
-///           顶边位移读数随两条并入路径一起快照（选区漂移补偿的基准，裁决 7.38⑤ / 7.39①）
+///           顶边位移读数随两条并入路径一起快照（选区漂移补偿的基准，裁决 7.38⑤ / 7.39①）、
+///           可见窗顶的绝对行号随回看与溢出更新（选区存储行序 ↔ 屏幕行的唯一换算量，裁决 7.40）
 ///           （架构 §3.4 / §9.5，SPEC.FEAT.RENDER.01 的状态机前置）。
 
 #include <cstddef>
@@ -226,6 +227,34 @@ AURORA_TEST_CASE(consumed_rows_lose_their_dirty_marks) {
     mirror.apply(storage, one(0U, 0U, true), 0U);
     // 整屏脏走整窗重建，视口行的脏一并消费掉（否则下一帧还要重读一遍）。
     AURORA_TEST_CHECK_FALSE(storage.visible_line(2U).dirty());
+}
+
+AURORA_TEST_CASE(window_top_is_the_storage_row_underneath_screen_rows) {
+    auto storage = make_storage();
+    for (const char letter : {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'}) {
+        push_line(storage, letter);
+    }
+    // 容量 13（视口 3 + 历史 10）此时已满：total 不再涨，而屏幕行 0 的绝对行号仍随内容前移。
+    ScreenMirror mirror;
+    mirror.apply(storage, std::span<const Damage>{}, 0U);
+    AURORA_TEST_REQUIRE_EQ(mirror.rows(), 3U);
+    AURORA_TEST_CHECK_EQ(mirror.window_top(), storage.total_lines() - mirror.rows());
+    AURORA_TEST_CHECK_GT(mirror.window_top(), 0U);
+    // 逐行对照「屏幕行 i 的内容 == 绝对行 window_top + i 的内容」：选区端点存存储行序、绘制取
+    // 屏幕行，这条等式是两者之间唯一的换算关系，错一格就是高亮与复制文本差一行。
+    for (std::size_t row = 0; row < mirror.rows(); ++row) {
+        AURORA_TEST_CHECK_EQ(head(mirror.line(row)), head(storage.line(mirror.window_top() + row)));
+    }
+    const auto bottom_row_head = head(mirror.line(2U));
+
+    // 回看两行：整窗换源，读数随重建一起带出来，且同一份内容只是换了屏幕行号。
+    mirror.apply(storage, std::span<const Damage>{}, 2U);
+    AURORA_TEST_CHECK_EQ(mirror.window_top(), storage.total_lines() - mirror.rows() - 2U);
+    AURORA_TEST_CHECK_EQ(head(mirror.line(0U)), head(storage.line(mirror.window_top())));
+    // 视口最后一行（绝对行 12）回看两行后落在屏幕行 2 之上一格：新的屏幕行 2 是绝对行 10，
+    // 正是刚才新的屏幕行 0——两个读数必须指向同一份内容。
+    AURORA_TEST_CHECK_NE(bottom_row_head, head(mirror.line(0U)));
+    AURORA_TEST_CHECK_NE(head(mirror.line(0U)), ' ');
 }
 
 AURORA_TEST_CASE(dropped_lines_snapshot_carried_by_both_merge_paths) {
