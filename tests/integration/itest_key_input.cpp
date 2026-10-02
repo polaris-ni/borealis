@@ -8,10 +8,9 @@
 ///           那一份必须被让掉，否则屏幕上每个字符出现两次）、CJK 按会话编码成 UTF-8、无焦点时
 ///           按键不着陆。
 ///
-///           `Tab` 与 Alt 系组合**刻意不在本文件断言**：框架派发器把 `Tab` 无条件当焦点遍历消费、
-///           Win32 后端把 `WM_SYSKEY*` 只用于推进修饰态而不交控件（附录 A.2 的 G14/G15），按键在
-///           到达控件之前就被吃掉。编码层已把两者的字节形态写好，框架补全后接回即用；在此断言
-///           「收不到」会在框架回货当天变成假失败。
+///           `Tab` 与 Alt 系组合**在本文件断言**（框架回货后接回）：派发器的 Tab 有控件优先钩子
+///           （`Widget::wants_tab_keys()`），Win32 后端把 `WM_SYSKEY*` 与 `WM_KEY*` 同走一条按键
+///           通道（附录 A.2 的 G14/G15 已闭合）。断言的是链路而非编码表字节形态。
 
 #include <chrono>
 #include <cstddef>
@@ -282,6 +281,61 @@ AURORA_TEST_CASE(printable_characters_are_sent_once_through_the_text_channel) {
     h.clear_written();
 
     AURORA_TEST_REQUIRE(!h.release(au::KeyCode::A));
+    AURORA_TEST_CHECK(h.written().empty());
+}
+
+AURORA_TEST_CASE(tab_reaches_the_connection_instead_of_focus_travel) {
+    Harness h;
+    // `wants_tab_keys()` 不覆写则派发器把 Tab 当焦点遍历消费掉，会话一个字节也收不到（G14 的回货腿）。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::Tab));
+    AURORA_TEST_CHECK_EQ(h.written(), std::string{"\t", 1U});
+    h.clear_written();
+
+    // Shift+Tab 走反向形态 `CSI Z`：Tab 的遗留编码与「Shift 改形态」两件事都在链路上过一遍。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::Tab, au::ModifierKey::Shift));
+    AURORA_TEST_CHECK_EQ(h.written(), "\x1B[Z");
+    h.clear_written();
+
+    // Alt+字母（Win32 的 `WM_SYSKEYDOWN` 腿，G15）：前缀一个 ESC，且不留给快捷键层。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::A, au::ModifierKey::Alt));
+    AURORA_TEST_CHECK_EQ(h.written(), "\x1B" "a");
+}
+
+AURORA_TEST_CASE(application_keypad_switches_through_the_real_state_machine) {
+    Harness h;
+    // 缺省是常规键盘模式（DECKPNM）：NumLock 开着的小键盘数字归文本通道，按键通道不发。
+    AURORA_TEST_CHECK(!h.press(au::KeyCode::KP_7, au::ModifierKey::NumLock));
+    AURORA_TEST_CHECK(h.written().empty());
+    AURORA_TEST_REQUIRE(h.type("7"));
+    AURORA_TEST_CHECK_EQ(h.written(), "7");
+    h.clear_written();
+
+    // `ESC =`（DECKPAM）须经**真实状态机**喂入：注入模式快照就测不到状态机那条指派。
+    h.feed("\x1B=");
+    AURORA_TEST_REQUIRE(h.modes().application_keypad);
+
+    // 应用模式下小键盘数字发 SS3 数值族；Windows 无论哪一档都给同一物理键再发一条 `WM_CHAR`，
+    // 故紧随其后的文本事件必须被吞掉一次——两份都发就是屏幕上多一个字符。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::KP_7, au::ModifierKey::NumLock));
+    AURORA_TEST_CHECK_EQ(h.written(), "\x1BOw");
+    AURORA_TEST_REQUIRE(h.type("7"));
+    AURORA_TEST_CHECK_EQ(h.written(), "\x1BOw");
+    h.clear_written();
+
+    // 吞一次即止：下一条文本事件属于别的来源，照常发给会话。
+    AURORA_TEST_REQUIRE(h.type("8"));
+    AURORA_TEST_CHECK_EQ(h.written(), "8");
+    h.clear_written();
+
+    // NumLock 关时数字阵是导航语义，DECKPAM 不改它：小键盘 7 即 Home（DECCKM 未开故走 CSI）。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::KP_7));
+    AURORA_TEST_CHECK_EQ(h.written(), "\x1B[H");
+    h.clear_written();
+
+    // `ESC >` 回常规模式：小键盘数字重新让位文本通道。
+    h.feed("\x1B>");
+    AURORA_TEST_REQUIRE(!h.modes().application_keypad);
+    AURORA_TEST_CHECK(!h.press(au::KeyCode::KP_8, au::ModifierKey::NumLock));
     AURORA_TEST_CHECK(h.written().empty());
 }
 
