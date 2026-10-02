@@ -2,10 +2,11 @@
 /// 目标单元: include/borealis/session/session.h
 /// 测试说明: 会话层的读侧接线（字节 → 解码 → 状态机 → 网格 → 脏行提交）与写侧通道
 ///           （文本编码下发、尺寸下发、DSR/DA1 应答回写、OSC 52 读方向应答）、OSC 消费产物
-///           的会话侧取值（标题 / 工作目录 / 超链接 / 剪贴板待写合并），以及对端退出时的
-///           解码收尾与非法字节替换（SPEC.FEAT.TERM.01 查询响应、SPEC.FEAT.TERM.07 OSC 消费、
+///           的会话侧取值（标题 / 工作目录 / 超链接 / 剪贴板待写合并）、帧唤醒句柄的注入与
+///           唤醒时机，以及对端退出时的解码收尾与非法字节替换
+///           （SPEC.FEAT.TERM.01 查询响应、SPEC.FEAT.TERM.07 OSC 消费、
 ///           SPEC.FEAT.TERM.09 双向编码、SPEC.FEAT.XFER.01 尺寸同步、SPEC.FEAT.WS.01 存活判定、
-///           架构 §3.3/§7.2）。
+///           架构 §3.2/§3.3/§7.2）。
 
 #include <cstddef>
 #include <cstdint>
@@ -286,6 +287,64 @@ AURORA_TEST_CASE(osc_52_read_request_answers_through_write_channel) {
     fixture.connection->deliver("\x1B]52;c;?\x07");
     AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\x1B]52;c;\x07"));
     AURORA_TEST_CHECK_FALSE(fixture.session->take_clipboard_write().has_value());
+}
+
+AURORA_TEST_CASE(frame_wake_fires_once_per_batch_whatever_the_commit_count) {
+    auto fixture = make_session();
+    int wakes = 0;
+    fixture.session->set_frame_wake([&wakes]() { ++wakes; });
+
+    // 行 0 与行 2 同时脏且不相邻 → 两条提交，但一轮批量输入只该唤醒一次。
+    fixture.connection->deliver("ab\x1B[3;1Hcd");
+    AURORA_TEST_REQUIRE_EQ(drain_all(*fixture.session).size(), 2U);
+    AURORA_TEST_CHECK_EQ(wakes, 1);
+}
+
+AURORA_TEST_CASE(frame_wake_sees_a_queue_already_filled) {
+    auto fixture = make_session();
+    bool commits_visible = false;
+    fixture.session->set_frame_wake([&fixture, &commits_visible]() {
+        commits_visible = fixture.session->has_damage();  // 唤醒早于入队的那帧会白排一空帧
+    });
+
+    fixture.connection->deliver("ab");
+    AURORA_TEST_CHECK_TRUE(commits_visible);
+}
+
+AURORA_TEST_CASE(frame_wake_stays_quiet_when_the_batch_touches_no_cell) {
+    auto fixture = make_session();
+    int wakes = 0;
+    fixture.session->set_frame_wake([&wakes]() { ++wakes; });
+
+    fixture.connection->deliver("");      // 空输入
+    fixture.connection->deliver("\x1B[?25l");  // 只改模式，一格没写 → 无需排帧
+    AURORA_TEST_CHECK_EQ(wakes, 0);
+    AURORA_TEST_CHECK_FALSE(fixture.session->has_damage());
+}
+
+AURORA_TEST_CASE(resize_wakes_once_and_invalid_size_does_not) {
+    auto fixture = make_session();
+    int wakes = 0;
+    fixture.session->set_frame_wake([&wakes]() { ++wakes; });
+
+    fixture.session->resize(Size{12, 4});
+    AURORA_TEST_CHECK_EQ(wakes, 1);
+    AURORA_TEST_CHECK_TRUE(drain_all(*fixture.session)[0].full_screen);
+
+    fixture.session->resize(Size{0, 0});
+    AURORA_TEST_CHECK_EQ(wakes, 1);  // 无效尺寸整条路径都不走，含唤醒
+}
+
+AURORA_TEST_CASE(replacing_the_wake_handle_takes_effect_immediately) {
+    auto fixture = make_session();
+    int first = 0;
+    int second = 0;
+    fixture.session->set_frame_wake([&first]() { ++first; });
+    fixture.session->set_frame_wake([&second]() { ++second; });
+
+    fixture.connection->deliver("ab");
+    AURORA_TEST_CHECK_EQ(first, 0);
+    AURORA_TEST_CHECK_EQ(second, 1);  // 注入式接缝：装配换句柄不需要重启会话
 }
 
 }  // namespace borealis::test_cases::utest_session
