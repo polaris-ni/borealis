@@ -6,6 +6,22 @@
 
 ---
 
+## v0.29（2026-10-02）粘贴处置计划的纯逻辑件与 G18 登记（裁决 7.33）
+
+**动机**：`SPEC.FEAT.INTERACT.03` 的粘贴腿排在对话框与主线程定时器之上，但「发什么、分几块、块间等多久、要不要警告」四条全是可脱界面定死的纯折算。先把这层落成公共件，界面侧接的只是排期与呈现，回调里就不会长出口径。同时为下一棒（选区高亮 / 右键三态 / 粘贴警告）实测一遍框架现状，把实测到的唯一缺口入册。
+
+- **新增裁决 7.33（粘贴处置计划的口径与换行策略的单一真值源）**：① 形态＝纯逻辑件 `term::plan_paste` → `PastePlan{line_breaks, multiline, bracketed, chunks}`，本件不持时间也不碰 IO，排期归主线程（框架 `Scheduler::set_timeout`）；② **bracketed paste 优先于换行策略**——`?2004` 为真时只加一对 `ESC[200~ … ESC[201~`，`Filter` / `Convert` 与节流一并让位（该模式的语义就是整段交给 shell 判定），空文本连包裹也不发；③ 断点只认 CR / LF / CRLF 且 CRLF 算一个换行，U+0085 / U+2028 / U+001C 不是断点（当断点就会把一条命令拆成两条执行）；④ **多行警告判据取待发结果**而非剪贴板原文；⑤ 块切分与节流细则（首块 `delay` 恒 0、其后每块前等一个间隔，缺省间隔 10 ms 为内置常量、暂不开配置键）；⑥ 单一真值源迁移；⑦ 验收与变异自证；⑧ 界面腿的框架现状实测清单。
+- **单一真值源迁移**：`PasteNewlinePolicy` 的定义从 `config/settings.h` 移入 `term/paste.h`，配置侧改为 `using term::PasteNewlinePolicy`（与既有的 `term::CursorShape`、`term::AmbiguousWidth` 同口径）；落盘的 `as_is / filter / convert` 名称→枚举值映射逐字节不变，`utest_config` 的往返等值仍绿。新增 `term::LineEnding{Lf, Cr, Crlf}` 作为串口 `line_ending`（`SPEC.FEAT.CONN.05`，默认 LF）的代码侧形态，串口腿落地时由配置字符串映射过来。
+- **代码落地**：`include/borealis/term/paste.h` + `src/term/paste.cpp`（`PasteNewlinePolicy` / `LineEnding` / `PasteOptions` / `PasteChunk` / `PastePlan` / `plan_paste`），经 `src/CMakeLists.txt` 编入 `borealis_core`。
+- **测试**：`tests/unit/utest_paste.cpp` 11 例（三策略的块切分与行尾形态、bracketed 原样与不节流、警告判据取自待发结果、非断点字符、空文本、块间隔从第二块起、配置别名同型），非 e2e 通道 **23 项全绿**。变异自证：把 CRLF 的断点长度改为 1（即 CRLF 算两个换行）后三例转红，改回即全绿。
+- **新增缺口 G18（附录 A.2）：指针与滚轮事件不携带修饰键位**。实测事实：`KeyEvent` 有 `modifiers` 而 `MouseEvent` / `ScrollEvent` 没有，全库无「查询当前修饰态」的公共 API，Win32 的 `handle_mouse(HWND, UINT, LPARAM)` 连 `WPARAM` 都不接，`MK_SHIFT` / `MK_CONTROL` 等键位标记在源头丢弃；且鼠标消息按 Win32 约定本就不带 Alt，须现取 `GetKeyState(VK_MENU)`。影响面：`SPEC.FEAT.INTERACT.02` 的列模式触发位、`SPEC.FEAT.RENDER.02` 的 Ctrl+滚轮缩放、`SPEC.FEAT.INTERACT.05` 的 Ctrl+点击。属事件链路（裁决 7.13①），已按既有形态派发 Aurora 侧补全；本仓在回货前不自造替代判定，列模式与 Ctrl+滚轮两腿暂不落地。
+- **同批实测为非缺口的框架原语**（记入裁决 7.33⑧，避免下一棒重复排查）：指针捕获（Win32 在 Press 时 `SetCapture`，拖出窗口仍收 Move/Release）、`click_count`、`CursorShape::IBeam` 与 `Widget::cursor_shape()` 虚钩子、`Modifier::context_menu` + `MenuItem`（含 `enabled` / `checkable` / `shortcut_text`）、`Dialog` / `alert` / `confirm`（模态焦点作用域）、`Clipboard::get_text`、`Painter::fill_rect` / `blend_rect` 的源 alpha 混合、`Scheduler::set_timeout`、`TextCompositionEvent`。
+- **文档回写**：`SPECIFICATIONS.md` §7 新增裁决 7.33、附录 A.2 新增 G18 行、版本脚注 v0.28 → v0.29；`ARCHITECTURE.md` §10.2 补粘贴件形态与界面腿余下清单；`PLAN.md` §6 缺口表新增 G18、§8 的 M1 落地清单与「鼠标 → 选区 → 复制文本」接缝行更新、测试计数 22 → 23；`AGENTS.md` §2 目录表与 §6 现状快照同步。
+- **代价与边界**：块数与原文本行数同阶（一次算全的计划而非拉取式生成器），一万行的粘贴即一万块排期加一份等长拷贝；`Convert` 的目标行尾本件只收最终值，其配置来源留待设置面板裁决；本件不含界面，故剪贴板读取、警告对话框、逐行排期与 copy-on-select / 右键三态均未落，界面侧须先出视觉稿评审。
+- 需求条目数量（66 条）、标识体系、优先级与分期结构均未变动；本次是 `SPEC.FEAT.INTERACT.03` 粘贴腿的**首版纯逻辑腿落地**。
+
+---
+
 ## v0.28（2026-10-02）选区归一与选中文本的纯逻辑件（裁决 7.32）
 
 **动机**：`SPEC.FEAT.INTERACT.02` 与 `SPEC.FEAT.INTERACT.03` 的首版面要求流式拖拽、矩形块（列模式）与三项默认关闭的复制变换。其中高亮绘制、鼠标事件与剪贴板写入属界面侧（且按既有规矩须先出视觉稿评审），而「两个端点 → 逐行列区间 → 选中文本」这一半与像素无关、却是最容易算错的一半（双宽字符被切成半格、历史溢出后的越界行、三项变换谁先谁后）。故先把它落成脱界面的纯逻辑件并配满单测，界面棒接的是它的产物而不是它的算术。

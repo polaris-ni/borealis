@@ -383,7 +383,14 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 - **文本口径**：行以 LF 分隔且剪贴板侧不翻译（行尾的唯一决策点留在粘贴策略与串口 `line_ending`）；选区左界落在双宽延续格上时整字符纳入，延续格永不产第二个字符；越界行（历史已溢出）不产文本也不补空行。
 - **变换次序固定**为「剥 tmux 细线制表符 → 剥行尾空白 → 合并反斜杠续行」，前一步的产物是后一步的判据。
 
-**余下未落**：鼠标按下/拖动/抬起 → 格子坐标的换算与选区状态机、选区高亮的绘制层（`ui::rect_for` 已能按行列区间出矩形）、剪贴板写入与 copy-on-select / 右键三态、`Session::copy_text`（计划 / 待建：在既有短临界区内取文本后交回主线程）、粘贴侧的多行警告与逐行节流。另有一条显式欠项：scrollback 饱和后新输出把最旧行挤出，其余行的存储索引整体减一，仍活着的选区因此相对内容下移一行——消除须给存储加单调行号，随界面腿一并处理（裁决 7.32②）。
+**已落地的粘贴件（2026-10-02，裁决 7.33）**：`term::plan_paste`（`include/borealis/term/paste.h` + `src/term/paste.cpp`）把「剪贴板文本 + `?2004` 是否为真 + 三项可配口径」折算成发送计划 `PastePlan{line_breaks, multiline, bracketed, chunks}`——**它不持时间也不碰 IO**，`PasteChunk::delay` 只是数值，排期由主线程的绘制侧控件用框架 `Scheduler::set_timeout` 兑现（§3.2 的「回调里不做阻塞」纪律）。三条要点：
+- **bracketed paste 优先于换行策略**：`?2004` 为真时只加一对 `ESC[200~ … ESC[201~` 包裹，文本逐字节原样，`Filter` / `Convert` 与节流一并让位。该模式的语义就是「整段交给 shell 判定」（`SPEC.FEAT.TERM.01`），应用侧再重排等于替 shell 做了它明令保留的判断。
+- **断点只认 CR / LF / CRLF**（CRLF 算一个换行）：U+0085 / U+2028 一类在终端网格里不是换行，当断点就会把一条命令拆成两条依次执行。
+- **多行警告的判据取待发结果**而非剪贴板原文：`Filter` 与 bracketed 两种形态都不会逐行执行，据原文本判就会为「粘成一行的粘贴」弹警告。
+
+`PasteNewlinePolicy` 的定义自 `config/settings.h` 迁入本件（配置侧改为 `using term::PasteNewlinePolicy`，与 `term::CursorShape` 同口径），`term::LineEnding{Lf, Cr, Crlf}` 是串口 `line_ending`（`SPEC.FEAT.CONN.05`，默认 LF）的代码侧形态。
+
+**余下未落**：鼠标按下/拖动/抬起 → 格子坐标的换算与选区状态机（框架侧原语已具备：`Widget::on_pointer_event(MouseEvent &)` 是虚钩子、事件带 `position` / `local_position` / `button` / `click_count`，Win32 在 Press 时 `SetCapture` 使拖出窗口仍收 Move/Release）、选区高亮的绘制层（`ui::rect_for` 已能按行列区间出矩形）、剪贴板写入与 copy-on-select / 右键三态（`Clipboard::get_text` / `set_text`、`Modifier::context_menu` + `MenuItem`、`Dialog` 均在公共 API 上）、`Session::copy_text`（计划 / 待建：在既有短临界区内取文本后交回主线程）、多行警告的对话框与逐行排期（计划本身已由 `term::plan_paste` 给出）。**列模式（Alt+拖拽）与 Ctrl+滚轮缩放两腿被 G18 挡住**：`MouseEvent` / `ScrollEvent` 不携带修饰键位（附录 A.2，裁决 7.33⑧），本仓不自造替代判定。另有一条显式欠项：scrollback 饱和后新输出把最旧行挤出，其余行的存储索引整体减一，仍活着的选区因此相对内容下移一行——消除须给存储加单调行号，随界面腿一并处理（裁决 7.32②）。
 
 ### 10.3 搜索
 
