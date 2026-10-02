@@ -62,6 +62,9 @@ auto main() -> int {
     borealis::session::ClipboardOutbox outbox;
 
     au::Application app{std::move(scene), std::move(window), opts};
+    // 框架不在启动时给焦点序里的首个控件派焦点（只有模态 `push_scope` 会这么做），不设这一步则
+    // 按键与滚轮都路由不到视口，光标也永远停在失焦的空心描边形态。
+    app.focus().set_focus(view.get());
     app.set_on_frame([&view, &outbox, &session]() -> void {
         view->on_frame();  // 先取脏行提交、再在临界区并入本地副本（顺序不可颠倒，见 session.h）
         static_cast<void>(outbox.drain(session));
