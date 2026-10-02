@@ -34,6 +34,11 @@ endif ()
 
 add_subdirectory(src)
 
+option(BOREALIS_BUILD_BENCH "Build the render throughput benchmark (tools/bench)" ON)
+if (BOREALIS_BUILD_BENCH)
+    add_subdirectory(tools)
+endif ()
+
 option(BOREALIS_BUILD_TESTS "Build Borealis tests" ON)
 if (BOREALIS_BUILD_TESTS)
     include(cmake/BorealisTests.cmake)
