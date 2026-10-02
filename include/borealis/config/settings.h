@@ -23,6 +23,7 @@
 
 #include "borealis/config/themes.h"
 #include "borealis/grid/storage.h"
+#include "borealis/term/paste.h"
 #include "borealis/term/terminal.h"
 #include "borealis/term/width.h"
 #include "borealis/ui/palette.h"
@@ -43,11 +44,10 @@ enum class LongLinePolicy : std::uint8_t {
 };
 
 /// @brief 粘贴文本里换行符的处理策略（`SPEC.FEAT.INTERACT.03`）。
-enum class PasteNewlinePolicy : std::uint8_t {
-    AsIs,    ///< 原样发送（缺省：与该条「保留原样为默认」的复制语义同口径）。
-    Filter,  ///< 剥掉换行，粘成一行。
-    Convert, ///< 换行转成显式行尾序列（与串口 `line_ending` 同一套取值）。
-};
+///
+/// 取值与语义的唯一定义在 `term::PasteNewlinePolicy`（发送侧要用它折算计划），配置侧只作别名，
+/// 以免两处枚举表在取值上分叉——与 `term::CursorShape`、`term::AmbiguousWidth` 同口径。
+using term::PasteNewlinePolicy;
 
 /// @brief 右键的缺省行为（`SPEC.FEAT.INTERACT.03` 的 Windows Terminal 三态）。
 enum class RightClickAction : std::uint8_t {
