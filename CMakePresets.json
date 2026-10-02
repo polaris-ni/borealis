@@ -15,6 +15,16 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
       }
+    },
+    {
+      "name": "msvc-bench",
+      "displayName": "MSVC + Ninja (RelWithDebInfo, benchmarks)",
+      "description": "Optimized build for the time-class gates: a benchmark reports product cost, and a Debug build inflates the write chain by 20-30x (ruling 7.35). tools/check/check_perf_gates.ps1 reads this build directory by default.",
+      "inherits": "msvc",
+      "binaryDir": "${sourceDir}/build-bench",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
     }
   ],
   "buildPresets": [
@@ -22,6 +32,11 @@
       "name": "msvc",
       "displayName": "Build (build/)",
       "configurePreset": "msvc"
+    },
+    {
+      "name": "msvc-bench",
+      "displayName": "Build (build-bench/, optimized)",
+      "configurePreset": "msvc-bench"
     }
   ],
   "testPresets": [
