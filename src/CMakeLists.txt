@@ -18,6 +18,7 @@ add_library(borealis_core STATIC
         grid/storage.cpp
         session/clipboard_outbox.cpp
         session/damage_queue.cpp
+        session/screen_mirror.cpp
         session/session.cpp
         ui/cell_layout.cpp
         ui/palette.cpp)
