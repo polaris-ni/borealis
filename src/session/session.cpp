@@ -43,6 +43,22 @@ auto Session::start() -> void { connection_->start(*this); }
 
 auto Session::close() -> void { connection_->close(); }
 
+auto Session::set_frame_wake(std::function<void()> wake) -> void {
+    const std::lock_guard lock{mutex_};
+    frame_wake_ = std::move(wake);
+}
+
+auto Session::wake_frame() -> void {
+    std::function<void()> wake;
+    {
+        const std::lock_guard lock{mutex_};
+        wake = frame_wake_;  // 取副本出锁再调：句柄是跨线程 post，锁内不做 IO（架构 §3.4）
+    }
+    if (wake) {
+        wake();
+    }
+}
+
 auto Session::send_text(std::u32string_view text) -> void { flush(text); }
 
 auto Session::send_bytes(std::span<const std::byte> bytes) -> void { connection_->write(bytes); }
@@ -58,6 +74,7 @@ auto Session::resize(Size size) -> void {
         terminal_.clear_full_screen_dirty();
     }
     damage_queue_.push_full_screen();
+    wake_frame();
     connection_->resize(size);
 }
 
@@ -107,14 +124,15 @@ auto Session::ingest(std::span<const std::byte> bytes, bool end_of_stream) -> vo
     if (!responses.empty()) {
         flush(responses);
     }
-    // TODO(SPEC.FEAT.RENDER.01): 提交入队后须按架构 §3.2 经 `au::post_to_main` 唤醒主线程排帧；
-    // 事件循环接线随上屏层落地，当前消费方按帧轮询 `has_damage()`。
     for (const auto &entry : damage) {
         if (entry.full_screen) {
             damage_queue_.push_full_screen();
         } else {
             damage_queue_.push_rows(entry.first_row, entry.last_row);
         }
+    }
+    if (!damage.empty()) {
+        wake_frame();  // 一轮批量输入只唤醒一次，且必须在队列已成型之后（否则唤醒的那帧取不到提交）
     }
 }
 

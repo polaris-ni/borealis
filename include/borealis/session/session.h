@@ -11,9 +11,13 @@
 // ——查询应答（DSR/DA1）先在锁内登记，出锁后才写连接；`OSC 52` 的剪贴板写同构，锁内只留存、
 // 由主线程取走后落地。写队列同样在锁外：主线程的取用顺序
 // 是「先取队列、再读网格」，反过来就会与读线程构成 ABBA 死锁。
+//
+// 主线程不会自己想起要排帧：提交入队后由装配层注入的帧唤醒句柄叫它一次（架构 §3.2），
+// 该句柄同样在锁外调用——它是跨线程 post，属 IO。
 // ============================================================
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -59,6 +63,14 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
 
     /// @brief 主动结束连接，之后不再接收回调（关闭标签、退出会话）。
     auto close() -> void;
+
+    /// @brief 注入帧唤醒句柄：本次确有网格提交入队后、在锁外调用一次（架构 §3.2）。
+    ///
+    /// 读线程由连接回调驱动，而排帧在主线程，故「唤醒主线程」这个跨线程动作必须由装配层交进来
+    /// ——它调的是什么（`Surface::request_wake` 一类）本层不知道，也不该知道。一轮批量输入只唤醒
+    /// 一次，不按提交条数唤醒；一轮没有产出任何提交就不唤醒。
+    /// @param wake 唤醒动作，须线程安全且不得阻塞（它在读线程上被调用）。
+    auto set_frame_wake(std::function<void()> wake) -> void;
 
     /// @brief 文本发送方向：按会话编码成字节后写连接（`SPEC.FEAT.TERM.09`）。
     ///
@@ -145,7 +157,11 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// @brief 把码点流按会话编码成字节交给连接（调用方不得持锁：临界区内不做 IO）。
     auto flush(std::u32string_view text) -> void;
 
+    /// @brief 唤醒主线程排帧：句柄在锁内取出、锁外调用（架构 §3.4 的「锁内不做 IO」）。
+    auto wake_frame() -> void;
+
     mutable std::mutex mutex_;  ///< const 取值路径（`decode_stats`）也要加锁，故可变。
+    std::function<void()> frame_wake_;  ///< 装配层注入的帧唤醒句柄，与 `mutex_` 同世代护住。
     std::unique_ptr<Connection> connection_;
     term::Terminal terminal_;
     term::Utf8Decoder decoder_;
