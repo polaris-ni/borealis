@@ -2,7 +2,9 @@
 /// 目标单元: include/borealis/ui/cell_layout.h + src/ui/cell_layout.cpp
 /// 测试说明: 整格像素度量按 scale 换算成 dp 步长（含非整除缩放的取整容差、「装不满也给一格」与
 ///           不可用度量的空网格）、行列数即尺寸的 UI 侧来源且先扣视口内边距（SPEC.FEAT.XFER.01、
-///           裁决 7.25②）、run 按样式全等合并且色带与文本共用同一批切分边界（裁决 7.23②）、
+///           裁决 7.25②）、指针 dp 落点折回格子序号（`SPEC.FEAT.INTERACT.02` 的鼠标换算腿：格边界
+///           归右下一格、内边距带与越界一律钳到边界格、网格不可用时不定位）、run 按样式全等合并
+///           且色带与文本共用同一批切分边界（裁决 7.23②）、
 ///           双宽延续格不进文本但保留列宽、combining 随基础码点并进同段文本（裁决 7.23ⓑ）、
 ///           空格与不可见段的丢弃与底色保留、下划线空格段仍需交给绘制侧
 ///           （SPEC.FEAT.RENDER.01、SPEC.FEAT.TERM.08）、三档下划线与删除线的落笔矩形吸附物理像素
@@ -34,6 +36,7 @@ using borealis::grid::kFlagWideContinuation;
 using borealis::grid::Row;
 using borealis::grid::UnderlineStyle;
 using borealis::ui::CellPixels;
+using borealis::ui::cell_at_point;
 using borealis::ui::decoration_rects;
 using borealis::ui::GridGeometry;
 using borealis::ui::layout_row;
@@ -94,6 +97,11 @@ auto ruled_run(std::size_t first, std::size_t last, UnderlineStyle style) -> Sty
 /// @brief 8 px × 16 px、基线 12 px 的格在 2× 缩放下即 4 dp × 8 dp、基线 6 dp，1 px = 0.5 dp。
 auto square_geometry() -> GridGeometry {
     return make_geometry(CellPixels{8, 16, 12}, 2.0, LogicalSize{800.0, 800.0}, 0.0);
+}
+
+/// @brief 同一格度量但带 6 dp 内边距：可画区从 (6, 6) 起，行列数各少一格余量。
+auto padded_geometry() -> GridGeometry {
+    return make_geometry(CellPixels{8, 16, 12}, 2.0, LogicalSize{800.0, 800.0}, 6.0);
 }
 
 }  // namespace
@@ -423,6 +431,66 @@ AURORA_TEST_CASE(plain_and_hidden_runs_produce_no_decoration) {
     concealed.paint.strike = true;
     concealed.paint.hidden = true;  // `SGR 8` 只隐去字形与装饰，底色色带另由绘制侧铺
     AURORA_TEST_CHECK_TRUE(decoration_rects(geometry, 0U, concealed).empty());
+}
+
+AURORA_TEST_CASE(pointer_hits_the_cell_that_covers_it) {
+    const auto geometry = square_geometry();  // 4 dp × 8 dp，无内边距
+
+    const auto first = cell_at_point(geometry, 3.99, 7.99);
+    AURORA_TEST_REQUIRE_TRUE(first.has_value());
+    AURORA_TEST_CHECK_EQ(first->row, 0U);
+    AURORA_TEST_CHECK_EQ(first->column, 0U);
+
+    // 格边界归右/下那一格：它是那一格的第一个像素，不是上一格的最后一个。
+    const auto boundary = cell_at_point(geometry, 4.0, 8.0);
+    AURORA_TEST_REQUIRE_TRUE(boundary.has_value());
+    AURORA_TEST_CHECK_EQ(boundary->row, 1U);
+    AURORA_TEST_CHECK_EQ(boundary->column, 1U);
+
+    const auto inside = cell_at_point(geometry, 13.5, 27.0);
+    AURORA_TEST_REQUIRE_TRUE(inside.has_value());
+    AURORA_TEST_CHECK_EQ(inside->row, 3U);
+    AURORA_TEST_CHECK_EQ(inside->column, 3U);
+}
+
+AURORA_TEST_CASE(pointer_in_the_padding_band_snaps_to_the_origin_cell) {
+    const auto geometry = padded_geometry();  // 原点 (6, 6)，格仍是 4 dp × 8 dp
+
+    const auto corner = cell_at_point(geometry, 2.0, 2.0);
+    AURORA_TEST_REQUIRE_TRUE(corner.has_value());
+    AURORA_TEST_CHECK_EQ(corner->row, 0U);
+    AURORA_TEST_CHECK_EQ(corner->column, 0U);
+
+    // 内边距只移原点，不折进格子步长（裁决 7.25②），故 (10, 14) 已在第 1 格内。
+    const auto next = cell_at_point(geometry, 10.0, 14.0);
+    AURORA_TEST_REQUIRE_TRUE(next.has_value());
+    AURORA_TEST_CHECK_EQ(next->row, 1U);
+    AURORA_TEST_CHECK_EQ(next->column, 1U);
+}
+
+AURORA_TEST_CASE(pointer_outside_the_grid_extends_the_hit_to_the_edge_cell) {
+    // 指针捕获下拖出窗口仍持续收到 Move 事件（框架在 Press 时 `SetCapture`），此刻要的是
+    // 「选区继续长到边界」，故四个方向一律钳位而非丢事件。
+    const auto geometry = square_geometry();  // 200 列 × 100 行
+
+    const auto beyond_left = cell_at_point(geometry, -40.0, -120.0);
+    AURORA_TEST_REQUIRE_TRUE(beyond_left.has_value());
+    AURORA_TEST_CHECK_EQ(beyond_left->row, 0U);
+    AURORA_TEST_CHECK_EQ(beyond_left->column, 0U);
+
+    const auto beyond_right = cell_at_point(geometry, 1000000.0, 1000000.0);
+    AURORA_TEST_REQUIRE_TRUE(beyond_right.has_value());
+    AURORA_TEST_CHECK_EQ(beyond_right->row, geometry.rows - 1U);
+    AURORA_TEST_CHECK_EQ(beyond_right->column, geometry.columns - 1U);
+}
+
+AURORA_TEST_CASE(unusable_grid_hits_no_cell) {
+    // 度量为 0（字体未就绪）与可视区为 0（窗口最小化）都是真实输入，此刻没有可落点的网格。
+    const auto no_metrics = make_geometry(CellPixels{0, 0, 0}, 2.0, LogicalSize{800.0, 800.0}, 0.0);
+    AURORA_TEST_CHECK_FALSE(cell_at_point(no_metrics, 10.0, 10.0).has_value());
+
+    const auto no_viewport = make_geometry(CellPixels{8, 16, 12}, 2.0, LogicalSize{0.0, 0.0}, 0.0);
+    AURORA_TEST_CHECK_FALSE(cell_at_point(no_viewport, 10.0, 10.0).has_value());
 }
 
 }  // namespace borealis::test_cases::utest_cell_layout
