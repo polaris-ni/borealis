@@ -19,9 +19,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include "borealis/grid/row.h"
 #include "borealis/grid/storage.h"
 
 namespace borealis::ui {
@@ -72,6 +75,31 @@ struct RowSpan {
 /// @param columns 网格列数；为 0 时不出区间。
 /// @return 行号升序的区间表；`anchor == focus`（单击）时为空表。
 [[nodiscard]] auto row_spans(const Selection &selection, std::size_t columns) -> std::vector<RowSpan>;
+
+/// @brief 把选区折算到「存储顶边前移了 @p rows_up 行」之后的同一份内容上（裁决 7.38⑤）。
+///
+/// 选区端点存的是存储行序，而 scrollback 饱和后的每一行新输出都让既有内容前移一行，不折算的话
+/// 高亮与复制文本会一起滑离用户当初点中的那些行。@p rows_up 取自
+/// `grid::Storage::dropped_lines()` 两次读数之差（快照由 `session::ScreenMirror` 带出）。
+/// 列号不动：顶边位移只发生在行方向。
+/// @param selection 待折算的选区。
+/// @param rows_up 内容整体上移的行数；负数表示整体下移（顶部补空白、无历史时的上滚）。
+/// @return 折算后的选区；行号越出存储顶端的一端钳到 0，**整段**都被推出顶端时塌成两端重合
+///         （即 `row_spans` 口径下的无选区，而不是指着空白行继续高亮，裁决 7.39②）。
+[[nodiscard]] auto translate_selection_rows(const Selection &selection, std::int64_t rows_up) -> Selection;
+
+/// @brief 双击选词的列区间（`SPEC.FEAT.INTERACT.02` 的词粒度，裁决 7.38③）。
+///
+/// 断点集是 UTF-8 原文（配置键 `terminal.word_delimiters`），空格与制表**恒**为断点而不必列入。
+/// 界定符自身可以是字组成分（例如 `foo;bar` 里的 `;`），故落点在界定符上时不成选区——双击空白与
+/// 双击标点同样什么都不选，与 xterm 一致。双宽字符的延续格按其**基础格**判定，于是整字符要么
+/// 全入选区要么全不选（裁决 7.32② 同口径）。
+/// @param row 落点所在行（权威网格或可见区副本的行，两者内容一致）。
+/// @param point 落点坐标：`row` 是调用方给定的存储行序，`column` 是指针那半格。
+/// @param delimiters 断点字符集；空串即「只有空格与制表断词」。
+/// @return `RowSpan{point.row, first, last}`（闭开区间）；落点越界或落在断点上时 `std::nullopt`。
+[[nodiscard]] auto word_span_at(const grid::Row &row, GridCellPos point, std::string_view delimiters)
+    -> std::optional<RowSpan>;
 
 /// @brief 复制文本的三项变换开关（`SPEC.FEAT.INTERACT.03`，**均默认关闭以保留原样**）。
 ///

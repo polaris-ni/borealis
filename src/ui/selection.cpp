@@ -8,9 +8,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -92,6 +95,38 @@ auto trim_trailing_space(std::string &line) noexcept -> void {
     return (trailing_backslashes(line) % 2U) == 1U;
 }
 
+/// @brief 界定符串的接收端：把 UTF-8 原文逐码点收进表。
+class DelimiterCollector final : public term::CodePointSink {
+  public:
+    auto on_code_point(char32_t code_point) -> void override { code_points.push_back(code_point); }
+
+    std::vector<char32_t> code_points;
+};
+
+/// @brief 界定符集（码点表）。按码点而非字节比：配置串里的多字节界定符，其续字节会撞上
+///        Latin-1 码点（单元格里的 `©` 与 `©` 的第二个字节同为 0xA9），逐字节比较就选错词。
+[[nodiscard]] auto delimiter_set(std::string_view delimiters) -> std::vector<char32_t> {
+    DelimiterCollector collector;
+    term::Utf8Decoder decoder;
+    decoder.feed(std::as_bytes(std::span{delimiters}), collector);
+    decoder.finish(collector);  // 配置串被人截断成半截序列时按替换字符收尾，不影响其余界定符
+    return collector.code_points;
+}
+
+/// @brief 某格是否打断一个词。
+///
+/// 空格与制表恒为断点（裁决 7.38③），故界定符集为空只意味着「每个 ASCII 标点都算字组成分」。
+/// 延续格按其基础格判定：双宽字符要么整字符进选区，要么整字符不进，不存在半个字被选中。
+[[nodiscard]] auto breaks_word(const grid::Row &row, std::size_t column, const std::vector<char32_t> &delimiters)
+    -> bool {
+    if (row.cell(column).is_wide_continuation() && column > 0U) {
+        --column;
+    }
+    const char32_t code_point = row.cell(column).code_point;
+    return code_point == U' ' || code_point == U'\t' ||
+           std::ranges::find(delimiters, code_point) != delimiters.end();
+}
+
 }  // namespace
 
 auto row_spans(const Selection &selection, const std::size_t columns) -> std::vector<RowSpan> {
@@ -124,6 +159,53 @@ auto row_spans(const Selection &selection, const std::size_t columns) -> std::ve
         spans.push_back(RowSpan{row, first, last + 1U});
     }
     return spans;
+}
+
+auto translate_selection_rows(const Selection &selection, const std::int64_t rows_up) -> Selection {
+    const auto shifted = [rows_up](std::size_t row) noexcept -> std::optional<std::size_t> {
+        const std::int64_t moved = static_cast<std::int64_t>(row) - rows_up;
+        if (moved < 0) {
+            return std::nullopt;  // 该端已被推出存储顶端
+        }
+        return static_cast<std::size_t>(moved);
+    };
+    const auto anchor = shifted(selection.anchor.row);
+    const auto focus = shifted(selection.focus.row);
+    if (!anchor.has_value() && !focus.has_value()) {
+        // 整段都被推出：塌成两端重合（`row_spans` 即无选区），而不是钳到第 0 行指着空白继续高亮。
+        const GridCellPos collapsed{0U, selection.anchor.column};
+        return Selection{collapsed, collapsed, selection.shape};
+    }
+    Selection moved = selection;
+    moved.anchor.row = anchor.value_or(0U);  // 只有一端被推出时那一端钳到顶
+    moved.focus.row = focus.value_or(0U);
+    return moved;
+}
+
+auto word_span_at(const grid::Row &row, const GridCellPos point, const std::string_view delimiters)
+    -> std::optional<RowSpan> {
+    const auto columns = row.columns();
+    if (columns == 0U || point.column >= columns) {
+        return std::nullopt;
+    }
+    const auto set = delimiter_set(delimiters);
+    auto column = point.column;
+    while (column > 0U && row.cell(column).is_wide_continuation()) {
+        --column;  // 指针只能指到双宽字符的左半格，用户要的是那个字（裁决 7.32② 同口径）
+    }
+    if (breaks_word(row, column, set)) {
+        return std::nullopt;  // 落点本身就是断点：双击空白与双击标点什么都不选
+    }
+
+    std::size_t first = column;
+    while (first > 0U && !breaks_word(row, first - 1U, set)) {
+        --first;
+    }
+    std::size_t last = column;
+    while (last + 1U < columns && !breaks_word(row, last + 1U, set)) {
+        ++last;
+    }
+    return RowSpan{point.row, first, last + 1U};
 }
 
 auto copy_text(const grid::Storage &storage, const Selection &selection, const CopyOptions &options)
