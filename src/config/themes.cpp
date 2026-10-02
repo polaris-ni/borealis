@@ -36,6 +36,7 @@ struct ThemeColors {
     std::uint32_t foreground;
     std::uint32_t background;
     std::uint32_t cursor;
+    std::uint32_t selection;  ///< 选区底（`SPEC.FEAT.INTERACT.02`）；八套的取值来源见各表行注释。
 };
 
 /// @brief 原始色值 → 生效调色板：只填色，开关类字段留给配置层。
@@ -47,6 +48,7 @@ constexpr auto to_palette(const ThemeColors &colors) noexcept -> ui::PaletteSpec
     spec.default_foreground = rgb(colors.foreground);
     spec.default_background = rgb(colors.background);
     spec.cursor_color = rgb(colors.cursor);
+    spec.selection_color = rgb(colors.selection);
     return spec;
 }
 
@@ -57,56 +59,64 @@ constexpr std::array<ThemeColors, 8> kThemeColors{{
          0x62728A, 0xFF6E6E, 0x69FF94, 0xFFFFA5, 0xD6ACFF, 0xFF92DF, 0xA4FFFF, 0xFFFFFF},
         0xF8F8F2,
         0x282A36,
-        0xF8F8F2},
+        0xF8F8F2,
+        0x44475A},  ///< 选区底取 Dracula 官方 palette 的 selection 档（与 current line 同值）。
     ThemeColors{
         "nord",
         {0x3B4252, 0xBF616A, 0xA3BE8C, 0xEBCB8B, 0x81A1C1, 0xB48EAD, 0x88C0D0, 0xE5E9F0,  //
          0x4C566A, 0xBF616A, 0xA3BE8C, 0xEBCB8B, 0x81A1C1, 0xB48EAD, 0x8FBCBB, 0xECEFF4},
         0xD8DEE9,
         0x2E3440,
-        0xD8DEE9},
+        0xD8DEE9,
+        0x434C5E},  ///< 选区底取官方 Nord 的 nord2（本表只收录 nord1 与 nord3）。
     ThemeColors{
         "solarized-dark",
         {0x073642, 0xDC322F, 0x859900, 0xB58900, 0x268BD2, 0xD33682, 0x2AA198, 0xEEE8D5,  //
          0x002B36, 0xCB4B16, 0x586E75, 0x657B83, 0x839496, 0x6C71C4, 0x93A1A1, 0xFDF6E3},
         0x839496,
         0x002B36,
-        0x839496},
+        0x839496,
+        0x073642},  ///< 选区底即 Solarized 的 base02（本表 basic[0] 那一档）。
     ThemeColors{
         "one-dark",
         {0x3F4451, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xABB2BF,  //
          0x5C6370, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xFFFFFF},
         0xABB2BF,
         0x282C34,
-        0x528BFF},
+        0x528BFF,
+        0x3E4451},  ///< 选区底取 Atom one-dark-ui 的 highlight 档（本表未收录，属移植惯例）。
     ThemeColors{
         "gruvbox-dark",
         {0x282828, 0xCC241D, 0x98971A, 0xD79921, 0x458588, 0xB16286, 0x689D6A, 0xA89984,  //
          0x928374, 0xFB4934, 0xB8BB26, 0xFABD2F, 0x83A598, 0xD3869B, 0x8EC07C, 0xEBDBB2},
         0xEBDBB2,
         0x282828,
-        0xEBDBB2},
+        0xEBDBB2,
+        0x504945},  ///< 选区底取 gruvbox 官方 bg3（本表未收录该深色档）。
     ThemeColors{
         "monokai",
         {0x272822, 0xF92672, 0xA6E22E, 0xF4BF75, 0x66D9EF, 0xAE81FF, 0x66D9EF, 0xF8F8F2,  //
          0x75715E, 0xF92672, 0xA6E22E, 0xF4BF75, 0x66D9EF, 0xAE81FF, 0x66D9EF, 0xF8F8F2},
         0xF8F8F2,
         0x272822,
-        0xF8F8F2},
+        0xF8F8F2,
+        0x49483E},  ///< 选区底取 Sublime Monokai 的 selection 档（本表未收录，属移植惯例）。
     ThemeColors{
         "campbell",
         {0x0C0C0C, 0xC50F1F, 0x13A10E, 0xC19C00, 0x0037DA, 0x881798, 0x3A96DD, 0xCCCCCC,  //
          0x767676, 0xE74856, 0x16C60C, 0xF9F1A5, 0x3B78FF, 0xB4009E, 0x61D6D6, 0xF2F2F2},
         0xCCCCCC,
         0x0C0C0C,
-        0xFFFFFF},
+        0xFFFFFF,
+        0x767676},  ///< Campbell 无官方选区色，取亮黑 basic[8]（即未配时的回落档）。
     ThemeColors{
         "tokyo-night",
         {0x15161E, 0xF7768E, 0x9ECE6A, 0xE0AF68, 0x7AA2F7, 0xBB9AF7, 0x7DCFFF, 0xA9B1D6,  //
          0x414868, 0xF7768E, 0x9ECE6A, 0xE0AF68, 0x7AA2F7, 0xBB9AF7, 0x7DCFFF, 0xC0CAF5},
         0xC0CAF5,
         0x1A1B26,
-        0xC0CAF5},
+        0xC0CAF5,
+        0x414868},  ///< 选区底取 Tokyo Night 的亮黑 basic[8]（其官方半透明 selection 不落整数表）。
 }};
 
 /// @brief 表 → 主题数组：派生一次即常驻，避免每次取用都重算 128 个色值。

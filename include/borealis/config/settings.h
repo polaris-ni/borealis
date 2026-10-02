@@ -116,7 +116,12 @@ struct TerminalSettings {
     bool copy_on_select{false};             ///< 选中即复制（`SPEC.FEAT.INTERACT.03` 明确默认关闭）。
     bool trim_pasted_trailing_space{false}; ///< 复制三项开关之一，默认关闭以保留原样。
     bool smart_line_join{false};            ///< 跨行反斜杠续行智能合并。
-    bool strip_tmux_border_chars{false};    ///< 去除 tmux 分屏边框字符。
+    bool strip_tmux_border_chars{false};  ///< 去除 tmux 分屏边框字符。
+    /// @brief 双击选词的断点集（裁决 7.38③）：ASCII 可见标点全集，空格与制表恒为断点。
+    ///
+    /// 存原始字符而非码点表：该键的取值域就是「哪些字符打断一个词」，界内为空即每个界定符各自
+    /// 成词，属用户显式选择而非损坏，故装载侧只判类型不判域。
+    std::string word_delimiters{"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"};
 
     /// @brief 逐字段全等比较（配置往返断言用）。
     [[nodiscard]] auto operator==(const TerminalSettings &other) const noexcept -> bool = default;

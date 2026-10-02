@@ -108,6 +108,19 @@ constexpr int kContrastSearchSteps = 256;
 
 }  // namespace
 
+auto selection_color(const PaletteSpec &spec) noexcept -> RgbaColor {
+    return spec.selection_color.value_or(spec.basic[kBasicColorCount / 2U]);
+}
+
+auto mix_half(const RgbaColor &a, const RgbaColor &b) noexcept -> RgbaColor {
+    // 向下取整而非四舍五入：两色相加可能为奇数，取整方向必须唯一，否则聚焦/失焦两帧的差
+    // 就不能由一条表达式指认（裁决 7.38① D3）。
+    const auto half = [](std::uint8_t x, std::uint8_t y) noexcept {
+        return static_cast<std::uint8_t>((static_cast<unsigned>(x) + static_cast<unsigned>(y)) / 2U);
+    };
+    return RgbaColor{half(a.red, b.red), half(a.green, b.green), half(a.blue, b.blue), half(a.alpha, b.alpha)};
+}
+
 auto palette_color(std::uint8_t index, const PaletteSpec &spec) noexcept -> RgbaColor {
     if (index < kBasicColorCount) {
         return spec.basic[index];

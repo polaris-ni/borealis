@@ -424,7 +424,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     }
 }
 
-/// @brief 写调色板：`cursor` 为 null 表示「未配」，与「配了黑色」可区分（裁决 7.25③）。
+/// @brief 写调色板：`cursor` / `selection` 为 null 表示「未配」，与「配了黑色」可区分（裁决 7.25③、7.38②）。
 [[nodiscard]] auto palette_to_json(const ui::PaletteSpec &spec) -> Value {
     auto node = Value::object();
     auto basic = Value::array();
@@ -435,6 +435,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     put(node, "foreground", color_to_text(spec.default_foreground));
     put(node, "background", color_to_text(spec.default_background));
     node.set("cursor", spec.cursor_color ? Value(color_to_text(*spec.cursor_color)) : Value(nullptr));
+    node.set("selection", spec.selection_color ? Value(color_to_text(*spec.selection_color)) : Value(nullptr));
     put(node, "bold_is_bright", spec.bold_is_bright);
     put(node, "min_contrast_enabled", spec.min_contrast_enabled);
     put(node, "min_contrast", spec.min_contrast);
@@ -485,6 +486,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     put(node, "trim_pasted_trailing_space", terminal.trim_pasted_trailing_space);
     put(node, "smart_line_join", terminal.smart_line_join);
     put(node, "strip_tmux_border_chars", terminal.strip_tmux_border_chars);
+    put(node, "word_delimiters", terminal.word_delimiters);
     return node;
 }
 
@@ -572,6 +574,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     appearance.palette.default_background =
         palette.color("background", themed.default_background);
     appearance.palette.cursor_color = palette.optional_color("cursor", themed.cursor_color);
+    appearance.palette.selection_color = palette.optional_color("selection", themed.selection_color);
     appearance.palette.bold_is_bright = palette.boolean("bold_is_bright", defaults.appearance.palette.bold_is_bright);
     appearance.palette.min_contrast_enabled =
         palette.boolean("min_contrast_enabled", defaults.appearance.palette.min_contrast_enabled);
@@ -608,6 +611,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     terminal.smart_line_join = scope.boolean("smart_line_join", defaults.terminal.smart_line_join);
     terminal.strip_tmux_border_chars =
         scope.boolean("strip_tmux_border_chars", defaults.terminal.strip_tmux_border_chars);
+    terminal.word_delimiters = scope.text("word_delimiters", defaults.terminal.word_delimiters);
     scope.collect_unknown();
     return terminal;
 }

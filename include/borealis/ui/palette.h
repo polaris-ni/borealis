@@ -42,6 +42,13 @@ struct PaletteSpec {
     /// `resolve` 不参与它——一格的光标色不取决于该格内容，故它只经视口层取用。
     std::optional<RgbaColor> cursor_color;
 
+    /// @brief 选区底色（`SPEC.FEAT.INTERACT.02` 的绘制腿，裁决 7.38②）。
+    ///
+    /// 空表示未配，取用方经 `selection_color` 回落该色板的 `basic[8]`。与 `cursor_color`
+    /// 同为 `optional`：黑色选中底是合法配置，与「没配」必须可区分。
+    /// `resolve` 同样不参与它——一格属不属于选区不是该格的事实，而是区间级事实（裁决 7.32②）。
+    std::optional<RgbaColor> selection_color;
+
     /// @brief 「粗体渲染为亮色」（`SPEC.FEAT.RENDER.03` 的可配开关）。
     ///
     /// 开启后，带粗体标志且前景取自**前 8 色**时改取其后 8 色的亮色档（索引 +8）。
@@ -78,6 +85,23 @@ struct CellPaint {
     /// @brief 逐字段全等比较：它就是 run 合并的判据（裁决 7.23②「样式全等合并到行」）。
     [[nodiscard]] constexpr auto operator==(const CellPaint &other) const noexcept -> bool = default;
 };
+
+/// @brief 取选区底色：已配则用之，未配回落到该色板的 `basic[8]`（bright black）。
+///
+/// 回落档刻意不用算式而用既有槽位：`basic[8]` 恒存在、恒与 `default_background` 拉开一档，
+/// 且 campbell / tokyo-night 两套主题的选区色本就取自它（裁决 7.38②）。
+/// @param spec 调色板配置。
+/// @return 选区底色（不透明，alpha 随回落档或配置值）。
+[[nodiscard]] auto selection_color(const PaletteSpec &spec) noexcept -> RgbaColor;
+
+/// @brief 两色按通道各半混合，向下取整（失焦态的选区色，裁决 7.38① D3）。
+///
+/// 算式只在这里定义一次，故聚焦与失焦两帧的差异恰为一个表达式；alpha 也走同一条混合，
+/// 不假设两边都是 255。
+/// @param a 主色（选区色）。
+/// @param b 副色（`default_background`）。
+/// @return 各半混合后的颜色。
+[[nodiscard]] auto mix_half(const RgbaColor &a, const RgbaColor &b) noexcept -> RgbaColor;
 
 /// @brief 把调色板索引解析成颜色。
 ///
