@@ -32,6 +32,8 @@ namespace {
 auto ScreenMirror::apply(grid::Storage &authoritative, std::span<const Damage> frame, std::size_t back_rows) -> void {
     const std::size_t rows = authoritative.visible_rows();
     const std::size_t total = authoritative.total_lines();
+    // 顶边位移随本帧一起快照：整窗重建与逐行并入两条路都要带给绘制侧，否则下一次没有基准可比。
+    dropped_lines_ = authoritative.dropped_lines();
     // 可回看范围上限 = 视口之上的历史行数；越界按上限截断（滚动状态与网格之间本就容许一帧的偏差）。
     const std::size_t max_back = total > rows ? total - rows : 0U;
     const std::size_t back = std::min(back_rows, max_back);

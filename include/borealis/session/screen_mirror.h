@@ -17,6 +17,7 @@
 // ============================================================
 
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <vector>
 
@@ -58,6 +59,12 @@ class ScreenMirror final {
     /// @brief 上次并入生效的距底行数：绘制侧的光标行换算要用同一个数。
     [[nodiscard]] auto back_rows() const noexcept -> std::size_t { return back_rows_; }
 
+    /// @brief 上次并入时权威网格的顶边位移读数（`grid::Storage::dropped_lines`）。
+    ///
+    /// 副本与权威网格只能在 `apply` 的临界区内见面，故漂移补偿的基准必须由副本带出来：绘制侧
+    /// 拿两次读数之差折算选区行号（裁决 7.38⑤、7.39①）。
+    [[nodiscard]] auto dropped_lines() const noexcept -> std::int64_t { return dropped_lines_; }
+
   private:
     /// @brief 按绝对行号整窗重取（尺寸、窗口起点或整屏脏变了就走这条，不做搬移）。
     auto rebuild(grid::Storage &authoritative, std::size_t back_rows, std::size_t window_top) -> void;
@@ -69,6 +76,7 @@ class ScreenMirror final {
     std::size_t columns_ = 0;
     std::size_t back_rows_ = 0;
     std::size_t window_top_ = 0;  ///< 上次重建时可见窗顶的绝对行号；变化即换源。
+    std::int64_t dropped_lines_ = 0;  ///< 上次并入时的权威网格顶边位移读数。
 };
 
 }  // namespace borealis::session
