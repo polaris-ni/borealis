@@ -106,6 +106,10 @@ grid 由后台线程写、主线程读，故需同步保护：
 
 UI 事件 → 键映射（`SPEC.FEAT.INTERACT.01`）→ **文本按会话编码编码**（`SPEC.FEAT.TERM.09` 的发送方向）→ 会话写接口 → PTY/连接。输入法路径（`SPEC.FEAT.INTERACT.06`）：框架 `TextCompositionEvent` 的 preedit 由视口就地绘制在光标单元格处、候选窗按光标屏幕坐标定位，**组合中间态不发往会话**，仅 commit 文本经同一编码环节写入。鼠标上报模式与本地选择交互的切换由终端状态驱动（`SPEC.FEAT.TERM.06`）。
 
+**已落地形态（2026-10-02，裁决 7.30）**：键映射是纯逻辑件 `term::encode_key(const KeyPress &, const TermModes &) -> std::optional<std::string>`（`include/borealis/term/keymap.h` + `src/term/keymap.cpp`，公共头不含 Aurora 类型），`term::KeySym` 与 `aurora::KeyCode` 逐值对齐、互转即 `static_cast`。视口控件的两个入口按通道分工下笔：`on_key_event` 只发**已过编码环节的转义字节**（`Session::send_bytes`），`on_text_input` 只发**码点**（`Session::send_text`，故非 UTF-8 会话的编码环节仍归 `SPEC.FEAT.TERM.09` 那一棒）；`encode_key` 对「无 Alt/Meta 的可打印键」返回空正是这条分工的落点——真实后端先给 `WM_KEYDOWN` 再给 `WM_CHAR`，两份都发即每字符上屏两次。控制字符不冲突：Win32 后端在 `ch < 0x20` 时不发文本事件（其注释自陈「控制字符交给 `KeyEvent` 处理」）。模式快照（`DECCKM` 等）经既有的 `Session::read` 短临界区取用，不新增跨线程协调点。`Ctrl+Alt` 系一律返回空：框架 `Application` 在按键到达控件之前先跑 `ShortcutRegistry`，该系归快捷键层独占（配置裁决口径见 `SPEC.FEAT.PREF.05`）。
+
+三条派发出去的框架缺口使本路径**部分达成**：`Tab`（G14）、Alt 系（G15）、小键盘与 NumLock（G16）到不了控件，详见 §9.6 与 `SPECIFICATIONS.md` 附录 A.2。
+
 ### 3.6 背压与有界队列
 
 后台读线程与 UI 之间设**有界队列**（`SPEC.NF.PERF.06`，落地为 `session::DamageQueue`）：
@@ -340,7 +344,15 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 
 ### 9.6 交互阻塞项
 
-**渲染与文本选择链路当前无框架阻塞项**（2026-10-02）：G1（三腿）、G13（批量入口的排版选项）、G2（`click_count`）均已闭合，视口绘制主路径与多击选择的实现面全在公共 API 上；缺口清单的其余开放项（见 `SPECIFICATIONS.md` 附录 A.2）不在渲染层。
+**渲染与文本选择链路当前无框架阻塞项**（2026-10-02）：G1（三腿）、G13（批量入口的排版选项）、G2（`click_count`）均已闭合，视口绘制主路径与多击选择的实现面全在公共 API 上。
+
+**键盘链路有且只有三条阻塞，且都阻塞「完整度」而不阻塞「开工」**（2026-10-02 实测，登记为附录 A.2 的 G14 / G15 / G16，裁决 7.30⑤）：
+
+- **G14 `Tab` 到不了控件**：派发器的 `match_shortcut` 把 `KeyCategory::Tab` 无条件当焦点遍历消费；方向键与 Enter/Space 各有「控件优先」钩子（`wants_navigation_keys()` / `wants_activation_keys()`，本仓两者已覆写）而 `Tab` 没有对应钩子。后端侧无阻拦——`VK_TAB` 已映射为 `KeyCode::Tab` 并进常规按键链，故缺的是派发层一个钩子分支。
+- **G15 Alt 系在 Win32 被挡在事件链之外**：`handle_syskey` 只推进修饰态便把 `WM_SYSKEYDOWN/UP` 交回 `DefWindowProcA`，不产生 `KeyEvent`；Alt 系也不生成字符，故文本通道亦无。
+- **G16 数字小键盘与 NumLock 未建模**：`KeyCode` 无 `KP_*` 项（其注释自陈 KP_0-9 映射到 `Unknown`、`KP_Enter` 并入 `Enter`），也没有 NumLock 键码或修饰态。后果是 `DECKPAM`/`DECKPNM` **有模式位而无可发之键**——状态机侧的模式登记已落（`SPEC.FEAT.TERM.01`），该腿验收随 G16 关闭移动。
+
+三者的处置按裁决 7.13① / 7.24③ 派发 Aurora 侧以「公共 API + 单测 + 文档回写」补全；本仓**不等不绕**：编码层已把 `Tab` / `Shift+Tab` / Alt 前缀三者的字节形态写对并各自有逐字节单测（小键盘序列要的是框架侧的键码本身，本仓无从代写），回货后接入的是派发侧（一行覆写或一个钩子），不自造窗口消息钩子、不改派发顺序。
 
 - 多击语义直接用框架的 `MouseEvent::click_count`（派发层集中自算，裁决 7.29②），本仓不自算、不私挂分叉；阈值未接系统双击速度，跨平台手感一致而各平台各自的设置不生效，属框架侧刻意的取舍。
 - 视口滚动的取用口径见 §9.5；真机走查时要确认「鼠标须悬停在控件盒内才响应滚轮」（`wants_scroll()` 按命中链派发）符合终端软件的预期——部分终端是「焦点在窗口即响应」，那条差异属本仓交互层的选择而非框架缺陷。
@@ -352,6 +364,8 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 ### 10.1 键盘映射
 
 完整转发 Ctrl/Alt/Shift/Meta 组合键、功能键、方向键；控制字符直通；`DECCKM` 与 keypad 应用模式生效（`SPEC.FEAT.INTERACT.01`）。
+
+**已落地（2026-10-02，裁决 7.30）**：编码表 `term::encode_key` + 视口的 `on_key_event` / `on_text_input` 两入口，遗留档（xterm）口径逐字节定死并有 7 例单测；链路形状由 `itest_key_input`（替身连接观测、`DECCKM` 经真实状态机喂入）守，真机对端接受度由 `etest_key_forwarding`（cmd.exe 的行编辑与命令提交）守。功能键、方向键、控制字符、可打印文本与 Alt/Meta 前缀的**编码**齐备；`Tab` 与 Alt 系的**到达**、以及 keypad 应用模式的**可发之键**仍受 §9.6 的 G14 / G15 / G16 阻塞。kitty keyboard protocol / `modifyOtherKeys` 是需求原文的延后观察项，本件对「无遗留编码可发」的键返回空而不发新式序列。
 
 ### 10.2 选择与复制粘贴
 
@@ -475,6 +489,7 @@ Windows 便携 zip + 安装包；Linux tar 通用 + AppImage；产物含第三�
 | G2 `MouseEvent` 多击语义 | **已闭合（2026-10-02 实测）**：`MouseEvent::click_count`（1..3，Release / Move 恒为 1）由 `EventDispatcher::dispatch_mouse` 在派发前集中判定，阈值是库内常量 500ms / 4dp（未接系统双击速度），形态与判据见裁决 7.29② | 双击 / 三击能力**不再受框架阻塞**，实装随 `SPEC.FEAT.INTERACT.02` 那一棒；本仓未自算多击 |
 | G9 OS 级全局热键 / G11 跨平台系统通知 | **均已闭合（2026-10-02 实测）**：`OsHotkeyRegistry` + `OsHotkeyHandle`（裁决 7.29③）、`NotificationCenter::notify` + 激活回传 + 「仅记录」测试后端（裁决 7.29④） | 两条的框架依赖解除；本仓消费者分别在 `SPEC.FEAT.WS.12` 与 `SPEC.FEAT.INTEG.03` 的落期上，未提前实装 |
 | G13 批量入口的排版选项 | **已闭合（2026-10-02 实测）**：`draw_text_runs` 另有 `(runs, opts)` / `(runs, aa_mode, opts)` 重载，opts 整批共用、框架刻意不做 per-run opts（裁决 7.29①） | §9.2 的逐片段分流已撤销，改按「是否斜体」分两批；像素用例以变异自证守住 |
+| G14 `Tab` 派发 / G15 Win32 Alt 系 / G16 小键盘与 NumLock | **开放（2026-10-02 键盘映射棒实测新增）**：三处原始事实见 §9.6 与 `SPECIFICATIONS.md` 附录 A.2，按裁决 7.13① / 7.30⑤ 派发 Aurora 侧补全 | 阻塞 `SPEC.FEAT.INTERACT.01` 的「完整转发」完整度与 keypad 应用模式腿，不阻塞该条开工（本仓已落首版）。本仓编码层已把 `Tab` / `Shift+Tab` / Alt 前缀写对，回货后接入的是派发侧；`SPEC.FEAT.PREF.05` 的 Alt 系快捷键同样受 G15 制约 |
 
 > 框架现状以 Aurora **当日活动分支实测**为准；上表的绘制原语两腿为 2026-09-29 实测结论，宽度判定一腿为 2026-09-30 在 Aurora 当日活动分支落地的实测结论；可能随上游提交变化，复用前须复验。
 
