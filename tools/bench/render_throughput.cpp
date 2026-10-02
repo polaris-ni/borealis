@@ -33,6 +33,8 @@
 #include "borealis/grid/storage.h"
 #include "borealis/session/connection.h"
 #include "borealis/session/session.h"
+#include "borealis/term/terminal.h"
+#include "borealis/term/utf8.h"
 #include "borealis/term/width.h"
 
 #include "aurora/aurora.h"
@@ -60,6 +62,17 @@ constexpr std::size_t kFeedChunkBytes = 64U * 1024U;
 /// @brief 默认窗口尺寸（`src/main.cpp` 的 `WindowOptions::size`）：需求原文的「默认窗口尺寸」。
 constexpr int kWindowWidth = 960;
 constexpr int kWindowHeight = 640;
+
+/// @brief 本次二进制的优化档标记，写进 JSON 供门禁核对。
+///
+/// 基准判的是产品成本，而 `/Od /RTC1` 的 Debug 构建把写链放大约 30 倍（实测灌入 0.7 MB/s 对
+/// RelWithDebInfo 的 25 MB/s），同名的两个读数会得出相反的结论。门禁因此要求样本与基线的
+/// 该标记一致，而不是让人去猜构建目录是怎么配出来的。
+#if defined(_DEBUG)
+constexpr const char *kBuildConfig = "debug";
+#else
+constexpr const char *kBuildConfig = "optimized";
+#endif
 
 term::UnicodeWidthPolicy g_width_policy;
 
@@ -197,6 +210,11 @@ struct FrameStats {
     return stream.str();
 }
 
+/// @brief 吞吐（MB/s）：字节数除以墙钟毫秒。三个灌入侧场景共用同一换算才可直接比。
+[[nodiscard]] auto mb_per_s(std::size_t bytes, double wall_ms) -> double {
+    return wall_ms > 0.0 ? static_cast<double>(bytes) / (1024.0 * 1024.0) / (wall_ms / 1000.0) : 0.0;
+}
+
 /// @brief 驱动台：默认配置装配（Dracula、14pt、4 dp 内边距），无头窗口 + 视口控件 + 会话。
 ///
 /// 用 `cfg::Settings{}` 而非手搭调色板：基准要量的是用户实际跑的那套参数，手搭值会让基线对不上
@@ -256,8 +274,14 @@ class Rig {
 
     [[nodiscard]] auto has_damage() const -> bool { return session_.has_damage(); }
 
+    /// @brief 只排空脏行提交、不排帧（写侧诊断用）。
+    [[nodiscard]] auto drain_damage() -> std::vector<sess::Damage> { return session_.drain_damage(); }
+
     [[nodiscard]] auto rows() const noexcept -> std::size_t { return rows_; }
     [[nodiscard]] auto columns() const noexcept -> std::size_t { return columns_; }
+    [[nodiscard]] auto scrollback_limit() const noexcept -> std::size_t {
+        return settings_.terminal.scrollback_limit;
+    }
 
     /// @brief 强制下一帧全量重排重绘（框架测试 seam），即「整屏重画一次」的成本。
     auto force_full_redraw() -> void { window_.force_full_redraw(); }
@@ -372,12 +396,113 @@ struct CatResult {
     result.stats = summarize(std::move(samples), elapsed_ms(wall));
     return result;
 }
+
+/// @brief 写侧诊断的产出：灌入字节数、墙钟时长与吞吐（MB/s）。
+struct FeedResult {
+    std::size_t bytes = 0;
+    double wall_ms = 0.0;
+    double mb_per_s = 0.0;
+};
+
+/// @brief 预先造好 @p bytes 字节的灌注素材（**不计入时长**）。
+///
+/// 生成成本不属于被测链路：`cat` 场景里生成与灌入同线程，写侧诊断若照样现造现灌，读到的就是
+/// 字符串拼接的吞吐而非终端链路的吞吐。
+[[nodiscard]] auto make_corpus(std::size_t bytes, LineGen &gen, std::size_t columns) -> std::string {
+    std::string corpus;
+    corpus.reserve(bytes + 512U);
+    while (corpus.size() < bytes) {
+        corpus += gen.next_row(columns);
+    }
+    corpus.resize(bytes);  // 截到整字节数：末行可能被切断，与 `cat` 场景的 `take` 同形
+    return corpus;
+}
+
+/// @brief 解码器的码点出口：与 `Session::ingest` 同形（先解进缓冲，再整块喂状态机）。
+class BufferCollector final : public term::CodePointSink {
+  public:
+    auto on_code_point(char32_t cp) -> void override { buffer_.push_back(cp); }
+
+    [[nodiscard]] auto view() const noexcept -> std::u32string_view { return buffer_; }
+
+    auto reset() noexcept -> void { buffer_.clear(); }
+
+  private:
+    std::u32string buffer_;
+};
+
+/// @brief 只灌不画：量「解码 → 解析 → 状态机 → 网格 → 脏行提交 → 队列」这条写链的吞吐。
+///
+/// 主线程只 `drain_damage()`（排空队列）而不排帧，故样本里既不含上屏层成本，也不会有队列塞满后
+/// 走合并分支的失真——生产上队列正是被帧边界排空的。
+[[nodiscard]] auto bench_ingest(Rig &rig, const std::string &corpus) -> FeedResult {
+    FeedResult result;
+    std::atomic<bool> done{false};
+    std::size_t delivered = 0;
+
+    std::thread producer([&rig, &done, &delivered, &corpus]() -> void {
+        for (std::size_t off = 0U; off < corpus.size(); off += kFeedChunkBytes) {
+            const std::size_t take = std::min(kFeedChunkBytes, corpus.size() - off);
+            rig.deliver(std::string_view{corpus}.substr(off, take));
+            delivered += take;
+        }
+        done.store(true, std::memory_order_release);
+    });
+
+    const auto wall = Clock::now();
+    while (!done.load(std::memory_order_acquire) || rig.has_damage()) {
+        if (rig.has_damage()) {
+            static_cast<void>(rig.drain_damage());
+        } else {
+            std::this_thread::yield();
+        }
+    }
+    producer.join();
+    result.bytes = delivered;
+    result.wall_ms = elapsed_ms(wall);
+    result.mb_per_s = mb_per_s(result.bytes, result.wall_ms);
+    return result;
+}
+
+/// @brief 连会话也不要：量「解码 → 解析 → 状态机 → 网格」这条纯链的吞吐（单线程，无锁无队列）。
+///
+/// 与 `bench_ingest` 的差值就是会话侧的开销（互斥、脏行扫描、队列），两者同速则瓶颈在链内。
+/// 网格尺寸与 scrollback 容量取同一次运行的配置，素材也同一份，故两个数直接可比。
+[[nodiscard]] auto bench_chain(const std::string &corpus, std::size_t rows, std::size_t columns,
+                               std::size_t scrollback_limit) -> FeedResult {
+    FeedResult result;
+    term::Terminal terminal{columns, rows, scrollback_limit, g_width_policy};
+    term::Utf8Decoder decoder;
+    BufferCollector collector;
+
+    const auto wall = Clock::now();
+    for (std::size_t off = 0U; off < corpus.size(); off += kFeedChunkBytes) {
+        const std::size_t take = std::min(kFeedChunkBytes, corpus.size() - off);
+        std::string_view slice{corpus.data() + off, take};
+        std::vector<std::byte> raw;
+        raw.reserve(slice.size());
+        for (const char c : slice) {
+            raw.push_back(static_cast<std::byte>(static_cast<unsigned char>(c)));
+        }
+        collector.reset();
+        decoder.feed(raw, collector);
+        terminal.feed(collector.view());
+    }
+    decoder.finish(collector);
+    terminal.feed(collector.view());
+    result.bytes = corpus.size();
+    result.wall_ms = elapsed_ms(wall);
+    result.mb_per_s = mb_per_s(result.bytes, result.wall_ms);
+    return result;
+}
+
 struct Options {
     std::size_t feed_bytes = kDefaultFeedBytes;
     int scroll_frames = kDefaultScrollFrames;
     int redraw_runs = kDefaultRedrawRuns;
     std::string json_path;
     bool want_help = false;
+    bool write_side = false;
 };
 
 /// @brief 解析结果：失败即返回 false 并给出退出码。
@@ -395,6 +520,8 @@ struct Options {
             opts->redraw_runs = std::stoi(std::string{v});
         } else if (const auto v = value_of("--json="); !v.empty()) {
             opts->json_path = std::string{v};
+        } else if (arg == "--write-side") {
+            opts->write_side = true;
         } else if (arg == "--help") {
             opts->want_help = true;
             return true;
@@ -407,7 +534,8 @@ struct Options {
 }
 
 auto write_json(const std::string &path, const Rig &rig, const FrameStats &scroll, double full_redraw_ms,
-                const CatResult &cat, double cat_mb_per_s) -> void {
+                const CatResult &cat, double cat_mb_per_s, const FeedResult *chain,
+                const FeedResult *ingest) -> void {
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) {
         AURORA_LOG_ERROR("bench", "cannot open json output path");
@@ -417,6 +545,7 @@ auto write_json(const std::string &path, const Rig &rig, const FrameStats &scrol
     file << "{\n"
          << "  \"scenario\": \"borealis_render_throughput\",\n"
          << "  \"backend\": \"headless_software_painter\",\n"
+         << "  \"build_config\": \"" << kBuildConfig << "\",\n"
          << "  \"window_dp\": [" << kWindowWidth << ", " << kWindowHeight << "],\n"
          << "  \"grid\": [" << rig.rows() << ", " << rig.columns() << "],\n"
          << "  \"feed_bytes\": " << cat.bytes << ",\n"
@@ -430,15 +559,22 @@ auto write_json(const std::string &path, const Rig &rig, const FrameStats &scrol
          << "    \"cat_fps\": " << fmt(3, stats.fps) << ",\n"
          << "    \"cat_mb_per_s\": " << fmt(3, cat_mb_per_s) << ",\n"
          << "    \"cat_frames\": " << stats.frames << ",\n"
-         << "    \"cat_wall_ms\": " << fmt(3, stats.wall_ms) << "\n"
-         << "  }\n"
-         << "}\n";
+         << "    \"cat_wall_ms\": " << fmt(3, stats.wall_ms);
+    if (chain != nullptr) {
+        file << ",\n    \"chain_mb_per_s\": " << fmt(3, chain->mb_per_s);
+    }
+    if (ingest != nullptr) {
+        file << ",\n    \"ingest_mb_per_s\": " << fmt(3, ingest->mb_per_s);
+    }
+    file << "\n  }\n}\n";
 }
 
 auto print_help() -> void {
     AURORA_LOG_RAW("bench",
-                   "usage: borealis_bench [--bytes=N] [--frames=N] [--runs=N] [--json=PATH]\n"
+                   "usage: borealis_bench [--bytes=N] [--frames=N] [--runs=N] [--write-side] "
+                   "[--json=PATH]\n"
                    "  render throughput benchmark for SPEC.NF.PERF.02 (headless software painter)\n"
+                   "  --write-side adds producer-only diagnostics (chain / ingest MB/s), ungated\n"
                    "  prints metrics only; pass/fail is tools/check/check_perf_gates.ps1\n");
 }
 
@@ -465,14 +601,11 @@ auto main(int argc, char **argv) -> int {
     const FrameStats scroll = bench_scroll(rig, opts.scroll_frames, gen);
     const double full_redraw_ms = bench_full_redraw(rig, opts.redraw_runs, gen);
     const CatResult cat = bench_cat(rig, opts.feed_bytes, gen);
-    const double cat_mb_per_s = cat.stats.wall_ms > 0.0
-                                    ? (static_cast<double>(cat.bytes) / (1024.0 * 1024.0)) /
-                                          (cat.stats.wall_ms / 1000.0)
-                                    : 0.0;
+    const double cat_mb_per_s = mb_per_s(cat.bytes, cat.stats.wall_ms);
 
     AURORA_LOG_RAW("bench", "borealis render throughput benchmark (SPEC.NF.PERF.02)\n");
     AURORA_LOG_RAW("bench", "| window | ", kWindowWidth, " x ", kWindowHeight, " dp | grid | ", rig.rows(),
-                   " rows x ", rig.columns(), " cols |\n");
+                   " rows x ", rig.columns(), " cols | build | ", kBuildConfig, " |\n");
     AURORA_LOG_RAW("bench", "| scroll frame (", opts.scroll_frames, " frames) | ", fmt(3, scroll.mean_ms),
                    " ms mean | ", fmt(3, scroll.p95_ms), " ms p95 | ", fmt(1, scroll.fps), " fps |\n");
     AURORA_LOG_RAW("bench", "| full redraw (", opts.redraw_runs, " runs) | ", fmt(3, full_redraw_ms),
@@ -481,12 +614,25 @@ auto main(int argc, char **argv) -> int {
                    " MB | ", fmt(1, cat_mb_per_s), " MB/s | ", cat.stats.frames, " frames | ",
                    fmt(3, cat.stats.mean_ms), " ms mean | ", fmt(3, cat.stats.p95_ms), " ms p95 | ",
                    fmt(1, cat.stats.fps), " fps |\n");
+    FeedResult chain;
+    FeedResult ingest;
+    if (opts.write_side) {
+        // 素材一次生成、两档共用：三个数必须来自同一份字节流才可直接相减归因。
+        const std::string corpus = make_corpus(opts.feed_bytes, gen, rig.columns());
+        chain = bench_chain(corpus, rig.rows(), rig.columns(), rig.scrollback_limit());
+        ingest = bench_ingest(rig, corpus);
+        AURORA_LOG_RAW("bench", "| write-side chain (decode+parse+state+grid, no session) | ",
+                       fmt(1, chain.mb_per_s), " MB/s |\n");
+        AURORA_LOG_RAW("bench", "| write-side ingest (+session lock, damage scan, queue) | ",
+                       fmt(1, ingest.mb_per_s), " MB/s |\n");
+    }
     AURORA_LOG_RAW("bench",
                    "(benchmark only - not a CTest assertion; idle frames excluded; timings carry "
                    "environment jitter, gate on relative baseline via tools/check/check_perf_gates.ps1)\n");
 
     if (!opts.json_path.empty()) {
-        write_json(opts.json_path, rig, scroll, full_redraw_ms, cat, cat_mb_per_s);
+        write_json(opts.json_path, rig, scroll, full_redraw_ms, cat, cat_mb_per_s,
+                   opts.write_side ? &chain : nullptr, opts.write_side ? &ingest : nullptr);
         AURORA_LOG_RAW("bench", "json written: ", opts.json_path, "\n");
     }
     return 0;
