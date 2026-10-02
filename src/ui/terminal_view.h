@@ -79,6 +79,18 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 本地回看：驱动 `scroll_viewport_` 并把未吸收的余量上冒给更浅的可滚动祖先。
     auto on_scroll(aurora::ScrollEvent &e) -> void override;
 
+    /// @brief 按键 → VT 字节 → 会话（`SPEC.FEAT.INTERACT.01` 的转发腿）。
+    auto on_key_event(aurora::KeyEvent &e) -> void override;
+
+    /// @brief 文本输入通道：框架给出的真实字符（含布局与大小写）按会话编码写入。
+    auto on_text_input(aurora::TextInputEvent &e) -> void override;
+
+    /// @brief 方向键归终端自己用：不声明则派发器把它们当几何焦点导航吃掉，光标无法移动。
+    [[nodiscard]] auto wants_navigation_keys() const -> bool override;
+
+    /// @brief Enter/Space 先给键盘入口：否则派发器直接调用 `activate()`，终端收不到回车。
+    [[nodiscard]] auto wants_activation_keys() const -> bool override;
+
     /// @brief 挂载时向运行中的 `Scheduler` 注册闪烁周期（无 App 运行时不注册）。
     auto on_mount(const aurora::BuildContext &ctx) -> void override;
 
@@ -104,6 +116,9 @@ class TerminalView final : public aurora::LeafWidget {
 
     /// @brief 行列数真变了才下发给会话；0 行或 0 列（窗口最小化）不下发。
     auto request_grid_size() -> void;
+
+    /// @brief 取模式快照（短临界区内只取值）：按键编码要按 DECCKM 决定方向键走 SS3 还是 CSI。
+    [[nodiscard]] auto modes_snapshot() -> term::TermModes;
 
     /// @brief 每帧重投影（裁决 D6①「距底恒定」）：返回本次生效的距底行数。
     [[nodiscard]] auto reproject(std::size_t total_lines, std::size_t rows) -> std::size_t;

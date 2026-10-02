@@ -12,6 +12,7 @@ add_library(borealis_core STATIC
         vt/parser.cpp
         term/utf8.cpp
         term/charset.cpp
+        term/keymap.cpp
         term/osc.cpp
         term/width.cpp
         term/terminal.cpp

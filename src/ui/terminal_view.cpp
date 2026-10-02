@@ -12,7 +12,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -21,6 +23,7 @@
 #include "aurora/render/font_engine.h"
 #include "borealis/grid/cell.h"
 #include "borealis/grid/row.h"
+#include "borealis/term/keymap.h"
 #include "borealis/term/utf8.h"
 
 namespace borealis::ui {
@@ -77,6 +80,41 @@ constexpr double kIndicatorMinLengthDp = 12.0;
         return 0U;
     }
     return std::min(static_cast<std::size_t>(value), rows - 1U);
+}
+
+/// @brief 互转点之三：框架按键事件 → 本层键位语义。
+///
+/// `term::KeySym` 的取值与 `aurora::KeyCode` 逐一对齐（对齐由单元用例逐条断言），故这里只需一次
+/// `static_cast`；框架新增键位而本层未跟随时，未映射值落进编码表的「不编码」分支，不会译成别的键。
+[[nodiscard]] auto to_key_press(const aurora::KeyEvent &e) -> term::KeyPress {
+    return term::KeyPress{
+        .sym = static_cast<term::KeySym>(e.key),
+        .shift = (e.modifiers & aurora::ModifierKey::Shift) != 0U,
+        .control = (e.modifiers & aurora::ModifierKey::Control) != 0U,
+        .alt = (e.modifiers & aurora::ModifierKey::Alt) != 0U,
+        .meta = (e.modifiers & aurora::ModifierKey::Meta) != 0U,
+    };
+}
+
+/// @brief 码点接收端：把解出的码点依次收进串里。
+class StringCollector final : public term::CodePointSink {
+  public:
+    explicit StringCollector(std::u32string &into) : into_(&into) {}
+
+    auto on_code_point(char32_t code_point) -> void override { into_->push_back(code_point); }
+
+  private:
+    std::u32string *into_ = nullptr;
+};
+
+/// @brief 把框架文本事件给的 UTF-8 片段解成码点流（框架按完整码点给出，故不留跨事件的挂起态）。
+[[nodiscard]] auto to_code_points(std::string_view utf8) -> std::u32string {
+    std::u32string out;
+    out.reserve(utf8.size());  // 纯 ASCII 时即为上界
+    StringCollector collector{out};
+    term::Utf8Decoder decoder;
+    decoder.feed(std::as_bytes(std::span<const char>{utf8.data(), utf8.size()}), collector);
+    return out;
 }
 
 }  // namespace
@@ -191,6 +229,40 @@ auto TerminalView::on_scroll(aurora::ScrollEvent &e) -> void {
         aurora::ScrollViewport::remaining_offset(before, scroll_viewport_.offset_y, e.delta_y, kRowStep);
     e.is_handled = true;
     // 不在这里标脏：内容换源要等本帧随后的 `on_frame` 重取可见窗，它自会标脏。
+}
+
+auto TerminalView::wants_navigation_keys() const -> bool { return true; }
+
+auto TerminalView::wants_activation_keys() const -> bool { return true; }
+
+auto TerminalView::on_key_event(aurora::KeyEvent &e) -> void {
+    // TODO(SPEC.FEAT.INTERACT.01): `Tab` 与 Alt 系组合到不了这里——派发器把 Tab 当焦点遍历无条件
+    // 消费（无控件优先钩子），Win32 后端对 `WM_SYSKEY*` 只推进修饰态不派发。两者登记为附录 A.2
+    // 的 G14 / G15，本仓不自造绕过（裁决 7.13①）。
+    if (e.action != aurora::KeyAction::Down) {
+        return;  // 抬起无按键释放语义（kitty 协议属延后观察项），留着让宿主继续处理
+    }
+    const auto bytes = term::encode_key(to_key_press(e), modes_snapshot());
+    if (!bytes) {
+        return;  // 本层不编码：可打印形态归文本通道，无遗留编码的组合归快捷键层
+    }
+    session_->send_bytes(std::as_bytes(std::span<const char>{bytes->data(), bytes->size()}));
+    e.is_handled = true;
+}
+
+auto TerminalView::on_text_input(aurora::TextInputEvent &e) -> void {
+    // TODO(SPEC.FEAT.INTERACT.06): 输入法上屏走 `on_text_composition` 的 `committed`，本入口只覆盖
+    // 直接按键产生的文本；preedit 就地绘制与候选窗定位随那一棒接。
+    session_->send_text(to_code_points(e.text));
+    e.is_handled = true;
+}
+
+auto TerminalView::modes_snapshot() -> term::TermModes {
+    term::TermModes snapshot{};
+    session_->read([&snapshot](grid::Storage &, const term::Cursor &, const term::TermModes &modes) {
+        snapshot = modes;
+    });
+    return snapshot;
 }
 
 auto TerminalView::cell_metrics(float scale) -> const CellPixels & {
