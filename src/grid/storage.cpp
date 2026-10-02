@@ -48,6 +48,7 @@ auto Storage::scroll_up(std::size_t count) -> void {
         }
         // 已满：最旧行出列（它所占的物理槽位随即被新的底部行复用）。
         zero_ = (zero_ + 1) % buffer_.size();
+        ++dropped_lines_;
         buffer_[physical(lines_ - 1)].reset();
     }
 }
@@ -63,6 +64,8 @@ auto Storage::scroll_down(std::size_t count) -> void {
             visible_line(index) = std::move(visible_line(index - 1));
         }
         visible_line(0).reset(columns_);
+        // 顶部凭空多出一行空白＝既有内容整体下移一行，顶边在绝对行空间里后退。
+        --dropped_lines_;
     }
 }
 
@@ -122,6 +125,7 @@ auto Storage::set_rows(std::size_t rows) -> void {
     // 历史不够填满新视口时，顶部补空白行——它们落在环中原本未使用的槽位上。
     const std::size_t blanks = rows > kept ? rows - kept : 0;
     zero_ = (zero_ + dropped + capacity - blanks) % capacity;
+    dropped_lines_ += static_cast<std::int64_t>(dropped) - static_cast<std::int64_t>(blanks);
     for (std::size_t index = 0; index < blanks; ++index) {
         buffer_[(zero_ + index) % capacity].reset();
     }
@@ -146,6 +150,8 @@ auto Storage::clear() -> void {
     for (auto &row : buffer_) {
         row.reset();
     }
+    // 现存内容整体消失：顶边一次性推进 `lines_`，让以存储行序存端点的调用方折算到顶端之外。
+    dropped_lines_ += static_cast<std::int64_t>(lines_);
     zero_ = 0;
     lines_ = rows_;
 }

@@ -12,6 +12,7 @@
 // ============================================================
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include "borealis/grid/row.h"
@@ -46,6 +47,16 @@ class Storage {
 
     /// @brief 当前已存行数（scrollback + 视口，不超过 `rows_ + scrollback_limit_`）。
     [[nodiscard]] auto total_lines() const noexcept -> std::size_t { return lines_; }
+
+    /// @brief 存储**顶边**在绝对行空间里走过的距离：同一份内容的行号每上移一行就 +1。
+    ///
+    /// 选区按存储行序存端点（裁决 7.32），而 scrollback 饱和后的新输出会让旧内容整体前移，
+    /// 于是选区相对它当初指着的内容漂走（裁决 7.38⑤）。本计数是那条补偿的唯一输入：调用方
+    /// 记下快照，下一次取两次之差即为行号偏移量。四个动顶边的路径都记账（`scroll_up` 的溢出、
+    /// `set_rows` 的溢出与顶部补空白、`scroll_down` 无历史可收回时的顶部空白、`clear`），
+    /// 带内滚动（`scroll_region_*`）**不记**——带内位移无法由单一全局偏移表达，见裁决 7.39③。
+    /// 可为负：顶部补空白与无历史的上滚让内容整体下移。
+    [[nodiscard]] auto dropped_lines() const noexcept -> std::int64_t { return dropped_lines_; }
 
     /// @brief 缓冲区物理容量（行），仅供诊断与测试。
     [[nodiscard]] auto capacity() const noexcept -> std::size_t { return buffer_.size(); }
@@ -124,6 +135,9 @@ class Storage {
     auto set_rows(std::size_t rows) -> void;
 
     /// @brief 清空全部内容回到初始状态（主备屏切换、会话重设）。
+    ///
+    /// 顶边计数按现存行数一次性推进：清空后的行**不是**被清掉的那些行，故以存储行序存端点的
+    /// 调用方（选区）据此把自己折算到顶端之外并作废，而不是指着空白继续高亮（裁决 7.39②）。
     auto clear() -> void;
 
   private:
@@ -144,6 +158,7 @@ class Storage {
     std::size_t scrollback_limit_ = 0;
     std::size_t lines_ = 0;
     std::size_t zero_ = 0;
+    std::int64_t dropped_lines_ = 0;
 };
 
 }  // namespace borealis::grid
