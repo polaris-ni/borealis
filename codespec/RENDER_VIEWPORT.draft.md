@@ -24,7 +24,7 @@
 ## 1 范围
 
 - **做**：终端视口控件的绘制主路径（网格 → 色带 → 文本 run → 装饰 → 光标）、整格几何与 dp 换算的消费、尺寸来源（`SPEC.FEAT.XFER.01` 的 UI 侧取值腿，不含去抖）、跨线程帧唤醒与剪贴板排帧、**scrollback 滚轮回看（D5 选②：自管行偏移 + 钳制 + 偏移变化即整屏脏）**、`HeadlessSurface` 两帧像素差分的验收用例。
-- **不做**（各归其棒，本稿不留半成品接缝）：文本选择与选区着色（`SPEC.FEAT.INTERACT.02`）、IME preedit 绘制与候选窗定位（`SPEC.FEAT.INTERACT.06`）、键映射与字节发送（`SPEC.FEAT.INTERACT.01`）、字号/字体可配（`SPEC.FEAT.RENDER.02`）、DPI 变更后的度量与字形缓存重建（`SPEC.FEAT.RENDER.05`）、尺寸去抖合并（裁决 7.23④）、吞吐基准与时间门禁（`SPEC.NF.PERF.02`，本仓 task #36）。
+- **不做**（各归其棒，本稿不留半成品接缝）：文本选择与选区着色（`SPEC.FEAT.INTERACT.02`）、IME preedit 绘制与候选窗定位（`SPEC.FEAT.INTERACT.06`）、键映射与字节发送（`SPEC.FEAT.INTERACT.01`）、字号/字体可配（`SPEC.FEAT.RENDER.02`）、DPI 变更后的度量与字形缓存重建（`SPEC.FEAT.RENDER.05`）、尺寸去抖合并（裁决 7.23④）、吞吐基准与时间门禁（`SPEC.NF.PERF.02`，2026-10-02 已落，形态与口径见裁决 7.34）。
 - **D5 选② 带出的两条明确边界**（本棒只留口径与 `TODO`，不实装）：
   1. **回看态遇到新输出的锚定语义**：这是 D5 选② 才出现的问题（回看画面 + 后台仍在产出行），已按 **D6①「距底恒定」** 拍板（§0 表末行、实现式见 §6.1），不改 `grid::Storage` 公共头。
   2. **鼠标上报模式下的滚轮**：`SPEC.FEAT.TERM.06` 的上报模式与 alternate scroll（DECSET 1007）要求滚轮**转发给应用**而非本地回看，本棒不做该分派（键映射与字节发送不在本棒），故 `on_scroll` 里以 `TODO(SPEC.FEAT.TERM.06): 上报模式与备屏 alternate scroll 优先于本地回看` 标一处，代码路径恒走本地回看。
@@ -211,7 +211,7 @@ rows = min(geom.rows, mirror.rows())
 | 滚轮回看与距底恒定（D5②、D6①） | `utest_screen_mirror.cpp`（纯逻辑 9 例）+ `review_window_shifts_with_the_bottom_and_survives_new_output`、`alternate_screen_cannot_be_scrolled_back` | 像素层：连渲三帧「满屏 → 上滚 k 行 → 回到底」，断言中间帧差异覆盖全部行（整屏脏成立）且首屏与末屏**逐位相同**；D6① 的判据形态是 `row_band(grown, i) == row_band(again, i + 1)`；备屏连滚 5 格后两帧逐位相同 |
 | 列位与字形对齐（`SPEC.FEAT.TERM.08` 的像素延伸） | `wide_and_zero_width_cells_keep_their_column_slots` | 以 SGR 底色段做「这一格被谁占了」的探针（底色走 `fill_rect` 不透明快速路径，可逐位比；字形是 AA 灰度，不可）：双宽格占两格宽且延续格不另推进列、combining 并入基础格且其后字符落在下一列。**素材内联在本例**（`CJK-LITERAL: cjk-fixture`），未提为 `tests/fixtures/` 夹具——只此一处消费，提取反而多一层间接 |
 
-- **本棒未验收的两项**：帧唤醒（D2）的真机 e2e——逻辑层已由 `utest_session.cpp` 的 5 例锁住「出锁后唤醒一次、无提交不唤醒」，尚欠一条投放交互桌面的 e2e（裁决 7.19⑤：让子进程延迟输出，断言无键盘输入时窗口也被唤醒并排帧）；吞吐（`SPEC.NF.PERF.02`）由 task #36 承接，`tools/bench` + 时间门禁（裁决 7.23③）。
+- **本棒未验收的两项**：帧唤醒（D2）的真机 e2e——逻辑层已由 `utest_session.cpp` 的 5 例锁住「出锁后唤醒一次、无提交不唤醒」，尚欠一条投放交互桌面的 e2e（裁决 7.19⑤：让子进程延迟输出，断言无键盘输入时窗口也被唤醒并排帧）；吞吐（`SPEC.NF.PERF.02`）已落，形态＝`tools/bench` 的 `borealis_bench` 三场景 + `tools/check` 的时间门禁（裁决 7.23③ 的要求，执行口径见裁决 7.34）。
 
 - **「裁剪盒外不画」不作像素断言**（实测改口径）：脏区上报走非虚的 `Widget::dirty_bounds()`，恒等于控件自身盒，控件无法把子矩形报成脏，于是像素差分观察不到那条纪律；它仍是 §6 行集折算的行为，只是没有可观测面。用例文件头注释已按此说明。
 - **像素判据的三类写法只有一类成立**（实测教训，写死以免后人重蹈）：①「同格两帧对比」与 ②「跨行对比」都空转——前者在内容未变时本就逐位相同，后者底色与相位都不同，差异与被判据无关；成立的形态是 **同底色、同行、相邻两格对照 + 整格取带（`cell_band`）+ 先 REQUIRE 被画的那一层确实落笔**。`preflight()` 要求格宽为整数，否则带子的格-local 坐标对不齐，判据会假绿。
