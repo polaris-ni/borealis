@@ -236,7 +236,7 @@ auto TerminalView::paint_row(aurora::Painter &p, const aurora::Rect &bounds, std
     const auto runs = layout_row(mirror_.line(screen_row), spec_);
     std::vector<aurora::render::TextRun> batch;
     batch.reserve(runs.size());
-    std::vector<const StyleRun *> italic_runs;
+    std::vector<aurora::render::TextRun> italic_batch;
     for (const auto &run : runs) {
         const auto band = rect_for(geometry_, screen_row, run.first_column, run.last_column);
         if (run.paint.background != spec_.default_background) {
@@ -245,28 +245,23 @@ auto TerminalView::paint_row(aurora::Painter &p, const aurora::Rect &bounds, std
         if (run.text.empty()) {
             continue;  // 只有色带的一段：`layout_row` 已把全空白段的文本清空
         }
-        if (run.paint.italic) {
-            italic_runs.push_back(&run);
-            continue;
-        }
-        batch.push_back(aurora::render::TextRun{
-            .text = run.text,
-            .box = to_rect(band, bounds.origin),
-            .font = font_for(ref_font_, run.paint),
-            .color = to_color(run.paint.foreground),
-        });
+        (run.paint.italic ? italic_batch : batch)
+            .push_back(aurora::render::TextRun{
+                .text = run.text,
+                .box = to_rect(band, bounds.origin),
+                .font = font_for(ref_font_, run.paint),
+                .color = to_color(run.paint.foreground),
+            });
     }
     if (!batch.empty()) {
         p.draw_text_runs(batch);  // ③ 每行一次批量文本
     }
-    // 缺口 G13：批量入口不透传排版选项，斜体只能退到逐片段带 opts 的重载（裁决 7.24④）；
-    // 框架侧透传落地后本分支撤销，斜体段并入上面的 batch。
-    for (const StyleRun *run : italic_runs) {
-        const auto band = rect_for(geometry_, screen_row, run->first_column, run->last_column);
+    if (!italic_batch.empty()) {
+        // 批量入口的 opts 是**整批共用**（框架刻意不提供 per-run opts，以免与 `Font` 的样式语义
+        // 重叠成两条矛盾来源），故斜体单独成一批——每行最多两次调用，仍拿得到批量化省下的派生量。
         auto opts = aurora::render::TextLayoutOpts{};
         opts.italic = true;
-        p.draw_text(to_rect(band, bounds.origin), run->text, font_for(ref_font_, run->paint),
-                    to_color(run->paint.foreground), opts);
+        p.draw_text_runs(italic_batch, opts);
     }
     for (const auto &run : runs) {
         for (const auto &decoration : decoration_rects(geometry_, screen_row, run)) {
