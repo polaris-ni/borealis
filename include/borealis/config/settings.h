@@ -27,6 +27,7 @@
 #include "borealis/term/terminal.h"
 #include "borealis/term/width.h"
 #include "borealis/ui/palette.h"
+#include "borealis/ui/right_click.h"
 
 namespace borealis::config {
 
@@ -50,11 +51,10 @@ enum class LongLinePolicy : std::uint8_t {
 using term::PasteNewlinePolicy;
 
 /// @brief 右键的缺省行为（`SPEC.FEAT.INTERACT.03` 的 Windows Terminal 三态）。
-enum class RightClickAction : std::uint8_t {
-    ContextMenu,  ///< 弹菜单（缺省：Windows 习惯，且不吞掉选区）。
-    Paste,        ///< 直接粘贴。
-    CopyOnSelect, ///< 选中即复制，右键只粘贴。
-};
+///
+/// 取值与语义的唯一定义在 `ui::RightClickAction`（界面腿要用它折算右键处置计划），配置侧只作
+/// 别名，与上面的 `PasteNewlinePolicy` 同一条单一真值源口径（裁决 7.41）。
+using ui::RightClickAction;
 
 /// @brief 状态栏各项的开关（裁决 7.25⑧：每项一个开关，缺省全开）。
 ///

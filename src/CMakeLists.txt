@@ -24,6 +24,7 @@ add_library(borealis_core STATIC
         session/session.cpp
         ui/cell_layout.cpp
         ui/palette.cpp
+        ui/right_click.cpp
         ui/selection.cpp
         ui/terminal_view.cpp)
 
