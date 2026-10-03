@@ -24,12 +24,14 @@ add_library(borealis_core STATIC
         session/session.cpp
         ui/cell_layout.cpp
         ui/font_choice.cpp
+        ui/grid_size_debounce.cpp
         ui/palette.cpp
         ui/pane_tree.cpp
         ui/right_click.cpp
         ui/selection.cpp
         ui/tab_strip.cpp
-        ui/terminal_view.cpp)
+        ui/terminal_view.cpp
+        ui/workspace_keys.cpp)
 
 # 平台层实现按目标平台编入：共享路径只见接口，ConPTY 句柄与 Win32 API 留在 src/platform/ 内
 # （裁决 7.11、架构 §2.2）。posix 侧等价实现待建，见 codespec/PLAN.md §8。
