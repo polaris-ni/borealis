@@ -468,6 +468,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     put(node, "theme", appearance.theme);
     put(node, "font_family", appearance.font_family);
     put(node, "font_size_pt", appearance.font_size_pt);
+    put(node, "font_line_height", appearance.font_line_height);
+    put(node, "font_letter_spacing_dp", appearance.font_letter_spacing_dp);
     put(node, "viewport_padding_dp", appearance.viewport_padding_dp);
     put_enum(node, "cursor_shape", kCursorShapeNames, static_cast<std::int64_t>(appearance.cursor_shape));
     put(node, "cursor_blinking", appearance.cursor_blinking);
@@ -545,6 +547,10 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     appearance.theme = scope.text("theme", defaults.appearance.theme);
     appearance.font_family = scope.text("font_family", defaults.appearance.font_family);
     appearance.font_size_pt = scope.real("font_size_pt", defaults.appearance.font_size_pt, 6.0, 72.0);
+    // 两档排版可调量的取值域在此把守，`ui::apply_typography` 因此不含夹取（裁决 7.46②）。
+    appearance.font_line_height = scope.real("font_line_height", defaults.appearance.font_line_height, 1.0, 3.0);
+    appearance.font_letter_spacing_dp =
+        scope.real("font_letter_spacing_dp", defaults.appearance.font_letter_spacing_dp, 0.0, 8.0);
     appearance.viewport_padding_dp =
         static_cast<float>(scope.real("viewport_padding_dp", defaults.appearance.viewport_padding_dp, 0.0, 64.0));
     appearance.cursor_shape = static_cast<term::CursorShape>(

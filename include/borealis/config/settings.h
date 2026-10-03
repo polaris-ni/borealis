@@ -96,6 +96,14 @@ struct AppearanceSettings {
 
     std::string font_family{"Cascadia Code"};  ///< 默认字体（裁决 7.3）。
     double font_size_pt{14.0};                 ///< 14pt 是视觉稿的实测基准（100% DPI → 11×22 dp 格）。
+    /// @brief 行高倍数（`SPEC.FEAT.RENDER.02`）：网格行步长 = 字体行高 × 它，取值域 [1.0, 3.0]。
+    ///
+    /// 域从 1.0 起：小于字体自身行高会把下伸部切进下一行，而终端的网格对齐不容许行重叠。
+    double font_line_height{1.0};
+    /// @brief 字距（dp，同上）：加在每对相邻字形之间，取值域 [0.0, 8.0]。
+    ///
+    /// 域从 0.0 起：负字距让字形压进下一列，等宽网格里那不是「紧凑」而是错位。
+    double font_letter_spacing_dp{0.0};
 
     float viewport_padding_dp{4.0F};  ///< 终端视口内边距（裁决 7.25②）；改 0 即回到贴边形态。
 
