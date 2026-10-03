@@ -4,8 +4,9 @@
 // 终端视口控件（src/ui/terminal_view.h，私有头）
 // ------------------------------------------------------------
 // 裁决 D1①：类声明留在 `src/` 而不进 `include/borealis/`——含此头即含框架头，架构 §2.3 的
-// 「公共头不含 Aurora 类型」会因此破洞。消费方只有 `src/ui/terminal_view.cpp`（全仓唯一
-// 触达 `aurora::Painter` 的翻译单元）与 `src/main.cpp`（装配点）。
+// 「公共头不含 Aurora 类型」会因此破洞。消费方只有 `src/ui/terminal_view.cpp`（与
+// `workspace_view.cpp` 并列的两个触达 `aurora::Painter` 的翻译单元之一）、`src/main.cpp`（装配点）
+// 与按相对路径取用本头的渲染用例。
 //
 // 本层只做翻译与落笔：颜色由 `ui::resolve`、run 由 `ui::layout_row`、dp 几何由
 // `ui::make_geometry`、可见行内容由 `session::ScreenMirror` 判好、选区的逐行区间由
@@ -24,6 +25,7 @@
 
 #include "aurora/app/scheduler.h"
 #include "aurora/core/font.h"
+#include "aurora/render/font_engine.h"
 #include "aurora/widget/widget.h"
 #include "borealis/grid/row.h"
 #include "borealis/session/connection.h"
@@ -90,8 +92,12 @@ class TerminalView final : public aurora::LeafWidget {
     /// @param padding_dp 视口四周内边距（裁决 7.25②），可配为 0。
     /// @param blink_period 光标闪烁周期；本棒内置，可配项随设置面板那一棒接（`SPEC.FEAT.PREF.02`）。
     /// @param options 选区与复制的可配置行为；由装配层从 `config::TerminalSettings` 搬值。
+    /// @param font_fallback_chain 缺字回退链的族名序列（配置键 `appearance.font_fallback_chain`）。
+    ///        顺序即语义；超过框架的链容量上限时**保留前 N 项**并留痕一次（截断对用户不可见）。
+    ///        空表即不注入按族链，只走框架的全局默认回退链。
     TerminalView(session::Session &session, PaletteSpec palette, aurora::Font ref_font, Typography typography,
-                 float padding_dp, std::chrono::milliseconds blink_period, InteractionOptions options);
+                 float padding_dp, std::chrono::milliseconds blink_period, InteractionOptions options,
+                 std::vector<std::string> font_fallback_chain = {});
 
     TerminalView(const TerminalView &) = delete;
     auto operator=(const TerminalView &) -> TerminalView & = delete;
@@ -169,6 +175,14 @@ class TerminalView final : public aurora::LeafWidget {
     /// 缩放是运行期状态（持久化的入口随 `SPEC.FEAT.PREF.02` 的设置面板），用例要靠它把「步长与
     /// 钳位」这一条算式单独断言，而不是从像素反推字号。
     [[nodiscard]] auto font_size_pt() const noexcept -> float { return ref_font_.size_pt; }
+
+    /// @brief 本帧交进框架的排版选项（回退链、量化字距与固定格推进档位）——接线的观测点。
+    ///
+    /// 用例要靠它把「配置 → 控件 → 框架排版选项」这一段单独断言：三项都从像素反推不出来，
+    /// 而档位那一项的单位（物理 px 且已含 scale）写错时像素只是整体挪位，看不出错在何处。
+    [[nodiscard]] auto layout_options() const noexcept -> const aurora::render::TextLayoutOpts & {
+        return layout_opts_;
+    }
 
   protected:
     /// @brief 撑满父级，并在此重取整格几何与下发行列尺寸（`SPEC.FEAT.XFER.01` 的 UI 取值腿）。
@@ -347,6 +361,12 @@ class TerminalView final : public aurora::LeafWidget {
     session::ScreenMirror mirror_;
     GridGeometry geometry_{};
     TypedMetrics typed_{};
+    /// @brief 与本帧排版量同源的排版选项：按族回退链在构造时装好，字距随度量刷新写入。
+    ///
+    /// 两处落笔点共用这一份，是为了让「链漏进一处、字距漏进另一处」不可能发生（光标第三段必须
+    /// 与批量那次同源，否则停在同一格上的字形会换一种排布）。绘制侧按行取一份副本（链的承载形态
+    /// 是框架的定长数组，缺省链为空故副本通常只是几个标量）。
+    aurora::render::TextLayoutOpts layout_opts_{};
     float metrics_scale_ = -1.0F;  ///< `typed_` 所属的缩放；与入参不等即重取度量。
     bool metrics_stale_ = true;    ///< 字体或排版入参变过（Ctrl+滚轮缩放是唯一改点）；取用即清。
 

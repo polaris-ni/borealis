@@ -1,10 +1,10 @@
 // ============================================================
 // 终端视口控件实现（src/ui/terminal_view.cpp）
 // ------------------------------------------------------------
-// 全仓唯一触达 `aurora::Painter` 绘制面的翻译单元（架构 §9.2 的收口纪律）：这里只有
-// 「互转 + 按层叠顺序下调用」，判断全在纯逻辑件里（`ui::palette`、`ui::cell_layout`、
-// `ui::selection`、`session::ScreenMirror`），于是最容易算错的行号与 dp 换算能留在无框架
-// 环境里全量单测。
+// 本文件与 `workspace_view.cpp` 是触达 `aurora::Painter` 绘制面的两个翻译单元（架构 §9.2 的收口
+// 纪律）：这里只有「互转 + 按层叠顺序下调用」，判断全在纯逻辑件里（`ui::palette`、
+// `ui::cell_layout`、`ui::selection`、`session::ScreenMirror`），于是最容易算错的行号与 dp 换算
+// 能留在无框架环境里全量单测。
 // ============================================================
 
 #include "terminal_view.h"
@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "aurora/core/dimension.h"
+#include "aurora/core/log.h"
 #include "aurora/environment/build_context.h"
 #include "aurora/render/font_engine.h"
 #include "aurora/widget/button.h"
@@ -160,18 +161,25 @@ class StringCollector final : public term::CodePointSink {
 
 TerminalView::TerminalView(session::Session &session, PaletteSpec palette, aurora::Font ref_font,
                            Typography typography, float padding_dp, std::chrono::milliseconds blink_period,
-                           InteractionOptions options)
+                           InteractionOptions options, std::vector<std::string> font_fallback_chain)
     : session_(&session),
       spec_(std::move(palette)),
       ref_font_(std::move(ref_font)),
       typography_(typography),
       padding_dp_(padding_dp),
       blink_period_(blink_period),
-      options_(std::move(options)) {
+      options_(std::move(options)),
+      layout_opts_(aurora::render::TextLayoutOpts::with_fallback_chain(font_fallback_chain)) {
     // 撑满父级是控件自身的意图，写在这里以免每个装配点（含测试）都要重述一遍。
     width(aurora::fill());
     height(aurora::fill());
     scroll_viewport_.step = kRowStep;
+    if (font_fallback_chain.size() > aurora::render::AURORA_TEXT_FALLBACK_CHAIN_MAX) {
+        // 截断发生在框架的构造入口里（保留前 N 项、顺序不变），对用户是静默的，故留痕一次；
+        // 上限不写在本仓的常量里：链的承载形态属框架，抄一个数过来就是第二个真值源。
+        AURORA_LOG_WARN("ui", "font fallback chain truncated: requested ", font_fallback_chain.size(),
+                        " entries, using the first ", aurora::render::AURORA_TEXT_FALLBACK_CHAIN_MAX);
+    }
 }
 
 TerminalView::~TerminalView() {
@@ -434,6 +442,11 @@ auto TerminalView::cell_metrics(float scale) -> const TypedMetrics & {
         const auto metrics = aurora::render::FontEngine::monospace_cell(ref_font_, scale);
         typed_ = apply_typography(CellPixels{metrics.cell_width_px, metrics.cell_height_px, metrics.ascent_px},
                                   static_cast<double>(scale), typography_);
+        // 量化字距、回退链与固定格推进同处一份选项：绘制侧两处落笔都必须取回填值而非配置原值（裁决 7.46①）。
+        layout_opts_.letter_spacing = static_cast<float>(typed_.letter_spacing_dp);
+        // 固定格推进取**未含字距**的原始格宽（物理 px 且已含 scale，与 `monospace_cell` 同源）：
+        // 框架把 `letter_spacing` 叠加在本档位之上，取回填后的 `typed_.cells.width_px` 会把字距算两遍。
+        layout_opts_.fixed_cell_advance_px = static_cast<float>(metrics.cell_width_px);
         metrics_scale_ = scale;
         metrics_stale_ = false;
     }
@@ -512,8 +525,7 @@ auto TerminalView::paint_row(aurora::Painter &p, const aurora::Rect &bounds, std
     // 文本盒比色带盒低一个「上半 leading」，且字距取 `apply_typography` 回填的量化值而非配置原值：
     // 后者保证相邻字形的间距落在整数物理像素上，列步长与字形推进因此同源（裁决 7.46①）。
     const double glyph_top = glyph_top_dp();
-    auto opts = aurora::render::TextLayoutOpts{};
-    opts.letter_spacing = static_cast<float>(typed_.letter_spacing_dp);
+    auto opts = layout_opts_;
     for (const auto &run : runs) {
         const auto band = rect_for(geometry_, screen_row, run.first_column, run.last_column);
         if (run.paint.background != spec_.default_background) {
@@ -596,9 +608,8 @@ auto TerminalView::paint_cursor(aurora::Painter &p, const aurora::Rect &bounds, 
     }
     const std::string text = cell_text(row, cursor_.column);
     if (!paint.hidden && !text.empty()) {
-        auto opts = aurora::render::TextLayoutOpts{};
+        auto opts = layout_opts_;
         opts.italic = paint.italic;  // 与 ③ 的斜体判定同源，否则光标停在斜体格上会把那一格画成正体
-        opts.letter_spacing = static_cast<float>(typed_.letter_spacing_dp);  // 与 ③ 同一份量化字距
         // 块形的外沿是格子矩形，字却按 `paint_row` 的同一个偏移盒重画：两者共用盒会让行高调大后
         // 第三段的字浮在块上半，块内下沿空出一条带。
         const Rect text_box{box.x, box.y + glyph_top_dp(), box.width, box.height};

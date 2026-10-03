@@ -110,7 +110,8 @@ auto main() -> int {
                  .size_pt = static_cast<float>(settings.appearance.font_size_pt),
                  .weight = 400},
         typography, settings.appearance.viewport_padding_dp,
-        std::chrono::milliseconds{settings.appearance.cursor_blink_period_ms}, std::move(interaction));
+        std::chrono::milliseconds{settings.appearance.cursor_blink_period_ms}, std::move(interaction),
+        settings.appearance.font_fallback_chain);
     // TODO(SPEC.FEAT.PREF.02): 配置里的光标缺省形态与闪烁档、Ambiguous 口径尚无会话侧接缝可注入，
     // 三者当前分别取状态机的 `Block` / `blinking=true` 缺省值与判定入参的 `Narrow`。
     // 右键菜单与多行粘贴确认都是浮层，故场景根是浮层宿主而非视口本身（裁决 7.41③）：宿主的子节点
