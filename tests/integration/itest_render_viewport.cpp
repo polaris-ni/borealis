@@ -143,12 +143,14 @@ using Pixels = std::vector<std::uint8_t>;
 class Harness {
   public:
     explicit Harness(const PaletteSpec &palette = test_palette(),
-                     const TerminalView::InteractionOptions &options = {})
+                     const TerminalView::InteractionOptions &options = {},
+                     const Typography &typography = {})
         : palette_(palette),
           options_(options),
           font_(test_font()),
+          typography_(typography),
           session_(std::make_unique<Session>(own_connection(), kNominalSize, kScrollback, width_policy)),
-          view_(std::make_shared<TerminalView>(*session_, palette_, font_, Typography{}, kPaddingDp,
+          view_(std::make_shared<TerminalView>(*session_, palette_, font_, typography_, kPaddingDp,
                                                std::chrono::milliseconds{kBlinkPeriodMs}, options_)),
           root_(std::static_pointer_cast<au::Widget>(view_)) {
         session_->start();
@@ -157,10 +159,8 @@ class Harness {
         scale_ = window_.surface().scale_factor();
         origin_x_ = static_cast<double>(box.origin.x);
         origin_y_ = static_cast<double>(box.origin.y);
-        const auto metrics = au::render::FontEngine::monospace_cell(font_, scale_);
-        geometry_ = borealis::ui::make_geometry(
-            CellPixels{metrics.cell_width_px, metrics.cell_height_px, metrics.ascent_px}, scale_,
-            LogicalSize{static_cast<double>(box.size.width), static_cast<double>(box.size.height)}, kPaddingDp);
+        box_ = box;
+        refresh_geometry();
     }
 
     Harness(const Harness &) = delete;
@@ -229,13 +229,27 @@ class Harness {
     /// @brief 滚轮回看：@p rows 为正向上看更早的行，负向反之。
     auto scroll(int rows) -> void {
         au::ScrollEvent event;
-        const auto center_x = static_cast<float>(origin_x_ + (geometry_.cell_width *
-                                                              static_cast<double>(geometry_.columns) / 2.0));
-        const auto center_y = static_cast<float>(origin_y_ + (geometry_.cell_height *
-                                                              static_cast<double>(geometry_.rows) / 2.0));
-        event.position = au::Point{.x = center_x, .y = center_y};
+        event.position = grid_center();
         event.delta_y = static_cast<float>(rows);
         (void)au::EventDispatcher::dispatch(root_.widget(), event);
+    }
+
+    /// @brief Ctrl+滚轮缩放 @p steps 档（正 = 放大，一档 ±1 pt），走真实滚轮事件派发。
+    ///
+    /// 缩放后把驱动台自己的字体同步成控件报告的字号再复算格网：字号算式（步长与钳位）由
+    /// `font_size_pt()` 单独断言，格网断言因此只测「几何跟着字号重算且不裂」这一件事。
+    auto zoom(int steps) -> void {
+        au::ScrollEvent event;
+        event.position = grid_center();
+        event.modifiers = au::ModifierKey::Control;
+        const int unit = steps < 0 ? -1 : 1;
+        for (int i = 0; i < (steps < 0 ? -steps : steps); ++i) {
+            event.delta_y = static_cast<float>(unit);
+            (void)au::EventDispatcher::dispatch(root_.widget(), event);
+        }
+        render();
+        font_.size_pt = view_->font_size_pt();
+        refresh_geometry();
     }
 
     /// @brief 发一个指针事件：行列是**屏幕**坐标，落点取该格中心。
@@ -264,6 +278,9 @@ class Harness {
 
     /// @brief 选区文本（复制腿的产物，不经系统剪贴板）。
     [[nodiscard]] auto selected_text() -> std::string { return view_->selected_text(); }
+
+    /// @brief 控件报告的当前字号：缩放算式（步长与钳位）的直接观测点。
+    [[nodiscard]] auto font_size_pt() const -> float { return view_->font_size_pt(); }
 
     /// @brief 控件当前是否持焦：指针 Press 的焦点归属由派发器决定，本用例要能证到它。
     [[nodiscard]] auto view_focused() const -> bool { return view_->is_focused(); }
@@ -348,6 +365,27 @@ class Harness {
         return out;
     }
 
+    /// @brief 从某格**左上角**起的固定尺寸窗口（跨两套格网比字形相位用）。
+    ///
+    /// `cell_band` 的宽是各自那一格的宽，两套格网的带宽不同就没法逐位比；字距腿要问的是「字形
+    /// 相对自己格左沿的落点」，故两边都锚在各自的格左沿上取同尺寸的一块。
+    [[nodiscard]] auto cell_window(const Pixels &px, std::size_t row, std::size_t column, std::size_t width,
+                                   std::size_t height) const -> Pixels {
+        Pixels out;
+        const std::size_t top = static_cast<std::size_t>(
+            origin_y_ + geometry_.padding + static_cast<double>(row) * geometry_.cell_height);
+        const std::size_t left = static_cast<std::size_t>(
+            origin_x_ + geometry_.padding + static_cast<double>(column) * geometry_.cell_width);
+        for (std::size_t y = top; y < top + height && y < buffer_height(); ++y) {
+            for (std::size_t x = left; x < left + width && x < buffer_width(); ++x) {
+                const std::size_t index = (y * buffer_width() + x) * 4U;
+                out.insert(out.end(), px.begin() + static_cast<Pixels::difference_type>(index),
+                           px.begin() + static_cast<Pixels::difference_type>(index + 4U));
+            }
+        }
+        return out;
+    }
+
     /// @brief 两帧差分落到了哪些绘制行；不在任何行带内的差异只记一次（`outside_grid()`）。
     [[nodiscard]] auto changed_rows(const Pixels &before, const Pixels &after) const -> std::vector<std::size_t> {
         std::vector<std::size_t> rows;
@@ -409,10 +447,32 @@ class Harness {
         return au::Window{std::move(surface)};
     }
 
+    /// @brief 网格中心的逻辑坐标：滚轮事件要落在可命中链里，落窗外就成了「没人消费」。
+    [[nodiscard]] auto grid_center() const -> au::Point {
+        const auto center_x =
+            static_cast<float>(origin_x_ + (geometry_.cell_width * static_cast<double>(geometry_.columns) / 2.0));
+        const auto center_y =
+            static_cast<float>(origin_y_ + (geometry_.cell_height * static_cast<double>(geometry_.rows) / 2.0));
+        return au::Point{.x = center_x, .y = center_y};
+    }
+
+    /// @brief 独立复算一遍格网：绘制侧的几何必须能被测试侧重算出来，否则像素断言退化成
+    ///        「拿实现自己的输出当预期」。字体与排版量取驱动台自己的副本。
+    auto refresh_geometry() -> void {
+        const auto metrics = au::render::FontEngine::monospace_cell(font_, scale_);
+        const auto typed = borealis::ui::apply_typography(
+            CellPixels{metrics.cell_width_px, metrics.cell_height_px, metrics.ascent_px},
+            static_cast<double>(scale_), typography_);
+        geometry_ = borealis::ui::make_geometry(
+            typed.cells, scale_,
+            LogicalSize{static_cast<double>(box_.size.width), static_cast<double>(box_.size.height)}, kPaddingDp);
+    }
+
     au::Window window_ = make_window();  ///< 最先声明、最后析构：帧缓冲须活到取样结束。
     PaletteSpec palette_{};
     TerminalView::InteractionOptions options_{};  ///< 选区行为的可配项，须在 view_ 之前就位。
     au::Font font_{};
+    Typography typography_{};  ///< 排版可调量，须在 view_ 之前就位。
     FakeConnection *connection_ = nullptr;  ///< 非拥有，会话持有。
     std::unique_ptr<Session> session_;
     std::shared_ptr<TerminalView> view_;
@@ -420,10 +480,42 @@ class Harness {
     au::FocusManager focus_;
     au::EventDispatcher pointer_dispatcher_;  ///< 本驱动台私有的连击判定与指针捕获状态。
     GridGeometry geometry_{};
+    au::Rect box_{};  ///< 控件的绘制盒，`refresh_geometry` 的可视尺寸来源。
     float scale_ = 1.0F;
     double origin_x_ = 0.0;
     double origin_y_ = 0.0;
 };
+
+/// @brief 一格带子里「有墨的横行」的首末行号（行高腿的观测手段）。
+///
+/// 只认与底色不同的像素：抗锯齿字形本就是前景与底色的混合，比色值比不出，但「这一行有没有墨」
+/// 是稳的。首行号即字盒顶到第一笔的距离，正是上半 leading 的直接读数。
+[[nodiscard]] auto ink_rows(const Pixels &band, std::size_t width, const RgbaColor &background)
+    -> std::pair<std::size_t, std::size_t> {
+    std::pair<std::size_t, std::size_t> span{0U, 0U};
+    bool seen = false;
+    const std::size_t height = width > 0U ? band.size() / (4U * width) : 0U;
+    for (std::size_t y = 0; y < height; ++y) {
+        bool ink = false;
+        for (std::size_t x = 0; x < width; ++x) {
+            const std::size_t index = (y * width + x) * 4U;
+            if (band[index] != background.red || band[index + 1U] != background.green ||
+                band[index + 2U] != background.blue || band[index + 3U] != background.alpha) {
+                ink = true;
+                break;
+            }
+        }
+        if (!ink) {
+            continue;
+        }
+        if (!seen) {
+            span.first = y;
+            seen = true;
+        }
+        span.second = y;
+    }
+    return span;
+}
 
 #endif  // 无头后端缺席时上面的驱动台与替身都不参与编译
 
@@ -1038,6 +1130,184 @@ AURORA_TEST_CASE(copy_options_travel_with_the_interaction_options) {
     trimmed.render();
     // 同一份选区、只换一个变换键：配置值确实经 `InteractionOptions` 抵达复制腿。
     AURORA_TEST_CHECK_EQ(trimmed.selected_text(), "AB\ntail");
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(line_height_moves_the_glyph_down_by_the_upper_half_leading) {
+#ifdef AURORA_BACKEND_HEADLESS
+    const auto raw = au::render::FontEngine::monospace_cell(test_font(), 1.0F);
+    const auto leading = static_cast<std::size_t>(raw.cell_height_px) / 2U;  // 余数归行盒下沿
+    const auto line_height = static_cast<double>(raw.cell_height_px + leading * 2U) /
+                             static_cast<double>(raw.cell_height_px);
+    const auto &background = test_palette().default_background;
+
+    Harness tight;
+    Harness tall(test_palette(), TerminalView::InteractionOptions{}, Typography{.line_height = line_height});
+    AURORA_TEST_REQUIRE(tight.preflight() && tall.preflight());
+    const auto width = static_cast<std::size_t>(tall.geometry().cell_width);
+    AURORA_TEST_REQUIRE_MSG(leading > 0U && tall.geometry().cell_height ==
+                                                 tight.geometry().cell_height + static_cast<double>(leading * 2U),
+                            "the requested line height must add exactly two half-leadings to the row step");
+
+    const std::string script = "\x1b[?25l\x1b[3;1HW";
+    tight.feed(script);
+    tall.feed(script);
+    const auto flat = ink_rows(tight.cell_band(tight.pixels(), 2U, 0U), width, background);
+    const auto dropped = ink_rows(tall.cell_band(tall.pixels(), 2U, 0U), width, background);
+    AURORA_TEST_REQUIRE_MSG(flat.second > flat.first, "the tight row must be the one with ink to compare against");
+    // 行高加大只把空白加在字盒**之上**：字形的墨高度不变，整块下移上半 leading。
+    // 框架按「行盒顶 + 该字体 ascender」定位基线（GDI `TA_TOP` 遗留语义），少了视口那一下下移，
+    // 文字就贴死行顶而行盒下方空一片——两处的首行号因此相同，本判据随即转红。
+    AURORA_TEST_CHECK_EQ(dropped.first, flat.first + leading);
+    AURORA_TEST_CHECK_EQ(dropped.second - dropped.first, flat.second - flat.first);
+
+    // 色带吃的是重算后的整格高（② 层用 `rect_for`），故加高后的行顶与行底仍在带内。
+    tall.feed("\x1b[4;1H\x1b[41mAB\x1b[49m");
+    const auto px = tall.pixels();
+    const auto &red = tall.palette().basic[1];
+    AURORA_TEST_CHECK(tall.cell_probe(px, 3U, 0U, 0.02) == red);
+    AURORA_TEST_CHECK(tall.cell_probe(px, 3U, 1U, 0.98) == red);
+    AURORA_TEST_CHECK(tall.cell_probe(px, 3U, 2U, 0.98) == background);
+    // 同一窗口的行数按新步长重排（`SPEC.FEAT.RENDER.05`：行高变了行列数必须跟着变）。
+    AURORA_TEST_CHECK(tall.geometry().rows < tight.geometry().rows);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(letter_spacing_widens_the_column_step_without_drifting_the_glyphs) {
+#ifdef AURORA_BACKEND_HEADLESS
+    const auto raw = au::render::FontEngine::monospace_cell(test_font(), 1.0F);
+    const auto spacing_px = static_cast<std::size_t>(raw.cell_width_px) / 3U;
+    // 无头缩放恒为 1，故配置 dp 与吸附后的整像素同值；比例取自实测格宽，改字号也不破这条判据。
+    Harness tight;
+    Harness spread(test_palette(), TerminalView::InteractionOptions{},
+                   Typography{.letter_spacing_dp = static_cast<double>(spacing_px)});
+    AURORA_TEST_REQUIRE(tight.preflight() && spread.preflight());
+    const auto narrow = static_cast<std::size_t>(tight.geometry().cell_width);
+    const auto tall = static_cast<std::size_t>(tight.geometry().cell_height);
+    AURORA_TEST_REQUIRE_MSG(spread.geometry().cell_width == tight.geometry().cell_width + spacing_px,
+                            "the quantized spacing must enter the column step");
+
+    // 每格的字形仍停在**自己那一格**的左沿：锚在各自格左沿的同尺寸窗口逐位相同。
+    // 吸附后的字距是整数像素，故第 k 格的字形相对格左沿的亚像素相位与未加宽时一致；
+    // 若绘制侧漏掉排版选项（或漏掉吸附而按小数 dp 加距），第 1、2 格会停在未加宽的推进位上
+    // （左移一格距、两格距），窗口随即对不上——那正是长行按块累积漂移的那一档。
+    const std::string script = "\x1b[?25l\x1b[3;1HABC";
+    tight.feed(script);
+    spread.feed(script);
+    const auto tight_px = tight.pixels();
+    const auto spread_px = spread.pixels();
+    for (const std::size_t column : {std::size_t{0U}, std::size_t{1U}, std::size_t{2U}}) {
+        AURORA_TEST_CHECK_MSG(spread.cell_window(spread_px, 2U, column, narrow, tall) ==
+                                  tight.cell_window(tight_px, 2U, column, narrow, tall),
+                              "a glyph slid off its own column once the cell got wider");
+    }
+    // 色带跟着新列步长走：两格红带止于第 2 格的右沿，第 3 格起回到默认底色。
+    spread.feed("\x1b[5;1H\x1b[41mAB\x1b[49m");
+    const auto banded = spread.pixels();
+    const auto &red = spread.palette().basic[1];
+    const auto &background = spread.palette().default_background;
+    AURORA_TEST_CHECK(spread.cell_probe(banded, 4U, 1U, 0.06) == red);
+    AURORA_TEST_CHECK(spread.cell_probe(banded, 4U, 2U, 0.06) == background);
+    // 列数按新步长重排，行高不受字距影响。
+    AURORA_TEST_CHECK(spread.geometry().columns < tight.geometry().columns);
+    AURORA_TEST_CHECK(spread.geometry().cell_height == tight.geometry().cell_height);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(neutral_typography_reproduces_the_untouched_frame) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness plain;
+    Harness neutral(test_palette(), TerminalView::InteractionOptions{},
+                    Typography{.line_height = 1.0, .letter_spacing_dp = 0.0});
+    AURORA_TEST_REQUIRE(plain.preflight() && neutral.preflight());
+    // 装配层无条件下传一个 `Typography`，代价是缺省档必须与「没有这一档」逐位相同：倍数 1.0 取整
+    // 回原行高、字距 0 吸附回 0 像素，两处任一带上舍入残差，整帧就会系统性错位。
+    const std::string script = "\x1b[?25l\x1b[2;1H\x1b[4mABC 中文\x1b[24m\x1b[5;1H\x1b[43mXY\x1b[49mZ";
+    plain.feed(script);
+    neutral.feed(script);
+    // CJK-LITERAL: cjk-fixture - 回退面的落位随排版量一起变，纯 ASCII 样本会放过双宽那一腿
+    AURORA_TEST_CHECK_EQ(Harness::count_diff(plain.pixels(), neutral.pixels()), 0U);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(ctrl_wheel_zoom_rebuilds_the_grid_and_redownloads_the_size) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto start = h.geometry();
+    const auto size_before = h.font_size_pt();
+    const auto resizes_before = h.resize_count();
+
+    h.zoom(3);
+    AURORA_TEST_REQUIRE(h.preflight());
+    AURORA_TEST_CHECK_MSG(h.font_size_pt() == size_before + 3.0F, "one wheel notch is exactly one point");
+    AURORA_TEST_CHECK(h.geometry().cell_width > start.cell_width);
+    AURORA_TEST_CHECK(h.geometry().rows < start.rows);
+    // 行列数真变了才下发（`SPEC.FEAT.XFER.01` 的 UI 取值腿在缩放后须再走一遍）。
+    AURORA_TEST_CHECK_EQ(h.resize_count(), resizes_before + 1U);
+    AURORA_TEST_REQUIRE(h.last_resize().has_value());
+    const auto sent = h.last_resize().value();
+    AURORA_TEST_CHECK(sent.columns == h.geometry().columns && sent.rows == h.geometry().rows);
+    // 放大后色带仍逐格对齐：几何重算不裂（`SPEC.FEAT.RENDER.05` 的缩放档判据）。
+    h.feed("\x1b[6;1H\x1b[41mAB\x1b[49mC");
+    const auto zoomed = h.pixels();
+    const auto &red = h.palette().basic[1];
+    const auto &background = h.palette().default_background;
+    AURORA_TEST_CHECK(h.cell_probe(zoomed, 5U, 0U, 0.06) == red);
+    AURORA_TEST_CHECK(h.cell_probe(zoomed, 5U, 1U, 0.94) == red);
+    AURORA_TEST_CHECK(h.cell_probe(zoomed, 5U, 2U, 0.06) == background);
+
+    h.zoom(-3);
+    AURORA_TEST_CHECK_MSG(h.font_size_pt() == size_before, "zooming back must return to the starting point size");
+    const auto &back = h.geometry();
+    AURORA_TEST_CHECK(back.cell_width == start.cell_width && back.cell_height == start.cell_height);
+    AURORA_TEST_CHECK(back.columns == start.columns && back.rows == start.rows);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(wheel_zoom_clamps_at_the_bounds_and_yields_the_rest_to_the_review) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    // 到界值即停口，且**不吃事件**：越界那一档照旧冒泡给回看，否则顶/底档就再也滚不动了。
+    h.zoom(200);
+    AURORA_TEST_CHECK_MSG(h.font_size_pt() == 72.0F, "the upper bound is 72 pt");
+    h.zoom(-200);
+    AURORA_TEST_CHECK_MSG(h.font_size_pt() == 6.0F, "the lower bound is 6 pt");
+
+    std::string script = "\x1b[?25l";
+    for (std::size_t index = 0U; index < h.geometry().rows + 6U; ++index) {
+        script += "line ";
+        script += static_cast<char>('A' + static_cast<int>(index % 26U));
+        script += "\r\n";
+    }
+    h.feed(script);
+    h.scroll(2);
+    h.render();
+    const auto backed = h.pixels();
+    h.scroll(-1);
+    h.render();
+    const auto one_row_lower = h.pixels();
+    AURORA_TEST_REQUIRE_MSG(Harness::count_diff(backed, one_row_lower) > 0U,
+                            "the review window must be able to move at all");
+
+    // 回到同一处再发越界的那一档：结果须与「普通滚轮向下一档」逐位相同。
+    h.scroll(1);
+    h.render();
+    AURORA_TEST_CHECK_EQ(Harness::count_diff(h.pixels(), backed), 0U);
+    h.zoom(-1);
+    AURORA_TEST_CHECK_MSG(h.font_size_pt() == 6.0F, "an out-of-range notch must not move the size");
+    AURORA_TEST_CHECK_EQ(Harness::count_diff(h.pixels(), one_row_lower), 0U);
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif
