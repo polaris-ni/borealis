@@ -5,7 +5,10 @@
 ///           单帧像素差集只落在本帧提交行与光标行（含「上一帧光标行必须被重绘干净」）、SGR 色带
 ///           与装饰线的落笔矩形、斜体经批量入口的整批 opts 送出（不得静默退化成正体）、光标三形态
 ///           与失焦降级、滚轮回看的整窗换源与回到底的逐位复现、
-///           回看态的「距底恒定」（裁决 D6①）、备屏不可滚、双宽与零宽的列位对齐。
+///           回看态的「距底恒定」（裁决 D6①）、备屏不可滚、双宽与零宽的列位对齐，以及选区界面腿
+///           （`SPEC.FEAT.INTERACT.02`）：拖拽扫过的格子整格变 selection 色而区间外逐位不变、
+///           流式首行到行尾、失焦各半混合、Alt 列模式矩形、双击选词（断点上回空）、三击整行与
+///           向上拖的外沿、高亮跟着内容而非屏幕行走，以及复制腿的变换入参。
 ///           像素一律比 RGBA 四通道含 alpha：Headless 帧底色是全透明黑 (0,0,0,0)，只比 RGB 会让
 ///           「画了个纯黑」与「什么都没画」混为一谈。
 ///
@@ -138,12 +141,14 @@ using Pixels = std::vector<std::uint8_t>;
 /// 成员声明次序即析构次序的倒序：焦点管理器与根节点须在会话之前消散——控件持会话裸引用。
 class Harness {
   public:
-    explicit Harness(const PaletteSpec &palette = test_palette())
+    explicit Harness(const PaletteSpec &palette = test_palette(),
+                     const TerminalView::InteractionOptions &options = {})
         : palette_(palette),
+          options_(options),
           font_(test_font()),
           session_(std::make_unique<Session>(own_connection(), kNominalSize, kScrollback, width_policy)),
           view_(std::make_shared<TerminalView>(*session_, palette_, font_, kPaddingDp,
-                                               std::chrono::milliseconds{kBlinkPeriodMs})),
+                                               std::chrono::milliseconds{kBlinkPeriodMs}, options_)),
           root_(std::static_pointer_cast<au::Widget>(view_)) {
         session_->start();
         render();  // 帧 0：布局发生在这里，控件据此把行列尺寸下发给会话
@@ -231,6 +236,36 @@ class Harness {
         event.delta_y = static_cast<float>(rows);
         (void)au::EventDispatcher::dispatch(root_.widget(), event);
     }
+
+    /// @brief 发一个指针事件：行列是**屏幕**坐标，落点取该格中心。
+    ///
+    /// 走实体派发器而非静态入口，为的是连击判定与指针捕获都隔离在本驱动台：静态那条共用进程内
+    /// 单例，上一个用例的点击时刻与落点会让本次 Press 的 `click_count` 从 2 起算。
+    /// `click_count` 由派发器在派发前覆写，故多击须按 Press/Release 交替实发，手写该字段无效。
+    auto pointer(au::MouseAction action, std::size_t row, std::size_t column,
+                 au::ModifierKey modifiers = au::ModifierKey::None) -> void {
+        au::MouseEvent event;
+        const Rect band = borealis::ui::rect_for(geometry_, row, column, column + 1U);
+        event.position = au::Point{.x = static_cast<float>(origin_x_ + band.x + band.width * 0.5),
+                                   .y = static_cast<float>(origin_y_ + band.y + band.height * 0.5)};
+        event.button = au::MouseButton::Left;
+        event.action = action;
+        event.modifiers = modifiers;
+        (void)pointer_dispatcher_.dispatch_mouse(root_.widget(), event, &focus_);
+    }
+
+    /// @brief 单击一次（按下即抬起）。连击序号由派发器累加，故本方法连续调用 N 次即 N 击。
+    auto click(std::size_t row, std::size_t column,
+               au::ModifierKey modifiers = au::ModifierKey::None) -> void {
+        pointer(au::MouseAction::Press, row, column, modifiers);
+        pointer(au::MouseAction::Release, row, column, modifiers);
+    }
+
+    /// @brief 选区文本（复制腿的产物，不经系统剪贴板）。
+    [[nodiscard]] auto selected_text() -> std::string { return view_->selected_text(); }
+
+    /// @brief 控件当前是否持焦：指针 Press 的焦点归属由派发器决定，本用例要能证到它。
+    [[nodiscard]] auto view_focused() const -> bool { return view_->is_focused(); }
 
     /// @brief 权威网格某视口行的整行副本（绘制取的是主线程副本，本用例里两者内容恒等）。
     [[nodiscard]] auto visible_line(std::size_t row) -> Row {
@@ -375,12 +410,14 @@ class Harness {
 
     au::Window window_ = make_window();  ///< 最先声明、最后析构：帧缓冲须活到取样结束。
     PaletteSpec palette_{};
+    TerminalView::InteractionOptions options_{};  ///< 选区行为的可配项，须在 view_ 之前就位。
     au::Font font_{};
     FakeConnection *connection_ = nullptr;  ///< 非拥有，会话持有。
     std::unique_ptr<Session> session_;
     std::shared_ptr<TerminalView> view_;
     au::Node root_;
     au::FocusManager focus_;
+    au::EventDispatcher pointer_dispatcher_;  ///< 本驱动台私有的连击判定与指针捕获状态。
     GridGeometry geometry_{};
     float scale_ = 1.0F;
     double origin_x_ = 0.0;
@@ -721,6 +758,285 @@ AURORA_TEST_CASE(wide_and_zero_width_cells_keep_their_column_slots) {
     AURORA_TEST_CHECK(h.cell_probe(px, 4U, 0U, 0.06) == green);
     AURORA_TEST_CHECK(h.cell_probe(px, 4U, 1U, 0.06) == background);
     AURORA_TEST_CHECK(h.cell_probe(px, 4U, 1U, 0.94) == background);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(drag_selection_paints_only_the_swept_cells) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto &background = h.palette().default_background;
+    const auto ink = borealis::ui::selection_color(h.palette());  // 未配 selection 槽，回落 basic[8]
+    h.feed("\x1b[?25l\x1b[3;1HABCDEFGH");
+    const auto before = h.pixels();
+
+    h.pointer(au::MouseAction::Press, 2U, 1U);
+    h.pointer(au::MouseAction::Move, 2U, 4U);
+    h.pointer(au::MouseAction::Release, 2U, 4U);
+    h.render();
+    const auto after = h.pixels();
+
+    // 整帧只差落在被扫到的那一行：其余行连一个像素都不许动（高亮不越行）。
+    const auto changed = h.changed_rows(before, after);
+    AURORA_TEST_REQUIRE_MSG(changed.size() == 1U && changed[0] == 2U, "the highlight must stay on its row");
+    // 选中区间整格变为 selection 色（格腰留给字形，故取近顶与近底两处）。
+    for (std::size_t column = 1U; column <= 4U; ++column) {
+        AURORA_TEST_CHECK(h.cell_probe(after, 2U, column, 0.06) == ink);
+        AURORA_TEST_CHECK(h.cell_probe(after, 2U, column, 0.94) == ink);
+    }
+    // 区间外的**无字形**格逐位不变：高亮不外溢，也不牵动别处的落笔。带字形的未选格只断言带色回到
+    // 底色——行文本按 run 起排，选中区间把该行切成三段后同一 run 里后续字形的像素覆盖会变（实测
+    // 如此），那是框架 shaping 的性质而不是选区层的，逐位相等在这里判不出选区缺陷。
+    for (const std::size_t column : {std::size_t{0U}, std::size_t{8U}, std::size_t{9U}, std::size_t{10U}}) {
+        AURORA_TEST_CHECK(h.cell_probe(after, 2U, column, 0.06) == background);
+        AURORA_TEST_CHECK(h.cell_probe(after, 2U, column, 0.94) == background);
+    }
+    for (const std::size_t column : {std::size_t{8U}, std::size_t{9U}, std::size_t{10U}}) {
+        AURORA_TEST_CHECK_MSG(h.cell_band(before, 2U, column) == h.cell_band(after, 2U, column),
+                              "a blank unselected cell changed while only columns 1..4 were swept");
+    }
+    AURORA_TEST_CHECK_MSG(h.cell_probe(after, 2U, 5U, 0.06) == background &&
+                              h.cell_probe(after, 2U, 7U, 0.94) == background,
+                          "the highlight leaked past the swept interval onto glyph cells");
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(flow_selection_runs_to_the_row_end_and_stops_at_the_focus) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const std::size_t columns = h.geometry().columns;
+    const auto &background = h.palette().default_background;
+    const auto ink = borealis::ui::selection_color(h.palette());
+    h.feed("\x1b[?25l\x1b[3;1HABCDEFGH");
+    const auto before = h.pixels();
+
+    h.pointer(au::MouseAction::Press, 2U, 3U);
+    h.pointer(au::MouseAction::Move, 4U, 2U);
+    h.pointer(au::MouseAction::Release, 4U, 2U);
+    h.render();
+    const auto after = h.pixels();
+
+    // 首行从按下那一格起到**行尾**（含未写入的填充格），末行截到焦点列，中间行整行。
+    AURORA_TEST_CHECK(h.cell_probe(after, 2U, 2U, 0.06) == background);
+    AURORA_TEST_CHECK(h.cell_probe(after, 2U, 3U, 0.06) == ink);
+    AURORA_TEST_CHECK(h.cell_probe(after, 2U, columns - 1U, 0.06) == ink);
+    AURORA_TEST_CHECK(h.cell_probe(after, 3U, 0U, 0.06) == ink);
+    AURORA_TEST_CHECK(h.cell_probe(after, 3U, columns - 1U, 0.06) == ink);
+    AURORA_TEST_CHECK(h.cell_probe(after, 4U, 2U, 0.06) == ink);
+    AURORA_TEST_CHECK(h.cell_probe(after, 4U, 3U, 0.06) == background);
+    // 区间外两行整带不变（中间行的整行高亮不许外溢到相邻行）。
+    AURORA_TEST_CHECK_EQ(Harness::count_diff(h.row_band(before, 1U), h.row_band(after, 1U)), 0U);
+    AURORA_TEST_CHECK_EQ(Harness::count_diff(h.row_band(before, 5U), h.row_band(after, 5U)), 0U);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(unfocused_selection_blends_half_toward_the_background) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto &background = h.palette().default_background;
+    const auto ink = borealis::ui::selection_color(h.palette());
+    h.feed("\x1b[?25l\x1b[3;2Hword");
+
+    h.pointer(au::MouseAction::Press, 2U, 1U);
+    h.pointer(au::MouseAction::Move, 2U, 4U);
+    h.pointer(au::MouseAction::Release, 2U, 4U);
+    h.render();
+    // 指针 Press 经真实焦点序把焦点给了本控件，故此刻是持焦态：取 selection 槽本体。
+    AURORA_TEST_REQUIRE(h.view_focused());
+    auto px = h.pixels();
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 2U, 0.06) == ink);
+
+    h.set_focused(false);
+    h.render();
+    px = h.pixels();
+    const auto blended = borealis::ui::mix_half(ink, background);
+    AURORA_TEST_REQUIRE_MSG(blended != ink, "the two colors must differ for this to be a witness");
+    for (std::size_t column = 1U; column <= 4U; ++column) {
+        AURORA_TEST_CHECK(h.cell_probe(px, 2U, column, 0.06) == blended);
+    }
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 0U, 0.06) == background);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(alt_drag_selects_a_rectangular_block) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto &background = h.palette().default_background;
+    const auto ink = borealis::ui::selection_color(h.palette());
+    std::string script = "\x1b[?25l";
+    for (std::size_t row = 2U; row <= 5U; ++row) {
+        script += "\x1b[";
+        script += std::to_string(row + 1U);
+        script += ";1H0123456789";
+    }
+    h.feed(script);
+
+    h.pointer(au::MouseAction::Press, 2U, 2U, au::ModifierKey::Alt);
+    h.pointer(au::MouseAction::Move, 4U, 5U, au::ModifierKey::Alt);
+    h.pointer(au::MouseAction::Release, 4U, 5U, au::ModifierKey::Alt);
+    h.render();
+    const auto px = h.pixels();
+
+    // 列模式是矩形：每一行进选区的列区间都相同，且行尾填充格一律不入选区。
+    for (std::size_t row = 2U; row <= 4U; ++row) {
+        AURORA_TEST_CHECK(h.cell_probe(px, row, 1U, 0.06) == background);
+        AURORA_TEST_CHECK(h.cell_probe(px, row, 2U, 0.06) == ink);
+        AURORA_TEST_CHECK(h.cell_probe(px, row, 5U, 0.06) == ink);
+        AURORA_TEST_CHECK(h.cell_probe(px, row, 6U, 0.06) == background);
+        AURORA_TEST_CHECK(h.cell_probe(px, row, 10U, 0.06) == background);
+    }
+    AURORA_TEST_CHECK(h.cell_probe(px, 5U, 3U, 0.06) == background);
+    // 复制腿随行：三行的同一列区间，行以 **LF** 分隔（裁决 7.32①）。
+    AURORA_TEST_CHECK_EQ(h.selected_text(), "2345\n2345\n2345");
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(double_click_selects_the_word_and_nothing_on_a_break) {
+#ifdef AURORA_BACKEND_HEADLESS
+    TerminalView::InteractionOptions options;
+    options.word_delimiters = ";";
+    Harness h(test_palette(), options);
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto &background = h.palette().default_background;
+    const auto ink = borealis::ui::selection_color(h.palette());
+    h.feed("\x1b[?25l\x1b[3;1Hfoo;bar");
+
+    h.click(2U, 1U);  // 单击落在词内：逐格
+    h.click(2U, 1U);  // 同一格第二次按下即双击
+    h.render();
+    auto px = h.pixels();
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 0U, 0.06) == ink);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 2U, 0.06) == ink);
+    // 界定符本身不入选区，词后紧接的 `;` 保持在底色。
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 3U, 0.06) == background);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 4U, 0.06) == background);
+    AURORA_TEST_CHECK_EQ(h.selected_text(), "foo");
+
+    // 双击落在断点上回空（裁决 7.39④）：既有选区就此作废，而不是扩成一串空白。
+    h.click(2U, 3U);
+    h.click(2U, 3U);
+    h.render();
+    px = h.pixels();
+    for (std::size_t column = 0U; column <= 6U; ++column) {
+        AURORA_TEST_CHECK(h.cell_probe(px, 2U, column, 0.06) == background);
+    }
+    AURORA_TEST_CHECK_EQ(h.selected_text(), std::string{});
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(triple_click_selects_the_row_and_dragging_up_extends_whole_rows) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const std::size_t columns = h.geometry().columns;
+    const auto &background = h.palette().default_background;
+    const auto ink = borealis::ui::selection_color(h.palette());
+    h.feed("\x1b[?25l\x1b[2;1Htop\r\n\x1b[3;1HABC");
+
+    // 三击落在行尾空白上也选整行（D5①）：行号是屏幕行，内容是上一行写下的 "top"。
+    h.click(1U, 0U);
+    h.click(1U, 0U);
+    h.click(1U, 0U);
+    h.render();
+    auto px = h.pixels();
+    for (std::size_t column = 0U; column < columns; ++column) {
+        AURORA_TEST_CHECK(h.cell_probe(px, 1U, column, 0.06) == ink);
+    }
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 0U, 0.06) == background);
+    // 行粒度取的是**整行含行尾空白**（D5①），故复制结果带满列宽的填充空格。
+    const std::string blanks(columns - 3U, ' ');
+    AURORA_TEST_CHECK_EQ(h.selected_text(), "top" + blanks);
+
+    // 连击上限是 3，故第四次按下仍是行粒度；向上拖时端点须折成区间**外沿**，
+    // 否则只选中起始行的第一列（裁决 7.40③）。
+    h.pointer(au::MouseAction::Press, 1U, 0U);
+    h.pointer(au::MouseAction::Move, 2U, 1U);
+    h.pointer(au::MouseAction::Release, 2U, 1U);
+    h.render();
+    px = h.pixels();
+    for (std::size_t column = 0U; column < columns; ++column) {
+        AURORA_TEST_CHECK(h.cell_probe(px, 1U, column, 0.06) == ink);
+        AURORA_TEST_CHECK(h.cell_probe(px, 2U, column, 0.06) == ink);
+    }
+    AURORA_TEST_CHECK_EQ(h.selected_text(), "top" + blanks + "\nABC" + blanks);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(selection_highlight_follows_the_content_when_output_arrives) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const std::size_t rows = h.geometry().rows;
+    const auto ink = borealis::ui::selection_color(h.palette());
+    std::string script = "\x1b[?25l";
+    for (std::size_t index = 0U; index < rows + 2U; ++index) {
+        script += "row ";
+        script += static_cast<char>('A' + static_cast<int>(index % 26U));
+        script += "\r\n";
+    }
+    h.feed(script);
+    const std::size_t row = rows - 3U;
+    h.pointer(au::MouseAction::Press, row, 2U);
+    h.pointer(au::MouseAction::Move, row, 3U);
+    h.pointer(au::MouseAction::Release, row, 3U);
+    h.render();
+    auto px = h.pixels();
+    AURORA_TEST_REQUIRE(h.cell_probe(px, row, 2U, 0.06) == ink);
+    AURORA_TEST_REQUIRE_EQ(h.selected_text(), "w ");  // 每行都是 "row <字母>"，第 2~3 列即 "w "
+
+    // 新输出把可见窗整体上推一行：高亮跟着内容走而不是跟着屏幕行走（端点存的是存储行序）。
+    h.feed("appended\r\n");
+    h.render();
+    px = h.pixels();
+    AURORA_TEST_CHECK(h.cell_probe(px, row - 1U, 2U, 0.06) == ink);
+    AURORA_TEST_CHECK(h.cell_probe(px, row, 2U, 0.06) != ink);
+    AURORA_TEST_CHECK_EQ(h.selected_text(), "w ");
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(copy_options_travel_with_the_interaction_options) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness plain;
+    AURORA_TEST_REQUIRE(plain.preflight());
+    plain.feed("\x1b[?25l\x1b[3;1HAB   \x1b[4;1Htail");
+    plain.pointer(au::MouseAction::Press, 2U, 0U);
+    plain.pointer(au::MouseAction::Move, 3U, 3U);
+    plain.pointer(au::MouseAction::Release, 3U, 3U);
+    plain.render();
+    // 原样：首行选到**行尾**（含未写入的填充格），行以 LF 分隔（剪贴板侧不翻译，裁决 7.32①）。
+    const std::string blanks(plain.geometry().columns - 2U, ' ');
+    AURORA_TEST_CHECK_EQ(plain.selected_text(), "AB" + blanks + "\ntail");
+
+    TerminalView::InteractionOptions options;
+    options.copy.trim_trailing_space = true;
+    Harness trimmed(test_palette(), options);
+    AURORA_TEST_REQUIRE(trimmed.preflight());
+    trimmed.feed("\x1b[?25l\x1b[3;1HAB   \x1b[4;1Htail");
+    trimmed.pointer(au::MouseAction::Press, 2U, 0U);
+    trimmed.pointer(au::MouseAction::Move, 3U, 3U);
+    trimmed.pointer(au::MouseAction::Release, 3U, 3U);
+    trimmed.render();
+    // 同一份选区、只换一个变换键：配置值确实经 `InteractionOptions` 抵达复制腿。
+    AURORA_TEST_CHECK_EQ(trimmed.selected_text(), "AB\ntail");
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif
