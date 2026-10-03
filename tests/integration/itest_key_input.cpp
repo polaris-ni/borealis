@@ -255,6 +255,12 @@ AURORA_TEST_CASE(function_and_editing_keys_use_the_xterm_forms) {
     AURORA_TEST_CHECK_EQ(h.written(), "\x1B[3~");
     h.clear_written();
 
+    // 主键盘 `Insert` 的 `CSI 2~` 腿：框架 G20 回货前 `VK_INSERT` 只能落成 `Unknown`，本例当时
+    // 结构上无法成立（裁决 7.30⑤ 的「不等不绕」留桩处）。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::Insert));
+    AURORA_TEST_CHECK_EQ(h.written(), "\x1B[2~");
+    h.clear_written();
+
     AURORA_TEST_REQUIRE(h.press(au::KeyCode::PageUp));
     AURORA_TEST_CHECK_EQ(h.written(), "\x1B[5~");
     h.clear_written();

@@ -127,6 +127,11 @@ AURORA_TEST_CASE(key_sym_values_are_aligned_with_the_framework_key_codes) {
     lock(KeySym::KP_8, aurora::KeyCode::KP_8);
     lock(KeySym::KP_9, aurora::KeyCode::KP_9);
     AURORA_TEST_CHECK_EQ(static_cast<int>(KeySym::KP_Insert), 100);  // 段首锚点：两侧都写死的值
+
+    // 主键盘 `Insert` 是框架的**后补显式初值段**（G20），取 `KP_9`（122）之后的下一格而非插回
+    // 「编辑/导航」段——插回中间会让其后全部取值整体位移，而互转即 `static_cast`，不报错只错位。
+    lock(KeySym::Insert, aurora::KeyCode::Insert);
+    AURORA_TEST_CHECK_EQ(static_cast<int>(KeySym::Insert), 123);  // 段首锚点：两侧都写死的值
 }
 
 AURORA_TEST_CASE(control_keys_produce_the_legacy_control_bytes) {
@@ -191,6 +196,9 @@ AURORA_TEST_CASE(function_and_editing_keys_use_the_xterm_forms) {
     AURORA_TEST_CHECK_EQ(enc(KeySym::F11), esc("[23~"));
     AURORA_TEST_CHECK_EQ(enc(KeySym::F12), esc("[24~"));
     AURORA_TEST_CHECK_EQ(enc(KeySym::Delete), esc("[3~"));
+    // 主键盘 `Insert` 与 `KP_Insert` 是同一波浪号族的 `2` 号位（框架 G20 回货；Win32 / GLFW 的
+    // 小键盘导航区也恒给主档，故本档才是该键在三后端上的唯一产出形态）。
+    AURORA_TEST_CHECK_EQ(enc(KeySym::Insert), esc("[2~"));
     AURORA_TEST_CHECK_EQ(enc(KeySym::PageUp), esc("[5~"));
     AURORA_TEST_CHECK_EQ(enc(KeySym::PageDown), esc("[6~"));
 
@@ -198,6 +206,8 @@ AURORA_TEST_CASE(function_and_editing_keys_use_the_xterm_forms) {
     AURORA_TEST_CHECK_EQ(enc(KeySym::F1, true), esc("[1;2P"));
     AURORA_TEST_CHECK_EQ(enc(KeySym::F4, false, true), esc("[1;5S"));
     AURORA_TEST_CHECK_EQ(enc(KeySym::Delete, true), esc("[3;2~"));
+    AURORA_TEST_CHECK_EQ(enc(KeySym::Insert, true), esc("[2;2~"));    // Shift+Insert（xterm 的 paste 位）
+    AURORA_TEST_CHECK_EQ(enc(KeySym::Insert, false, true), esc("[2;5~"));
     AURORA_TEST_CHECK_EQ(enc(KeySym::PageUp, false, true), esc("[5;5~"));
     AURORA_TEST_CHECK_EQ(enc(KeySym::F12, true, false, true), esc("[24;4~"));  // Shift+Alt：掩码 1+1+2
     // 应用模式不影响 F1–F4（它们与 DECCKM 无关），也不影响波浪号族。
@@ -316,7 +326,7 @@ AURORA_TEST_CASE(keypad_segment_predicate_covers_only_the_keypad_range) {
     AURORA_TEST_CHECK(!term::is_keypad(KeySym::F12));
     AURORA_TEST_CHECK(!term::is_keypad(KeySym::Unknown));
     AURORA_TEST_CHECK(!term::is_keypad(static_cast<KeySym>(99)));    // 段前一格
-    AURORA_TEST_CHECK(!term::is_keypad(static_cast<KeySym>(123)));   // 段后一格
+    AURORA_TEST_CHECK(!term::is_keypad(KeySym::Insert));             // 段后一格（G20 回货的主键盘档，走波浪号族）
 }
 
 AURORA_TEST_CASE(modifier_only_and_unmapped_keys_produce_nothing) {
