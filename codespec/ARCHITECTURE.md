@@ -271,6 +271,9 @@ SFTP（`SPEC.FEAT.CONN.04`）、隧道（`SPEC.FEAT.CONN.08`）、公钥推送�
 ### 8.1 标签与 pane 树
 
 - 多标签（`SPEC.FEAT.WS.01`）；框架 `TabBar`（`widget/tab_bar.h`）**仅覆盖选中切换与关闭**——事件只有 `on_change` / `on_close`，属性为选中序号、栏高、四个**全局**配色、指示器粗细、字号与内边距。`SPEC.FEAT.WS.01` 要求的**拖拽重排**与**逐标签图标**、`SPEC.FEAT.WS.04` 要求的**逐标签状态角标与活动高亮**均无对应能力（配色是全局的，无法区分单个标签），须应用侧自研标签栏或在其外自绘这些元素。不得因 `TabBar` 的存在而低估本项工作量（与下条 `Splitter` 同理）。
+  - `ui::TabStrip`（`include/borealis/ui/tab_strip.h` + `src/ui/tab_strip.cpp`，纯逻辑、公共头不含 Aurora 也不含 `config` 类型）承载**与绘制与会话无关的那一半**：顺序本身、当前选中格、以及这一格该显示哪个名字。它不是 `TabBar` 的壳，而是重排、逐标签名称与三名优先级这三处的唯一真值源；`TabBar` 至多是呈现件。九条口径见裁决 7.43①–⑨。
+  - **名称折算在自由函数里**：`resolve_tab_name(TabNames, TabNamePriority)` 是唯一的判定点（档案名 / `OSC 0/2` 标题 / 手动重命名三来源，照 `SPEC.FEAT.TERM.07`），`TabStrip` 的显示名入口只按 id 取来源再转调它。**空串即「该来源未设置」**，故撤销重命名与 OSC 设回空是同一条让位规则，没有「重置为默认名」这个动作。优先级是入参而非写死（需求把 manual-vs-OSC 明标「可配」），配置键 `appearance.tab_name_priority` 缺省 `manual_wins`。
+  - **界面腿另棒**：栏位宽度与溢出滚动、逐标签图标与角标、拖拽落点折成 `move` 的下标、关闭按钮命中、「关闭前确认（有运行中进程时）」的对话框，以及末位标签关闭 → 关窗口（`SPEC.FEAT.WS.03`）那条路径。图标与角标、「有运行中进程」的判据刻意不入本件——存了会话指针，标签列表就再也无法脱离会话单测（AGENTS.md §4.4 第 20 条）。
 - **pane 树须自研**：框架 `Splitter` 为二元分割器，只能表达「两个子节点 + 一个比例」；本需求要求每一层为**多子 pane 容器**并满足任意方向 / 任意深度 / 任意比例 / 任意 pane 数四义（裁决 7.10）。
   - `ui::PaneTree`（`include/borealis/ui/pane_tree.h` + `src/ui/pane_tree.cpp`，纯逻辑、公共头不含 Aurora 类型）已承载这棵树**与绘制无关的那一半**：拓扑编辑（`split` / `close`）、每层沿轴的相对长度、等分与把手拖拽（`equalize` / `move_divider`）、方向键路由（自由函数 `ui::route_focus`）。十一条口径见裁决 7.42①–⑪。界面腿（pane 容器 widget、把手命中与拖拽接线、焦点描边、逐 pane 下发尺寸）另棒，且按「UI 编写前先出设计图评审」须先补分屏交互的视觉稿。
   - **树不持几何记忆**：只存每层的相对长度，绝对尺寸只存在于 `layout()` 的产物里（const，且与 `move_divider()` 共用同一条折算算式）。于是窗口 resize、pane 增删、把手拖拽三条路径走同一次折算，不会出现「界面记了一份尺寸、模型记了另一份」的分叉，历史拖拽也不会因缩放而「回弹」。
