@@ -2,7 +2,7 @@
 // 剪贴板落地实现（src/session/clipboard_outbox.cpp）
 // ------------------------------------------------------------
 // 本文件是全仓唯一触达框架与系统剪贴板的地方：远端 `OSC 52` 的留存文本与本地选中复制的文本
-// 都从这里出去，取走与写入都发生在主线程。
+// 都从这里出去，本地右键粘贴的文本从这里进来，取走、写入与读取都发生在主线程。
 // ============================================================
 
 #include "borealis/session/clipboard_outbox.h"
@@ -25,6 +25,17 @@ auto ClipboardOutbox::write(std::string_view utf8) -> void {
         // 抛给帧循环只会让画面为一次剪贴板写买单。
         AURORA_LOG_WARN("session", "clipboard write failed: ", result.error().message);
     }
+}
+
+auto ClipboardOutbox::read() -> std::string {
+    const auto result = aurora::Clipboard::get_text();
+    if (!result.ok()) {
+        // 与写方向同一条口径：读不到就当剪贴板是空的，调用方什么都不发。剪贴板没有内容格式
+        // 是日常状态（复制过图片之后），为它抬一条 warn 会让日志失去信号价值。
+        AURORA_LOG_DEBUG("session", "clipboard read unavailable: ", result.error().message);
+        return {};
+    }
+    return result.value();
 }
 
 auto ClipboardOutbox::drain(Session &session) -> std::size_t {
