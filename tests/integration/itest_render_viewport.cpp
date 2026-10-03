@@ -8,7 +8,9 @@
 ///           回看态的「距底恒定」（裁决 D6①）、备屏不可滚、双宽与零宽的列位对齐，以及选区界面腿
 ///           （`SPEC.FEAT.INTERACT.02`）：拖拽扫过的格子整格变 selection 色而区间外逐位不变、
 ///           流式首行到行尾、失焦各半混合、Alt 列模式矩形、双击选词（断点上回空）、三击整行与
-///           向上拖的外沿、高亮跟着内容而非屏幕行走，以及复制腿的变换入参。
+///           向上拖的外沿、高亮跟着内容而非屏幕行走，以及复制腿的变换入参；另有排版选项的接线腿
+///           （配置里的缺字回退链进到交进框架的那一份选项、且不随缩放丢失，固定格推进档位取
+///           **未含字距**的原始格宽并随缩放重取）。
 ///           像素一律比 RGBA 四通道含 alpha：Headless 帧底色是全透明黑 (0,0,0,0)，只比 RGB 会让
 ///           「画了个纯黑」与「什么都没画」混为一谈。
 ///
@@ -16,6 +18,7 @@
 ///           盒），控件无法把子矩形报成脏，故像素差分观察不到那条纪律（设计稿 §9 已按实测改口径）。
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -144,14 +147,15 @@ class Harness {
   public:
     explicit Harness(const PaletteSpec &palette = test_palette(),
                      const TerminalView::InteractionOptions &options = {},
-                     const Typography &typography = {})
+                     const Typography &typography = {}, std::vector<std::string> font_fallback_chain = {})
         : palette_(palette),
           options_(options),
           font_(test_font()),
           typography_(typography),
           session_(std::make_unique<Session>(own_connection(), kNominalSize, kScrollback, width_policy)),
           view_(std::make_shared<TerminalView>(*session_, palette_, font_, typography_, kPaddingDp,
-                                               std::chrono::milliseconds{kBlinkPeriodMs}, options_)),
+                                               std::chrono::milliseconds{kBlinkPeriodMs}, options_,
+                                               std::move(font_fallback_chain))),
           root_(std::static_pointer_cast<au::Widget>(view_)) {
         session_->start();
         render();  // 帧 0：布局发生在这里，控件据此把行列尺寸下发给会话
@@ -281,6 +285,19 @@ class Harness {
 
     /// @brief 控件报告的当前字号：缩放算式（步长与钳位）的直接观测点。
     [[nodiscard]] auto font_size_pt() const -> float { return view_->font_size_pt(); }
+
+    /// @brief 控件交进框架的排版选项：回退链与固定格档位的观测点（三项都反推不出像素）。
+    [[nodiscard]] auto layout_options() const -> const au::render::TextLayoutOpts & {
+        return view_->layout_options();
+    }
+
+    /// @brief 框架给出的**原始**整格宽（物理 px、已含 scale）——固定格推进档位的独立复算点。
+    ///
+    /// 与 `refresh_geometry` 同一条算式（取驱动台自己那份已同步字号的字体），故不是把实现的输出
+    /// 当预期；档位若误取回填后的格宽（含字距），本值与观测值就正好差一个字距。
+    [[nodiscard]] auto raw_cell_width_px() const {
+        return au::render::FontEngine::monospace_cell(font_, scale_).cell_width_px;
+    }
 
     /// @brief 控件当前是否持焦：指针 Press 的焦点归属由派发器决定，本用例要能证到它。
     [[nodiscard]] auto view_focused() const -> bool { return view_->is_focused(); }
@@ -1345,6 +1362,87 @@ AURORA_TEST_CASE(double_width_cells_do_not_shift_the_following_columns) {
                                   h.cell_window(many, 8U, column, width, height),
                               "the double-width advance error accumulated over consecutive Han glyphs");
     }
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(fallback_face_glyphs_do_not_shift_the_following_columns) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto width = static_cast<std::size_t>(h.geometry().cell_width);
+    const auto height = static_cast<std::size_t>(h.geometry().cell_height);
+    // 固定格推进档位的像素证人：主面缺字时选面回退，而**回退面的单宽推进量不由网格决定**。
+    // 第 3 行的 ① 与第 5 行的空格同占第 1 列，`AB` 在两行里都落在第 2、3 列；档位没生效时
+    // 第 3 行的 AB 会按 ① 自己的推进落点，与对照行逐位不同。
+    // CJK-LITERAL: cjk-fixture - 回退面的推进量就是被测事实，转成 ASCII 这条判据即消失
+    h.feed("\x1b[?25l\x1b[3;1H\xe2\x91\xa0" "AB\r\n\r\n AB");
+    const auto px = h.pixels();
+    AURORA_TEST_REQUIRE_MSG(Harness::count_diff(h.cell_window(px, 2U, 0U, width, height),
+                                                h.cell_window(px, 4U, 0U, width, height)) > 0U,
+                            "the witness needs the fallback glyph to actually put ink");
+    // 只断第 2、3 列：① 的回退面字形比一格宽，其墨迹越出自己那格压进第 1 列（实测档位开合该列
+    // 都非零），那属回退面字形自己的宽度而非推进误差；推进误差落在其**后面**的列上（无档位时
+    // 第 2 列差 134、第 3 列差 74，有档位时两列均为 0）。
+    for (const std::size_t column : {std::size_t{2U}, std::size_t{3U}}) {
+        AURORA_TEST_CHECK_MSG(h.cell_window(px, 2U, column, width, height) ==
+                                  h.cell_window(px, 4U, column, width, height),
+                              "a glyph following the fallback-face cell slid off its own column");
+    }
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(configured_fallback_chain_survives_the_metric_refresh) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 缺省档：空链 = 不注入按族链，只走框架的全局默认链。这一半是「装配层不给这一项时与 G23
+    // 回货前逐位同形」的判据。
+    Harness plain;
+    AURORA_TEST_REQUIRE(plain.preflight());
+    AURORA_TEST_CHECK_TRUE(plain.layout_options().fallback_chain_view().empty());
+
+    // 两个互异族名：顺序就是这条链的语义，构造或写读两侧反了次序在这里才露得出来。
+    Harness chained(test_palette(), TerminalView::InteractionOptions{}, Typography{},
+                    {"Courier New", "MS Gothic"});
+    AURORA_TEST_REQUIRE(chained.preflight());
+    const std::array<std::string_view, 2> expected{"Courier New", "MS Gothic"};
+    AURORA_TEST_CHECK_TRUE((std::ranges::equal(chained.layout_options().fallback_chain_view(), expected)));
+
+    // Ctrl+滚轮缩放要重取整格度量并覆写同一份排版选项的字距，链必须原地留着：只在新建那份
+    // 选项时填链，缩放一次就把用户配的链抹掉了。
+    chained.zoom(-2);
+    AURORA_TEST_CHECK_TRUE((std::ranges::equal(chained.layout_options().fallback_chain_view(), expected)));
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(fixed_cell_advance_is_the_raw_grid_width_and_follows_the_zoom) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness tight;
+    AURORA_TEST_REQUIRE(tight.preflight());
+    const auto raw = tight.raw_cell_width_px();
+    AURORA_TEST_REQUIRE_MSG(raw > 0, "the framework must report a positive cell width to anchor the grid");
+    const auto spacing_px = static_cast<double>(raw) / 3.0;
+
+    // 档位取**未含字距**的原始格宽：框架把 `letter_spacing` 叠加在本档位之上，取回填后的格宽
+    // （= 原始 + 字距）就等于把字距算两遍，列位会以每格一个字距的速度漂走。
+    Harness spread(test_palette(), TerminalView::InteractionOptions{},
+                   Typography{.letter_spacing_dp = spacing_px});
+    AURORA_TEST_REQUIRE(spread.preflight());
+    AURORA_TEST_REQUIRE(spread.layout_options().fixed_cell_advance_px.has_value());
+    AURORA_TEST_CHECK_EQ(*spread.layout_options().fixed_cell_advance_px, static_cast<float>(raw));
+    AURORA_TEST_CHECK_EQ(*spread.layout_options().fixed_cell_advance_px + spread.layout_options().letter_spacing,
+                         static_cast<float>(spread.geometry().cell_width * spread.scale()));
+
+    // 缩放重取整格度量：档位必须跟上新格宽。单位写成逻辑 dp 时本断言仍可能与旧值巧合相等，
+    // 故判据取「与框架同一算式在缩放后现算的那一个」逐位相等，而非某个绝对数。
+    tight.zoom(3);
+    const auto zoomed_raw = tight.raw_cell_width_px();
+    AURORA_TEST_REQUIRE_MSG(zoomed_raw != raw, "the zoom must actually change the raw cell width");
+    AURORA_TEST_CHECK_EQ(*tight.layout_options().fixed_cell_advance_px, static_cast<float>(zoomed_raw));
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif

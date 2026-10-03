@@ -97,6 +97,8 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     next.appearance.font_size_pt = 11.5;
     next.appearance.font_line_height = 1.25;    // 非整倍数：行高余量的往返等值才判得出取整口径
     next.appearance.font_letter_spacing_dp = 2.0;
+    // 顺序即语义：两项互换在往返里必须判得出来，故用两个互异的族名而非同名重复。
+    next.appearance.font_fallback_chain = {"Courier New", "MS Gothic"};
     next.appearance.viewport_padding_dp = 0.0F;  // 贴边形态（裁决 7.25②）
     next.appearance.cursor_shape = CursorShape::Bar;
     next.appearance.cursor_blinking = false;
@@ -197,6 +199,9 @@ AURORA_TEST_CASE(defaults_are_the_first_launch_shape) {
     // 两档排版可调量的默认值即「字体自身的排布」：首屏不得因为可调项而改变行列数。
     AURORA_TEST_CHECK_NEAR(defaults.appearance.font_line_height, 1.0, 0.001);
     AURORA_TEST_CHECK_NEAR(defaults.appearance.font_letter_spacing_dp, 0.0, 0.001);
+    // 缺省不注入按族链：全局默认回退链是本键落地前唯一的形态，故空表 = 「沿用框架全局」而非
+    // 「用户要求不回退」（裁决 7.50）。
+    AURORA_TEST_CHECK_TRUE(defaults.appearance.font_fallback_chain.empty());
     AURORA_TEST_CHECK_NEAR(defaults.appearance.viewport_padding_dp, 4.0F, 0.001F);
     AURORA_TEST_CHECK_TRUE(defaults.appearance.cursor_shape == CursorShape::Block);
     AURORA_TEST_CHECK_TRUE(defaults.appearance.cursor_blinking);
@@ -352,6 +357,29 @@ AURORA_TEST_CASE(bad_values_fall_back_to_defaults_and_are_reported) {
     AURORA_TEST_CHECK_TRUE(holds(store.report().unknown_keys, "migrated_from"));
     AURORA_TEST_CHECK_TRUE(holds(store.report().unknown_keys, "appearance.legacy_widget"));
     AURORA_TEST_CHECK_FALSE(holds(store.report().unknown_keys, "terminal.bell"));
+}
+
+AURORA_TEST_CASE(chain_entries_drop_individually_not_wholesale) {
+    // 一张链里坏一项不该让整张链失效：框架对解析不到的族也只是跳过而不报错，装载侧同方向容错。
+    const auto partial_file = make_path("chain_partial.json");
+    write_file(partial_file, R"({
+  "schema_version": 1,
+  "appearance": {"font_fallback_chain": ["Courier New", 7, "", "MS Gothic"]}
+})");
+    const Store partial{partial_file};
+    // 顺序是链的语义，故保住的两项必须按原次序读到（写读两侧反了次序在这里就露出来）。
+    AURORA_TEST_CHECK_TRUE((partial.settings().appearance.font_fallback_chain ==
+                            std::vector<std::string>{"Courier New", "MS Gothic"}));
+    // 留痕落在**坏掉那一项的下标**上而非整键：用户要的是「哪一项写坏了」。
+    AURORA_TEST_CHECK_TRUE(holds(partial.report().rejected_keys, "appearance.font_fallback_chain[1]"));
+    AURORA_TEST_CHECK_TRUE(holds(partial.report().rejected_keys, "appearance.font_fallback_chain[2]"));
+
+    // 类型不符（压根不是数组）才整键回落默认：这时链的每一项都无从判断。
+    const auto broken_file = make_path("chain_not_an_array.json");
+    write_file(broken_file, R"({"schema_version": 1, "appearance": {"font_fallback_chain": "Courier New"}})");
+    const Store broken{broken_file};
+    AURORA_TEST_CHECK_TRUE(broken.settings().appearance.font_fallback_chain.empty());
+    AURORA_TEST_CHECK_TRUE(holds(broken.report().rejected_keys, "appearance.font_fallback_chain"));
 }
 
 AURORA_TEST_CASE(missing_domains_are_reported_once_each) {
