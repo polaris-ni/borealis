@@ -3,7 +3,8 @@
 // ------------------------------------------------------------
 // 全仓唯一触达 `aurora::Painter` 绘制面的翻译单元（架构 §9.2 的收口纪律）：这里只有
 // 「互转 + 按层叠顺序下调用」，判断全在纯逻辑件里（`ui::palette`、`ui::cell_layout`、
-// `session::ScreenMirror`），于是最容易算错的行号与 dp 换算能留在无框架环境里全量单测。
+// `ui::selection`、`session::ScreenMirror`），于是最容易算错的行号与 dp 换算能留在无框架
+// 环境里全量单测。
 // ============================================================
 
 #include "terminal_view.h"
@@ -23,8 +24,10 @@
 #include "aurora/render/font_engine.h"
 #include "borealis/grid/cell.h"
 #include "borealis/grid/row.h"
+#include "borealis/session/clipboard_outbox.h"
 #include "borealis/term/keymap.h"
 #include "borealis/term/utf8.h"
+#include "borealis/ui/selection.h"
 
 namespace borealis::ui {
 namespace {
@@ -97,6 +100,11 @@ constexpr double kIndicatorMinLengthDp = 12.0;
     };
 }
 
+/// @brief 格子坐标的阅读序比较（先行后列）：流式选区的首尾就是按这个序定的（`ui::row_spans`）。
+[[nodiscard]] auto before(const GridCellPos &a, const GridCellPos &b) noexcept -> bool {
+    return a.row < b.row || (a.row == b.row && a.column < b.column);
+}
+
 /// @brief 码点接收端：把解出的码点依次收进串里。
 class StringCollector final : public term::CodePointSink {
   public:
@@ -121,12 +129,14 @@ class StringCollector final : public term::CodePointSink {
 }  // namespace
 
 TerminalView::TerminalView(session::Session &session, PaletteSpec palette, aurora::Font ref_font,
-                           float padding_dp, std::chrono::milliseconds blink_period)
+                           float padding_dp, std::chrono::milliseconds blink_period,
+                           InteractionOptions options)
     : session_(&session),
       spec_(std::move(palette)),
       ref_font_(std::move(ref_font)),
       padding_dp_(padding_dp),
-      blink_period_(blink_period) {
+      blink_period_(blink_period),
+      options_(std::move(options)) {
     // 撑满父级是控件自身的意图，写在这里以免每个装配点（含测试）都要重述一遍。
     width(aurora::fill());
     height(aurora::fill());
@@ -150,6 +160,10 @@ auto TerminalView::on_frame() -> void {
             };
             mirror_.apply(grid, frame, reproject(total_lines_, grid.visible_rows()));
         });
+    // 选区的端点是存储行序，而存储顶边会随输出溢出、随 resize 与 `clear()` 位移：折算必须发生在
+    // 副本并入之后（读数由副本带出），否则高亮与复制文本会跟着旧的行号指着别的内容（裁决 7.38⑤）。
+    compensate_selection_drift();
+    flush_copy_request();
     // 回看换源与光标移动都不在提交里：前者由距底行数变化指认（`on_scroll` 在帧序里先于本函数，
     // 故同帧就能换源），后者直接比较光标快照。
     if (!frame.empty() || previous_back != mirror_.back_rows() || !(cursor_ == painted_cursor_)) {
@@ -268,6 +282,71 @@ auto TerminalView::on_text_input(aurora::TextInputEvent &e) -> void {
     e.is_handled = true;
 }
 
+auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
+    if (e.button != aurora::MouseButton::Left) {
+        return;  // 右键归 `config::RightClickAction` 的三态那一棒，中键粘贴不在首版交付面
+    }
+    if (mirror_.rows() == 0U || geometry_.columns == 0U) {
+        return;  // 字体未就绪或窗口最小化：没有格子可选
+    }
+    const auto hit = cell_at_point(geometry_, e.local_position.x, e.local_position.y);
+    if (!hit) {
+        return;
+    }
+    // 落点是绘制行号，选区存的是存储行序（`ui/selection.h` 的坐标约定），换算量只有副本的窗顶。
+    const GridCellPos cell{mirror_.window_top() + hit->row, hit->column};
+    switch (e.action) {
+        case aurora::MouseAction::Press: {
+            dragging_ = true;
+            // 连击序号由派发器集中判定并盖章（后端不参与），上限 3（裁决 7.29②）。
+            drag_mode_ = e.click_count >= 3U   ? DragMode::Line
+                         : e.click_count == 2U ? DragMode::Word
+                                               : DragMode::Cell;
+            pressed_cell_ = cell;
+            extend_selection(cell, e.modifiers);  // 单击即两端重合，旧选区就此清空
+            e.is_handled = true;
+            break;
+        }
+        case aurora::MouseAction::Move: {
+            if (!dragging_) {
+                return;  // 悬停移动不改选区
+            }
+            extend_selection(cell, e.modifiers);
+            e.is_handled = true;
+            break;
+        }
+        case aurora::MouseAction::Release: {
+            if (!dragging_) {
+                return;
+            }
+            dragging_ = false;
+            extend_selection(cell, e.modifiers);
+            // copy-on-select 只在区间非空时触发（裁决 7.38⑥）；写剪贴板是 IO，落在下一帧的
+            // `on_frame` 而不是本回调（AGENTS.md §4.5 第 25 条）。
+            if (options_.copy_on_select && selection_.has_value()) {
+                copy_pending_ = true;
+            }
+            e.is_handled = true;
+            break;
+        }
+    }
+}
+
+auto TerminalView::selected_text() -> std::string {
+    if (!selection_.has_value()) {
+        return {};
+    }
+    const Selection selection = *selection_;
+    const CopyOptions options = options_.copy;
+    std::string text;
+    // 取行须在会话锁内：可见区副本只有视口那几行，而选区可以横跨 scrollback（裁决 7.40）。
+    session_->read([&text, &selection, &options](grid::Storage &grid, const term::Cursor &,
+                                                const term::TermModes &) {
+        text = copy_text(grid, selection, options);
+    });
+    return text;
+}
+
 auto TerminalView::modes_snapshot() -> term::TermModes {
     term::TermModes snapshot{};
     session_->read([&snapshot](grid::Storage &, const term::Cursor &, const term::TermModes &modes) {
@@ -316,7 +395,12 @@ auto TerminalView::on_blink_tick() -> void {
 }
 
 auto TerminalView::paint_row(aurora::Painter &p, const aurora::Rect &bounds, std::size_t screen_row) -> void {
-    const auto runs = layout_row(mirror_.line(screen_row), spec_);
+    const auto &row = mirror_.line(screen_row);
+    const auto selected = band_at(mirror_.window_top() + screen_row);
+    // 有选中格的那一行走四参形态：底色替换发生在 `resolve` 之后，选中段因此自成一跑，而色带、
+    // 文本与装饰都跟着这张 run 表走（裁决 7.38① D1①，视觉稿 A1-c 的「字形不被染色」）。
+    const auto runs =
+        selected ? layout_row(row, spec_, *selected, selection_ink()) : layout_row(row, spec_);
     std::vector<aurora::render::TextRun> batch;
     batch.reserve(runs.size());
     std::vector<aurora::render::TextRun> italic_batch;
@@ -393,7 +477,13 @@ auto TerminalView::paint_cursor(aurora::Painter &p, const aurora::Rect &bounds, 
     p.fill_rect(to_rect(box, bounds.origin), to_color(ink));
     // 三段式的第三段：块已盖住 ③ 的字形，改按该格合成后的**底色**作前景重画一次。不取「块在下、
     // 字在上」的次序，因为主题光标色可能与前景同色——那样叠上去字符会消失。
-    const auto paint = resolve(cell, spec_);
+    auto paint = resolve(cell, spec_);
+    if (const auto selected = band_at(mirror_.window_top() + screen_row);
+        selected && cursor_.column >= selected->first_column && cursor_.column < selected->last_column) {
+        // 视觉稿 C2-a：光标层压在选区层之上，块形照旧，但第三段取的是「该格合成底色」——此刻它
+        // 就是选区色。漏这一步会让被选中的光标格用未选中底色重画字形，与同行其余选中格不一致。
+        paint.background = selection_ink();
+    }
     const std::string text = cell_text(row, cursor_.column);
     if (!paint.hidden && !text.empty()) {
         auto opts = aurora::render::TextLayoutOpts{};
@@ -418,6 +508,109 @@ auto TerminalView::paint_scroll_indicator(aurora::Painter &p, const aurora::Rect
     const Rect thumb{static_cast<double>(bounds.size.width) - kIndicatorWidthDp, thumb_top, kIndicatorWidthDp,
                      thumb_height};
     p.fill_rect(to_rect(thumb, bounds.origin), to_color(spec_.default_foreground));
+}
+
+auto TerminalView::mirror_line_of(std::size_t storage_row) const noexcept -> const grid::Row * {
+    const std::size_t top = mirror_.window_top();
+    if (storage_row < top || storage_row - top >= mirror_.rows()) {
+        return nullptr;  // 已滚出可见窗：既画不到也不该按词判定
+    }
+    return &mirror_.line(storage_row - top);
+}
+
+auto TerminalView::span_of(const GridCellPos &storage_cell, DragMode mode) const -> std::optional<RowSpan> {
+    const std::size_t columns = mirror_.columns();
+    if (columns == 0U) {
+        return std::nullopt;
+    }
+    if (mode == DragMode::Line) {
+        // 三击取整行含行尾空白（裁决 7.38① D5② 同口径的 ④），右界是列数而非最后一个有字符的列。
+        return RowSpan{.row = storage_cell.row, .first_column = 0U, .last_column = columns};
+    }
+    if (mode == DragMode::Cell) {
+        return RowSpan{.row = storage_cell.row,
+                       .first_column = storage_cell.column,
+                       .last_column = storage_cell.column + 1U};
+    }
+    const auto *row = mirror_line_of(storage_cell.row);
+    if (row == nullptr) {
+        return std::nullopt;
+    }
+    // 落在空格、制表或界定符上回空，且不扩到相邻字（裁决 7.39④）。
+    return word_span_at(*row, storage_cell, options_.word_delimiters);
+}
+
+auto TerminalView::extend_selection(const GridCellPos &current_storage, aurora::ModifierKey modifiers) -> void {
+    const auto single = [](const GridCellPos &cell) -> RowSpan {
+        return RowSpan{.row = cell.row, .first_column = cell.column, .last_column = cell.column + 1U};
+    };
+    // 取不到区间（Word 粒度落在断点上、或行已滚出可见窗）时退化为「那一格」：按下端退化保住
+    // 「双击断点不成选区」（两端重合），拖拽端退化保住「从断点拖出去仍能扩」（裁决 7.39④）。
+    const RowSpan from = span_of(pressed_cell_, drag_mode_).value_or(single(pressed_cell_));
+    const RowSpan to = span_of(current_storage, drag_mode_).value_or(single(current_storage));
+    // 折成阅读序的外沿：`row_spans` 只认两个端点格，直接拿按下格与当前格会让按词/按行的向后拖
+    // 只选到起始行的第一列（裁决 7.40）。
+    GridCellPos start{from.row, from.first_column};
+    GridCellPos end{to.row, to.last_column - 1U};
+    if (before(end, start)) {
+        start = {to.row, to.first_column};
+        end = {from.row, from.last_column - 1U};
+    }
+    const auto shape = (modifiers & aurora::ModifierKey::Alt) != 0U ? SelectionShape::Block : SelectionShape::Stream;
+    set_selection(Selection{.anchor = start, .focus = end, .shape = shape});
+}
+
+auto TerminalView::set_selection(const Selection &selection) -> void {
+    selection_ = selection;
+    refresh_selection_bands();
+    mark_needs_paint();  // 无论成不成都要重画：旧选区的像素得被清掉
+}
+
+auto TerminalView::refresh_selection_bands() -> void {
+    if (!selection_.has_value()) {
+        bands_.clear();
+        return;
+    }
+    bands_ = row_spans(*selection_, mirror_.columns());
+    if (bands_.empty()) {
+        selection_.reset();  // 两端重合（单击）或整段被推出顶端：无区间即无选区（裁决 7.39②）
+    }
+}
+
+auto TerminalView::band_at(std::size_t storage_row) const -> std::optional<RowSpan> {
+    const auto it = std::lower_bound(
+        bands_.begin(), bands_.end(), storage_row,
+        [](const RowSpan &band, std::size_t row) { return band.row < row; });
+    if (it == bands_.end() || it->row != storage_row) {
+        return std::nullopt;
+    }
+    return *it;
+}
+
+auto TerminalView::selection_ink() const noexcept -> RgbaColor {
+    const auto ink = selection_color(spec_);
+    return is_focused() ? ink : mix_half(ink, spec_.default_background);  // 裁决 7.38① D3①
+}
+
+auto TerminalView::compensate_selection_drift() -> void {
+    const std::int64_t dropped = mirror_.dropped_lines();
+    const std::int64_t rows_up = dropped - dropped_baseline_;
+    dropped_baseline_ = dropped;
+    if (selection_.has_value() && rows_up != 0) {
+        selection_ = translate_selection_rows(*selection_, rows_up);
+    }
+    refresh_selection_bands();  // 列数也可能随 resize 变，首行右界取的是列数
+}
+
+auto TerminalView::flush_copy_request() -> void {
+    if (!copy_pending_) {
+        return;
+    }
+    copy_pending_ = false;
+    const std::string text = selected_text();
+    if (!text.empty()) {
+        session::ClipboardOutbox::write(text);
+    }
 }
 
 }  // namespace borealis::ui

@@ -110,7 +110,7 @@ class Harness {
     Harness()
         : session_(std::make_unique<Session>(own_connection(), kNominalSize, kScrollback, width_policy)),
           view_(std::make_shared<TerminalView>(*session_, PaletteSpec{}, test_font(), kPaddingDp,
-                                               std::chrono::milliseconds{500})),
+                                               std::chrono::milliseconds{500}, TerminalView::InteractionOptions{})),
           root_(std::static_pointer_cast<au::Widget>(view_)) {
         session_->start();
         focus_.set_root(&root_.widget());

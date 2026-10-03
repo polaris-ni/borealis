@@ -86,7 +86,8 @@ class Harness {
         spec.command_line = command_line;
         session_ = std::make_unique<Session>(
             conn::make_local_terminal_connection(spec, kViewport), kViewport, kScrollback, width_policy);
-        view_ = std::make_shared<TerminalView>(*session_, PaletteSpec{}, test_font(), kPaddingDp, kBlinkPeriod);
+        view_ = std::make_shared<TerminalView>(*session_, PaletteSpec{}, test_font(), kPaddingDp, kBlinkPeriod,
+                                            TerminalView::InteractionOptions{});
         root_ = std::make_unique<au::Node>(std::static_pointer_cast<au::Widget>(view_));
         focus_.set_root(&root_->widget());
         focus_.set_focus(view_.get());

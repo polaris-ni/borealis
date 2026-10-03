@@ -234,7 +234,8 @@ class Rig {
                        .size_pt = static_cast<float>(settings_.appearance.font_size_pt),
                        .weight = 400},
               settings_.appearance.viewport_padding_dp,
-              std::chrono::milliseconds{settings_.appearance.cursor_blink_period_ms})),
+              std::chrono::milliseconds{settings_.appearance.cursor_blink_period_ms},
+              ui::TerminalView::InteractionOptions{})),
           root_(std::static_pointer_cast<au::Widget>(view_)) {
         session_.start();
         focus_.set_root(&root_.widget());

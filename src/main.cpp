@@ -49,13 +49,24 @@ auto main() -> int {
     session.set_frame_wake([&surface]() -> void { surface.request_wake(); });
     session.start();
 
+    // 选区与复制的可配项由配置逐字段搬进来：视口刻意不认识 `config`（`config` 含 `ui::PaletteSpec`，
+    // 反向依赖会成模块环，架构 §2.3），故搬运点只能在装配层。
+    borealis::ui::TerminalView::InteractionOptions interaction;
+    interaction.word_delimiters = settings.terminal.word_delimiters;
+    interaction.copy_on_select = settings.terminal.copy_on_select;
+    interaction.copy = borealis::ui::CopyOptions{
+        .trim_trailing_space = settings.terminal.trim_pasted_trailing_space,
+        .smart_line_join = settings.terminal.smart_line_join,
+        .strip_tmux_border_chars = settings.terminal.strip_tmux_border_chars,
+    };
+
     auto view = std::make_shared<borealis::ui::TerminalView>(
         session, settings.appearance.palette,
         au::Font{.family = settings.appearance.font_family,
                  .size_pt = static_cast<float>(settings.appearance.font_size_pt),
                  .weight = 400},
         settings.appearance.viewport_padding_dp,
-        std::chrono::milliseconds{settings.appearance.cursor_blink_period_ms});
+        std::chrono::milliseconds{settings.appearance.cursor_blink_period_ms}, std::move(interaction));
     // TODO(SPEC.FEAT.PREF.02): 配置里的光标缺省形态与闪烁档、Ambiguous 口径尚无会话侧接缝可注入，
     // 三者当前分别取状态机的 `Block` / `blinking=true` 缺省值与判定入参的 `Narrow`。
     au::Scene scene{au::Node{std::static_pointer_cast<au::Widget>(view)}};
