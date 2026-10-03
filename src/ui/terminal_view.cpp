@@ -190,6 +190,10 @@ auto TerminalView::set_presentation(Presentation presentation) -> void {
     presentation_ = std::move(presentation);
 }
 
+auto TerminalView::set_grid_size_sink(GridSizeSink sink) -> void { grid_size_sink_ = std::move(sink); }
+
+auto TerminalView::set_key_pre_filter(KeyPreFilter filter) -> void { key_pre_filter_ = std::move(filter); }
+
 auto TerminalView::on_frame() -> void {
     const std::vector<session::Damage> frame = session_->drain_damage();
     const std::size_t previous_back = mirror_.back_rows();
@@ -312,6 +316,12 @@ auto TerminalView::on_key_event(aurora::KeyEvent &e) -> void {
         return;  // 抬起无按键释放语义（kitty 协议属延后观察项），留着让宿主继续处理
     }
     const auto press = to_key_press(e);
+    // 工作区层的键位先于本层判定（裁决 7.47②：不经框架快捷键层，而在焦点 pane 的按键入口前置
+    // 过滤）。未认领即照原路编码发会话——裸方向键与 `Ctrl+方向键` 恒归会话（`SPEC.FEAT.INTERACT.01`）。
+    if (key_pre_filter_ && key_pre_filter_(press)) {
+        e.is_handled = true;
+        return;
+    }
     const auto bytes = term::encode_key(press, modes_snapshot());
     if (!bytes) {
         return;  // 本层不编码：可打印形态归文本通道，无遗留编码的组合归快捷键层
@@ -451,13 +461,22 @@ auto TerminalView::zoom_font_size(float delta_rows) -> bool {
 }
 
 auto TerminalView::request_grid_size() -> void {
-    const session::Size size{geometry_.columns, geometry_.rows};
+    const GridSize size{geometry_.columns, geometry_.rows};
     if (size.columns == 0U || size.rows == 0U ||
         (size.columns == requested_size_.columns && size.rows == requested_size_.rows)) {
         return;  // 0 行 0 列（窗口最小化）连下发都不该发生
     }
-    requested_size_ = size;
-    session_->resize(size);
+    requested_size_ = session::Size{size.columns, size.rows};
+    if (grid_size_sink_) {
+        grid_size_sink_(size);  // 静默窗口与下发都归工作区层（裁决 7.47⑩）
+        return;
+    }
+    session_->resize(requested_size_);
+}
+
+auto TerminalView::scrollback_rows_from_bottom() const -> std::size_t {
+    return static_cast<std::size_t>(
+        std::lround(std::max(0.0F, scroll_viewport_.max_offset() - scroll_viewport_.offset_y)));
 }
 
 auto TerminalView::reproject(std::size_t total_lines, std::size_t rows) -> std::size_t {

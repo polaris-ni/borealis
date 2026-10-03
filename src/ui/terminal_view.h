@@ -29,9 +29,11 @@
 #include "borealis/session/connection.h"
 #include "borealis/session/screen_mirror.h"
 #include "borealis/session/session.h"
+#include "borealis/term/keymap.h"
 #include "borealis/term/paste.h"
 #include "borealis/term/terminal.h"
 #include "borealis/ui/cell_layout.h"
+#include "borealis/ui/grid_size_debounce.h"
 #include "borealis/ui/palette.h"
 #include "borealis/ui/right_click.h"
 #include "borealis/ui/selection.h"
@@ -121,11 +123,46 @@ class TerminalView final : public aurora::LeafWidget {
     /// @param presentation 三条接缝，字段留空即保持默认。
     auto set_presentation(Presentation presentation) -> void;
 
+    /// @brief 工作区层的两条注入接缝：期望行列的去向、以及「这一键归谁」的判定。
+    ///
+    /// 各对应裁决 7.47 的一条判据：⑩ 的尺寸去抖落工作区层（同一帧里所有 pane 一起变，视口层
+    /// 各自去抖会让下发次数变成 N 倍），② 的本棒键位不经框架快捷键层、改在焦点 pane 的按键入口
+    /// 前置过滤。两条都是 `std::function` 而非虚函数：工作区层用闭包捕获 pane 标识，控件因此
+    /// 不需要认识分屏树。
+    using GridSizeSink = std::function<void(GridSize expected)>;
+    using KeyPreFilter = std::function<bool(const term::KeyPress &press)>;
+
+    /// @brief 换掉「期望行列」的去向；装上即不再直发 `Session::resize`。
+    ///
+    /// 缺省（未装）仍直发，故既有像素与集成用例零改动。0 行 0 列与「同值不重发」两条过滤留在
+    /// 本层——它们的真值源是本控件的度量与内边距，工作区层判不了（裁决 7.48③）。
+    /// @param sink 接收者。
+    auto set_grid_size_sink(GridSizeSink sink) -> void;
+
+    /// @brief 装上按键前置过滤；返回 true 即该键已被消费，不再编码发会话。
+    ///
+    /// 只问 `Down` 那一支：重复与抬起都不该被工作区层认领。命中即置 `is_handled`，未命中的键
+    /// 照原路走 `term::encode_key`——`SPEC.FEAT.INTERACT.01` 的转发腿不可让渡。
+    /// @param filter 判定者；入参与 `term::encode_key` 吃的是同一个 `term::KeyPress`。
+    auto set_key_pre_filter(KeyPreFilter filter) -> void;
+
     /// @brief 右键菜单浮层的只读句柄，从未打开过菜单即空指针（用例的落点观测点）。
     ///
     /// 条目宽度由 `ButtonProps::min_width` 定死而非文字撑开，用例拿不到内容盒就只能自己复制一套
     /// 按钮尺寸算式去猜哪一行是「复制」，而算式猜错时「点到了哪一项」就成了未知量。
     [[nodiscard]] auto context_menu() const noexcept -> const aurora::Popup *;
+
+    /// @brief 本帧的整格几何（dp 步长、行列数与内边距）——工作区层据此现算最小 pane 尺寸。
+    ///
+    /// 判据是 `max(20 列 × 格宽, 3 行 × 格高)`（裁决 7.47③），而格宽与内边距只有本控件知道；
+    /// 让工作区层自己再算一遍度量就成了第二个真值源。
+    [[nodiscard]] auto grid_geometry() const noexcept -> const GridGeometry & { return geometry_; }
+
+    /// @brief 回看位置距底的行数（0 = 贴底）：焦点路由「滚动位置不动」判据的观测点。
+    ///
+    /// 取距底而非内核的 `offset_y`：前者是用户意图（裁决 D6①），随输出与 resize 都不变，
+    /// 断言因此只测「路由没有碰它」这一件事。
+    [[nodiscard]] auto scrollback_rows_from_bottom() const -> std::size_t;
 
     /// @brief 当前生效的字号（pt）：Ctrl+滚轮缩放的观测点。
     ///
@@ -319,7 +356,7 @@ class TerminalView final : public aurora::LeafWidget {
 
     bool blink_on_ = true;
     aurora::TimerHandle blink_timer_;
-    session::Size requested_size_{};  ///< 上次下发的行列，避免每次布局都重发。
+    session::Size requested_size_{};  ///< 上次交出去的行列（直发或交给 sink 都算），同值不重发。
     /// @brief 一次性吞掉紧随其后的文本事件：应用模式的小键盘数字已由按键通道发成 SS3，而 Windows
     ///        无论 `DECKPAM` 都给同一物理键再发一条 `WM_CHAR`（`term::is_keypad` 的判据）。
     bool swallow_next_text_ = false;
@@ -333,6 +370,8 @@ class TerminalView final : public aurora::LeafWidget {
     std::int64_t dropped_baseline_ = 0;  ///< 上次折算选区时的顶边位移读数（裁决 7.39⑤）。
 
     Presentation presentation_{};         ///< 剪贴板与多行确认的三条接缝（空字段即生产实现）。
+    GridSizeSink grid_size_sink_;         ///< 空即直发 `Session::resize`（未挂工作区层的形态）。
+    KeyPreFilter key_pre_filter_;         ///< 空即不认领任何键（单 pane 装配的形态）。
     aurora::OverlayHost *host_ = nullptr; ///< 非拥有：装配层给的浮层宿主，本控件的父节点。
     std::shared_ptr<aurora::Popup> menu_;                    ///< 懒建的菜单浮层（建成后一直是宿主的浮层子节点）。
     std::shared_ptr<aurora::Dialog> multiline_warning_;      ///< 懒建的多行粘贴确认对话框。
