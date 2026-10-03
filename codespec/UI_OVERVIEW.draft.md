@@ -8,7 +8,8 @@
 > |:---|:---|
 > | `codespec/UI_OVERVIEW.draft.md` + 四屏 `UI_*.draft.svg/.png`（本稿） | 界面布局、控件形态、文案、需求落点 |
 > | `codespec/RENDER_UI.draft.md` + `RENDER_UI.draft.svg/.png` | 终端格子上屏后的像素判据（V1~V27）与差距清单（G-1~G-9） |
-> | `codespec/UI_SELECTION.draft.md` + `UI_SELECTION.draft.svg/.png` | 选区高亮的像素判据与 `selection` 色值来源（D1~D7 **待拍板**） |
+> | `codespec/UI_SELECTION.draft.md` + `UI_SELECTION.draft.svg/.png` | 选区高亮的像素判据与 `selection` 色值来源（D1~D7 已并入裁决 7.38①） |
+> | `codespec/UI_WORKSPACE_INTERACT.draft.md` + 同名 `.svg/.png` | 分屏与标签条的**交互态**判据（切分 / 把手五态 / 焦点路由 / 重排 / 重命名 / 关闭确认，D1~D11 见裁决 7.47） |
 > | `codespec/RENDER_VIEWPORT.draft.md` | 上屏层的代码形态（widget 结构、绘制路径、接缝） |
 >
 > **状态**：评审已于 2026-10-02 收口，`§4` 的 N1~N8 全部给出结论并并入裁决 7.25；`src/ui/` 的实现约束就此解除。草图由一次性脚本生成后未入库，**入库的 SVG 源即事实来源**，后续修改直接改 SVG。
@@ -23,6 +24,7 @@
 | 2 连接与会话侧栏 | `UI_CONNECTIONS.draft.svg` / `.png` | 档案树 + 搜索 + 收藏、Quick connect、最近连接、snippets（延后）、五步新建向导、SSH 表单、串口表单对照、错误分类三档、known_hosts 首次确认、保存动作 | `SPEC.FEAT.CONN.02`–`07`、`SPEC.FEAT.CONN.09`、`SPEC.FEAT.PREF.03` |
 | 3 设置与主题面板 | `UI_SETTINGS.draft.svg` / `.png` | 分类导航 + 语言、8 套主题卡 + 自定义、跟随系统浅色、16 色重映射、选区色/光标色、最小对比度、字号/行高/字距、字体与 CJK 回退链、光标三形态与闪烁、终端行为开关缩略、快捷键表（含冲突）、实时预览 | `SPEC.FEAT.PREF.01`–`05`、`SPEC.FEAT.PREF.07`、`SPEC.FEAT.RENDER.02`–`04`、`SPEC.FEAT.TERM.04`、`SPEC.FEAT.CONN.12` |
 | 4 浮层与菜单 | `UI_COMMANDS.draft.svg` / `.png` | 命令面板、右键菜单（含两种警告态）、关闭标签确认、链接打开确认、系统通知 toast | `SPEC.FEAT.WS.07`、`SPEC.FEAT.WS.01`/`05`、`SPEC.FEAT.INTERACT.03`/`05`、`SPEC.FEAT.PREF.04`、`SPEC.FEAT.INTEG.03` |
+| 5 分屏与标签条的交互态 | `UI_WORKSPACE_INTERACT.draft.svg` / `.png` | 切分与并入塌缩、把手五态（静止/hover/拖拽/钳位/等分）、焦点标识与 `Alt+方向键` 路由、键位总表、标签五态、就地重命名、关闭确认与末位标签、栏位宽与溢出滚动 | `SPEC.FEAT.WS.01`、`SPEC.FEAT.WS.02`、`SPEC.FEAT.XFER.01`（屏 1 的静止态由它补成交互态） |
 | 总览 | `UI_OVERVIEW.draft.svg` / `.png` | 四屏缩略 + 一句话职责 + 本轮未画范围 | — |
 
 每屏下方的编号块就是该屏的**判据清单**（标号与屏内圆标一一对应），评审逐条过。
