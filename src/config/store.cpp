@@ -24,6 +24,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "aurora/core/json.h"
 #include "aurora/preferences/preferences.h"
@@ -342,6 +343,34 @@ class ScopeReader {
         return color;
     }
 
+    /// @brief 读一张有序的文本表（缺字回退链一类）：非文本或空串的元素只丢该元素并留痕其下标。
+    ///
+    /// 与下面的 `command_overrides` 同一分工：表里坏一项不该让整张表失效——框架对链上解析不到的族
+    /// 也只是跳过而不报错，故这里的「丢一项」不是自造宽容而是照抄该领域件的容错方向。空串不算一项
+    /// （它在框架侧只会白占一个链位），而**空表是合法值**（= 不注入按族链，走全局默认链）。
+    [[nodiscard]] auto string_list(std::string_view key, const std::vector<std::string> &fallback)
+        -> std::vector<std::string> {
+        known_.emplace_back(key);
+        if (node_ == nullptr) {
+            return fallback;
+        }
+        const Value *value = node_->at(key);
+        if ((value == nullptr) || !value->is_array()) {
+            reject(key);
+            return fallback;
+        }
+        std::vector<std::string> out;
+        for (std::size_t index = 0; index < value->size(); ++index) {
+            const auto family = text_of(value->at(index));
+            if (!family || family->empty()) {
+                report_.rejected_keys.push_back(qualified(key) + "[" + std::to_string(index) + "]");
+                continue;
+            }
+            out.emplace_back(*family);
+        }
+        return out;
+    }
+
     /// @brief 读快捷键覆盖表：数组元素形态是 `{"command": ..., "combo": ...}`。
     ///
     /// 不用「命令 id 作对象键」的映射形态：框架的持久化模型把点号当路径分隔符
@@ -470,6 +499,13 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     put(node, "font_size_pt", appearance.font_size_pt);
     put(node, "font_line_height", appearance.font_line_height);
     put(node, "font_letter_spacing_dp", appearance.font_letter_spacing_dp);
+    auto chain = Value::array();
+    for (const auto &family : appearance.font_fallback_chain) {
+        chain.push_back(Value(family));
+    }
+    // 空表也写成数组而非省掉本键：与 `shortcuts.overrides` 同一条理由（空对象在装载时会被拍平掉），
+    // 且「用户清空了链」与「从未配过链」在回退语义上本就同值，不必为区分它们留两个形态。
+    node.set("font_fallback_chain", std::move(chain));
     put(node, "viewport_padding_dp", appearance.viewport_padding_dp);
     put_enum(node, "cursor_shape", kCursorShapeNames, static_cast<std::int64_t>(appearance.cursor_shape));
     put(node, "cursor_blinking", appearance.cursor_blinking);
@@ -551,6 +587,10 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     appearance.font_line_height = scope.real("font_line_height", defaults.appearance.font_line_height, 1.0, 3.0);
     appearance.font_letter_spacing_dp =
         scope.real("font_letter_spacing_dp", defaults.appearance.font_letter_spacing_dp, 0.0, 8.0);
+    // 链上只判「是不是一段非空文本」，不查它是否在系统字体目录里：目录要扫盘才有，而装载接缝
+    // 不得做同步 IO（§4.5 第 25 条）。写了没装的族由框架跳过，代价是一格白占链位。
+    appearance.font_fallback_chain =
+        scope.string_list("font_fallback_chain", defaults.appearance.font_fallback_chain);
     appearance.viewport_padding_dp =
         static_cast<float>(scope.real("viewport_padding_dp", defaults.appearance.viewport_padding_dp, 0.0, 64.0));
     appearance.cursor_shape = static_cast<term::CursorShape>(

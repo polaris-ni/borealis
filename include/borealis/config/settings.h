@@ -20,6 +20,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "borealis/config/themes.h"
 #include "borealis/grid/storage.h"
@@ -105,6 +106,15 @@ struct AppearanceSettings {
     ///
     /// 域从 0.0 起：负字距让字形压进下一列，等宽网格里那不是「紧凑」而是错位。
     double font_letter_spacing_dp{0.0};
+    /// @brief 缺字回退链（`SPEC.FEAT.RENDER.02` 的「回退链顺序可配」）：主族缺字时依次尝试的族名序列。
+    ///
+    /// 顺序即语义，越靠前优先级越高；族名的口径与框架的字体族枚举**同源**（逐字节精确、区分大小写），
+    /// 解析不到的族由框架跳过而不报错。长度上限由绘制侧按框架常量截断并留痕，本头因此不写那个数
+    /// （公共头不得含 Aurora 类型）。
+    ///
+    /// 缺省为空 = 不注入按族链，只走框架的全局默认回退链——那是本键落地前唯一的形态，故空值与
+    /// 「配置里没有这个键」逐位相同，而不是「用户要求不回退」。
+    std::vector<std::string> font_fallback_chain{};
 
     float viewport_padding_dp{4.0F};  ///< 终端视口内边距（裁决 7.25②）；改 0 即回到贴边形态。
 
