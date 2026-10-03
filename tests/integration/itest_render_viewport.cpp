@@ -1313,4 +1313,41 @@ AURORA_TEST_CASE(wheel_zoom_clamps_at_the_bounds_and_yields_the_rest_to_the_revi
 #endif
 }
 
+AURORA_TEST_CASE(double_width_cells_do_not_shift_the_following_columns) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto width = static_cast<std::size_t>(h.geometry().cell_width);
+    const auto height = static_cast<std::size_t>(h.geometry().cell_height);
+    // 第 3 行以双宽汉字起头，第 5 行以两个空格起头，`AB` 在两行里都落在第 2、3 列。全空白段不产
+    // 文本（`layout_row` 把它的文本清空），故第 5 行的 run 从第 2 列起排、pen 落在那一列左沿；
+    // 第 3 行的 `AB` 却排在汉字那一段之后，落点全凭汉字自己的推进量。实测回退面的推进是 19 px
+    // 而两格是 22 px，同一 run 内紧随其后的字形因此整体左挪——第 5 行就是同一列上的对照。
+    // CJK-LITERAL: cjk-fixture - 回退面的推进量就是被测事实，转成 ASCII 这条判据即消失
+    h.feed("\x1b[?25l\x1b[3;1H\xe4\xb8" "\xad" "AB\r\n\r\n  AB");
+    const auto px = h.pixels();
+    // 证人非空转：汉字必须真的把墨铺进延续格，否则「双宽那一腿」根本没被走到。
+    const auto blank = h.cell_window(px, 8U, 8U, width, height);
+    AURORA_TEST_REQUIRE_MSG(Harness::count_diff(h.cell_window(px, 2U, 1U, width, height), blank) > 0U,
+                            "the witness needs the Han glyph to span its continuation cell");
+    for (const std::size_t column : {std::size_t{2U}, std::size_t{3U}}) {
+        AURORA_TEST_CHECK_MSG(h.cell_window(px, 2U, column, width, height) ==
+                                  h.cell_window(px, 4U, column, width, height),
+                              "a following glyph slid off its own column after a double-width cell");
+    }
+    // 断点须落在每个双宽字形之后而非只落在第一个：连续三个汉字（共六格）后跟 `AB`，落点仍须与
+    // 「六个空格后跟 AB」逐位相同。只断第一个双宽格之后的话，剩余两个汉字的推进误差照旧累积。
+    h.feed("\x1b[7;1H\xe4\xb8\xad\xe6\x96\x87\xe6\xb5\x8b"
+           "AB\r\n\r\n      AB");
+    const auto many = h.pixels();
+    for (const std::size_t column : {std::size_t{6U}, std::size_t{7U}}) {
+        AURORA_TEST_CHECK_MSG(h.cell_window(many, 6U, column, width, height) ==
+                                  h.cell_window(many, 8U, column, width, height),
+                              "the double-width advance error accumulated over consecutive Han glyphs");
+    }
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
 }  // namespace borealis::test_cases::itest_render_viewport

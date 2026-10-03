@@ -328,11 +328,42 @@ AURORA_TEST_CASE(wide_continuation_keeps_columns_but_not_text) {
     put(row, 2U, U'x');
 
     const auto runs = layout_row(row, spec);
-    AURORA_TEST_REQUIRE_EQ(runs.size(), 1U);
-    // 延续格不进文本（也不画豆腐块），但列区间仍含它，字形才占得满两格宽。
+    // 双宽字形自成一跑：回退面的推进不等于两个格宽（实测 19 px 对 22 px），同一 run 内紧随其后
+    // 的字形会整体挪位，故延续格一过就断。列区间仍含延续格，字形才占得满两格宽。
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 2U);
     AURORA_TEST_CHECK_EQ(at(runs, 0).first_column, 0U);
-    AURORA_TEST_CHECK_EQ(at(runs, 0).last_column, 4U);
-    AURORA_TEST_CHECK_EQ(at(runs, 0).text, std::string{"\xE4\xB8\xADx "});
+    AURORA_TEST_CHECK_EQ(at(runs, 0).last_column, 2U);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).text, std::string{"\xE4\xB8\xAD"});
+    AURORA_TEST_CHECK_EQ(at(runs, 1).first_column, 2U);
+    AURORA_TEST_CHECK_EQ(at(runs, 1).last_column, 4U);
+    AURORA_TEST_CHECK_EQ(at(runs, 1).text, std::string{"x "});
+}
+
+AURORA_TEST_CASE(every_double_width_glyph_breaks_the_run) {
+    const auto spec = themed();
+    Row row{5U};
+
+    const auto put_wide = [](Row &r, std::size_t column, char32_t cp) -> void {
+        Cell base{};
+        base.code_point = cp;
+        base.width = 2U;
+        put(r, column, base);
+        Cell continuation{};
+        continuation.flags = static_cast<CellFlags>(kFlagWideContinuation);
+        continuation.width = 0U;
+        put(r, column + 1U, continuation);  // 延续格码点写 0 而非空格，与生产形态一致
+    };
+    put_wide(row, 0U, U'\x4E2D');
+    put_wide(row, 2U, U'\x6587');
+    put(row, 4U, U'x');
+
+    const auto runs = layout_row(row, spec);
+    // 断点落在**每个**双宽字形之后而不只是第一个：只断一处时余下的推进误差仍按字数累积。
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 3U);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).text, std::string{"\xE4\xB8\xAD"});
+    AURORA_TEST_CHECK_EQ(at(runs, 1).text, std::string{"\xE6\x96\x87"});
+    AURORA_TEST_CHECK_EQ(at(runs, 2).text, std::string{"x"});
+    AURORA_TEST_CHECK_EQ(at(runs, 2).first_column, 4U);
 }
 
 AURORA_TEST_CASE(combining_marks_follow_their_base_in_the_same_run) {
