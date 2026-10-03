@@ -1,8 +1,9 @@
 // ============================================================
 // 整格几何与行内 run 切分（src/ui/cell_layout.cpp）
 // ------------------------------------------------------------
-// 本文件只做三件算得清的事：像素格度量 ÷ scale 换成 dp 步长、指针 dp 落点折回格子序号，以及按样式
-// 全等把一行切成 run。不含框架类型，故 dp/px 换算与切分边界都能全量单测（架构 §9.2）。
+// 本文件只做四件算得清的事：像素格度量 ÷ scale 换成 dp 步长、行高与字距量化成整数物理像素、
+// 指针 dp 落点折回格子序号，以及按样式全等把一行切成 run。不含框架类型，故 dp/px 换算与切分
+// 边界都能全量单测（架构 §9.2）。
 // ============================================================
 
 #include "borealis/ui/cell_layout.h"
@@ -148,6 +149,26 @@ auto make_geometry(const CellPixels &metrics, double scale, const LogicalSize &v
     geometry.columns = cell_count(viewport.width - 2.0 * padding_dp, geometry.cell_width);
     geometry.rows = cell_count(viewport.height - 2.0 * padding_dp, geometry.cell_height);
     return geometry;
+}
+
+auto apply_typography(const CellPixels &font, double scale, const Typography &typography) noexcept -> TypedMetrics {
+    TypedMetrics typed{};
+    if (scale <= 0.0) {
+        return typed;  // 缩放不可用则整格度量为全零，与「字体未就绪」同形（`make_geometry` 据此出空网格）
+    }
+    // 字距进列步长前先吸附整数物理像素：框架按 `dp × scale` 在每对相邻字形之间加一次，
+    // 非整数就会让第 k 个字形偏离第 k 列左沿（回填值因此是整数像素 ÷ scale 而非配置原值）。
+    const auto spacing_px = static_cast<std::int32_t>(to_pixel(typography.letter_spacing_dp, scale));
+    typed.letter_spacing_dp = static_cast<double>(spacing_px) / scale;
+    typed.cells.width_px = font.width_px + spacing_px;
+
+    const auto row_step_px = static_cast<std::int32_t>(std::lround(static_cast<double>(font.height_px) *
+                                                                   typography.line_height));
+    const auto leading_px = row_step_px - font.height_px;
+    typed.glyph_top_px = leading_px / 2;  // 余数归行盒下沿：色带铺满整行，下沿多一像素不露缝
+    typed.cells.height_px = row_step_px;
+    typed.cells.ascent_px = font.ascent_px + typed.glyph_top_px;
+    return typed;
 }
 
 auto rect_for(const GridGeometry &geometry, std::size_t row, std::size_t first_column,

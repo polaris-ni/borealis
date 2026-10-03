@@ -5,7 +5,8 @@
 // ------------------------------------------------------------
 // 架构 §9.2 的取用形态细则：框架只收「合成后的最终值」，列起点、跨格与切分边界都在本层。
 // 格宽取自 `render::FontEngine::monospace_cell`（物理像素），而 `Painter` 的几何是逻辑 dp，
-// 故这里的算术只有三样：÷ scale 换算、内边距从可视尺寸里扣除、装饰线边界吸附物理像素。
+// 故这里的算术只有四样：÷ scale 换算、内边距从可视尺寸里扣除、装饰线边界吸附物理像素、
+// 行高与字距量化成整数物理像素（`apply_typography`，`SPEC.FEAT.RENDER.02` 的排版腿）。
 // 把它放在无框架依赖的一层，是为了让 dp/px 这条最容易算错的换算能进单测（AGENTS.md §4.4 第 20 条）。
 //
 // run 切分按裁决 7.23②「样式全等合并到行」：一行内相邻格的前景/背景/字体三者全等才并入同
@@ -32,6 +33,22 @@ struct CellPixels {
     std::int32_t width_px = 0;   ///< 单格推进宽度。
     std::int32_t height_px = 0;  ///< 单格行高。
     std::int32_t ascent_px = 0;  ///< 行盒顶 → 基线。
+};
+
+/// @brief 字体的排版可调量（`SPEC.FEAT.RENDER.02` 的「行高 / 字距可调」）。
+///
+/// 取值域由配置侧的装载校验把守，本件只做量化：域外值在装载时已回落默认并留痕，
+/// 故这里的算术不含夹取。
+struct Typography {
+    double line_height = 1.0;        ///< 字体行高的倍数；1.0 即逐位等于框架给出的行高。
+    double letter_spacing_dp = 0.0;  ///< 加在每对相邻字形之间的额外间距（逻辑 dp，可为负）。
+};
+
+/// @brief 排版可调量落到物理像素之后的整格度量，形态即 `make_geometry` 的入参。
+struct TypedMetrics {
+    CellPixels cells{};
+    std::int32_t glyph_top_px = 0;  ///< 行盒顶 → **字盒**顶（上半 leading）。
+    double letter_spacing_dp = 0.0; ///< 量化后实际生效的字距（dp），绘制侧的排版选项必须取它。
 };
 
 /// @brief 可视区的逻辑尺寸（dp），由控件的绘制盒给出。
@@ -71,6 +88,25 @@ struct Rect {
 /// @return 该帧的网格几何；度量为 0 或尺寸为 0（窗口最小化是真实输入）时行列数为 0。
 [[nodiscard]] auto make_geometry(const CellPixels &metrics, double scale, const LogicalSize &viewport,
                                  double padding_dp) noexcept -> GridGeometry;
+
+/// @brief 把行高与字距折进物理像素的整格步长（`SPEC.FEAT.RENDER.02` 的排版腿）。
+///
+/// 三条量化口径都为了让**字形落在整数物理像素列上**：
+/// ① 字距先按 scale 取整成**整数物理像素**再进列步长，回填的 `letter_spacing_dp` 是那个整数
+///    除以 scale 的结果——框架把排版选项的字距按 `dp × scale` 加在每对相邻字形之间（整串共
+///    n−1 次），只有整数像素才让第 k 个字形恰好停在第 k 列的左沿；绘制侧因此**必须**用回填值
+///    而不是配置原值，否则网格与字形随字号缩放慢慢错开。
+/// ② 行步长按字体行高 × 倍数取整，余量（leading）按 `glyph_top_px` 记下**上半**、余数归行盒
+///    下沿；框架以「行盒顶 + 自身 ascender」定基线（历史 GDI `TA_TOP` 语义），故放大行高只把
+///    色带撑高、字形仍贴行顶，文本落笔需由调用方下移 `glyph_top_px`。
+/// ③ 基线随上半 leading 一同下移并写回 `ascent_px`，于是 `decoration_rects` 与光标块**零改动**
+///    就跟到新的基线上。
+/// @param font 框架给出的字体整格度量（未含任何可调量）。
+/// @param scale device pixel ratio（物理像素 / 逻辑 dp）。
+/// @param typography 行高倍数与字距（已由配置侧校验过取值域）。
+/// @return 可直接喂 `make_geometry` 的整格度量与绘制侧的两样取用值；缩放不可用时全零（同「字体未就绪」形态）。
+[[nodiscard]] auto apply_typography(const CellPixels &font, double scale, const Typography &typography) noexcept
+    -> TypedMetrics;
 
 /// @brief 第 @p row 行、`[first_column, last_column)` 列区间的矩形（逻辑 dp）。
 ///
