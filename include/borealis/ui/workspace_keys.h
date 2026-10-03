@@ -4,7 +4,7 @@
 // 工作区键位：分屏层命令的判定与步进折算（include/borealis/ui/workspace_keys.h）
 // ------------------------------------------------------------
 // `SPEC.FEAT.WS.02` 的键盘腿里与 widget、与会话无关的那半：一次按键该触发哪条分屏命令，以及
-// 「键盘步进」落到哪条把手、推多远。键位总表见 `codespec/UI_WORKSPACE_INTERACT.draft.md` §4。
+// 「键盘步进」落到哪条把手、推多远。键位总表见 `codespec/UI_WORKSPACE_INTERACT.draft.md` §2 的面板 4。
 //
 // 本件存在的**首要理由**是派发通道（裁决 7.47②）：这些键位不经框架 `ShortcutRegistry`，而由
 // 焦点 pane 的按键入口前置过滤。三条读 Aurora 当日活动分支的实测结论摆在那里——快捷键钩子先于
