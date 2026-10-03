@@ -42,6 +42,7 @@ using borealis::config::PasteNewlinePolicy;
 using borealis::config::RightClickAction;
 using borealis::config::Settings;
 using borealis::config::Store;
+using borealis::config::TabNamePriority;
 using borealis::config::theme_palette;
 using borealis::term::AmbiguousWidth;
 using borealis::term::CursorShape;
@@ -97,6 +98,7 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     next.appearance.cursor_blinking = false;
     next.appearance.cursor_blink_period_ms = 120;
     next.appearance.sidebar_collapsed = false;
+    next.appearance.tab_name_priority = TabNamePriority::OscWins;  // 非缺省档，往返等值才判得出接线
     auto &bar = next.appearance.status_bar;
     bar.show_connection = false;
     bar.show_reconnect = true;
@@ -189,6 +191,8 @@ AURORA_TEST_CASE(defaults_are_the_first_launch_shape) {
     AURORA_TEST_CHECK_TRUE(defaults.appearance.cursor_shape == CursorShape::Block);
     AURORA_TEST_CHECK_TRUE(defaults.appearance.cursor_blinking);
     AURORA_TEST_CHECK_TRUE(defaults.appearance.sidebar_collapsed);
+    // 手动重命名压过 OSC 标题是缺省档（`SPEC.FEAT.TERM.07` 的「用户重命名优先级更高（可配）」）。
+    AURORA_TEST_CHECK_TRUE(defaults.appearance.tab_name_priority == TabNamePriority::ManualWins);
 
     // 状态栏十项缺省全开（裁决 7.25⑧）。
     const auto &bar = defaults.appearance.status_bar;
@@ -304,6 +308,7 @@ AURORA_TEST_CASE(bad_values_fall_back_to_defaults_and_are_reported) {
     "font_size_pt": "large",
     "cursor_blink_period_ms": 0,
     "cursor_shape": "triangle",
+    "tab_name_priority": "sometimes",
     "sidebar_collapsed": "yes",
     "legacy_widget": true
   },
@@ -325,7 +330,8 @@ AURORA_TEST_CASE(bad_values_fall_back_to_defaults_and_are_reported) {
 
     const auto &rejected = store.report().rejected_keys;
     for (std::string_view key : {"appearance.font_size_pt", "appearance.cursor_blink_period_ms",
-                                 "appearance.cursor_shape", "appearance.sidebar_collapsed", "appearance.theme",
+                                 "appearance.cursor_shape", "appearance.tab_name_priority",
+                                 "appearance.sidebar_collapsed", "appearance.theme",
                                  "appearance.palette", "terminal.bell", "terminal.scrollback_limit",
                                  "terminal.encoding", "connection", "shortcuts.overrides[0]"}) {
         AURORA_TEST_CHECK_MSG(holds(rejected, key), std::string{key});
