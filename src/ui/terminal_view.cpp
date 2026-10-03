@@ -39,6 +39,11 @@ namespace {
 /// @brief 滚动内核的计量单位：1 个滚轮增量 = 1 行。存行数而非 dp，免得浮点残差让取整少算一行。
 constexpr float kRowStep = 1.0F;
 
+/// @brief Ctrl+滚轮缩放的字号界值（pt）：一档 ±1 pt。下界取 6 是让最小档仍可辨认，上界 72 是
+///        `SPEC.FEAT.RENDER.02` 给的调整范围；越界即不再吃事件，回看照常冒泡。
+constexpr float kMinFontSizePt = 6.0F;
+constexpr float kMaxFontSizePt = 72.0F;
+
 /// @brief 回看位置指示条的宽与最短长度（逻辑 dp，视觉稿 U1）。
 constexpr double kIndicatorWidthDp = 2.0;
 constexpr double kIndicatorMinLengthDp = 12.0;
@@ -154,11 +159,12 @@ class StringCollector final : public term::CodePointSink {
 }  // namespace
 
 TerminalView::TerminalView(session::Session &session, PaletteSpec palette, aurora::Font ref_font,
-                           float padding_dp, std::chrono::milliseconds blink_period,
+                           Typography typography, float padding_dp, std::chrono::milliseconds blink_period,
                            InteractionOptions options)
     : session_(&session),
       spec_(std::move(palette)),
       ref_font_(std::move(ref_font)),
+      typography_(typography),
       padding_dp_(padding_dp),
       blink_period_(blink_period),
       options_(std::move(options)) {
@@ -226,7 +232,7 @@ auto TerminalView::on_layout(const aurora::Constraints &c, const aurora::BuildCo
     const aurora::Size box =
         c.max.is_finite() ? c.constrain(aurora::Size{.width = c.max.width, .height = c.max.height}) : size_;
     const float scale = ctx.scale_factor > 0.0F ? ctx.scale_factor : 1.0F;
-    geometry_ = make_geometry(cell_metrics(scale), scale, LogicalSize{box.width, box.height}, padding_dp_);
+    geometry_ = make_geometry(cell_metrics(scale).cells, scale, LogicalSize{box.width, box.height}, padding_dp_);
     request_grid_size();
     return box;
 }
@@ -275,6 +281,15 @@ auto TerminalView::can_cache_display_list() const -> bool { return false; }
 auto TerminalView::can_cache_layout() const -> bool { return false; }
 
 auto TerminalView::on_scroll(aurora::ScrollEvent &e) -> void {
+    // Ctrl+滚轮是字号缩放档（`SPEC.FEAT.RENDER.02`）：修饰态由后端在事件产生处盖章、派发器只透传，
+    // 本层据此分流而不轮询物理按键态（G18 回货字段在选区之外的第二个消费点）。
+    if ((e.modifiers & aurora::ModifierKey::Control) != 0U) {
+        if (zoom_font_size(e.delta_y)) {
+            e.remaining_y = 0.0F;  // 缩放吃掉这一档，不再冒泡给回看与祖先
+            e.is_handled = true;
+            return;
+        }
+    }
     // TODO(SPEC.FEAT.TERM.06): 上报模式与备屏 alternate scroll 优先于本地回看
     const float before = scroll_viewport_.offset_y;
     scroll_viewport_.offset_y = aurora::ScrollViewport::clamp_offset(
@@ -404,13 +419,35 @@ auto TerminalView::modes_snapshot() -> term::TermModes {
     return snapshot;
 }
 
-auto TerminalView::cell_metrics(float scale) -> const CellPixels & {
-    if (scale != metrics_scale_ || cell_px_.height_px <= 0) {
+auto TerminalView::cell_metrics(float scale) -> const TypedMetrics & {
+    if (metrics_stale_ || scale != metrics_scale_ || typed_.cells.height_px <= 0) {
         const auto metrics = aurora::render::FontEngine::monospace_cell(ref_font_, scale);
-        cell_px_ = CellPixels{metrics.cell_width_px, metrics.cell_height_px, metrics.ascent_px};
+        typed_ = apply_typography(CellPixels{metrics.cell_width_px, metrics.cell_height_px, metrics.ascent_px},
+                                  static_cast<double>(scale), typography_);
         metrics_scale_ = scale;
+        metrics_stale_ = false;
     }
-    return cell_px_;
+    return typed_;
+}
+
+auto TerminalView::glyph_top_dp() const noexcept -> double {
+    // 排版关闭时恒 0，故文本盒与叠上排版量之前逐位相同；换算成 dp 是因为 `Painter` 收逻辑坐标。
+    return geometry_.scale > 0.0 ? static_cast<double>(typed_.glyph_top_px) / geometry_.scale : 0.0;
+}
+
+auto TerminalView::zoom_font_size(float delta_rows) -> bool {
+    const float step = delta_rows > 0.0F ? 1.0F : -1.0F;
+    const float clamped = std::clamp(ref_font_.size_pt + step, kMinFontSizePt, kMaxFontSizePt);
+    if (clamped == ref_font_.size_pt) {
+        return false;  // 已在界值：这一档让回去看，缩放不该在边界吞掉滚轮
+    }
+    ref_font_.size_pt = clamped;
+    // 字号是运行期唯一改 `ref_font_` 的地方，而它一改，格宽、行列数与下发的会话尺寸全都跟着变
+    // （`SPEC.FEAT.RENDER.02` 的字号调整与 `RENDER.05` 的「缩放变更后重算且不裂」是同一条判据）。
+    metrics_stale_ = true;
+    mark_needs_layout();
+    mark_needs_paint();
+    return true;
 }
 
 auto TerminalView::request_grid_size() -> void {
@@ -453,6 +490,11 @@ auto TerminalView::paint_row(aurora::Painter &p, const aurora::Rect &bounds, std
     std::vector<aurora::render::TextRun> batch;
     batch.reserve(runs.size());
     std::vector<aurora::render::TextRun> italic_batch;
+    // 文本盒比色带盒低一个「上半 leading」，且字距取 `apply_typography` 回填的量化值而非配置原值：
+    // 后者保证相邻字形的间距落在整数物理像素上，列步长与字形推进因此同源（裁决 7.46①）。
+    const double glyph_top = glyph_top_dp();
+    auto opts = aurora::render::TextLayoutOpts{};
+    opts.letter_spacing = static_cast<float>(typed_.letter_spacing_dp);
     for (const auto &run : runs) {
         const auto band = rect_for(geometry_, screen_row, run.first_column, run.last_column);
         if (run.paint.background != spec_.default_background) {
@@ -461,21 +503,21 @@ auto TerminalView::paint_row(aurora::Painter &p, const aurora::Rect &bounds, std
         if (run.text.empty()) {
             continue;  // 只有色带的一段：`layout_row` 已把全空白段的文本清空
         }
+        const Rect text_box{band.x, band.y + glyph_top, band.width, band.height};
         (run.paint.italic ? italic_batch : batch)
             .push_back(aurora::render::TextRun{
                 .text = run.text,
-                .box = to_rect(band, bounds.origin),
+                .box = to_rect(text_box, bounds.origin),
                 .font = font_for(ref_font_, run.paint),
                 .color = to_color(run.paint.foreground),
             });
     }
     if (!batch.empty()) {
-        p.draw_text_runs(batch);  // ③ 每行一次批量文本
+        p.draw_text_runs(batch, opts);  // ③ 每行一次批量文本
     }
     if (!italic_batch.empty()) {
         // 批量入口的 opts 是**整批共用**（框架刻意不提供 per-run opts，以免与 `Font` 的样式语义
         // 重叠成两条矛盾来源），故斜体单独成一批——每行最多两次调用，仍拿得到批量化省下的派生量。
-        auto opts = aurora::render::TextLayoutOpts{};
         opts.italic = true;
         p.draw_text_runs(italic_batch, opts);
     }
@@ -537,7 +579,12 @@ auto TerminalView::paint_cursor(aurora::Painter &p, const aurora::Rect &bounds, 
     if (!paint.hidden && !text.empty()) {
         auto opts = aurora::render::TextLayoutOpts{};
         opts.italic = paint.italic;  // 与 ③ 的斜体判定同源，否则光标停在斜体格上会把那一格画成正体
-        p.draw_text(to_rect(box, bounds.origin), text, font_for(ref_font_, paint), to_color(paint.background), opts);
+        opts.letter_spacing = static_cast<float>(typed_.letter_spacing_dp);  // 与 ③ 同一份量化字距
+        // 块形的外沿是格子矩形，字却按 `paint_row` 的同一个偏移盒重画：两者共用盒会让行高调大后
+        // 第三段的字浮在块上半，块内下沿空出一条带。
+        const Rect text_box{box.x, box.y + glyph_top_dp(), box.width, box.height};
+        p.draw_text(to_rect(text_box, bounds.origin), text, font_for(ref_font_, paint), to_color(paint.background),
+                    opts);
     }
 }
 

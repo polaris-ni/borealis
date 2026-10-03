@@ -233,6 +233,8 @@ class Rig {
               au::Font{.family = settings_.appearance.font_family,
                        .size_pt = static_cast<float>(settings_.appearance.font_size_pt),
                        .weight = 400},
+              ui::Typography{.line_height = settings_.appearance.font_line_height,
+                             .letter_spacing_dp = settings_.appearance.font_letter_spacing_dp},
               settings_.appearance.viewport_padding_dp,
               std::chrono::milliseconds{settings_.appearance.cursor_blink_period_ms},
               ui::TerminalView::InteractionOptions{})),

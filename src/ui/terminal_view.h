@@ -83,11 +83,13 @@ class TerminalView final : public aurora::LeafWidget {
     /// @param session 权威会话，**非拥有**：装配层的局部对象析构次序须保证它活得比本控件久。
     /// @param palette 调色板（含光标色与选区色，缺省时分别回落默认前景与 `basic[8]`）。
     /// @param ref_font 参考字体：整格度量只由它取一次，粗体仅换字重不改格宽（架构 §9.2）。
+    /// @param typography 行高与字距（`SPEC.FEAT.RENDER.02`）；缺省档即字体自身的排布，故行列数与
+    ///        不接本参数时逐位相同。取值域由配置侧把守，本层不夹取（裁决 7.46②）。
     /// @param padding_dp 视口四周内边距（裁决 7.25②），可配为 0。
     /// @param blink_period 光标闪烁周期；本棒内置，可配项随设置面板那一棒接（`SPEC.FEAT.PREF.02`）。
     /// @param options 选区与复制的可配置行为；由装配层从 `config::TerminalSettings` 搬值。
-    TerminalView(session::Session &session, PaletteSpec palette, aurora::Font ref_font, float padding_dp,
-                 std::chrono::milliseconds blink_period, InteractionOptions options);
+    TerminalView(session::Session &session, PaletteSpec palette, aurora::Font ref_font, Typography typography,
+                 float padding_dp, std::chrono::milliseconds blink_period, InteractionOptions options);
 
     TerminalView(const TerminalView &) = delete;
     auto operator=(const TerminalView &) -> TerminalView & = delete;
@@ -124,6 +126,12 @@ class TerminalView final : public aurora::LeafWidget {
     /// 条目宽度由 `ButtonProps::min_width` 定死而非文字撑开，用例拿不到内容盒就只能自己复制一套
     /// 按钮尺寸算式去猜哪一行是「复制」，而算式猜错时「点到了哪一项」就成了未知量。
     [[nodiscard]] auto context_menu() const noexcept -> const aurora::Popup *;
+
+    /// @brief 当前生效的字号（pt）：Ctrl+滚轮缩放的观测点。
+    ///
+    /// 缩放是运行期状态（持久化的入口随 `SPEC.FEAT.PREF.02` 的设置面板），用例要靠它把「步长与
+    /// 钳位」这一条算式单独断言，而不是从像素反推字号。
+    [[nodiscard]] auto font_size_pt() const noexcept -> float { return ref_font_.size_pt; }
 
   protected:
     /// @brief 撑满父级，并在此重取整格几何与下发行列尺寸（`SPEC.FEAT.XFER.01` 的 UI 取值腿）。
@@ -197,8 +205,22 @@ class TerminalView final : public aurora::LeafWidget {
         [[nodiscard]] constexpr auto operator==(const CursorState &) const noexcept -> bool = default;
     };
 
-    /// @brief 取（并按需重取）给定缩放下的物理像素整格度量。
-    [[nodiscard]] auto cell_metrics(float scale) -> const CellPixels &;
+    /// @brief 取（并按需重取）给定缩放下、叠上排版可调量之后的整格度量。
+    ///
+    /// 重取的触发有两处：缩放变了（框架那条），或字体与排版入参变过（`metrics_stale_`，Ctrl+滚轮
+    /// 缩放是运行期唯一的改点）。度量只在 `on_layout` 取，故重取的代价不进口令路径。
+    [[nodiscard]] auto cell_metrics(float scale) -> const TypedMetrics &;
+
+    /// @brief 文本落笔相对行盒顶的下移量（dp）＝上半 leading。
+    ///
+    /// 框架按「行盒顶 + 该字体自身 ascender」定位基线，而行高调大后多出的空白在字盒之上，故文本盒
+    /// 须整体下移这么多；色带与装饰不吃它（`apply_typography` 已把基线折进 `ascent_px`，两者自动跟随）。
+    [[nodiscard]] auto glyph_top_dp() const noexcept -> double;
+
+    /// @brief Ctrl+滚轮的字号缩放：一档 ±1 pt，落在 [6, 72] 内；到界值即不吃事件，让回看照常冒泡。
+    /// @param delta_rows 滚轮增量的垂直分量（上为正 = 放大）。
+    /// @return 是否改变了字号。
+    [[nodiscard]] auto zoom_font_size(float delta_rows) -> bool;
 
     /// @brief 行列数真变了才下发给会话；0 行或 0 列（窗口最小化）不下发。
     auto request_grid_size() -> void;
@@ -280,14 +302,16 @@ class TerminalView final : public aurora::LeafWidget {
     session::Session *session_ = nullptr;  ///< 非拥有。
     PaletteSpec spec_{};
     aurora::Font ref_font_{};
+    Typography typography_{};
     float padding_dp_ = 0.0F;
     std::chrono::milliseconds blink_period_{500};
     InteractionOptions options_{};
 
     session::ScreenMirror mirror_;
     GridGeometry geometry_{};
-    CellPixels cell_px_{};
-    float metrics_scale_ = -1.0F;  ///< `cell_px_` 所属的缩放；与入参不等即重取度量。
+    TypedMetrics typed_{};
+    float metrics_scale_ = -1.0F;  ///< `typed_` 所属的缩放；与入参不等即重取度量。
+    bool metrics_stale_ = true;    ///< 字体或排版入参变过（Ctrl+滚轮缩放是唯一改点）；取用即清。
 
     CursorState cursor_{};
     CursorState painted_cursor_{};  ///< 上次标脏时的光标，用于判断「本帧到底有没有可画的东西」。

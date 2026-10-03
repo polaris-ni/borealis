@@ -1,9 +1,12 @@
 #include <chrono>
 #include <memory>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include "aurora/aurora.h"
 #include "aurora/core/log.h"
+#include "aurora/render/font_discovery.h"
 #include "aurora/window/native_surfaces.h"
 #include "borealis/conn/local_terminal.h"
 #include "borealis/config/settings.h"
@@ -11,6 +14,7 @@
 #include "borealis/session/clipboard_outbox.h"
 #include "borealis/session/session.h"
 #include "borealis/term/width.h"
+#include "borealis/ui/font_choice.h"
 #include "ui/terminal_view.h"
 
 namespace {
@@ -18,6 +22,19 @@ namespace {
 /// @brief 会话的名义初始尺寸：真实行列由控件首次布局按自身尺寸派生并下发
 ///        （`SPEC.FEAT.XFER.01` 的 UI 取值腿），这里只要保证状态机与连接一起来有个可用的格。
 constexpr borealis::session::Size kNominalViewport{80U, 24U};
+
+/// @brief 降级留痕的 ASCII 取值名（日志字面量须是英文，AGENTS.md §4.3 第 14 条）。
+[[nodiscard]] auto verdict_name(borealis::ui::FontFamilyVerdict verdict) -> std::string_view {
+    switch (verdict) {
+        case borealis::ui::FontFamilyVerdict::Configured:
+            return "configured";
+        case borealis::ui::FontFamilyVerdict::NotMonospace:
+            return "not_monospace";
+        case borealis::ui::FontFamilyVerdict::Unlisted:
+            return "unlisted";
+    }
+    return "unknown";  // 枚举已穷尽：新增档位而忘跟上文案时，这串比静默复用上一条更醒目
+}
 
 }  // namespace
 
@@ -64,12 +81,35 @@ auto main() -> int {
     // TODO(SPEC.FEAT.CONN.05): 粘贴的 `line_ending` 取连接的行尾设置，本地终端就是缺省 LF；
     // 串口那一腿到货后由连接的行尾配置搬进来（块间隔同为缺省值，需求未开配置键）。
 
+    // 字体族目录只在装配阶段取一次：框架的首次调用要递归扫系统字体目录并逐个开 face 才能判定
+    // 等宽性，属同步 IO，不得进事件回调或绘制路径（AGENTS.md §4.5 第 25 条）。取全量而非
+    // `monospace_only` 的那个子集，是为了让「装了但非等宽」与「压根没这个族」两档降级可分别留痕。
+    const std::vector<borealis::ui::FontFamilyEntry> catalog = []() -> std::vector<borealis::ui::FontFamilyEntry> {
+        std::vector<borealis::ui::FontFamilyEntry> out;
+        for (const au::render::FontFamilyInfo &info : au::render::list_font_families()) {
+            out.push_back(borealis::ui::FontFamilyEntry{.family = info.family, .monospace = info.monospace});
+        }
+        return out;
+    }();
+    const borealis::ui::FontFamilyChoice font_choice =
+        borealis::ui::choose_font_family(settings.appearance.font_family, catalog);
+    if (font_choice.verdict != borealis::ui::FontFamilyVerdict::Configured) {
+        // 诊断走日志而非对话框：配置的字体族不可用不阻断启动，视口照常起来只是换了族。
+        AURORA_LOG_WARN("main", "configured font family is unusable, using fallback: '",
+                        settings.appearance.font_family, "' -> '", font_choice.family, "' (",
+                        verdict_name(font_choice.verdict), ", catalog size ", catalog.size(), ")");
+    }
+    const borealis::ui::Typography typography{
+        .line_height = settings.appearance.font_line_height,
+        .letter_spacing_dp = settings.appearance.font_letter_spacing_dp,
+    };
+
     auto view = std::make_shared<borealis::ui::TerminalView>(
         session, settings.appearance.palette,
-        au::Font{.family = settings.appearance.font_family,
+        au::Font{.family = font_choice.family,
                  .size_pt = static_cast<float>(settings.appearance.font_size_pt),
                  .weight = 400},
-        settings.appearance.viewport_padding_dp,
+        typography, settings.appearance.viewport_padding_dp,
         std::chrono::milliseconds{settings.appearance.cursor_blink_period_ms}, std::move(interaction));
     // TODO(SPEC.FEAT.PREF.02): 配置里的光标缺省形态与闪烁档、Ambiguous 口径尚无会话侧接缝可注入，
     // 三者当前分别取状态机的 `Block` / `blinking=true` 缺省值与判定入参的 `Narrow`。

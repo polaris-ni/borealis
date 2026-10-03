@@ -128,7 +128,7 @@ class Harness {
     explicit Harness(const TerminalView::InteractionOptions &options = {}, bool with_host = true,
                      bool stub_confirm = true)
         : session_(std::make_unique<Session>(own_connection(), kNominalSize, kScrollback, width_policy)),
-          view_(std::make_shared<TerminalView>(*session_, PaletteSpec{}, test_font(), kPaddingDp,
+          view_(std::make_shared<TerminalView>(*session_, PaletteSpec{}, test_font(), ui::Typography{}, kPaddingDp,
                                                std::chrono::milliseconds{500}, options)),
           host_(std::make_shared<au::OverlayHost>(au::Node{std::static_pointer_cast<au::Widget>(view_)})),
           root_(std::static_pointer_cast<au::Widget>(host_)) {

@@ -67,6 +67,7 @@ using borealis::ui::PaletteSpec;
 using borealis::ui::Rect;
 using borealis::ui::RgbaColor;
 using borealis::ui::TerminalView;
+using borealis::ui::Typography;
 
 constexpr int kWindowWidth = 420;
 constexpr int kWindowHeight = 260;
@@ -147,7 +148,7 @@ class Harness {
           options_(options),
           font_(test_font()),
           session_(std::make_unique<Session>(own_connection(), kNominalSize, kScrollback, width_policy)),
-          view_(std::make_shared<TerminalView>(*session_, palette_, font_, kPaddingDp,
+          view_(std::make_shared<TerminalView>(*session_, palette_, font_, Typography{}, kPaddingDp,
                                                std::chrono::milliseconds{kBlinkPeriodMs}, options_)),
           root_(std::static_pointer_cast<au::Widget>(view_)) {
         session_->start();
