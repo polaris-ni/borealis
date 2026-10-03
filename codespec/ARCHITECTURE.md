@@ -322,6 +322,7 @@ cell(col,row) 的落笔原点 = { pad_dp + col * cell_width_px / scale,  pad_dp 
 - 局部帧只压裁剪栈而 `on_paint` 收全量 bounds，故绘制行集取 `[0, rows)` ∩ 按 `Painter::clip_bounds()` 折算的行区间（裁决 7.23ⓐ）。**这条纪律没有像素可观测面**：脏区上报走非虚的 `Widget::dirty_bounds()`（恒等于控件自身盒），控件无法把子矩形报成脏，故帧间差分观察不到窗外是否被画——像素用例刻意不断言它。
 - 视口滚动状态只有一个「起始行偏移」，走 `Widget` 内置的 `ScrollViewport` 内核而非框架 `Scroll` 容器（§9.5）。
 - 唯一触达 `au::Painter` / `au::Widget` 的实现收口在 `src/ui/terminal_view.cpp` 一个翻译单元；`cell_layout` 与 `palette` 为无框架依赖的纯逻辑，可全量单测。
+- **场景根是 `au::OverlayHost`，浮层叠在视口之上**（裁决 7.41③，装配层 `src/main.cpp`）：右键菜单（`au::Popup` 承载一列 `au::Button`）与多行粘贴确认（`au::Dialog` + `aurora::confirm`）由视口自己挂到宿主上，故上面那条五层序列只描述视口自身的内容盒，浮层是宿主叠于其上的独立层；`Popup` / `Dialog` / `Button` 的节点装配同样只发生在该翻译单元内。**框架只建模不代劳派发**（实测）：`Modifier::context_menu` 与 `MenuItem` 没有渲染与点击派发，`OverlayHost::handle_outside_click()` 在 Aurora 全仓无调用点，故外部点击由本仓在 `on_pointer_event` 的 Press 分支先问宿主、命中即消费（点菜单外不再落到选区）。浮层懒建一次并常驻，之后只 `open_at` / `close`，不为每次右键重建节点树。
 
 ### 9.3 G1 就绪后的替换接缝
 
@@ -407,7 +408,13 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 - **列模式的 Alt 判定取 `MouseEvent::modifiers`**（裁决 7.40⑤）：这是 G18 回货字段在本仓的第一个消费点，派发器只透传不推断，故不自造轮询物理按键态的兜底；`Move` / `Release` 同样带该字段，拖拽途中松开 Alt 即回落流式。
 - **作废路径复用记账而非加模式判定**（裁决 7.40⑦）：主备屏切换与 `ESC c` 都必过 `Storage::clear()`，而 `clear()` 已按现存行数推进顶边位移（7.39②），选区随之折算到顶端之外并塌成作废；视口侧另设「是不是备屏」的判定会与 7.39③ 的「带内滚动不补偿」互相打脸。
 
-**余下未落**：右键三态菜单（`Modifier::context_menu` + `MenuItem`、`Dialog` 均在公共 API 上；含「无选区时复制项置灰」的口径，见裁决 7.38⑥）、多行粘贴警告的对话框与按 `PastePlan` 的逐块排期（计划本身已由 `term::plan_paste` 给出）、`SPEC.FEAT.INTERACT.04` 的滚动区域带内位移补偿（7.39③ 的显式欠项）。**真机走查未做**：拖拽跟手、跨回看滚动的选区跟随、copy-on-select 是否真落系统剪贴板——现有验收是无头像素与文本断言，不据此宣称「可用」。
+**已落地的右键三态与粘贴呈现腿（2026-10-03，裁决 7.41）**：`ui::plan_right_click(RightClickAction, bool has_selection) -> RightClickPlan{intent, items}`（`include/borealis/ui/right_click.h` + `src/ui/right_click.cpp`）是纯逻辑件，意图四值 `None / Copy / Paste / Menu`；`RightClickAction` 的定义自 `config/settings.h` 迁入该头（配置侧改 `using ui::RightClickAction;`，落盘名→值映射不变），迁的原因是判定发生在绘制侧而 `config` 已含 `ui/palette.h`——留在配置层就是 `config ⇄ ui` 模块环（与 7.32① 的 `ui::CopyOptions` 同因）。视口侧的三条架构相关口径：
+
+- **剪贴板的读与写都落帧边界**（裁决 7.41⑤）：右键与菜单项的点击只置 `copy_pending_` / `paste_pending_` 一个 bool，真正的 `get_text` / `set_text` 在下一帧 `on_frame` 的 `flush_copy_request` / `flush_paste_request` 里做（§4.5 第 25 条，与 7.40⑥ 同一条纪律）。全仓触达系统剪贴板的翻译单元仍只有 `session::ClipboardOutbox` 一个，本棒在其中并列新增 `read()`；视口为此开 `Presentation{clipboard_read, clipboard_write, confirm_multiline}` 三接缝，**留空即回落生产实现**，故集成用例测的是接线而不是替身行为。
+- **多行粘贴先确认后发送，且「问不了就不粘」**（裁决 7.41④）：`confirm_multiline` 是异步接缝，`PastePlan` 扣在 `pending_paste_` 里等用户，放行闭包以「持有值已被取走」作幂等判据（第二次 `true` 不再发第二遍）；无浮层宿主时把持有值直接作废——未经确认绝不替用户按下回车，「什么都不发生」是正确结果而非吞事件。
+- **逐块节流由 `Scheduler::set_timeout` 兑现，排期取累积延迟**（裁决 7.41⑥）：`PasteChunk::delay` 是「相对上一块」的量（7.33⑤），故累加后才是绝对时刻；`Scheduler::current()` 是 thread_local、无运行中 App 时恒空，此时按块次序一次发完（块边界与内容不变），所以无头用例锁「分了几块、每块发什么」而非「隔了多久」，节流那一腿的判据随真机走查。
+
+**余下未落**：`SPEC.FEAT.INTERACT.04` 的滚动区域带内位移补偿（7.39③ 的显式欠项）、三态与复制变换的 **UI 入口**（`SPEC.FEAT.PREF.02` 设置面板；键早已在 schema 内，7.38⑥ 所述「无消费方」自此闭合，缺的是面板）。「无选区时复制项置灰」的口径已随本棒实装（7.41②，判据见其验收段）。**真机走查未做**：拖拽跟手、跨回看滚动的选区跟随、copy-on-select 是否真落系统剪贴板、右键菜单的视觉与点选、多行警告对话框的呈现、逐行节流是否丢字——现有验收是无头像素 / 文本 / 集成断言，不据此宣称「可用」（AGENTS.md §4.6 第 33 条）。
 
 ### 10.3 搜索
 

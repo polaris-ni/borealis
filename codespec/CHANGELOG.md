@@ -6,6 +6,24 @@
 
 ---
 
+## v0.39（2026-10-03）右键三态与粘贴呈现腿：上下文菜单、多行警告与逐块节流（`SPEC.FEAT.INTERACT.03`，裁决 7.41）
+
+**动机**：v0.38 把选区界面腿本体接完，`SPEC.FEAT.INTERACT.03` 剩下的就是右键这一侧：三态可配（菜单 / 粘贴 / 选中即复制）、上下文菜单本体、多行粘贴警告、按 `PastePlan` 的逐块排期。这一段要裁决的仍不是画图，而是三处结构问题——`RightClickAction` 的定义该放哪一层、剪贴板 IO 落在事件回调还是帧边界、以及「没有浮层宿主就问不了确认」时到底发不粘贴。落地前实测了 Aurora 的 `Popup` / `OverlayHost` / `Dialog` 三个公共件的真实形态（框架只建模、不代劳派发），据此新增裁决 **7.41**（六条，其中 ③ 明确**不登记框架缺口**）。
+
+- **右键决策件与枚举单源迁移（`feat(ui)`，7.41①②）**：`RightClickAction` 的唯一定义处从 `config/settings.h` 迁入 `include/borealis/ui/right_click.h`，配置侧改 `using ui::RightClickAction;`（落盘的 `context_menu / paste / copy_on_select` 名称→值映射逐字节不变，一条 `is_same_v` 单测锁同型）。理由是判定发生在绘制侧的纯逻辑件里，枚举留在 `config` 就得让 `ui/right_click.h` 反向含 `config/settings.h`，而 `config` 已含 `ui/palette.h`——模块环（7.32① 同因）。处置是纯函数 `plan_right_click(action, has_selection) -> RightClickPlan{intent, items}`，意图四值 `None / Copy / Paste / Menu`；`CopyOnSelect` 无选区回 `None`（空写会覆盖用户剪贴板原有内容），`Paste` 态与选区无关；`ContextMenu` 首版两项，无选区时「复制」`enabled=false` 即**置灰而非点击后静默失败**（7.38⑥ F-b）。
+- **菜单与确认全部用框架公共 API 组合（`feat(ui)`，7.41③）**：装配层场景根换成 `au::OverlayHost`（`src/main.cpp`），视口内 `au::Popup` 承载一列 `au::Button`（`min_width` 定死条目宽度、`corner_radius=0` 让相邻条目拼成整板、置灰档取「前景向底色各半」而非框架缺省灰——后者在深色主题下比正文还亮，灰显反成了强调），多行警告用 `au::Dialog` + `aurora::confirm`。**实测两处框架现状**：`Modifier::context_menu` 与 `MenuItem` 只有状态模型、没有渲染与点击派发；`OverlayHost::handle_outside_click(Point)` 在 Aurora 全仓无人调用，即框架不代劳把外部点击派给浮层，须应用侧在指针入口自己驱动——本仓在 `on_pointer_event` 的 Press 分支先问宿主，命中即消费该事件（点菜单外不落到选区）。按裁决 7.13② 这属「用现有公共 API 组合得出的交互体验」，**留在本仓、不登记缺口**。浮层懒建一次并常驻，之后只 `open_at` / `close`。
+- **多行先确认后发送（`feat(ui)`，7.41④）**：`confirm_multiline` 是异步接缝（`void(const PastePlan &, function<void(bool)>)`），计划扣在 `pending_paste_` 里等用户；放行闭包以「持有值已被取走」为幂等判据，故第二次 `true` 不再发第二遍。**无宿主 ⇒ 问不了 ⇒ 不粘贴**（`pending_paste_.reset()`）——「什么都不发生」在这里是正确结果而非吞事件，未经确认绝不替用户按下回车。
+- **剪贴板读方向与帧边界纪律（`feat(session)` + `feat(ui)`，7.41⑤）**：`session::ClipboardOutbox` 新增 `read()`（`get_text` 失败只记诊断、返回空，与 `drain()` 的落地失败同口径），全仓触达系统剪贴板的翻译单元仍只有这一个，读写并列其中。视口侧 `on_pointer_event` / `on_menu_command` 只置 `copy_pending_` / `paste_pending_` 一个 bool，真正的 IO 在下一帧 `on_frame` 的 `flush_copy_request` / `flush_paste_request`（AGENTS.md §4.5 第 25 条，与 7.40⑥ 同一条纪律）。视口为此开 `Presentation{clipboard_read, clipboard_write, confirm_multiline}` 三接缝，**字段留空即回落生产实现**，故集成用例测的是接线本身而不是替身行为。
+- **逐块节流的排期（`feat(ui)`，7.41⑥）**：经 `Scheduler::set_timeout`，排期时刻取 `chunks[i].delay` 的**累积值**（计划里的延迟是「相对上一块」，7.33⑤）。`Scheduler::current()` 是 thread_local、无运行中 App 时恒 `nullptr`，此时按块次序一次发完（块边界与内容不变），所以无头用例锁「分了几块、每块发什么」而非「隔了多久」，节流那一腿的真机判据随人工走查。
+- **验收（`test(ui)`）**：`utest_right_click` **8 例**（三态 × 有无选区的分流、菜单条目与 `enabled`、配置别名同型）+ 新建 `itest_right_click_paste` **16 例**（真指针派发 + `Popup` 真实命中测试 + 帧边界的中间态 + 多行确认的扣与放），非 e2e 通道 **25 项全绿**（新增一条 CTest 项，`cmake/BorealisTests.cmake` 按 glob 自动挂载）。菜单条目的定点用 `context_menu()->content_bounds()` 的高度分数（1/4＝复制、3/4＝粘贴），为此给视口开一个只读 `context_menu()` 观测点——条目宽度由 `min_width` 定死而非文字撑开，用例拿不到内容盒就只能复刻一套按钮尺寸算式。
+- **四条变异自证与一处判据空洞**：粘贴改到回调里读剪贴板 → 帧边界两例转红；多行判据短路 → 三例转红；去掉外部点击关菜单 → 关菜单那一例转红；**置灰改成恒可用 → 只有置灰那一例转红，且这是自查补出来的**——原断言只比剪贴板读写计数，而无选区时即便条目可用，`flush_copy_request` 也因子串为空而早退，于是「置灰＝不可点」这件事结构上测不到；补的判据是「点它既不复制也不粘贴、**连菜单都还开着**」（禁用按钮不消费点击，真码保持 open；MUT 下 `on_menu_command` 关菜单 → 转红）。另记一条工具教训：首轮变异注入写成行尾注释使 `right_click.cpp` 编译失败，而那次「16 例全绿」其实是**旧二进制**的读数——改用块内注释并重建后才拿到真实读数。
+- **吞吐时间门禁**：复跑 7 档全 PASS，最紧的 B-5 `cat_frame_ms_mean` 三次中位 1.424 ms 对相对线 1.456 ms——场景根多了一层 `OverlayHost` 布局，未破线故**不改基线**。
+- **提交形态**（五个分层本地提交）：`feat(ui)` 右键决策件与枚举单源迁移 / `feat(session)` 剪贴板读方向 / `feat(ui)` 视口右键、菜单与粘贴排期（含装配层浮层宿主）/ `test(ui)` 八例单元 + 十六例集成 / `docs` 裁决 7.41 与现状回写。
+- **仍待人工**：右键菜单、多行警告与逐行节流的**真机走查未做**（本棒只有无头集成断言，不宣称「可用」）；三态的 **UI 入口仍缺**，因为 `SPEC.FEAT.PREF.02` 设置面板未开工（键早已在 schema 内，7.38⑥ 所述「无消费方」自此闭合）；缺省 10 ms 的块间隔是否丢字待真机校准（7.33⑤ 已在册）。
+- 文档回写：`SPECIFICATIONS.md` §7 增裁决 7.41（六条 + 代价 + 验收）、§7 追加分组范围补到 `7.37–7.41`、`SPEC.FEAT.INTERACT.03` 末句改指 7.41①–⑥、版本脚注 v0.38 → v0.39；`ARCHITECTURE.md` §9.2 记场景根 `OverlayHost` 与浮层层序、§10.2 记剪贴板读写与粘贴排期都落在帧边界；`AGENTS.md` §2 目录表补 `ui/right_click.{h,cpp}` 与新集成用例、§6 现状回填；`PLAN.md` 本条落期同步。
+
+---
+
 ## v0.38（2026-10-03）选区界面腿本体：指针状态机、高亮绘制与复制落地（`SPEC.FEAT.INTERACT.02` / `03`，裁决 7.40）
 
 **动机**：v0.36 / v0.37 两根把口径与纯逻辑件备齐了，界面腿于是只剩「把件接起来」这一段——而这一段真正需要裁决的不是画图，是**接缝落在哪一层**：复制取文本要不要新开会话侧 API、行号换算量藏在谁身上、断点上的退化按哪一端分。这几处原稿没写或写反，落地时逐条实测纠正，故新增裁决 **7.40**（九条，其中 ① 是 7.38⑥ 的改判）。
