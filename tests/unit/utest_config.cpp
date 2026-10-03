@@ -93,6 +93,8 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
 
     next.appearance.font_family = "Consolas";
     next.appearance.font_size_pt = 11.5;
+    next.appearance.font_line_height = 1.25;    // 非整倍数：行高余量的往返等值才判得出取整口径
+    next.appearance.font_letter_spacing_dp = 2.0;
     next.appearance.viewport_padding_dp = 0.0F;  // 贴边形态（裁决 7.25②）
     next.appearance.cursor_shape = CursorShape::Bar;
     next.appearance.cursor_blinking = false;
@@ -187,6 +189,9 @@ AURORA_TEST_CASE(defaults_are_the_first_launch_shape) {
     AURORA_TEST_CHECK_NEAR(defaults.appearance.palette.min_contrast, 4.5, 0.001);
 
     AURORA_TEST_CHECK_NEAR(defaults.appearance.font_size_pt, 14.0, 0.001);
+    // 两档排版可调量的默认值即「字体自身的排布」：首屏不得因为可调项而改变行列数。
+    AURORA_TEST_CHECK_NEAR(defaults.appearance.font_line_height, 1.0, 0.001);
+    AURORA_TEST_CHECK_NEAR(defaults.appearance.font_letter_spacing_dp, 0.0, 0.001);
     AURORA_TEST_CHECK_NEAR(defaults.appearance.viewport_padding_dp, 4.0F, 0.001F);
     AURORA_TEST_CHECK_TRUE(defaults.appearance.cursor_shape == CursorShape::Block);
     AURORA_TEST_CHECK_TRUE(defaults.appearance.cursor_blinking);
@@ -306,6 +311,8 @@ AURORA_TEST_CASE(bad_values_fall_back_to_defaults_and_are_reported) {
   "schema_version": 1,
   "appearance": {
     "font_size_pt": "large",
+    "font_line_height": 9.0,
+    "font_letter_spacing_dp": -1.0,
     "cursor_blink_period_ms": 0,
     "cursor_shape": "triangle",
     "tab_name_priority": "sometimes",
@@ -329,7 +336,8 @@ AURORA_TEST_CASE(bad_values_fall_back_to_defaults_and_are_reported) {
     AURORA_TEST_CHECK_TRUE(store.settings() == defaults);
 
     const auto &rejected = store.report().rejected_keys;
-    for (std::string_view key : {"appearance.font_size_pt", "appearance.cursor_blink_period_ms",
+    for (std::string_view key : {"appearance.font_size_pt", "appearance.font_line_height",
+                                 "appearance.font_letter_spacing_dp", "appearance.cursor_blink_period_ms",
                                  "appearance.cursor_shape", "appearance.tab_name_priority",
                                  "appearance.sidebar_collapsed", "appearance.theme",
                                  "appearance.palette", "terminal.bell", "terminal.scrollback_limit",
