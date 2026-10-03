@@ -26,6 +26,7 @@
 #include "borealis/grid/storage.h"
 #include "borealis/term/terminal.h"
 #include "borealis/term/width.h"
+#include "borealis/ui/font_choice.h"
 #include "borealis/ui/palette.h"
 #include "framework/aurora_test.h"
 
@@ -46,6 +47,7 @@ using borealis::config::TabNamePriority;
 using borealis::config::theme_palette;
 using borealis::term::AmbiguousWidth;
 using borealis::term::CursorShape;
+using borealis::ui::kDefaultMonospaceFamily;
 using borealis::ui::RgbaColor;
 
 namespace {
@@ -189,6 +191,9 @@ AURORA_TEST_CASE(defaults_are_the_first_launch_shape) {
     AURORA_TEST_CHECK_NEAR(defaults.appearance.palette.min_contrast, 4.5, 0.001);
 
     AURORA_TEST_CHECK_NEAR(defaults.appearance.font_size_pt, 14.0, 0.001);
+    // 默认字体族与判定件的回落族是同一个常量：配置层不留第二个族名，否则「首屏用的族」和
+    // 「降级后落到的族」会各自漂移（裁决 7.3 的内置 Cascadia Code 为默认）。
+    AURORA_TEST_CHECK_TRUE(defaults.appearance.font_family == kDefaultMonospaceFamily);
     // 两档排版可调量的默认值即「字体自身的排布」：首屏不得因为可调项而改变行列数。
     AURORA_TEST_CHECK_NEAR(defaults.appearance.font_line_height, 1.0, 0.001);
     AURORA_TEST_CHECK_NEAR(defaults.appearance.font_letter_spacing_dp, 0.0, 0.001);
