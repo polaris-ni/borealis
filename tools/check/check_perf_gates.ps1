@@ -22,6 +22,10 @@
     compiler flags rather than the product. Both the bench JSON and the baseline file carry
     a build_config marker and a mismatch is a hard FAIL -- comparing a Debug reading against
     an optimized reference (or the other way round) is meaningless.
+  - The grid is a marker of the same kind: the bench writes its actual rows x columns into the
+    JSON and the baseline records the grid it was captured at, and a mismatch is a hard FAIL.
+    Frame cost is per cell, so a grid change (a font that resolves differently, a window that
+    sizes differently) silently rescales every reading.
   - Idle frames are already excluded by the bench, and the benchmark measures the cost of
     the presentation layer itself (dirty-row filtering, run splitting, colour resolution,
     cursor three-pass), not how fast the far end can produce bytes.
@@ -149,6 +153,30 @@ foreach ($s in $samples) {
     }
 }
 Write-Host "Build config: $wantConfig (matches baseline)"
+
+# The grid the bench actually got belongs to the same contract, for the same reason: frame
+# cost is per cell, so a reference captured at one grid cannot judge a run at another. The
+# grid moves when the font subsystem's cell metrics move -- e.g. when the framework starts
+# resolving the requested family instead of falling back through the default chain -- and
+# that is precisely the pollution that otherwise surfaces as an unexplained +45%.
+$wantGrid = $cfg.capture.grid
+if ($null -eq $wantGrid) {
+    Write-Host "FAIL  baseline has no capture.grid -- re-capture it"
+    exit 1
+}
+$wantGridText = $wantGrid -join 'x'
+foreach ($s in $samples) {
+    if ($null -eq $s.grid) {
+        Write-Host "FAIL  a bench sample has no grid -- rebuild borealis_bench from the current source"
+        exit 1
+    }
+    $gotGridText = $s.grid -join 'x'
+    if ($gotGridText -ne $wantGridText) {
+        Write-Host "FAIL  bench grid $gotGridText != baseline $wantGridText -- cells per frame differ, compare like with like"
+        exit 1
+    }
+}
+Write-Host "Grid: $wantGridText (matches baseline)"
 
 # ---- judge ------------------------------------------------------------------------------
 $failures = 0
