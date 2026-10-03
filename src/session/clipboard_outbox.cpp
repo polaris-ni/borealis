@@ -1,8 +1,8 @@
 // ============================================================
-// OSC 52 剪贴板落地实现（src/session/clipboard_outbox.cpp）
+// 剪贴板落地实现（src/session/clipboard_outbox.cpp）
 // ------------------------------------------------------------
-// 本文件是这条腿上唯一触达框架与系统剪贴板的地方：会话侧只留存文本，取走与写入都发生在
-// 主线程的帧边界。
+// 本文件是全仓唯一触达框架与系统剪贴板的地方：远端 `OSC 52` 的留存文本与本地选中复制的文本
+// 都从这里出去，取走与写入都发生在主线程。
 // ============================================================
 
 #include "borealis/session/clipboard_outbox.h"
@@ -16,6 +16,17 @@
 
 namespace borealis::session {
 
+auto ClipboardOutbox::write(std::string_view utf8) -> void {
+    // 框架的写入口收 `const std::string &`，故这里物化一次；文本本就整段进剪贴板，无二次拷贝的空间。
+    const std::string text{utf8};
+    const auto result = aurora::Clipboard::set_text(text);
+    if (!result.ok()) {
+        // 失败只留诊断：两条来源的写者都拿不到回执（远端程序本就收不到，本地用户也没有对话框），
+        // 抛给帧循环只会让画面为一次剪贴板写买单。
+        AURORA_LOG_WARN("session", "clipboard write failed: ", result.error().message);
+    }
+}
+
 auto ClipboardOutbox::drain(Session &session) -> std::size_t {
     const auto pending = session.take_clipboard_write();
     if (!pending.has_value()) {
@@ -25,11 +36,7 @@ auto ClipboardOutbox::drain(Session &session) -> std::size_t {
     utf8.reserve(pending->size());
     // 不可表示码点在解码环节就已换成替换字符，这里没有第二层失败面。
     static_cast<void>(term::encode_utf8(*pending, utf8));
-    const auto result = aurora::Clipboard::set_text(utf8);
-    if (!result.ok()) {
-        // 失败只留诊断：远端拿不到回执，抛给帧循环只会让画面为一次剪贴板写买单。
-        AURORA_LOG_WARN("session", "OSC 52 clipboard write failed: ", result.error().message);
-    }
+    write(utf8);
     return 1U;
 }
 
