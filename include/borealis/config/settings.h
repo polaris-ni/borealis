@@ -28,6 +28,7 @@
 #include "borealis/term/width.h"
 #include "borealis/ui/palette.h"
 #include "borealis/ui/right_click.h"
+#include "borealis/ui/tab_strip.h"
 
 namespace borealis::config {
 
@@ -55,6 +56,12 @@ using term::PasteNewlinePolicy;
 /// 取值与语义的唯一定义在 `ui::RightClickAction`（界面腿要用它折算右键处置计划），配置侧只作
 /// 别名，与上面的 `PasteNewlinePolicy` 同一条单一真值源口径（裁决 7.41）。
 using ui::RightClickAction;
+
+/// @brief 标签名的手动重命名与 `OSC` 标题谁优先（`SPEC.FEAT.TERM.07` 那句「（可配）」）。
+///
+/// 取值与语义的唯一定义在 `ui::TabNamePriority`（名称折算发生在标签列表件里），配置侧只作别名，
+/// 与上面两条同口径（裁决 7.43①）。
+using ui::TabNamePriority;
 
 /// @brief 状态栏各项的开关（裁决 7.25⑧：每项一个开关，缺省全开）。
 ///
@@ -97,6 +104,10 @@ struct AppearanceSettings {
     int cursor_blink_period_ms{500};                           ///< 闪烁周期（`SPEC.FEAT.RENDER.04` 的可配项）。
 
     bool sidebar_collapsed{true};  ///< 侧栏缺省折叠（裁决 7.25⑥），展开态由本字段记住。
+    /// @brief 标签名冲突时的优先级（`SPEC.FEAT.TERM.07`）：手动重命名与 `OSC` 标题谁赢。
+    ///
+    /// 归外观域而非终端域：它改的是标签栏上那行字，不改会话里的任何字节。
+    TabNamePriority tab_name_priority{TabNamePriority::ManualWins};
     StatusBarSettings status_bar{};
 
     /// @brief 逐字段全等比较（配置往返断言用）。

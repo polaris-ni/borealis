@@ -78,6 +78,11 @@ constexpr std::array<EnumName, 3> kRightClickNames{{
     {"copy_on_select", static_cast<std::int64_t>(RightClickAction::CopyOnSelect)},
 }};
 
+constexpr std::array<EnumName, 2> kTabNamePriorityNames{{
+    {"manual_wins", static_cast<std::int64_t>(TabNamePriority::ManualWins)},
+    {"osc_wins", static_cast<std::int64_t>(TabNamePriority::OscWins)},
+}};
+
 constexpr std::array<EnumName, 2> kAmbiguousWidthNames{{
     {"narrow", static_cast<std::int64_t>(term::AmbiguousWidth::Narrow)},
     {"wide", static_cast<std::int64_t>(term::AmbiguousWidth::Wide)},
@@ -468,6 +473,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     put(node, "cursor_blinking", appearance.cursor_blinking);
     put(node, "cursor_blink_period_ms", appearance.cursor_blink_period_ms);
     put(node, "sidebar_collapsed", appearance.sidebar_collapsed);
+    put_enum(node, "tab_name_priority", kTabNamePriorityNames,
+             static_cast<std::int64_t>(appearance.tab_name_priority));
     node.set("status_bar", status_bar_to_json(appearance.status_bar));
     node.set("palette", palette_to_json(appearance.palette));
     return node;
@@ -546,6 +553,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     appearance.cursor_blink_period_ms =
         static_cast<int>(scope.integer("cursor_blink_period_ms", defaults.appearance.cursor_blink_period_ms, 50, 5000));
     appearance.sidebar_collapsed = scope.boolean("sidebar_collapsed", defaults.appearance.sidebar_collapsed);
+    appearance.tab_name_priority = static_cast<TabNamePriority>(scope.enumerated(
+        "tab_name_priority", kTabNamePriorityNames, static_cast<std::int64_t>(defaults.appearance.tab_name_priority)));
 
     auto bar = scope.enter("status_bar");
     appearance.status_bar.show_connection = bar.boolean("show_connection", defaults.appearance.status_bar.show_connection);
