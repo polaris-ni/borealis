@@ -120,7 +120,12 @@ std::vector<StyleRun> layout_selected(const grid::Row &row, const PaletteSpec &s
             building = true;
         }
         if (cell.is_wide_continuation()) {
-            continue;  // 延续格不承载字符：文本里既没有它也不画豆腐块，宽度由基础格那一段占住
+            // 双宽字形自成一跑：延续格不承载字符，而回退面的推进量由该 face 自己说了算，
+            // 实测并不等于两个格宽（Cascadia 14 pt 的格宽 11 px，汉字的推进 19 px）。同一 run
+            // 内紧随其后的字形因此会整体挪位、且逐字累积，故在这里断跑——下一段从自己的格左沿
+            // 重新起排（框架把每个 run 的 pen 吸附到整数像素），网格与字形才重新同源。
+            flush();
+            continue;  // 宽度由基础格那一段占住，文本里既没有延续格也不画豆腐块
         }
         static_cast<void>(term::append_utf8(cell.code_point, current.text));
         has_glyph = has_glyph || cell.code_point != U' ';
