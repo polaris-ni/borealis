@@ -2,7 +2,10 @@
 /// 目标单元: include/borealis/ui/cell_layout.h + src/ui/cell_layout.cpp
 /// 测试说明: 整格像素度量按 scale 换算成 dp 步长（含非整除缩放的取整容差、「装不满也给一格」与
 ///           不可用度量的空网格）、行列数即尺寸的 UI 侧来源且先扣视口内边距（SPEC.FEAT.XFER.01、
-///           裁决 7.25②）、指针 dp 落点折回格子序号（`SPEC.FEAT.INTERACT.02` 的鼠标换算腿：格边界
+///           裁决 7.25②）、行高与字距量化成整数物理像素并令基线随上半 leading 一同下移
+///           （SPEC.FEAT.RENDER.02 的排版腿：恒等变换逐位相同、余数归行盒下沿、回填字距是吸附后的
+///           整像素值、色带仍铺满放大后的整行）、
+///           指针 dp 落点折回格子序号（`SPEC.FEAT.INTERACT.02` 的鼠标换算腿：格边界
 ///           归右下一格、内边距带与越界一律钳到边界格、网格不可用时不定位）、run 按样式全等合并
 ///           且色带与文本共用同一批切分边界（裁决 7.23②）、
 ///           双宽延续格不进文本但保留列宽、combining 随基础码点并进同段文本（裁决 7.23ⓑ）、
@@ -37,6 +40,7 @@ using borealis::grid::kFlagHidden;
 using borealis::grid::kFlagWideContinuation;
 using borealis::grid::Row;
 using borealis::grid::UnderlineStyle;
+using borealis::ui::apply_typography;
 using borealis::ui::CellPixels;
 using borealis::ui::cell_at_point;
 using borealis::ui::contrast_ratio;
@@ -51,6 +55,7 @@ using borealis::ui::Rect;
 using borealis::ui::RgbaColor;
 using borealis::ui::RowSpan;
 using borealis::ui::StyleRun;
+using borealis::ui::Typography;
 
 /// @brief 默认前景白、默认背景黑（与 `themed` 用例里的调色板档区分开）。
 auto themed() -> PaletteSpec {
@@ -178,6 +183,71 @@ AURORA_TEST_CASE(viewport_padding_shrinks_the_grid_and_shifts_the_origin) {
 AURORA_TEST_CASE(padding_that_leaves_no_room_gives_an_empty_grid) {
     // 内边距吃掉整块可视区时不硬塞一格：那一格会画到窗口外，与「窗口最小化」同形。
     const auto geometry = make_geometry(CellPixels{8, 16, 12}, 2.0, LogicalSize{80.0, 80.0}, 40.0);
+    AURORA_TEST_CHECK_EQ(geometry.columns, 0U);
+    AURORA_TEST_CHECK_EQ(geometry.rows, 0U);
+}
+
+AURORA_TEST_CASE(default_typography_reproduces_the_font_metrics_bit_for_bit) {
+    // 行高 1.0 / 字距 0 必须是恒等变换：可调项关掉时整格度量逐字段等于框架给的那一份。
+    const auto typed = apply_typography(CellPixels{8, 16, 12}, 2.0, Typography{});
+    AURORA_TEST_CHECK_EQ(typed.cells.width_px, 8);
+    AURORA_TEST_CHECK_EQ(typed.cells.height_px, 16);
+    AURORA_TEST_CHECK_EQ(typed.cells.ascent_px, 12);
+    AURORA_TEST_CHECK_EQ(typed.glyph_top_px, 0);
+    AURORA_TEST_CHECK_NEAR(typed.letter_spacing_dp, 0.0, 1.0e-9);
+}
+
+AURORA_TEST_CASE(line_height_splits_the_leading_above_the_glyph_box) {
+    const auto typed = apply_typography(CellPixels{8, 16, 12}, 2.0, Typography{.line_height = 1.5});
+    AURORA_TEST_CHECK_EQ(typed.cells.height_px, 24);  // 行步长 = 16 × 1.5
+    AURORA_TEST_CHECK_EQ(typed.glyph_top_px, 4);      // 余量 8 px 的上半
+    AURORA_TEST_CHECK_EQ(typed.cells.ascent_px, 16);  // 基线随字盒一同下移
+    AURORA_TEST_CHECK_EQ(typed.cells.width_px, 8);    // 列步长不受行高影响
+}
+
+AURORA_TEST_CASE(odd_leading_leaves_the_extra_pixel_below_the_glyph_box) {
+    const auto typed = apply_typography(CellPixels{8, 15, 11}, 1.0, Typography{.line_height = 1.2});
+    AURORA_TEST_CHECK_EQ(typed.cells.height_px, 18);  // lround(15 × 1.2)
+    AURORA_TEST_CHECK_EQ(typed.glyph_top_px, 1);      // 余量 3 px：上半 1、下沿 2
+    AURORA_TEST_CHECK_EQ(typed.cells.ascent_px, 12);
+}
+
+AURORA_TEST_CASE(letter_spacing_snaps_to_whole_physical_pixels) {
+    // 1 dp 在 1.5× 下是 1.5 物理 px，非整数会让第 k 个字形偏离第 k 列左沿（框架按 dp × scale
+    // 逐对累加）；吸附成 2 px 后回填的实际字距也不再是配置原值。
+    const auto typed = apply_typography(CellPixels{8, 16, 12}, 1.5, Typography{.letter_spacing_dp = 1.0});
+    AURORA_TEST_CHECK_EQ(typed.cells.width_px, 10);
+    AURORA_TEST_CHECK_NEAR(typed.letter_spacing_dp, 2.0 / 1.5, 1.0e-9);
+    AURORA_TEST_CHECK_EQ(typed.cells.height_px, 16);
+}
+
+AURORA_TEST_CASE(negative_letter_spacing_narrows_the_column_step) {
+    const auto typed = apply_typography(CellPixels{8, 16, 12}, 2.0, Typography{.letter_spacing_dp = -0.75});
+    AURORA_TEST_CHECK_EQ(typed.cells.width_px, 6);  // −0.75 dp = −1.5 px → 吸附成 −2 px
+    AURORA_TEST_CHECK_NEAR(typed.letter_spacing_dp, -1.0, 1.0e-9);
+}
+
+AURORA_TEST_CASE(typed_metrics_keep_the_band_full_and_move_the_baseline) {
+    // 行高放大只把色带与行步长撑高：装饰线跟着**新基线**走，而不是留在旧行顶。
+    const auto typed = apply_typography(CellPixels{8, 16, 12}, 2.0, Typography{.line_height = 1.5});
+    const auto geometry = make_geometry(typed.cells, 2.0, LogicalSize{800.0, 800.0}, 0.0);
+    AURORA_TEST_CHECK_NEAR(geometry.cell_height, 12.0, 1.0e-9);
+    AURORA_TEST_CHECK_NEAR(geometry.ascent, 8.0, 1.0e-9);
+
+    const auto band = rect_for(geometry, 0U, 0U, 1U);
+    AURORA_TEST_CHECK_NEAR(band.height, 12.0, 1.0e-9);  // 选中高亮铺满放大后的整行
+
+    const auto rects = decoration_rects(geometry, 0U, ruled_run(0U, 1U, UnderlineStyle::Single));
+    AURORA_TEST_REQUIRE_EQ(rects.size(), 1U);
+    // 未放大行高时同一笔落在 6.5 dp（基线 6 dp + 1px）；行高 1.5 后基线到 8 dp。
+    AURORA_TEST_CHECK_NEAR(rect_at(rects, 0).y, 8.5, 1.0e-9);
+}
+
+AURORA_TEST_CASE(a_collapsed_column_step_yields_an_empty_grid) {
+    // 字距的取值域由配置侧把守：域外值把列步长压到非正时不画半格，与「字体未就绪」同一判据。
+    const auto typed = apply_typography(CellPixels{4, 16, 12}, 1.0, Typography{.letter_spacing_dp = -5.0});
+    AURORA_TEST_CHECK_EQ(typed.cells.width_px, -1);
+    const auto geometry = make_geometry(typed.cells, 1.0, LogicalSize{800.0, 600.0}, 0.0);
     AURORA_TEST_CHECK_EQ(geometry.columns, 0U);
     AURORA_TEST_CHECK_EQ(geometry.rows, 0U);
 }
