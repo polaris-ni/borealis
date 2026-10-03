@@ -15,8 +15,11 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "aurora/app/scheduler.h"
@@ -26,10 +29,18 @@
 #include "borealis/session/connection.h"
 #include "borealis/session/screen_mirror.h"
 #include "borealis/session/session.h"
+#include "borealis/term/paste.h"
 #include "borealis/term/terminal.h"
 #include "borealis/ui/cell_layout.h"
 #include "borealis/ui/palette.h"
+#include "borealis/ui/right_click.h"
 #include "borealis/ui/selection.h"
+
+namespace aurora {
+class Dialog;
+class OverlayHost;
+class Popup;
+}  // namespace aurora
 
 namespace borealis::ui {
 
@@ -48,6 +59,24 @@ class TerminalView final : public aurora::LeafWidget {
         std::string word_delimiters;  ///< 双击选词的断点集（配置键 `terminal.word_delimiters` 原样搬入）。
         bool copy_on_select{false};   ///< 选中即复制（`SPEC.FEAT.INTERACT.03`，默认关闭）。
         CopyOptions copy{};           ///< 三项复制变换，均默认关闭以保留原样。
+        RightClickAction right_click{RightClickAction::ContextMenu};  ///< 右键三态（配置键 `terminal.right_click`）。
+        term::PasteOptions paste{};   ///< 粘贴处置口径（换行策略、行尾与块间隔）。
+    };
+
+    /// @brief 视口的三条外部接缝：剪贴板读写与多行粘贴的确认呈现。
+    ///
+    /// 默认（字段为空）即生产路径的实现；换成替身是为了让「右键 → 剪贴板 → 会话字节」这条链
+    /// 能在无窗口站、无真实剪贴板的环境里断言（AGENTS.md §4.4 第 19 条）。字段留空即回落默认，
+    /// 是为了让装配层只声明它真正替换的那一条。
+    struct Presentation {
+        /// @brief 读剪贴板文本；空即 `session::ClipboardOutbox::read`。
+        std::function<std::string()> clipboard_read;
+        /// @brief 写剪贴板文本；空即 `session::ClipboardOutbox::write`。
+        std::function<void(std::string_view)> clipboard_write;
+        /// @brief 多行粘贴的确认呈现；空即模态对话框。
+        ///
+        /// 是异步形态而非 `bool`：对话框要等用户点，放行与否经 `answer` 回调给出，未回调即取消。
+        std::function<void(const term::PastePlan &, std::function<void(bool)> answer)> confirm_multiline;
     };
 
     /// @brief 组装视口。
@@ -79,6 +108,23 @@ class TerminalView final : public aurora::LeafWidget {
     /// @return 选中文本，三项变换已按入参应用；无选区时为空串。
     [[nodiscard]] auto selected_text() -> std::string;
 
+    /// @brief 挂上浮层宿主：右键菜单（`au::Popup`）与多行粘贴确认（`au::Dialog`）都作为它的浮层
+    ///        子节点存在，本控件只在按需打开时向它 `add_overlay`（裁决 7.41③）。
+    ///
+    /// 装配层的场景根因此是宿主而非本控件；不设这一步则右键只走直接动作两态，菜单态不发任何东西。
+    /// @param host 浮层宿主，**非拥有**：它持有本控件的节点，析构次序须晚于本控件。
+    auto set_overlay_host(aurora::OverlayHost &host) -> void;
+
+    /// @brief 替换剪贴板与确认的默认实现（用例注入替身；缺省不装即走生产路径）。
+    /// @param presentation 三条接缝，字段留空即保持默认。
+    auto set_presentation(Presentation presentation) -> void;
+
+    /// @brief 右键菜单浮层的只读句柄，从未打开过菜单即空指针（用例的落点观测点）。
+    ///
+    /// 条目宽度由 `ButtonProps::min_width` 定死而非文字撑开，用例拿不到内容盒就只能自己复制一套
+    /// 按钮尺寸算式去猜哪一行是「复制」，而算式猜错时「点到了哪一项」就成了未知量。
+    [[nodiscard]] auto context_menu() const noexcept -> const aurora::Popup *;
+
   protected:
     /// @brief 撑满父级，并在此重取整格几何与下发行列尺寸（`SPEC.FEAT.XFER.01` 的 UI 取值腿）。
     [[nodiscard]] auto on_layout(const aurora::Constraints &c, const aurora::BuildContext &ctx)
@@ -109,10 +155,10 @@ class TerminalView final : public aurora::LeafWidget {
     auto on_text_input(aurora::TextInputEvent &e) -> void override;
 
     /// @brief 指针入口：按下/拖动/抬起 → `ui::cell_at_point` → 选区端点推进
-    ///        （`SPEC.FEAT.INTERACT.02`，裁决 7.38① / 7.40）。
+    ///        （`SPEC.FEAT.INTERACT.02`，裁决 7.38① / 7.40）；右键按三态处置
+    ///        （`SPEC.FEAT.INTERACT.03`，裁决 7.41）。
     ///
     /// 不委派基类实现：那条路径只服务 Clickable / Gesture / ContextMenu 修饰链，本控件一样没有。
-    /// 右键不归本入口（`config::RightClickAction` 的三态另立一棒），故不消费、留着上冒。
     auto on_pointer_event(aurora::MouseEvent &e) -> void override;
 
     /// @brief 方向键归终端自己用：不声明则派发器把它们当几何焦点导航吃掉，光标无法移动。
@@ -210,6 +256,27 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 落地攒下的 copy-on-select 请求：在帧边界做 IO，不在事件回调里做（AGENTS.md §4.5 第 25 条）。
     auto flush_copy_request() -> void;
 
+    /// @brief 右键按下：按 `plan_right_click` 的意图分发到菜单 / 直接复制 / 直接粘贴（裁决 7.41）。
+    auto on_right_click(aurora::MouseEvent &e) -> void;
+
+    /// @brief 用公共 API 组合出上下文菜单（`au::Popup` 承载一列 `au::Button`）并挂到宿主上。
+    ///
+    /// 框架的 `Modifier::context_menu` 只有状态模型、没有渲染与点击派发，而这一套组合足以在应用侧
+    /// 做出可断言的菜单，故按裁决 7.13② 留在本仓而不登记缺口（裁决 7.41③）。
+    auto open_context_menu(aurora::Point where, const std::vector<MenuItem> &items) -> void;
+
+    /// @brief 菜单条目被点到：先收菜单，再把动作攒到帧边界（与 copy-on-select 同一条 IO 纪律）。
+    auto on_menu_command(MenuCommand command) -> void;
+
+    /// @brief 帧边界落地粘贴：读剪贴板 → `term::plan_paste` → 多行先确认 → 按计划排期发送。
+    auto flush_paste_request() -> void;
+
+    /// @brief 多行粘贴的默认确认呈现：宿主的模态对话框（`au::Dialog` + `au::confirm`）。
+    auto ask_multiline_warning(const term::PastePlan &plan, std::function<void(bool)> answer) -> void;
+
+    /// @brief 按计划把各块交进会话：块间延迟经 `Scheduler::set_timeout` 累积排期。
+    auto send_paste_plan(const term::PastePlan &plan) -> void;
+
     session::Session *session_ = nullptr;  ///< 非拥有。
     PaletteSpec spec_{};
     aurora::Font ref_font_{};
@@ -240,6 +307,14 @@ class TerminalView final : public aurora::LeafWidget {
     bool dragging_ = false;
     bool copy_pending_ = false;  ///< 抬起已发生、复制留到下一帧的 `on_frame` 落地。
     std::int64_t dropped_baseline_ = 0;  ///< 上次折算选区时的顶边位移读数（裁决 7.39⑤）。
+
+    Presentation presentation_{};         ///< 剪贴板与多行确认的三条接缝（空字段即生产实现）。
+    aurora::OverlayHost *host_ = nullptr; ///< 非拥有：装配层给的浮层宿主，本控件的父节点。
+    std::shared_ptr<aurora::Popup> menu_;                    ///< 懒建的菜单浮层（建成后一直是宿主的浮层子节点）。
+    std::shared_ptr<aurora::Dialog> multiline_warning_;      ///< 懒建的多行粘贴确认对话框。
+    bool paste_pending_ = false;  ///< 粘贴已请求、剪贴板读取留到下一帧的 `on_frame` 落地。
+    std::optional<term::PastePlan> pending_paste_;  ///< 等用户确认的处置计划（对话框放行才发送）。
+    std::vector<aurora::TimerHandle> paste_timers_; ///< 在途的逐块节流任务；析构时统一取消。
 };
 
 }  // namespace borealis::ui

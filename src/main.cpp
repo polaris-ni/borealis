@@ -59,6 +59,10 @@ auto main() -> int {
         .smart_line_join = settings.terminal.smart_line_join,
         .strip_tmux_border_chars = settings.terminal.strip_tmux_border_chars,
     };
+    interaction.right_click = settings.terminal.right_click;
+    interaction.paste.newline = settings.terminal.paste_newlines;
+    // TODO(SPEC.FEAT.CONN.05): 粘贴的 `line_ending` 取连接的行尾设置，本地终端就是缺省 LF；
+    // 串口那一腿到货后由连接的行尾配置搬进来（块间隔同为缺省值，需求未开配置键）。
 
     auto view = std::make_shared<borealis::ui::TerminalView>(
         session, settings.appearance.palette,
@@ -69,7 +73,11 @@ auto main() -> int {
         std::chrono::milliseconds{settings.appearance.cursor_blink_period_ms}, std::move(interaction));
     // TODO(SPEC.FEAT.PREF.02): 配置里的光标缺省形态与闪烁档、Ambiguous 口径尚无会话侧接缝可注入，
     // 三者当前分别取状态机的 `Block` / `blinking=true` 缺省值与判定入参的 `Narrow`。
-    au::Scene scene{au::Node{std::static_pointer_cast<au::Widget>(view)}};
+    // 右键菜单与多行粘贴确认都是浮层，故场景根是浮层宿主而非视口本身（裁决 7.41③）：宿主的子节点
+    // [0] 是撑满窗口的视口，[1..] 是视口按需追加的 Popup / Dialog。
+    auto host = std::make_shared<au::OverlayHost>(au::Node{std::static_pointer_cast<au::Widget>(view)});
+    view->set_overlay_host(*host);
+    au::Scene scene{au::Node{std::static_pointer_cast<au::Widget>(host)}};
     borealis::session::ClipboardOutbox outbox;
 
     au::Application app{std::move(scene), std::move(window), opts};

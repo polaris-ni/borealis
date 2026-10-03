@@ -22,6 +22,10 @@
 #include "aurora/core/dimension.h"
 #include "aurora/environment/build_context.h"
 #include "aurora/render/font_engine.h"
+#include "aurora/widget/button.h"
+#include "aurora/widget/containers.h"
+#include "aurora/widget/dialog.h"
+#include "aurora/widget/popup.h"
 #include "borealis/grid/cell.h"
 #include "borealis/grid/row.h"
 #include "borealis/session/clipboard_outbox.h"
@@ -38,6 +42,13 @@ constexpr float kRowStep = 1.0F;
 /// @brief 回看位置指示条的宽与最短长度（逻辑 dp，视觉稿 U1）。
 constexpr double kIndicatorWidthDp = 2.0;
 constexpr double kIndicatorMinLengthDp = 12.0;
+
+/// @brief 菜单条目的最小宽度（逻辑 dp）。需求与视觉稿都没规定数值，本仓取一档能让两字标签
+///        与右侧留白看起来像一列而非两个孤立按钮的宽度。
+constexpr float kMenuMinWidthDp = 168.0F;
+
+/// @brief 菜单条目的内边距：横向留得比 `Button` 缺省窄一档，让整列宽度由条目宽度而非文字决定。
+constexpr aurora::EdgeInsets kMenuPadding{.left = 10.0F, .top = 5.0F, .right = 10.0F, .bottom = 5.0F};
 
 /// @brief 互转点之一：`ui::RgbaColor` → 框架颜色（逐字段搬，alpha 参与混合）。
 [[nodiscard]] auto to_color(const RgbaColor &color) noexcept -> aurora::Color {
@@ -126,6 +137,20 @@ class StringCollector final : public term::CodePointSink {
     return out;
 }
 
+/// @brief 菜单条目的显示文案。
+///
+/// CJK-LITERAL: 上屏文案 - 右键菜单是给用户看的界面文案，本仓尚无本地化层（词条表随
+/// `SPEC.FEAT.PREF.02` 的设置面板那一棒再谈），故与视觉稿 F 面板一致用中文而非英文。
+[[nodiscard]] auto menu_label(MenuCommand command) -> std::string_view {
+    switch (command) {
+        case MenuCommand::Copy:
+            return "复制";
+        case MenuCommand::Paste:
+            return "粘贴";
+    }
+    return {};  // 枚举已穷尽：新增命令而忘跟上文案时，空标签比静默复用上一条更醒目
+}
+
 }  // namespace
 
 TerminalView::TerminalView(session::Session &session, PaletteSpec palette, aurora::Font ref_font,
@@ -143,7 +168,21 @@ TerminalView::TerminalView(session::Session &session, PaletteSpec palette, auror
     scroll_viewport_.step = kRowStep;
 }
 
-TerminalView::~TerminalView() { blink_timer_.cancel(); }
+TerminalView::~TerminalView() {
+    blink_timer_.cancel();
+    // 在途的粘贴块回调都捕获了 `this`；句柄只置取消标志，故调度器触发前会跳过它们。
+    for (const aurora::TimerHandle &handle : paste_timers_) {
+        handle.cancel();
+    }
+}
+
+auto TerminalView::set_overlay_host(aurora::OverlayHost &host) -> void { host_ = &host; }
+
+auto TerminalView::context_menu() const noexcept -> const aurora::Popup * { return menu_.get(); }
+
+auto TerminalView::set_presentation(Presentation presentation) -> void {
+    presentation_ = std::move(presentation);
+}
 
 auto TerminalView::on_frame() -> void {
     const std::vector<session::Damage> frame = session_->drain_damage();
@@ -164,6 +203,7 @@ auto TerminalView::on_frame() -> void {
     // 副本并入之后（读数由副本带出），否则高亮与复制文本会跟着旧的行号指着别的内容（裁决 7.38⑤）。
     compensate_selection_drift();
     flush_copy_request();
+    flush_paste_request();
     // 回看换源与光标移动都不在提交里：前者由距底行数变化指认（`on_scroll` 在帧序里先于本函数，
     // 故同帧就能换源），后者直接比较光标快照。
     if (!frame.empty() || previous_back != mirror_.back_rows() || !(cursor_ == painted_cursor_)) {
@@ -283,8 +323,17 @@ auto TerminalView::on_text_input(aurora::TextInputEvent &e) -> void {
 }
 
 auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
+    // 菜单开着时，任何按下都先问宿主：落在菜单外即收下这一击并关菜单，不再让它去推进选区或
+    // 触发第二个动作（`OverlayHost::handle_outside_click` 只由调用方在事件入口驱动，框架不代劳）。
+    if (e.action == aurora::MouseAction::Press && host_ != nullptr && host_->handle_outside_click(e.position)) {
+        e.is_handled = true;
+        return;
+    }
     if (e.button != aurora::MouseButton::Left) {
-        return;  // 右键归 `config::RightClickAction` 的三态那一棒，中键粘贴不在首版交付面
+        if (e.button == aurora::MouseButton::Right) {
+            on_right_click(e);
+        }
+        return;  // 中键粘贴不在首版交付面
     }
     if (mirror_.rows() == 0U || geometry_.columns == 0U) {
         return;  // 字体未就绪或窗口最小化：没有格子可选
@@ -608,9 +657,178 @@ auto TerminalView::flush_copy_request() -> void {
     }
     copy_pending_ = false;
     const std::string text = selected_text();
-    if (!text.empty()) {
-        session::ClipboardOutbox::write(text);
+    if (text.empty()) {
+        return;
     }
+    if (presentation_.clipboard_write) {
+        presentation_.clipboard_write(text);
+        return;
+    }
+    session::ClipboardOutbox::write(text);
+}
+
+auto TerminalView::open_context_menu(aurora::Point where, const std::vector<MenuItem> &items) -> void {
+    if (host_ == nullptr) {
+        return;  // 没有浮层宿主就发不出菜单：装配层须把场景根换成 `au::OverlayHost`（裁决 7.41③）
+    }
+    const aurora::Color panel = to_color(spec_.default_background);
+    // 置灰档取「前景向底色各半」，与失焦选区同一条降级思路（裁决 7.38① D3①）：框架的缺省灰
+    // {130,130,130} 在深色主题下几乎比正文还亮，灰显反而成了强调。
+    const aurora::Color dim = to_color(mix_half(spec_.default_foreground, spec_.default_background));
+    std::vector<aurora::Node> rows;
+    rows.reserve(items.size());
+    for (const auto &item : items) {
+        auto props = aurora::ButtonProps{};
+        props.label = std::string{menu_label(item.command)};
+        props.color = panel;
+        props.on_color = to_color(spec_.default_foreground);
+        props.font = ref_font_;
+        props.padding = kMenuPadding;
+        props.corner_radius = 0.0F;  // 相邻条目要拼成一块整板，圆角会在接缝处露出底色
+        props.min_width = kMenuMinWidthDp;
+        props.enabled = item.enabled;
+        props.disabled_color = panel;
+        props.disabled_text_color = dim;
+        auto button = std::make_shared<aurora::Button>(std::move(props));
+        if (item.enabled) {
+            button->set_on_click([this, command = item.command]() -> void { on_menu_command(command); });
+        }
+        rows.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(button))});
+    }
+    if (!menu_) {
+        menu_ = std::make_shared<aurora::Popup>();
+        static_cast<void>(host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(menu_)}));
+    }
+    menu_->set_content(aurora::Node{std::make_shared<aurora::Column>(aurora::ColumnProps{
+        .children = std::move(rows),
+        .gap = 0.0F,
+    })});
+    menu_->open_at(where);
+}
+
+auto TerminalView::on_menu_command(MenuCommand command) -> void {
+    if (menu_) {
+        menu_->close();
+    }
+    switch (command) {
+        case MenuCommand::Copy:
+            copy_pending_ = true;
+            break;
+        case MenuCommand::Paste:
+            paste_pending_ = true;
+            break;
+    }
+    // 菜单关掉本身就是画面变化（Popup::close 已标脏），但复制/粘贴要落地的那一帧仍由 `on_frame`
+    // 承担：回调里读剪贴板会把一次剪贴板抖动压在输入链上（AGENTS.md §4.5 第 25 条）。
+    mark_needs_paint();
+}
+
+auto TerminalView::flush_paste_request() -> void {
+    if (!paste_pending_) {
+        return;
+    }
+    paste_pending_ = false;
+    const std::string utf8 =
+        presentation_.clipboard_read ? presentation_.clipboard_read() : session::ClipboardOutbox::read();
+    if (utf8.empty()) {
+        return;  // 剪贴板没有文本：什么都不发，也不警告
+    }
+    const bool bracketed = modes_snapshot().bracketed_paste;
+    const term::PastePlan plan = term::plan_paste(to_code_points(utf8), bracketed, options_.paste);
+    if (!plan.multiline) {
+        send_paste_plan(plan);
+        return;
+    }
+    // 多行要先确认：判据是待发结果里仍有行尾（`term::plan_paste` 已按换行策略折过），
+    // 于是 `Filter` 粘成一行时不会弹警告，而 `?2004` 激活时一定会弹——那是 shell 明令保留的判断。
+    pending_paste_ = plan;
+    auto answer = [this](bool accepted) -> void {
+        if (!pending_paste_.has_value()) {
+            return;  // 已经答过一次（或被别处作废），重复放行不再发第二遍
+        }
+        const term::PastePlan held = *pending_paste_;
+        pending_paste_.reset();
+        if (accepted) {
+            send_paste_plan(held);
+        }
+    };
+    if (presentation_.confirm_multiline) {
+        presentation_.confirm_multiline(plan, std::move(answer));
+        return;
+    }
+    ask_multiline_warning(plan, std::move(answer));
+}
+
+auto TerminalView::ask_multiline_warning(const term::PastePlan &plan, std::function<void(bool)> answer) -> void {
+    if (host_ == nullptr) {
+        pending_paste_.reset();  // 没有宿主就问不了，未经确认不替用户按下回车
+        return;
+    }
+    if (!multiline_warning_) {
+        multiline_warning_ = std::make_shared<aurora::Dialog>();
+        static_cast<void>(
+            host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(multiline_warning_)}));
+    }
+    // 行数取待发块数而不是原文换行数：警告要说的是「会有几行被当成命令执行」。
+    const std::string message =
+        std::string{"剪贴板里的内容有 "} + std::to_string(plan.chunks.size()) +
+        " 行，粘贴会把每一行都当成一条命令依次执行。确定粘贴吗？";  // CJK-LITERAL: 上屏文案 - 同 `menu_label`
+    multiline_warning_->set_content(aurora::confirm(
+        "多行粘贴",  // CJK-LITERAL: 上屏文案 - 同 `menu_label`
+        message,
+        [this, answer = std::move(answer)](bool accepted) -> void {
+            multiline_warning_->close();
+            answer(accepted);
+        }));
+    multiline_warning_->show();
+    mark_needs_paint();
+}
+
+auto TerminalView::send_paste_plan(const term::PastePlan &plan) -> void {
+    std::erase_if(paste_timers_, [](const aurora::TimerHandle &handle) -> bool { return !handle.active(); });
+    aurora::Scheduler *scheduler = aurora::Scheduler::current();
+    if (scheduler == nullptr) {
+        // 没有运行中的调度器（用例里的无头帧）：节流无处排期，按次序一次发完，块边界与内容不变。
+        for (const auto &chunk : plan.chunks) {
+            session_->send_text(chunk.text);
+        }
+        return;
+    }
+    std::chrono::milliseconds elapsed{};
+    for (const auto &chunk : plan.chunks) {
+        elapsed += chunk.delay;  // 计划里的延迟是「相对上一块」，排期取累积值
+        const std::u32string text = chunk.text;
+        if (elapsed <= std::chrono::milliseconds::zero()) {
+            session_->send_text(text);
+            continue;
+        }
+        paste_timers_.push_back(scheduler->set_timeout(elapsed, [this, text]() -> void { session_->send_text(text); }));
+    }
+}
+
+auto TerminalView::on_right_click(aurora::MouseEvent &e) -> void {
+    if (e.action != aurora::MouseAction::Press) {
+        return;  // 抬起不再处置一次：三态的动作都在按下那一刻定
+    }
+    // 有没有选区看的是区间表而不是端点是否重合：两端重合即空表（`ui::row_spans` 的口径），
+    // 而区间表正是绘制与复制共用的那一张（裁决 7.40①）。
+    const RightClickPlan plan = plan_right_click(options_.right_click, !bands_.empty());
+    switch (plan.intent) {
+        case RightClickIntent::None:
+            return;  // 交还给宿主：右键本就没有可复制的东西
+        case RightClickIntent::Copy:
+            copy_pending_ = true;
+            break;
+        case RightClickIntent::Paste:
+            paste_pending_ = true;
+            break;
+        case RightClickIntent::Menu:
+            open_context_menu(e.position, plan.items);
+            break;
+    }
+    e.is_handled = true;
+    // 直接动作两态都不改画面内容，故本帧由这里点名（裁决 7.40⑥ 的「IO 落在帧边界」要有帧才落得下）。
+    mark_needs_paint();
 }
 
 }  // namespace borealis::ui
