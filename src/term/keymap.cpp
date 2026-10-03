@@ -89,6 +89,7 @@ struct SpecialForm {
         case KeySym::F2: return SpecialForm{.base = LetterBase::Ss3, .letter = U'Q'};
         case KeySym::F3: return SpecialForm{.base = LetterBase::Ss3, .letter = U'R'};
         case KeySym::F4: return SpecialForm{.base = LetterBase::Ss3, .letter = U'S'};
+        case KeySym::Insert: return SpecialForm{.tilde = 2};
         case KeySym::Delete: return SpecialForm{.tilde = 3};
         case KeySym::PageUp: return SpecialForm{.tilde = 5};
         case KeySym::PageDown: return SpecialForm{.tilde = 6};
