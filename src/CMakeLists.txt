@@ -27,6 +27,7 @@ add_library(borealis_core STATIC
         ui/pane_tree.cpp
         ui/right_click.cpp
         ui/selection.cpp
+        ui/tab_strip.cpp
         ui/terminal_view.cpp)
 
 # 平台层实现按目标平台编入：共享路径只见接口，ConPTY 句柄与 Win32 API 留在 src/platform/ 内
