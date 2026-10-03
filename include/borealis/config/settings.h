@@ -26,6 +26,7 @@
 #include "borealis/term/paste.h"
 #include "borealis/term/terminal.h"
 #include "borealis/term/width.h"
+#include "borealis/ui/font_choice.h"
 #include "borealis/ui/palette.h"
 #include "borealis/ui/right_click.h"
 #include "borealis/ui/tab_strip.h"
@@ -94,8 +95,8 @@ struct AppearanceSettings {
     std::string theme{kDefaultThemeName};  ///< 预置主题名；取值见 `config/themes.h`。
     ui::PaletteSpec palette{};                          ///< 生效调色板＝主题派生值 + 用户重映射；落盘的是这份最终值。
 
-    std::string font_family{"Cascadia Code"};  ///< 默认字体（裁决 7.3）。
-    double font_size_pt{14.0};                 ///< 14pt 是视觉稿的实测基准（100% DPI → 11×22 dp 格）。
+    std::string font_family{ui::kDefaultMonospaceFamily};  ///< 默认字体（裁决 7.3）；与回落族同名，故只有一处定义。
+    double font_size_pt{14.0};                             ///< 14pt 是视觉稿的实测基准（100% DPI → 11×22 dp 格）。
     /// @brief 行高倍数（`SPEC.FEAT.RENDER.02`）：网格行步长 = 字体行高 × 它，取值域 [1.0, 3.0]。
     ///
     /// 域从 1.0 起：小于字体自身行高会把下伸部切进下一行，而终端的网格对齐不容许行重叠。
