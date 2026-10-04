@@ -29,6 +29,7 @@
 ///           上那是终端视口，本用例给一个 `Text`。空宿主的返回序号是 0，而 0 正是面板「未登记」的哨兵值。
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -43,6 +44,7 @@
 #include "aurora/event/focus.h"
 #include "aurora/i18n/string_table.h"
 #include "aurora/widget/dropdown.h"
+#include "aurora/widget/switch.h"
 #include "aurora/widget/text.h"
 #include "aurora/widget/text_input.h"
 #include "borealis/config/form_transfer.h"
@@ -693,6 +695,18 @@ struct HitSpot {
     float y = 0.0F;
 };
 
+/// @brief 「这块底色仍属深色 chrome」的判据线（三通道都不亮于它，且像素不透明）。
+///
+/// 线的两侧都有实测出处：框架各控件的浅色缺省里**最低**的一档是开关关闭态轨道 `{180,180,180}`，
+/// 本仓 chrome 里**最深**的一档输入底是 `kControlBg{40,42,54}`，故这条钳位既能把每一处浅色缺省读成红，
+/// 又不会把本仓自己的深色底读成红。不透明那一半是把「帧缓冲取不到」和「底色够暗」分开的手段。
+constexpr std::uint8_t kChromeFloor = 0x60;
+
+[[nodiscard]] auto chrome_is_dark(const RgbaColor &color) -> bool {
+    return color.alpha == 0xFF && color.red <= kChromeFloor && color.green <= kChromeFloor
+        && color.blue <= kChromeFloor;
+}
+
 /// @brief 带真实布局与真实指针派发的驱动台：面板挂在无头窗口的场景根上。
 ///
 /// 只在这里需要窗口——其余用例判的都是行表与三条接缝，它们不依赖布局。本类的存在是因为
@@ -754,11 +768,17 @@ public:
     /// 跳过左导航列（宽 200 dp），免把导航按钮当成行区控件。
     /// @param room_below_dp 该控件的布局盒下沿到此窗口之间还要有的余量（dp）：要往下探覆盖绘制区的
     ///        用例（下拉的选项面板）须取一个够格的行，否则探到的点出了窗口，判据测的是坐标钳位而不是派发。
-    [[nodiscard]] auto find_first(std::string_view type_name, float room_below_dp = 0.0F) -> HitSpot {
+    /// @param accept 附加筛选（按控件实例）：chrome 用例要的是「关闭态的开关」，同类型的另一档底色
+    ///        是强调色，拿它判「底色不亮」会把正确实现读成红。
+    [[nodiscard]] auto find_first(std::string_view type_name, float room_below_dp = 0.0F,
+                                  const std::function<bool(au::Widget *)> &accept = {}) -> HitSpot {
         for (float y = kCardEdgeDp + 4.0F; y < static_cast<float>(kWindowHeight) - kCardEdgeDp; y += 4.0F) {
             for (float x = 220.0F; x < static_cast<float>(kWindowWidth) - kCardEdgeDp; x += 4.0F) {
                 au::Widget *widget = hit(x, y);
                 if (widget == nullptr || type_name != widget->type_name()) {
+                    continue;
+                }
+                if (accept && !accept(widget)) {
                     continue;
                 }
                 if (widget->paint_bounds().bottom() + room_below_dp > static_cast<float>(kWindowHeight) - kCardEdgeDp) {
@@ -768,6 +788,27 @@ public:
             }
         }
         return HitSpot{};
+    }
+
+    /// @brief 取当前帧缓冲里一点的色（无头 `scale` 恒 1.0，故窗口逻辑 dp 即物理像素下标）。
+    ///
+    /// 缓冲区缺失时返回 `alpha == 0` 的色，而 chrome 判据把「非透明」算在内，故不会把空缓冲读成「底色够暗」。
+    [[nodiscard]] auto pixel(float x_dp, float y_dp) const -> RgbaColor {
+        const std::uint8_t *data = window_.surface().data();
+        if (data == nullptr) {
+            return RgbaColor{0U, 0U, 0U, 0U};
+        }
+        const std::size_t index = (static_cast<std::size_t>(y_dp) * static_cast<std::size_t>(kWindowWidth)
+                                   + static_cast<std::size_t>(x_dp))
+                                  * 4U;
+        return RgbaColor{data[index], data[index + 1U], data[index + 2U], data[index + 3U]};
+    }
+
+    /// @brief 一个控件盒内 (fx, fy) 分数处的像素色。
+    [[nodiscard]] auto probe(const au::Widget *widget, double fx, double fy) const -> RgbaColor {
+        const au::Rect box = widget->paint_bounds();
+        return pixel(box.origin.x + static_cast<float>(box.size.width * fx),
+                     box.origin.y + static_cast<float>(box.size.height * fy));
     }
 
     /// @brief 发一个真实指针事件（按下即抬起由调用方各发一次）。
@@ -922,6 +963,57 @@ AURORA_TEST_CASE(a_dropdown_option_below_the_layout_box_is_not_dispatch_reachabl
     AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
 }
 
+/// @brief chrome 色值交接：六类通用行控件必须吃本仓自己的深色 chrome，而不是框架控件的浅色主题缺省。
+///
+/// S5 立的是「界面配色不随**终端主题**联动」，不是「随控件缺省」：框架侧 `TextInput` 的聚焦态底色缺省
+/// `{245,248,255}`、`SpinBox` / `Dropdown` 的框底 `255`、开关关闭态轨道 `{180,180,180}` 都是浅色时代的常数，
+/// 落在深色卡片上最坏的一处是**白底白字**（本件文本色是 `kText`，近白）。本例逐件在真实帧缓冲上取一个
+/// 「一定是底色」的点（盒内靠上，避开字形与 1 dp 描边），断它不亮。
+///
+/// 两处刻意的前提：开关只取**关闭态**那一枚（开启态轨道是本仓的强调色 `kAccent{189,147,249}`，拿「不亮」
+/// 判它会把正确实现读成红）；下拉放在切页之后问，而切页是整块重建，故此前各例的控件指针到那一句就不可再用。
+AURORA_TEST_CASE(the_editable_controls_paint_the_chrome_colors_not_the_light_defaults) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    // 文本行：未聚焦与聚焦两态都得是深色底（框架的浅色缺省正是聚焦那一态最亮）。
+    const HitSpot text_spot = h.find_first("TextInput");
+    AURORA_TEST_REQUIRE(text_spot.widget != nullptr);
+    auto *box = dynamic_cast<au::TextInput *>(text_spot.widget);
+    AURORA_TEST_REQUIRE(box != nullptr);
+    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(box, 0.9, 0.15)));
+    h.click(text_spot.x, text_spot.y);
+    h.render();
+    // 没真的聚焦上就根本没走聚焦态那条绘制分支，这一句是本例的前提而不是附带观察。
+    AURORA_TEST_REQUIRE(box->is_focused());
+    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(box, 0.9, 0.15)));
+
+    // 步进器：框底（数值文本从 y=8 起、箭头区在右侧 22 dp 之内，故取盒内靠上的中部）。
+    const HitSpot spin_spot = h.find_first("SpinBox");
+    AURORA_TEST_REQUIRE(spin_spot.widget != nullptr);
+    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(spin_spot.widget, 0.5, 0.12)));
+
+    // 开关关闭态轨道：缺省 {180,180,180} 是全部浅色缺省里最低的一档，仍必须被这条线抓住。
+    const HitSpot toggle_spot = h.find_first(
+        "Switch", 0.0F, [](au::Widget *widget) -> bool {
+            auto *sw = dynamic_cast<au::Switch *>(widget);
+            return sw != nullptr && !sw->value();
+        });
+    AURORA_TEST_REQUIRE(toggle_spot.widget != nullptr);
+    AURORA_TEST_CHECK_EQ(static_cast<int>(toggle_spot.widget->paint_bounds().size.height), 24);
+    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(toggle_spot.widget, 0.8, 0.5)));
+
+    // 下拉主框（选项面板与主框共用同一份 `box_color_`，故主框这一读也守住了展开的那一片）。
+    panel->select_page(SettingsPage::Terminal);
+    h.render();
+    const HitSpot dropdown_spot = h.find_first("Dropdown");
+    AURORA_TEST_REQUIRE(dropdown_spot.widget != nullptr);
+    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(dropdown_spot.widget, 0.5, 0.12)));
+}
+
 #else
 
 AURORA_TEST_CASE(the_scrim_covers_the_whole_window_and_a_real_click_closes_the_panel) {
@@ -933,6 +1025,10 @@ AURORA_TEST_CASE(a_text_row_commits_only_when_focus_leaves) {
 }
 
 AURORA_TEST_CASE(a_dropdown_option_below_the_layout_box_is_not_dispatch_reachable_G29) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_editable_controls_paint_the_chrome_colors_not_the_light_defaults) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
