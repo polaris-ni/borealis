@@ -83,18 +83,31 @@ class TerminalView final : public aurora::LeafWidget {
         std::function<void(const term::PastePlan &, std::function<void(bool)> answer)> confirm_multiline;
     };
 
+    /// @brief 视口的外观包：绘制与排版要用的那六项（裁决 7.52 的 S4①）。
+    ///
+    /// 构造与运行期更新共用**同一个载体**，而不是让运行期入口另带一份名单：面板从配置装出的
+    /// 外观既要喂给新建的 pane（装配层多会话化），也要广播给运行中的每个 pane，两条路径若各抄
+    /// 一套入参，「面板改了某项而新建的 pane 拿不到该项」就只能在真机上看见。
+    struct Appearance {
+        PaletteSpec palette{};                    ///< 调色板（含光标色与选区色）。
+        aurora::Font ref_font{};                  ///< 参考字体：整格度量只由它取（架构 §9.2）。
+        Typography typography{};                  ///< 行高与字距（`SPEC.FEAT.RENDER.02`）。
+        float padding_dp = 0.0F;                  ///< 视口四周内边距（裁决 7.25②），可配为 0。
+        std::chrono::milliseconds blink_period{500};  ///< 光标闪烁周期（配置键 `appearance.cursor_blink_period_ms`）。
+        std::vector<std::string> font_fallback_chain{};  ///< 缺字回退链的族名序列，顺序即语义。
+    };
+
     /// @brief 组装视口。
     /// @param session 权威会话，**非拥有**：装配层的局部对象析构次序须保证它活得比本控件久。
-    /// @param palette 调色板（含光标色与选区色，缺省时分别回落默认前景与 `basic[8]`）。
-    /// @param ref_font 参考字体：整格度量只由它取一次，粗体仅换字重不改格宽（架构 §9.2）。
-    /// @param typography 行高与字距（`SPEC.FEAT.RENDER.02`）；缺省档即字体自身的排布，故行列数与
-    ///        不接本参数时逐位相同。取值域由配置侧把守，本层不夹取（裁决 7.46②）。
-    /// @param padding_dp 视口四周内边距（裁决 7.25②），可配为 0。
-    /// @param blink_period 光标闪烁周期；本棒内置，可配项随设置面板那一棒接（`SPEC.FEAT.PREF.02`）。
+    /// @param appearance 外观包；取值域由配置侧把守，本层不夹取（裁决 7.46②）。
     /// @param options 选区与复制的可配置行为；由装配层从 `config::TerminalSettings` 搬值。
-    /// @param font_fallback_chain 缺字回退链的族名序列（配置键 `appearance.font_fallback_chain`）。
-    ///        顺序即语义；超过框架的链容量上限时**保留前 N 项**并留痕一次（截断对用户不可见）。
-    ///        空表即不注入按族链，只走框架的全局默认回退链。
+    TerminalView(session::Session &session, Appearance appearance, InteractionOptions options);
+
+    /// @brief 逐形参形态的构造（把七项包进 `Appearance` 后转调上一条）。
+    ///
+    /// 存在的唯一理由是既有的六个装配/用例调用点；一条委托语句把值交进同一个载体，故本控件仍
+    /// 只有**一处**存这些值的路径。设置面板那棒（`SPEC.FEAT.PREF.02`）按配置装出 `Appearance`
+    /// 之后，装配点应改走上一条，本形参表随之消失。
     TerminalView(session::Session &session, PaletteSpec palette, aurora::Font ref_font, Typography typography,
                  float padding_dp, std::chrono::milliseconds blink_period, InteractionOptions options,
                  std::vector<std::string> font_fallback_chain = {});
@@ -151,6 +164,34 @@ class TerminalView final : public aurora::LeafWidget {
     /// 照原路走 `term::encode_key`——`SPEC.FEAT.INTERACT.01` 的转发腿不可让渡。
     /// @param filter 判定者；入参与 `term::encode_key` 吃的是同一个 `term::KeyPress`。
     auto set_key_pre_filter(KeyPreFilter filter) -> void;
+
+    /// @brief 运行期换外观（裁决 7.52 的 S4①，`SPEC.FEAT.PREF.02` 的「修改即时生效」）。
+    ///
+    /// **不重建视口**，故选区、回看偏移、焦点态与 `ScreenMirror` 副本全部原样保留——重建会把
+    /// 这些一起作废（该稿 S4 对「改完重建视口」这一选项的否决理由）。三条连带动作各有代价：
+    /// 回退链是整份排版选项的载体（框架没有 per-field 的链 setter），装上即把量化字距与固定格
+    /// 推进清成默认值，故必须紧接 `metrics_stale_ = true`，让下一次取度量把三者一起写回同一份
+    /// `layout_opts_`（裁决 7.50 的同源不变量）；闪烁周期改动要取消旧句柄再按新周期注册；
+    /// 内边距与字号改动会改行列数，故只标脏让下一次 `on_layout` 经既有的 `GridSizeSink` 下发
+    /// （去抖在工作区层，裁决 7.47⑩），而不是在这里直发一个中间值。
+    /// @param appearance 新的外观包（与构造时同一个载体）。
+    auto apply_appearance(Appearance appearance) -> void;
+
+    /// @brief 运行期换选区、复制与粘贴的行为口径（S4① 的第二条入口）。
+    ///
+    /// 五项都在**用取时现读**（`word_delimiters` 在 `span_of`、`copy_on_select` 在抬起分支、
+    /// `copy` 在 `selected_text`、`right_click` 在 `on_right_click`、`paste` 在 `flush_paste_request`），
+    /// 故本入口只换值、不标脏——没有一项参与绘制，标脏只会让画面无谓地重画一遍。既有选区的端点
+    /// 是按**当时**的粒度折进外沿存下的，断点集改动不会回头重折已存的选区（用户改的是「下一次双击」，
+    /// 不是「上一次选中」）。
+    /// @param options 新的行为口径。
+    auto apply_interaction_options(InteractionOptions options) -> void;
+
+    /// @brief 当前生效的闪烁周期（毫秒）——S4 的接线观测点。
+    ///
+    /// 用例要靠它把「改动是否落到注册那条腿」与「改动只是存进了成员」分开断言，而像素那边
+    /// 断的是相位是否按新周期翻动。
+    [[nodiscard]] auto blink_period() const noexcept -> std::chrono::milliseconds { return blink_period_; }
 
     /// @brief 右键菜单浮层的只读句柄，从未打开过菜单即空指针（用例的落点观测点）。
     ///
@@ -285,6 +326,14 @@ class TerminalView final : public aurora::LeafWidget {
 
     /// @brief 闪烁到期：只有配了闪烁档且持焦时才翻相位并重绘。
     auto on_blink_tick() -> void;
+
+    /// @brief 把回退链装进排版选项并按需留痕一次截断（构造与运行期更新共用本入口）。
+    /// @param chain 按优先级排列的族名序列；超过框架的链容量上限时**保留前 N 项**、顺序不变
+    ///        （截断对用户不可见，故留痕一次）。空表即不注入按族链，只走框架的全局默认链。
+    auto install_fallback_chain(std::vector<std::string> chain) -> void;
+
+    /// @brief 按当前闪烁周期重注册周期任务；没有活跃句柄时不动（未挂载即由 `on_mount` 注册）。
+    auto reregister_blink_timer() -> void;
 
     /// @brief 画一个屏幕行：色带、批量文本（含斜体分流）与装饰线。
     auto paint_row(aurora::Painter &p, const aurora::Rect &bounds, std::size_t screen_row) -> void;

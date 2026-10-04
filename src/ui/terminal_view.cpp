@@ -159,25 +159,27 @@ class StringCollector final : public term::CodePointSink {
 
 }  // namespace
 
-TerminalView::TerminalView(session::Session &session, PaletteSpec palette, aurora::Font ref_font,
-                           Typography typography, float padding_dp, std::chrono::milliseconds blink_period,
-                           InteractionOptions options, std::vector<std::string> font_fallback_chain)
+TerminalView::TerminalView(session::Session &session, Appearance appearance, InteractionOptions options)
     : session_(&session),
-      spec_(std::move(palette)),
-      ref_font_(std::move(ref_font)),
-      typography_(typography),
-      padding_dp_(padding_dp),
-      blink_period_(blink_period),
-      options_(std::move(options)),
-      layout_opts_(aurora::render::TextLayoutOpts::with_fallback_chain(font_fallback_chain)) {
+      spec_(std::move(appearance.palette)),
+      ref_font_(std::move(appearance.ref_font)),
+      typography_(appearance.typography),
+      padding_dp_(appearance.padding_dp),
+      blink_period_(appearance.blink_period),
+      options_(std::move(options)) {
     // 撑满父级是控件自身的意图，写在这里以免每个装配点（含测试）都要重述一遍。
     width(aurora::fill());
     height(aurora::fill());
     scroll_viewport_.step = kRowStep;
-    if (font_fallback_chain.size() > aurora::render::AURORA_TEXT_FALLBACK_CHAIN_MAX) {
+    install_fallback_chain(std::move(appearance.font_fallback_chain));
+}
+
+auto TerminalView::install_fallback_chain(std::vector<std::string> chain) -> void {
+    layout_opts_ = aurora::render::TextLayoutOpts::with_fallback_chain(chain);
+    if (chain.size() > aurora::render::AURORA_TEXT_FALLBACK_CHAIN_MAX) {
         // 截断发生在框架的构造入口里（保留前 N 项、顺序不变），对用户是静默的，故留痕一次；
         // 上限不写在本仓的常量里：链的承载形态属框架，抄一个数过来就是第二个真值源。
-        AURORA_LOG_WARN("ui", "font fallback chain truncated: requested ", font_fallback_chain.size(),
+        AURORA_LOG_WARN("ui", "font fallback chain truncated: requested ", chain.size(),
                         " entries, using the first ", aurora::render::AURORA_TEXT_FALLBACK_CHAIN_MAX);
     }
 }
@@ -188,6 +190,44 @@ TerminalView::~TerminalView() {
     for (const aurora::TimerHandle &handle : paste_timers_) {
         handle.cancel();
     }
+}
+
+TerminalView::TerminalView(session::Session &session, PaletteSpec palette, aurora::Font ref_font,
+                           Typography typography, float padding_dp, std::chrono::milliseconds blink_period,
+                           InteractionOptions options, std::vector<std::string> font_fallback_chain)
+    : TerminalView(session,
+                   Appearance{.palette = std::move(palette),
+                              .ref_font = std::move(ref_font),
+                              .typography = typography,
+                              .padding_dp = padding_dp,
+                              .blink_period = blink_period,
+                              .font_fallback_chain = std::move(font_fallback_chain)},
+                   std::move(options)) {}
+
+auto TerminalView::apply_appearance(Appearance appearance) -> void {
+    // 只有闪烁周期要单独问：其余五项都靠下一次取度量与下一次绘制自然跟上，而周期是注册进调度器
+    // 的既有句柄，不改它就没有任何动作可做。
+    const bool blink_changed = appearance.blink_period != blink_period_;
+    spec_ = std::move(appearance.palette);
+    ref_font_ = std::move(appearance.ref_font);
+    typography_ = appearance.typography;
+    padding_dp_ = appearance.padding_dp;
+    blink_period_ = appearance.blink_period;
+    // 链没有 per-field 的 setter，装上即把整份排版选项连量化字距与固定格推进一起换掉，故必须
+    // 紧接重取度量——三者由 `cell_metrics` 在同一处写回同一份 `layout_opts_`（裁决 7.50 的同源不变量）。
+    install_fallback_chain(std::move(appearance.font_fallback_chain));
+    metrics_stale_ = true;
+    if (blink_changed) {
+        reregister_blink_timer();
+    }
+    // 内边距与字号改的是行列数：这里只标脏，让下一次 `on_layout` 走既有的 `request_grid_size`
+    // （去抖在工作区层，裁决 7.47⑩），在此直发会把一个中间值塞进会话并绕开去抖。
+    mark_needs_layout();
+    mark_needs_paint();
+}
+
+auto TerminalView::apply_interaction_options(InteractionOptions options) -> void {
+    options_ = std::move(options);
 }
 
 auto TerminalView::set_overlay_host(aurora::OverlayHost &host) -> void { host_ = &host; }
@@ -235,6 +275,16 @@ auto TerminalView::on_mount(const aurora::BuildContext &ctx) -> void {
     // 基类 `tick` 只在含手势的控件上被调用，空闲时不可靠；闪烁是纯周期任务，挂调度器（主线程、
     // present 之前触发，故相位翻动能赶上当帧）。
     if (auto *scheduler = aurora::Scheduler::current(); scheduler != nullptr) {
+        blink_timer_ = scheduler->set_interval(blink_period_, [this]() -> void { on_blink_tick(); });
+    }
+}
+
+auto TerminalView::reregister_blink_timer() -> void {
+    // 句柄按「取消-重排」整条换掉：`TimerHandle::cancel()` 对未注册句柄是幂等空操作（析构里也照调），
+    // 故挂载时没有调度器（无头帧）而后来才有的场景，在这里补注册一次即可让闪烁跟上。
+    auto *scheduler = aurora::Scheduler::current();
+    blink_timer_.cancel();
+    if (scheduler != nullptr) {
         blink_timer_ = scheduler->set_interval(blink_period_, [this]() -> void { on_blink_tick(); });
     }
 }
