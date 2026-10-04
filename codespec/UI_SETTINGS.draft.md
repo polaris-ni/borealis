@@ -193,11 +193,12 @@
 
 ---
 
-## 6 框架侧实测结论：本棒真缺口 0
+## 6 框架侧实测结论：本棒真缺口 2（原记 0，随面板本体开工就地更正）
 
 > 逐条读 Aurora 当日活动分支的公共头得出，不是凭既有结论。判据是裁决 7.13①：**只有渲染链路与事件链路上的缺口**才派框架；能用现有公共 API 组合出来的交互体验留本仓。
+> **本节原标题是「本棒真缺口 0」**，那是 2026-10-04 判据文棒只读公共 API 声明面得出的结论；面板本体开工时逐条读到实现体并配一次性无头探针实测，第 8 条的前提不成立，故新增 **G26 / G27** 两条事件链路缺口。裁决 **7.55**。
 
-八条形态限制都**不**落在裁决 7.13① 的类别里，故**本棒向框架派发的真缺口数 = 0**：
+七条形态限制**不**落在裁决 7.13① 的类别里，第八条落进去了：
 
 1. 「运行期换主窗口根」**有**公共入口（`Application::window()` 回主窗口 `Window *`，`present_root(Node&)` 是公开成员），但 `Application::open_window` 移交 `Window` 所有权且回的是 `WindowId`，故独立窗口要自己接派发与帧回调；换根那条的成本是视口的卸载-重挂与焦点重派（三条实测代价见 S1）。限制在**生命周期成本**而非可达性，故 S1① 取浮层形态。
 2. `Preferences` 的 `binding` 是单向投递视图、不写回存储（该文件自陈写回须另调 `set`），且有 Binding 构造重载的控件恰为**四个**（`Switch` / `Checkbox` / `Slider` / `ProgressIndicator(Binding<double>)`，进度件只读无写回需求）→ 表单状态机归本仓（S3①）。
@@ -206,7 +207,7 @@
 5. `Dropdown` 的 `options_` 私有且没有运行期 `set_options` → 面板打开时按当前配置构造，族名目录变了要重建面板（本棒可接受，因目录只在装配阶段取一次，S16）。
 6. `MediaQuery` 无亮度字段 → 「跟随系统浅色」没有数据源（§3 第 4 条撤销）。
 7. `ShortcutRegistry` 没有「暂停全部绑定」语义。它**有**逐条 `set_enabled(int id, bool)`（shortcuts.h 的 `add()` 回绑定 ID 并注明供 `remove`/`set_enabled` 使用），但 `bindings()` 返回的是 `ShortcutBinding` 副本而该结构**不含 ID 字段**，故「先枚举再逐条暂停」在只拿到注册表现状时走不通——`clear()` + `CommandRegistry::bind_shortcuts()`（该函数自陈幂等：先移除上次产生的绑定再重建）才是可组合的形态。**属可组合**，不登记缺口；代价是同期框架侧其他绑定一并暂停。本棒到 PREF.04 的缺口账目仍为 0。
-8. `Dialog` **没有** `with_scrollable_body()`（全 include grep 零命中，且该类的公共构造只收内容节点）。长列表（`LoadReport::rejected_keys` 的点号路径）须由本仓把内容包进框架 `Scroll`（`widget/scroll.h`）再交给 `au::Dialog(Node content)` → **属可组合**，不登记缺口；§7 那条降级对话框的滚动形态即此。
+8. ~~`Dialog` **没有** `with_scrollable_body()`（全 include grep 零命中，且该类的公共构造只收内容节点）。长列表（`LoadReport::rejected_keys` 的点号路径）须由本仓把内容包进框架 `Scroll`（`widget/scroll.h`)再交给 `au::Dialog(Node content)` → **属可组合**，不登记缺口；§7 那条降级对话框的滚动形态即此。~~ **该条结论已被推翻**（2026-10-04 面板本体开工实测，裁决 7.55）：那句「属可组合」只核对了**声明面**（有没有一件 `with_scrollable_body()`），没有核对**实现面**（`Dialog` 与 `Scroll` 的内容到底进不进命中链）。读到实现体后是两条事件链路缺口，登记为 **G26**（`Dialog::on_layout` 只 `children_[0]->layout(...)` 而从不 `Node::set_bounds`，而 `Container::on_hit_test_chain` 按 `child.bounds()` 判包含，故内容画得出而点不到；一次性无头探针的读数：内容 Column 绘制盒原点 x=171.5、宽 57 dp，而该子节点 bounds 宽 **0**，在绘制中心经真实 `au::EventDispatcher` 点击不触发按钮回调，且该点命中链长度**恰为 0**；同一份内容根改挂 `Column` 即能命中，正对照排除探针接线问题）与 **G27**（`Scroll` 同一条断裂，且它的 `on_hit_test` 整视口返回自身而不覆写链下降；其子节点 bounds 是 0×0，而内容 Column 及其第一子的 bounds 完好，说明断裂恰在容器→内容那一层；第二腿是即便补上 bounds，命中点还须减去 `offset_y_`，否则滚过之后点击与视觉错位一个滚动量）。**两条的连带后果**：本仓已落地的多行粘贴确认框（`src/ui/terminal_view.cpp` 取 `au::Dialog` + `aurora::confirm`）其 Yes/No 永不可点，且命中链为空意味着该次点击**穿透**到对话框下方的视口——想点确认却起了一个选区。既有 `itest_right_click_paste` 的相关用例全部经 `Presentation::confirm_multiline` 替身绕过真对话框，所以这条一直在册而无人守。**面板的形态随之改**：S1 的浮层与 §7 的降级对话框在回货前用**确实写 bounds 的容器**组合（`Stack` 遮罩层 + `Column` 卡片，行区取 `LazyList` 而非 `Scroll`——后者写 bounds 且覆写链下降），故 G26 / G27 **不阻塞面板开工**，而「长列表包进 `Scroll` 再交进 `Dialog`」那句作废。
 
 **一处对既有在册实测结论的就地更正**（裁决 7.52）：本仓 2026-10-02 在册的「框架 `Modifier::context_menu` 与 `MenuItem` 只有状态模型、**没有渲染与点击派发**」这半句不成立——`MenuItem` 是**有**渲染与点击派发的，载体是 `widget/menu_bar.h` 的下拉：`on_paint` 逐项画分隔线 / 标签 / 勾选标记 / 置灰色，`on_pointer_event` 的 Press 分支按等分行高折出序号、命中非分隔且 `enabled` 的项即调 `item.on_click()`，其 `wants_click()` 恒 `true`。须更正的是**两处限定**：① 派发只发生在 `MenuBar` 自己那块下拉矩形内（`dropdown_bounds()` 相对本控件原点），不是任意位置的上下文菜单，框架没有后者这件控件；② 那条下拉的色值是**硬编码浅色**（白底 `Color(255,255,255,255)`、正文 `30,30,30`、disabled `170,170,170`），**不随 `Theme` / `ThemeScope`**，故 7.41③ 的置灰档在深色界面上本就不可用。据此，`Modifier::context_menu` / `ContextMenuNode` 那一腿**确实**只有模型（存 items + `open_at` / `is_open` / `position`，全仓无 widget 侧渲染者；`system_tray_win32.cpp` 的 `show_context_menu` 是托盘自己的 Win32 原生菜单，不经控件树），而本仓右键菜单取 `au::Popup` + 一列 `au::Button` 的形态**不变**，只是理由从「框架不渲染不派发」改为「框架渲染但不随主题、且没有任意位置的弹出件」。回写落点：`codespec/SPECIFICATIONS.md` 附录 A.1 的菜单那一行与裁决 7.41③、`codespec/ARCHITECTURE.md` §9.2、`AGENTS.md` §6 各加就地更正，`codespec/ARCHITECTURE.md` §11.1 另补两条本稿实测的边界（chrome 色源须由本仓在装配阶段注入 `ThemeScope`、色值不经配置往返故面板不得有 alpha 位）；`codespec/CHANGELOG.md` 的历史条目按「旧编号旧条款原文保留」不改，只在 v0.49 条目里记这条更正。
 另一条复核**不变**：`OverlayHost::handle_outside_click()` 在 Aurora 全仓**没有生产调用点**（只有旧备份命中），故裁决 7.41③ 的「外部点击由本仓在 Press 分支自驱」继续成立。
@@ -215,7 +216,7 @@
 
 ## 7 两处 TODO 的消除
 
-- **`config/store.h` 的降级对话框（`TODO(SPEC.FEAT.PREF.07)`）**：按 S12 / S13 落地。装载发生在 `main` 早期、面板尚未建，所以对话框不走面板而走启动路径；`LoadOutcome` 四态里 `RecoveredCorrupt` 与 `RecoveredVersion` 需要弹（前者文案要带备份路径、后者要带版本号差），`FirstRun` 与 `Loaded` 不弹。`rejected_keys` 的点号路径列表在对话框里可滚动展开——框架 `Dialog` **无** `with_scrollable_body()`（§6 第 8 条），故由本仓把列表包进 `au::Scroll` 再作为内容节点交入。
+- **`config/store.h` 的降级对话框（`TODO(SPEC.FEAT.PREF.07)`）**：按 S12 / S13 落地。装载发生在 `main` 早期、面板尚未建，所以对话框不走面板而走启动路径；`LoadOutcome` 四态里 `RecoveredCorrupt` 与 `RecoveredVersion` 需要弹（前者文案要带备份路径、后者要带版本号差），`FirstRun` 与 `Loaded` 不弹。`rejected_keys` 的点号路径列表在对话框里可滚动展开——原写「由本仓把列表包进 `au::Scroll` 再作为内容节点交入」（§6 第 8 条旧结论），该形态随 G26 / G27 登记而**作废**：`Scroll` 与 `Dialog` 都不写子节点 bounds，包进去的条目不可点。改取 §6 第 8 条末句的形态（`Stack` 遮罩 + `Column` 卡片，长列表用 `LazyList`），回货后再不依赖该组合。
 - **`src/main.cpp` 的三个会话侧注入接缝（`TODO(SPEC.FEAT.PREF.02)`）**：`appearance.cursor_shape`、`appearance.cursor_blinking`、`terminal.ambiguous_width` 三条当下分别取状态机的 `Block` / `blinking = true` 缺省值与判定入参的 `Narrow`。S11 定的是**构造期**注入而非运行期改档，理由有两条：`settings.h` 把前两条写成「缺省档，只在建会话时喂给状态机」；`ambiguous_width` 的 `Terminal::set_ambiguous_width` 虽然技术上可在运行期调，但**已上屏的格宽不会重排**，按即时呈现会给出「改完一半生效」的错觉。代价是面板上这三个控件的角标与 `scrollback` / `encoding` 同档，评审时容易被当成偷懒——故把理由写在 §2 表与 S11 里。
 
 ---
