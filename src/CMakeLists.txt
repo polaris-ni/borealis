@@ -30,6 +30,7 @@ add_library(borealis_core STATIC
         ui/pane_tree.cpp
         ui/right_click.cpp
         ui/selection.cpp
+        ui/settings_catalog.cpp
         ui/tab_strip.cpp
         ui/terminal_view.cpp
         ui/workspace_keys.cpp
