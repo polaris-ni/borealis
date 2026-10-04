@@ -13,7 +13,7 @@
 - 本稿管「面板上有哪些控件、每个控件收哪个键、改完什么时候可见」，不管像素层序（那是 `codespec/RENDER_UI.draft.md` 与 `codespec/UI_SELECTION.draft.md` 的职责），也不管窗口 chrome 的尺寸阶梯（沿用 `codespec/UI_OVERVIEW.draft.md` §2）。
 - 三条不在本稿范围：连接域的**建档表单**（档案树、五步向导、SSH / 串口表单在屏 2 `codespec/UI_CONNECTIONS.draft.svg`，本稿只画四域的**默认值**）；SFTP 双栏 / SSH 隧道 / 密钥管理器（`codespec/UI_OVERVIEW.draft.md` §5 的未画清单）；`SPEC.FEAT.PREF.07` 的快照回滚与导出导入**本体**（M2 腿，本稿只处置「导入配置 / 导出配置」两个按钮的呈现，见 §4E）。
 - 「即时生效」在本棒有两条物理边界，先写明白免得评审时各说各话：
-  - ① **本仓当下没有任何给面板用的运行期更新接缝**。`ui::TerminalView` 的外观与交互入参**全部**挂在构造函数上（调色板、参考字体、`ui::Typography`、内边距、闪烁周期、`InteractionOptions`、回退链七个形参），已有的四条接缝（`set_overlay_host` / `set_presentation` / `set_grid_size_sink` / `set_key_pre_filter`）没有一条能改颜色或字号。故 §5 S4 是本棒的开工项而不是既有能力。
+  - ① **这条边界已由 §5 S4 的两条运行期入口闭合**（2026-10-04 落地，判据入册为裁决 **7.53**）。登记时的实测事实照录以免形成伪死链：`ui::TerminalView` 的外观与交互入参**全部**挂在构造函数上（调色板、参考字体、`ui::Typography`、内边距、闪烁周期、`InteractionOptions`、回退链七个形参），已有的四条接缝（`set_overlay_host` / `set_presentation` / `set_grid_size_sink` / `set_key_pre_filter`）没有一条能改颜色或字号。如今的形态：`apply_appearance(Appearance)` 收「外观包」六项（调色板 / 参考字体 / `Typography` / 内边距 / 闪烁周期 / 回退链），`apply_interaction_options(InteractionOptions)` 收交互包；七形参构造入口保留为委托适配器，故既有像素用例与装配层零改动。可改的仍是**外观 + 交互两域**——`cursor_shape` / `cursor_blinking` / `ambiguous_width` 三条照 §7 那条走构造期注入，本闭合不改变它们的「下次会话生效」。
   - ② **四个入参在「建会话」那一刻取用**（`scrollback_limit`、`connection.local_shell`、`connection.startup_directory`，以及 §7 那三个尚无接缝的会话侧缺省），运行期改它们不会重放既有会话。判据因此是「下次会话生效」，而不是把它谎报成即时。
 
 ---
@@ -58,7 +58,7 @@
 | `viewport_padding_dp` | 数值步进 `[0.0, 64.0]` | 裁决 7.25② | `ui::make_geometry` | 即时（行列数随之变，触发出列下发） |
 | `cursor_shape` | 三档（块 / 下划线 / 竖线） | `term::CursorShape` | **无接缝** | 接缝待开 → 下次会话 |
 | `cursor_blinking` | 开关 | bool | **无接缝** | 接缝待开 → 下次会话 |
-| `cursor_blink_period_ms` | 数值步进 `[50, 5000]` | 装载侧把守 | 视口构造入参 | 即时（须重注册闪烁任务，S4 的代价条） |
+| `cursor_blink_period_ms` | 数值步进 `[50, 5000]` | 装载侧把守 | `Appearance` 包的成员（S4 已落） | 即时（须重注册闪烁任务，S4 的代价条，裁决 7.53③） |
 | `sidebar_collapsed` | 开关 | bool | 无消费方（连接侧栏 `SPEC.FEAT.CONN.07` 未落地） | 延后 |
 | `tab_name_priority` | 下拉两档 | `ui::TabNamePriority` | 消费方在标签条一棒（在途，本稿不为其背书） | 即时 |
 | `status_bar.show_*`（10 项） | 开关 ×10（S10） | bool ×10 | 无消费方（状态栏件未落地） | 延后 |
@@ -124,7 +124,7 @@
 - A2-b：`cursor_color` 与 `selection_color` 各带「未配」档，且「未配」与「配成黑色」在 UI 上必须可区分——这是裁决 7.27③ 那条两态在界面上的兑现。
 - A2-c：最小对比度阈值输入旁**实时显示**当前前景/背景的 `ui::contrast_ratio` 读数与是否达标（WCAG），否则用户改完不知道有没有用。
 - A2-d：所有色值输入框**都没有 alpha 位**——`palette.*` 的槽经配置往返只有 `#RRGGBB`（装载侧只收 7 字符，写回不输出 alpha），给一个存不回去的输入框比不给更糟（用户以为改了透明度，重启就没了）。透明度若将来要可配，须先给 `PaletteSpec` 的落盘形态补 alpha，那是一条 schema 变更而非面板改动（S14）。
-- A3-a：字号、行高、字距三个步进器各自显示单位（`pt` / `×` / `dp`），与 SVG 的「14 pt / 行高 1.0 × / 字距 0.0 ×」逐字一致；三者一改即触发视口重取整格度量与行列数（S4）。
+- A3-a：字号、行高、字距三个步进器各自显示单位（`pt` / `×` / `dp`），与 SVG 的「14 pt / 行高 1.0 × / 字距 0.0 ×」逐字一致；三者一改即触发视口重取整格度量与行列数（S4 已落：`apply_appearance` 在装链后紧接触发一次度量重取，故三个排版量与回退链都经这一条入口生效，裁决 7.53①②）。
 - A3-b：「字体连字 ligature」保留 SVG 的**延后子项**角标且灰置——它是需求原文的延后观察项，不得画成可用态（`UI_OVERVIEW` §2.3）。
 - A4-a：等宽字体下拉的候选来自 `render::list_font_families(monospace_only = true)`，且**只在装配阶段取一次**（该入口首次调用是同步 IO，裁决 7.46③）；面板不得为它再取一遍目录（S16）。
 - A4-b：配置里写错的族名会**静默回落**（框架族名逐字节精确、区分大小写），故面板打开时若当前生效族 ≠ 配置族，须在字体行下方显示回落留痕，而不是把下拉显示成那个不存在的族。
@@ -177,7 +177,7 @@
 | **S1** | 面板的宿主形态 | ① **同窗口、在既有场景根 `au::OverlayHost` 上加一层全屏浮层**〔建议〕；② 运行期换主窗口的根（`app.window()->present_root(...)`）；③ 独立窗口 | ② 的公共入口**是**存在的（`Application::window()` 回主窗口 `Window *`，`present_root(Node&)` 是公开成员），但代价实测三条：框架只在**根变化**时重挂（`root_changed` 才调 `mount`），故换根会让视口走一遍卸载-重挂，其 `on_mount` 里注册的闪烁任务与（S5 那条）主题订阅都要重新接线；焦点不会自动回到重挂后的树，须再显式 `set_focus` 一次（裁决 7.31 那条「装配层必须显式派初始焦点」的教训是同一条坑）；面板关掉就是第二次换根，等于每次开关面板都折腾一次主视图的生命周期。③ 的代价两条：框架的 `scene()` / `focus()` 只作用主窗口（该文件自陈），多窗口下焦点与捕获不跨窗口，面板要自己接一份派发与帧回调。① 的代价是面板遮住主窗口终端，「即时生效」的可见兑现由预览盒承担——这正是 N5 要求真实绘制路径的动机；关掉浮层即见真实终端，主窗口视图**不被重挂** |
 | **S2** | 面板的关闭通道 | ① **打开时向 `ShortcutRegistry` 注册一条 `Global` 作用域的 `Escape`、关闭时 `remove`**〔建议〕+ 右上可见「关闭」按钮；② 面板自己覆写 `on_key_event` 拦 Esc；③ 只给按钮 | ① 是框架 `CommandPalette` 自己的做法（其 `open()` 推作用域并注册 Esc、`close()` 注销），有先例可循；② 需要面板持有键盘焦点且与终端视图抢键；框架全 include 没有 `on_escape` / `CancelAction` 钩子。代价：`Global` 作用域期间本仓其他全局快捷键仍会响应——当下本仓没有任何其他全局绑定，故不构成冲突，但这条要随 `SPEC.FEAT.PREF.04` 复评 |
 | **S3** | 面板的状态与写回通道 | ① **本仓自持一份 `Settings` 副本 + 显式 `Store::replace()`**〔建议〕；② 直接用框架 `Preferences::binding` 双向绑定 | ② 不成立：框架 `binding` 是**存储 → State 的单向投递视图**，`set()` 只更新下游 State 而**不写回存储**（该文件自己明写，写回须另调 `set`），且只有 `Switch` / `Checkbox` / `Slider` / `ProgressIndicator` 四个控件有 Binding 构造重载（最后一个只读，与写回无关）。① 属裁决 7.13② 的「可组合、留本仓」，代价是表单状态机（副本、脏标记、逐键落盘时机）归本仓自研并有单测 |
-| **S4** | 「即时生效」的传导形态 | ① **给 `TerminalView` 开两条运行期更新入口**：一条收「外观包」（palette / 参考字体 / `Typography` / 内边距 / 闪烁周期 / 回退链），一条收既有的 `InteractionOptions`〔建议〕；② 改完重建视口；③ 下次启动生效 | ② 会把选区、回看偏移、焦点态、`ScreenMirror` 副本一起作废（用户在面板里改个字号，主终端就丢了选区），不可接受；③ 直接违背需求原文的「修改即时生效」。① 的代价三条：外观包须一并触发 `cell_metrics()` 重取与 `layout_opts_` 重建（链、量化字距、固定格推进三者同源，裁决 7.50）；闪烁周期改动须取消旧 `TimerHandle` 再注册；改内边距/字号会改行列数，故须走既有的去抖下发而不是直发一个中间值 |
+| **S4** | 「即时生效」的传导形态 | ① **给 `TerminalView` 开两条运行期更新入口**：一条收「外观包」（palette / 参考字体 / `Typography` / 内边距 / 闪烁周期 / 回退链），一条收既有的 `InteractionOptions`〔建议〕；② 改完重建视口；③ 下次启动生效 | ② 会把选区、回看偏移、焦点态、`ScreenMirror` 副本一起作废（用户在面板里改个字号，主终端就丢了选区），不可接受；③ 直接违背需求原文的「修改即时生效」。① 的代价三条：外观包须一并触发 `cell_metrics()` 重取与 `layout_opts_` 重建（链、量化字距、固定格推进三者同源，裁决 7.50）；闪烁周期改动须取消旧 `TimerHandle` 再注册；改内边距/字号会改行列数，故须走既有的去抖下发而不是直发一个中间值 **〔已落 2026-10-04，判据入册为裁决 **7.53**，四条落地形态〕**：① 载体是一份 `Appearance` 聚合体，构造与运行期共用同一份（七形参的老构造入口保留为**委托适配器**，故既有像素用例与装配层零改动）；② 回退链没有 per-field 的 setter，框架入口 `TextLayoutOpts::with_fallback_chain(...)` 给的是**整份**排版选项，装上即把量化字距与固定格推进清成缺省值，故装完**紧接**触一次度量重取（7.50 的同源不变量，证人 `an_applied_chain_keeps_the_letter_spacing_and_cell_advance_same_sourced`）；③ 闪烁周期按「取消-重排」整条换句柄，且**不加** `active()` 前置守卫——`cancel()` 对未注册句柄是幂等空操作（析构里也照调），加了守卫反而挡住「挂载那刻无调度器、后来才有」那一档；④ 入口只标脏（`mark_needs_layout()` + `mark_needs_paint()`）而不自行下发，改行列数仍经 `on_layout` → `request_grid_size` → 注入的 sink 走工作区层去抖（7.47⑩）；框架的布局闸门是「首帧 ‖ 布局脏 ‖ 尺寸变 ‖ 边界变」，**只标绘制脏不会重布局**，故 `mark_needs_layout()` 是承重的一条。交互包那条入口**只换值不标脏**（`InteractionOptions` 五项全在用取时现读，没有一项参与绘制）。 |
 | **S5** | chrome 色源 | ① **本仓给场景根装 `ThemeScope(std::shared_ptr<State<Theme>>)`，其 `Theme` 由 `UI_OVERVIEW` §2.1 的 token 表构造**〔建议〕；② 不装，让控件走框架缺省浅色 | ② 的现实后果是面板按钮/输入框是**浅色**（`Theme::light()` 回落）而终端是 Dracula 深色，与视觉稿整幅深色不符；且裁决 7.25 N6 说的是 chrome「固定一套 token」而非「固定为框架浅色」。① 的代价：`Theme` 只有 5 个令牌（background / primary / on_primary / text / font）加一个 `tokens` 映射，**没有** surface / border / disabled 档，次要色只能进 `tokens` 或由本仓自绘控件承担；主题切换**不**联动 chrome（N6） |
 | **S6** | 切主题时 palette 的语义 | ① **整份 palette 取新主题值 + 每槽一个「恢复主题默认」按钮**〔建议〕；② 只换 `theme` 字段、色值不动；③ 另存「哪些槽被手动改过」的账本 | 落盘的是**最终值**（`settings.h` 的字段注释），内存里已无法区分「这格色是主题给的」还是「用户改的」，故 ② 会让主题选择形同无效（palette 是生效值），③ 要新增 schema 键并成为第二真值源（违裁决 7.26① 与 `codespec/ARCHITECTURE.md` §11.1「色值表归 `borealis::config`」那条）。① 的代价：切主题会丢掉自定义重映射——所以每槽的「恢复主题默认」是**逐槽出口**，且默认色永远可由 `theme_palette(theme)` 现算而不必存 |
 | **S7** | 实时预览的实现路径 | ① **内存连接 + 夹具文本喂一个独立 `Session`，其视图复用 `ui::TerminalView`**〔建议〕；② 把主会话的视图搬进面板；③ 画一张静态假预览 | ② 会让预览与真实终端争夺同一个 `Session`（且 resize 互相打架）；③ 违 N5 的明文结论。① 的代价：面板要持有一份不经 `main` 装配的连接替身（`Connection` 接口已有，会话层单测就是用它驱动的），夹具文本一次性内存读、不在事件回调里做阻塞 IO |
@@ -231,6 +231,7 @@
   - **脏标记按值而非按提交次数**：`is_dirty()` 比的是「当前值 vs 最后一次成功落盘的那份」，故改了又改回来既不落盘也不广播；`note_persisted()` 只在 `Store::replace()` 返回空值后调，它拒绝落盘时不调用，脏标记因此留着而面板不谎报已存。装载还做一次结构核对（表里有值没给、给了但形态族不符、路径不在表里 → 三张名单），面板据此少画控件而不是画一个存不回去的控件。〕**
 各补 `utest_*` 并以变异注入自证。
 - **集成**（`HeadlessSurface` 通道）：改 palette 一格 → 预览盒与主视口的**同一格色**逐位变化；改字号 → 两个视图的行列数各自按自身矩形重算且**不出现半格**；改 `right_click` 三态 → 下一次右键的意图与菜单项随新值走（复用 `itest_right_click_paste` 的派发形态）；切主题 → 整份 palette 按 S6 重置且「未配」光标/选区槽回落新主题（守 A2-b 的两态）；启动装载遇损坏 → 弹且只弹一次、备份路径出现在文案里、且**不静默清空**。
+  **S4 那两条入口的证人已落 2026-10-04**（裁决 7.53，七例分布在三个既有套件，非 e2e 通道 **35 项全绿**）：上面前三条的**主视口腿与分屏腿**各有证人——「改色」是 `a_runtime_palette_change_repaints_the_slots_and_keeps_the_view_state`（色带格与选中格各按新色逐位变，**且选区文本与回看偏移一字不动**，这一半是把 S4① 否决「重建视口」那条理由断在像素层）、字号与内边距是 `a_runtime_font_and_padding_change_retakes_the_grid_and_redownloads_the_size`（重取后的格网与驱动台按副本**独立复算**的行列数逐值相等，故不是拿实现自己的输出当预期）+ 分屏层的 `an_appearance_change_reaches_the_session_only_through_the_debounce`（面板连改两次字号，期间一次都不发、尾沿一次交出最新格，右格净变化为零故不进「已下发」名单，这是代价④ 那条「不许绕开去抖」的端到端形态）、右键三态是 `a_runtime_right_click_switch_changes_the_next_click`。三条**仍待面板本体**：预览盒那一半（前两条判据里的「两个视图」指主视口 + 预览盒，属 S7）、切主题的 S6 整份重置（入口已具备，重置与逐槽恢复默认是面板行为）、损坏配置的启动对话框（§7 那条 `TODO(SPEC.FEAT.PREF.07)`）。闪烁周期那条代价② 另配一例 `a_runtime_blink_period_change_re_registers_the_interval`（缺省 500 ms 档先证「推进 200 ms 一格不翻」，再把周期改成 100 ms 后每 tick 换一次相位——一次 `tick` 至多触发一个到期任务，故「每 tick 都换相位」就是「只有一条周期任务在跑」：忘取消旧句柄会在旧周期到期那一 tick 同时翻两次、压根没重注册则整段不翻）。
 - **不做**：真机走查以外的判据不宣称。设置面板是 UI 件，按 AGENTS.md §4.6 第 33 条与「UI 编写前先出设计图评审」的既有节奏——本稿即评审前置，实现后仍须真机走查（会话锁屏下 `SendInput` 静默失效，同裁决 7.31① 的可用面判据），故本棒不宣称「可用」；面板的取色、拖拽重排链、逐槽恢复默认这三处的**手感**尤其只能人工判。
 
 ---
