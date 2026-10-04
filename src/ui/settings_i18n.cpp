@@ -1,0 +1,189 @@
+#include "settings_i18n.h"
+
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "aurora/i18n/string_table.h"
+
+namespace borealis::ui {
+namespace {
+
+/// @brief 面板词条所在的区域标签（同时是字符串表的缺省档，见文件头③）。
+constexpr std::string_view kTag = "zh";
+
+/// @brief key → 中文模板。key 一律是落盘点号路径或 `settings.` 前缀的界面文案键。
+///
+/// CJK-LITERAL: locale-output - 本表整张就是面板的上屏文案，换成英文被测事实即消失（裁决 7.52 的 S11）。
+/// 设置项标签与 `codespec/UI_SETTINGS.draft.md` 的 SVG 行标签逐字对齐；SVG 未画出的行按该稿 §2 表的
+/// 控件列取名。SVG 上被该稿撤销的四格（第五类「高级」、跟随系统浅色、多行粘贴警告、OSC 52 三态）**不在此表**，
+/// 否则面板会画出一个 schema 里没有的标签。
+const std::map<std::string, std::string, std::less<>> kStrings{
+    // ---- 面板骨架 ----
+    {"settings.title", "设置"},
+    {"settings.subtitle", "修改即时生效"},
+    {"settings.close", "关闭"},
+    {"settings.action.open", "打开设置"},
+    {"settings.page.appearance", "外观"},
+    {"settings.page.terminal", "终端"},
+    {"settings.page.connection", "连接"},
+    {"settings.page.shortcuts", "快捷键"},
+    {"settings.action.unset", "未配"},
+    {"settings.badge.deferred", "延后"},
+    {"settings.badge.next_session", "下次会话生效"},
+
+    // ---- 外观域 ----
+    {"appearance.theme", "主题"},
+    {"appearance.palette.basic", "16 色重映射"},
+    {"appearance.palette.foreground", "默认前景色"},
+    {"appearance.palette.background", "默认背景色"},
+    {"appearance.palette.cursor", "光标色"},
+    {"appearance.palette.selection", "选区色"},
+    {"appearance.palette.bold_is_bright", "粗体提亮"},
+    {"appearance.palette.min_contrast_enabled", "启用最小对比度"},
+    {"appearance.palette.min_contrast", "最小对比度阈值"},
+    {"appearance.font_family", "等宽字体"},
+    {"appearance.font_size_pt", "字号"},
+    {"appearance.font_line_height", "行高"},
+    {"appearance.font_letter_spacing_dp", "字距"},
+    {"appearance.font_fallback_chain", "CJK 缺字回退链"},
+    {"appearance.viewport_padding_dp", "视口内边距"},
+    {"appearance.cursor_shape", "光标形态"},
+    {"appearance.cursor_blinking", "光标闪烁"},
+    {"appearance.cursor_blink_period_ms", "闪烁频率"},
+    {"appearance.sidebar_collapsed", "侧栏收起"},
+    {"appearance.tab_name_priority", "标签名优先级"},
+    {"appearance.status_bar.show_connection", "连接状态"},
+    {"appearance.status_bar.show_reconnect", "重连状态"},
+    {"appearance.status_bar.show_cursor_position", "光标位置"},
+    {"appearance.status_bar.show_encoding", "会话编码"},
+    {"appearance.status_bar.show_grid_size", "行列数"},
+    {"appearance.status_bar.show_font_size", "字号"},
+    {"appearance.status_bar.show_theme", "当前主题"},
+    {"appearance.status_bar.show_scrollback", "回看行数"},
+    {"appearance.status_bar.show_clipboard_policy", "剪贴板策略"},
+    {"appearance.status_bar.show_input_latency", "输入延迟"},
+
+    // ---- 终端域 ----
+    {"terminal.scrollback_limit", "scrollback 行数"},
+    {"terminal.ambiguous_width", "宽字符判定"},
+    {"terminal.long_line", "超长行处理"},
+    {"terminal.bell", "铃声"},
+    {"terminal.encoding", "会话编码"},
+    {"terminal.paste_newlines", "粘贴换行处理"},
+    {"terminal.right_click", "右键行为"},
+    {"terminal.copy_on_select", "选中即复制"},
+    {"terminal.trim_pasted_trailing_space", "复制时剥行尾空白"},
+    {"terminal.smart_line_join", "合并续行"},
+    {"terminal.strip_tmux_border_chars", "剥 tmux 细线制表符"},
+    {"terminal.word_delimiters", "双击选词断点集"},
+
+    // ---- 连接域 ----
+    {"connection.local_shell", "默认 shell"},
+    {"connection.startup_directory", "启动目录"},
+    {"connection.ssh.port", "端口"},
+    {"connection.ssh.auth_method", "认证方式"},
+    {"connection.ssh.agent_forwarding", "agent 转发"},
+    {"connection.ssh.keepalive_interval_sec", "保活间隔"},
+    {"connection.ssh.connect_timeout_sec", "连接超时"},
+    {"connection.serial.baud", "波特率"},
+    {"connection.serial.data_bits", "数据位"},
+    {"connection.serial.stop_bits", "停止位"},
+    {"connection.serial.parity", "校验位"},
+    {"connection.serial.line_ending", "行尾符"},
+    {"connection.serial.encoding", "串口编码"},
+    {"connection.session_logging", "会话日志"},
+    {"connection.session_log_dir", "日志目录"},
+
+    // ---- 快捷键域 ----
+    {"shortcuts.overrides", "键位覆盖表"},
+
+    // ---- 提交未通过的原因（`ui::CommitIssue` 的十三个非 `None` 值）----
+    {"settings.issue.unknown_key", "这个键不在当前版本的设置表里"},
+    {"settings.issue.not_loaded", "这个键没有装载到面板上"},
+    {"settings.issue.read_only", "这一项暂不支持在面板里修改"},
+    {"settings.issue.domain_mismatch", "这个值的类型与该项不符"},
+    {"settings.issue.text_not_accepted", "这一项不能直接输入文本"},
+    {"settings.issue.malformed_number", "请输入一个数字"},
+    {"settings.issue.not_integral", "这一项只接受整数"},
+    {"settings.issue.out_of_range", "超出允许范围"},
+    {"settings.issue.not_a_choice", "请从列表里选择一个取值"},
+    {"settings.issue.malformed_color", "色值须是 #RRGGBB 七位形态"},
+    {"settings.issue.unset_not_allowed", "这一项必须配置一个颜色"},
+    {"settings.issue.slot_out_of_range", "色板格序号超出 0 到 15"},
+    {"settings.issue.table_size_wrong", "调色板必须是 16 格"},
+};
+
+/// @brief `CommitIssue` → 词条 key：本件是唯一把该枚举翻成文案的地方（表单件只回枚举，不产文案）。
+[[nodiscard]] auto issue_key(CommitIssue issue) -> std::string_view {
+    switch (issue) {
+    case CommitIssue::UnknownKey:
+        return "settings.issue.unknown_key";
+    case CommitIssue::NotLoaded:
+        return "settings.issue.not_loaded";
+    case CommitIssue::ReadOnly:
+        return "settings.issue.read_only";
+    case CommitIssue::DomainMismatch:
+        return "settings.issue.domain_mismatch";
+    case CommitIssue::TextNotAccepted:
+        return "settings.issue.text_not_accepted";
+    case CommitIssue::MalformedNumber:
+        return "settings.issue.malformed_number";
+    case CommitIssue::NotIntegral:
+        return "settings.issue.not_integral";
+    case CommitIssue::OutOfRange:
+        return "settings.issue.out_of_range";
+    case CommitIssue::NotAChoice:
+        return "settings.issue.not_a_choice";
+    case CommitIssue::MalformedColor:
+        return "settings.issue.malformed_color";
+    case CommitIssue::UnsetNotAllowed:
+        return "settings.issue.unset_not_allowed";
+    case CommitIssue::SlotOutOfRange:
+        return "settings.issue.slot_out_of_range";
+    case CommitIssue::TableSizeWrong:
+        return "settings.issue.table_size_wrong";
+    case CommitIssue::None:
+        return {};
+    }
+    return {};
+}
+
+}  // namespace
+
+auto settings_locale() -> const aurora::Locale & {
+    // 一处构造、逐次同值：`tag()` 每次调用现拼串，故面板侧只留这一份 `Locale`。
+    static const aurora::Locale locale{std::string{kTag}, {}};
+    return locale;
+}
+
+auto install_settings_strings() -> void {
+    auto &table = aurora::default_string_table();
+    table.set_default_locale(settings_locale());
+    for (const auto &[key, text] : kStrings) {
+        table.add(settings_locale(), key, text);
+    }
+}
+
+auto settings_text(std::string_view key, std::vector<aurora::LocalizedString> args) -> aurora::LocalizedString {
+    return aurora::LocalizedString::tr(std::string{key}, std::move(args));
+}
+
+auto settings_label(std::string_view key, std::vector<aurora::LocalizedString> args) -> std::string {
+    return settings_text(key, std::move(args)).resolve(&aurora::default_string_table(), settings_locale());
+}
+
+auto has_settings_string(std::string_view key) -> bool {
+    return aurora::default_string_table().lookup(std::string{key}, settings_locale()).has_value();
+}
+
+auto settings_issue_text(CommitIssue issue) -> aurora::LocalizedString {
+    const auto key = issue_key(issue);
+    if (key.empty()) {
+        return aurora::LocalizedString{std::string_view{}};
+    }
+    return settings_text(key);
+}
+
+}  // namespace borealis::ui
