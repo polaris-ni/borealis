@@ -5,7 +5,9 @@
 ///           表里每个键都真在落盘形态里（面板不得画一个存不回去的控件，schema 也不得留一个面板
 ///           不知道的键）。表声明的取值域再逐键交给装载侧复核——域内值必须无回落留痕、域外值必须
 ///           留痕，于是「面板抄了一份比装载侧更宽或更窄的区间」这类分叉结构上抓得到。色值行的
-///           alpha 位（A2-d）与自由文本行的建议项（`terminal.encoding`）各有一条独立判据。
+///           alpha 位（A2-d）与自由文本行的建议项（`terminal.encoding`）各有一条独立判据。数值行的
+///           量纲后缀同受双向判据守住：稿上画了后缀的四行有且只有那四个，余下行必须留空（面板自造一个
+///           稿上没有的后缀、或把某个步进器画成裸数字，都在此转红）。
 
 #include <algorithm>
 #include <cstddef>
@@ -469,6 +471,33 @@ AURORA_TEST_CASE(row_fields_are_mutually_consistent) {
                            ControlKind::OptionalHexInput);
     AURORA_TEST_CHECK_TRUE(borealis::ui::find_settings_control("appearance.palette.selection")->kind ==
                            ControlKind::OptionalHexInput);
+}
+
+AURORA_TEST_CASE(units_are_declared_only_where_the_sketch_draws_them) {
+    // CJK-LITERAL: cjk-fixture - 判据 A3-a 断的就是行高那个乘号字形，换成字母 x 被测事实即消失
+    const std::vector<std::pair<std::string, std::string>> expected{{"appearance.font_size_pt", "pt"},
+                                                                    {"appearance.font_line_height", "×"},
+                                                                    {"appearance.font_letter_spacing_dp", "dp"},
+                                                                    {"appearance.cursor_blink_period_ms", "ms"}};
+    std::vector<std::string> declared;
+    for (const auto &control : borealis::ui::settings_catalog()) {
+        if (!control.unit.empty()) {
+            AURORA_TEST_CHECK_MSG(control.is_numeric(), control.key + " has a unit but is not numeric");
+            const auto found =
+                std::ranges::find(expected, control.key, [](const auto &item) { return item.first; });
+            AURORA_TEST_REQUIRE(found != expected.end());
+            declared.push_back(control.key);
+            AURORA_TEST_CHECK_MSG(found->second == control.unit, control.key + " unit suffix drifted");
+        }
+    }
+    std::ranges::sort(declared);
+    std::vector<std::string> want;
+    for (const auto &[key, suffix] : expected) {
+        want.push_back(key);
+    }
+    std::ranges::sort(want);
+    // 双向：少一行即面板把某个步进器画成裸数字，多一行即面板自造了稿上没有的后缀。
+    AURORA_TEST_CHECK_MSG(declared == want, "declared units=[" + join(declared) + "] sketch=[" + join(want) + "]");
 }
 
 AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {

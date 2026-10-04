@@ -66,6 +66,13 @@ namespace {
                EffectLevel::Immediate);
 }
 
+/// @brief 补量纲后缀：判据文 A3-a 要三个步进器各自显示单位，而后缀只能落在这张表里——
+///        面板 .cpp 另列一张按键的表就是第二个真值源。
+[[nodiscard]] auto with_unit(SettingsControl control, std::string_view unit) -> SettingsControl {
+    control.unit = std::string{unit};
+    return control;
+}
+
 [[nodiscard]] auto build_catalog() -> std::vector<SettingsControl> {
     std::vector<SettingsControl> catalog;
     catalog.reserve(58U);
@@ -113,24 +120,16 @@ namespace {
                           {},
                           ConsumerStatus::Wired,
                           EffectLevel::Immediate));
-    catalog.push_back(real_step("appearance.font_size_pt",
-                                SettingsPage::Appearance,
-                                6.0,
-                                72.0,
-                                ConsumerStatus::Wired,
-                                EffectLevel::Immediate));
-    catalog.push_back(real_step("appearance.font_line_height",
-                                SettingsPage::Appearance,
-                                1.0,
-                                3.0,
-                                ConsumerStatus::Wired,
-                                EffectLevel::Immediate));
-    catalog.push_back(real_step("appearance.font_letter_spacing_dp",
-                                SettingsPage::Appearance,
-                                0.0,
-                                8.0,
-                                ConsumerStatus::Wired,
-                                EffectLevel::Immediate));
+    catalog.push_back(with_unit(real_step("appearance.font_size_pt", SettingsPage::Appearance, 6.0, 72.0,
+                                          ConsumerStatus::Wired, EffectLevel::Immediate),
+                                "pt"));
+    // CJK-LITERAL: on-screen-demo - 行高是倍数，判据文 A3-a 逐字要求后缀显 `×` 而非字母 x
+    catalog.push_back(with_unit(real_step("appearance.font_line_height", SettingsPage::Appearance, 1.0, 3.0,
+                                          ConsumerStatus::Wired, EffectLevel::Immediate),
+                                "×"));
+    catalog.push_back(with_unit(real_step("appearance.font_letter_spacing_dp", SettingsPage::Appearance, 0.0, 8.0,
+                                          ConsumerStatus::Wired, EffectLevel::Immediate),
+                                "dp"));
     catalog.push_back(row("appearance.font_fallback_chain",
                           SettingsPage::Appearance,
                           ControlKind::FamilyList,
@@ -139,12 +138,8 @@ namespace {
                           {},
                           ConsumerStatus::Wired,
                           EffectLevel::Immediate));
-    catalog.push_back(real_step("appearance.viewport_padding_dp",
-                                SettingsPage::Appearance,
-                                0.0,
-                                64.0,
-                                ConsumerStatus::Wired,
-                                EffectLevel::Immediate));
+    catalog.push_back(real_step("appearance.viewport_padding_dp", SettingsPage::Appearance, 0.0, 64.0,
+                                ConsumerStatus::Wired, EffectLevel::Immediate));
     catalog.push_back(dropdown("appearance.cursor_shape",
                                SettingsPage::Appearance,
                                {"block", "underline", "bar"},
@@ -152,12 +147,9 @@ namespace {
                                EffectLevel::NextSession));
     catalog.push_back(toggle(
         "appearance.cursor_blinking", SettingsPage::Appearance, ConsumerStatus::SeamPending, EffectLevel::NextSession));
-    catalog.push_back(integer_step("appearance.cursor_blink_period_ms",
-                                   SettingsPage::Appearance,
-                                   50.0,
-                                   5000.0,
-                                   ConsumerStatus::Wired,
-                                   EffectLevel::Immediate));
+    catalog.push_back(with_unit(integer_step("appearance.cursor_blink_period_ms", SettingsPage::Appearance, 50.0,
+                                             5000.0, ConsumerStatus::Wired, EffectLevel::Immediate),
+                                "ms"));
     catalog.push_back(toggle(
         "appearance.sidebar_collapsed", SettingsPage::Appearance, ConsumerStatus::Absent, EffectLevel::Immediate));
     // 标签名优先级的消费方在标签条那一棒（在途）：判定件 `ui::resolve_tab_name` 已取该值，
