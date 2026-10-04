@@ -32,6 +32,7 @@
 #include "borealis/config/themes.h"
 #include "borealis/grid/storage.h"
 #include "borealis/term/width.h"
+#include "borealis/ui/color_text.h"
 #include "borealis/ui/palette.h"
 
 namespace borealis::config {
@@ -120,55 +121,16 @@ constexpr std::array<std::string_view, 3> kSerialLineEndings{"LF", "CR", "CRLF"}
     return found == names.end() ? std::string_view{} : found->name;
 }
 
-/// @brief 色值 → `#RRGGBB`。alpha 不参与存储：终端色带不做透明混合（`ui::contrast_ratio` 同口径）。
-[[nodiscard]] auto color_to_text(ui::RgbaColor color) -> std::string {
-    static constexpr std::string_view kDigits = "0123456789ABCDEF";
-    std::string text{'#'};
-    for (const std::uint8_t channel : {color.red, color.green, color.blue}) {
-        text.push_back(kDigits[(channel >> 4U) & 0x0FU]);
-        text.push_back(kDigits[channel & 0x0FU]);
-    }
-    return text;
-}
-
-/// @brief 取一个十六进制位的值。
-[[nodiscard]] auto hex_digit(char digit) -> std::optional<std::uint8_t> {
-    if (digit >= '0' && digit <= '9') {
-        return static_cast<std::uint8_t>(digit - '0');
-    }
-    if (digit >= 'a' && digit <= 'f') {
-        return static_cast<std::uint8_t>(digit - 'a' + 10);
-    }
-    if (digit >= 'A' && digit <= 'F') {
-        return static_cast<std::uint8_t>(digit - 'A' + 10);
-    }
-    return std::nullopt;
-}
-
-/// @brief `#RRGGBB` → 色值（大小写不敏感）。
-[[nodiscard]] auto color_from_text(std::string_view text) -> std::optional<ui::RgbaColor> {
-    if (text.size() != 7U || text.front() != '#') {
-        return std::nullopt;
-    }
-    std::uint8_t channels[3]{};
-    for (std::size_t index = 0; index < 3U; ++index) {
-        const auto high = hex_digit(text[1 + index * 2]);
-        const auto low = hex_digit(text[2 + index * 2]);
-        if (!high || !low) {
-            return std::nullopt;
-        }
-        channels[index] = static_cast<std::uint8_t>((*high << 4U) | *low);
-    }
-    return ui::RgbaColor{channels[0], channels[1], channels[2]};
-}
-
 /// @brief JSON 值 → 色值：非字符串或形态不合都算解析失败。
+///
+/// 校验式取自 `ui::color_from_hex` 而不是在本文件另写一份：设置面板的色值输入框收同一个判定
+/// （裁决 7.52 的 S14），面板接受而这里存不回去的形态就是第二真值源。
 [[nodiscard]] auto color_from(const Value &value) -> std::optional<ui::RgbaColor> {
     const auto text = value.as_string();
     if (!text) {
         return std::nullopt;
     }
-    return color_from_text(*text);
+    return ui::color_from_hex(*text);
 }
 
 /// @brief 指针取文本：节点缺失（`nullptr`）与类型不符都归为「没读到」。
@@ -463,13 +425,13 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     auto node = Value::object();
     auto basic = Value::array();
     for (const auto &color : spec.basic) {
-        basic.push_back(Value(color_to_text(color)));
+        basic.push_back(Value(ui::color_to_hex(color)));
     }
     node.set("basic", std::move(basic));
-    put(node, "foreground", color_to_text(spec.default_foreground));
-    put(node, "background", color_to_text(spec.default_background));
-    node.set("cursor", spec.cursor_color ? Value(color_to_text(*spec.cursor_color)) : Value(nullptr));
-    node.set("selection", spec.selection_color ? Value(color_to_text(*spec.selection_color)) : Value(nullptr));
+    put(node, "foreground", ui::color_to_hex(spec.default_foreground));
+    put(node, "background", ui::color_to_hex(spec.default_background));
+    node.set("cursor", spec.cursor_color ? Value(ui::color_to_hex(*spec.cursor_color)) : Value(nullptr));
+    node.set("selection", spec.selection_color ? Value(ui::color_to_hex(*spec.selection_color)) : Value(nullptr));
     put(node, "bold_is_bright", spec.bold_is_bright);
     put(node, "min_contrast_enabled", spec.min_contrast_enabled);
     put(node, "min_contrast", spec.min_contrast);

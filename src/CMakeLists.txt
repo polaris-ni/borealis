@@ -23,6 +23,7 @@ add_library(borealis_core STATIC
         session/screen_mirror.cpp
         session/session.cpp
         ui/cell_layout.cpp
+        ui/color_text.cpp
         ui/font_choice.cpp
         ui/grid_size_debounce.cpp
         ui/palette.cpp
