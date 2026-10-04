@@ -6,6 +6,7 @@
 # ============================================================
 
 add_library(borealis_core STATIC
+        config/form_transfer.cpp
         config/settings.cpp
         config/store.cpp
         config/themes.cpp

@@ -14,11 +14,10 @@
 // ① 本头不含 Aurora 类型，也**不含 `config` 类型**（与 `settings_catalog.h` 同一条理由：
 //    `config/settings.h` 已 include 本域的 `ui/palette.h`，反向 include 即 `config ⇄ ui` 模块环）。
 //    于是键一律用**落盘点号路径**指代，值用本件自己的 `FormValue`，行一律向 `ui::settings_catalog()`
-//    现查——面板、本件、反向核对件三者共用同一套地址。把 `config::Settings` 的成员搬进搬出发生在
-//    面板界面腿（该稿 §8 的 ⑤），其判据是 §8 集成那条「改 palette 一格 → 预览盒与主视口的同一格色
-//    逐位变化」。**本件守不到「两个同域成员互换」**（`appearance.font_line_height` 与
-//    `appearance.font_letter_spacing_dp` 都是实数），那条边界在 `utest_settings_form` 的说明里如实
-//    登记，不伪造判据。
+//    现查——面板、本件、反向核对件三者共用同一套地址。把 `config::Settings` 的成员搬进搬出落在
+//    搬运件 `config/form_transfer.cpp`（该稿 §8 的 ④）。**本件守不到「两个同域成员互换」**
+//    （`appearance.font_line_height` 与 `appearance.font_letter_spacing_dp` 都是实数），那条边界
+//    由搬运件的取侧与写侧逐键证人守住（裁决 7.54），本件不因此认识成员。
 // ② **校验式复用既有的两个真值源**，本件不新造第三条：取值域与区间来自 `ui::settings_catalog()`
 //    （其区间逐字照抄装载侧 `src/config/store.cpp`），色值文本来自 `ui::color_from_hex`（S14 要求
 //    「校验式必须与装载侧同一条」）。所以 `#12ab34ff` 这类「面板接受而存不回去」的形态在此同样判非法。

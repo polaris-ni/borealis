@@ -35,6 +35,8 @@
 #include "borealis/ui/color_text.h"
 #include "borealis/ui/palette.h"
 
+#include "schema_names.h"
+
 namespace borealis::config {
 namespace {
 
@@ -51,75 +53,11 @@ constexpr std::string_view kVersionKey = "schema_version";
 constexpr std::array<std::string_view, 4> kDomainKeys{
     {"appearance", "terminal", "connection", "shortcuts"}};
 
-/// @brief 一个枚举值与它在 JSON 里的文本名（写与读共用同一张表，避免两处各列一遍名字）。
-struct EnumName {
-    std::string_view name;
-    std::int64_t value;
-};
-
-constexpr std::array<EnumName, 3> kBellNames{{
-    {"off", static_cast<std::int64_t>(BellMode::Off)},
-    {"visual", static_cast<std::int64_t>(BellMode::Visual)},
-    {"audible", static_cast<std::int64_t>(BellMode::Audible)},
-}};
-
-constexpr std::array<EnumName, 2> kLongLineNames{{
-    {"truncate", static_cast<std::int64_t>(LongLinePolicy::Truncate)},
-    {"wrap", static_cast<std::int64_t>(LongLinePolicy::Wrap)},
-}};
-
-constexpr std::array<EnumName, 3> kPasteNewlineNames{{
-    {"as_is", static_cast<std::int64_t>(PasteNewlinePolicy::AsIs)},
-    {"filter", static_cast<std::int64_t>(PasteNewlinePolicy::Filter)},
-    {"convert", static_cast<std::int64_t>(PasteNewlinePolicy::Convert)},
-}};
-
-constexpr std::array<EnumName, 3> kRightClickNames{{
-    {"context_menu", static_cast<std::int64_t>(RightClickAction::ContextMenu)},
-    {"paste", static_cast<std::int64_t>(RightClickAction::Paste)},
-    {"copy_on_select", static_cast<std::int64_t>(RightClickAction::CopyOnSelect)},
-}};
-
-constexpr std::array<EnumName, 2> kTabNamePriorityNames{{
-    {"manual_wins", static_cast<std::int64_t>(TabNamePriority::ManualWins)},
-    {"osc_wins", static_cast<std::int64_t>(TabNamePriority::OscWins)},
-}};
-
-constexpr std::array<EnumName, 2> kAmbiguousWidthNames{{
-    {"narrow", static_cast<std::int64_t>(term::AmbiguousWidth::Narrow)},
-    {"wide", static_cast<std::int64_t>(term::AmbiguousWidth::Wide)},
-}};
-
-constexpr std::array<EnumName, 3> kCursorShapeNames{{
-    {"block", static_cast<std::int64_t>(term::CursorShape::Block)},
-    {"underline", static_cast<std::int64_t>(term::CursorShape::Underline)},
-    {"bar", static_cast<std::int64_t>(term::CursorShape::Bar)},
-}};
-
 constexpr std::array<std::string_view, 4> kSshAuthMethods{"password", "privatekey", "agent", "keyboard-interactive"};
 
 constexpr std::array<std::string_view, 3> kSerialParities{"none", "even", "odd"};
 
 constexpr std::array<std::string_view, 3> kSerialLineEndings{"LF", "CR", "CRLF"};
-
-/// @brief 按名取枚举值。
-/// @param names 映射表。
-/// @param name JSON 文本名。
-/// @return 命中的底层值；表里没有时为空（由调用方回落默认并留痕）。
-[[nodiscard]] auto value_of(std::span<const EnumName> names, std::string_view name)
-    -> std::optional<std::int64_t> {
-    const auto found = std::ranges::find(names, name, &EnumName::name);
-    return found == names.end() ? std::optional<std::int64_t>{} : std::optional<std::int64_t>{found->value};
-}
-
-/// @brief 按枚举值取名。
-/// @param names 映射表。
-/// @param value 枚举的底层值。
-/// @return 文本名；表里没有时为空串，该键于是**不写盘**（读回时按缺键回落默认）。
-[[nodiscard]] auto name_of(std::span<const EnumName> names, std::int64_t value) -> std::string_view {
-    const auto found = std::ranges::find(names, value, &EnumName::value);
-    return found == names.end() ? std::string_view{} : found->name;
-}
 
 /// @brief JSON 值 → 色值：非字符串或形态不合都算解析失败。
 ///
