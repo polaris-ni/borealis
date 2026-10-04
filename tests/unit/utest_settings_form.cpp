@@ -7,10 +7,11 @@
 ///           **脏标记按值而非按提交次数**（改了又改回来既不落盘也不广播）；**生效档位的折叠**
 ///           （只有「已接线 ∧ 即时」给运行期广播，其余三档只落盘）。
 ///
-///           一条边界如实登记：本件按**落盘点号路径**取放值，把 `config::Settings` 的成员搬进搬出在
-///           面板界面腿，故「两个同域成员互换」（`appearance.font_line_height` 与
-///           `appearance.font_letter_spacing_dp` 都是实数）在本件结构上抓不到，其判据是该稿 §8 集成
-///           那条「改 palette 一格 → 预览盒与主视口的同一格色逐位变化」。
+///           一条边界如实登记：本件按**落盘点号路径**取放值，不认识 `config::Settings` 的成员，
+///           故「两个同域成员互换」（`appearance.font_line_height` 与
+///           `appearance.font_letter_spacing_dp` 都是实数）在本件结构上抓不到。该事实的证人是搬运件
+///           `config/form_transfer.cpp` 的取侧与写侧逐键证人（`utest_form_transfer`，该稿 §8 的 ④，
+///           裁决 7.54），不是本件。
 
 #include <algorithm>
 #include <cstddef>
