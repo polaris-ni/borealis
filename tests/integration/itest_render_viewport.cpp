@@ -10,7 +10,11 @@
 ///           流式首行到行尾、失焦各半混合、Alt 列模式矩形、双击选词（断点上回空）、三击整行与
 ///           向上拖的外沿、高亮跟着内容而非屏幕行走，以及复制腿的变换入参；另有排版选项的接线腿
 ///           （配置里的缺字回退链进到交进框架的那一份选项、且不随缩放丢失，固定格推进档位取
-///           **未含字距**的原始格宽并随缩放重取）。
+///           **未含字距**的原始格宽并随缩放重取）；最后是本控件的两条运行期更新入口
+///           （裁决 7.52 的 S4①，`SPEC.FEAT.PREF.02` 的「修改即时生效」）：换外观包后色带与选区色
+///           按新值重画而**选区与回看偏移原样保留**（视口没有被重建）、字号与内边距改动经既有的
+///           下发腿重取行列数、换链后字距与格推进仍同源、闪烁周期改动按新周期重注册（每 tick 恰翻
+///           一次），以及换交互口径后「下一次读」用新变换而存下的选区端点未被回头改写。
 ///           像素一律比 RGBA 四通道含 alpha：Headless 帧底色是全透明黑 (0,0,0,0)，只比 RGB 会让
 ///           「画了个纯黑」与「什么都没画」混为一谈。
 ///
@@ -147,16 +151,23 @@ class Harness {
   public:
     explicit Harness(const PaletteSpec &palette = test_palette(),
                      const TerminalView::InteractionOptions &options = {},
-                     const Typography &typography = {}, std::vector<std::string> font_fallback_chain = {})
-        : palette_(palette),
+                     const Typography &typography = {}, std::vector<std::string> font_fallback_chain = {},
+                     bool with_scheduler = false)
+        : appearance_(TerminalView::Appearance{.palette = palette,
+                                               .ref_font = test_font(),
+                                               .typography = typography,
+                                               .padding_dp = kPaddingDp,
+                                               .blink_period = std::chrono::milliseconds{kBlinkPeriodMs},
+                                               .font_fallback_chain = std::move(font_fallback_chain)}),
           options_(options),
-          font_(test_font()),
-          typography_(typography),
           session_(std::make_unique<Session>(own_connection(), kNominalSize, kScrollback, width_policy)),
-          view_(std::make_shared<TerminalView>(*session_, palette_, font_, typography_, kPaddingDp,
-                                               std::chrono::milliseconds{kBlinkPeriodMs}, options_,
-                                               std::move(font_fallback_chain))),
+          view_(std::make_shared<TerminalView>(*session_, appearance_, options_)),
           root_(std::static_pointer_cast<au::Widget>(view_)) {
+        // 闪烁任务只在 `on_mount` 那一刻读 `Scheduler::current()`，而挂载发生在首次 present，
+        // 故播种必须早于下面的 `render()`；不开这一档的用例保持无调度器，帧里就不会有周期翻相。
+        if (with_scheduler) {
+            au::Scheduler::set_current(&scheduler_);
+        }
         session_->start();
         render();  // 帧 0：布局发生在这里，控件据此把行列尺寸下发给会话
         const au::Rect box = view_->paint_bounds();
@@ -166,6 +177,9 @@ class Harness {
         box_ = box;
         refresh_geometry();
     }
+
+    /// @brief 收掉本驱动台播种的调度器：`current()` 是进程内的，留给下一个用例就是脏环境。
+    ~Harness() { au::Scheduler::set_current(nullptr); }
 
     Harness(const Harness &) = delete;
     auto operator=(const Harness &) -> Harness & = delete;
@@ -252,9 +266,38 @@ class Harness {
             (void)au::EventDispatcher::dispatch(root_.widget(), event);
         }
         render();
-        font_.size_pt = view_->font_size_pt();
+        appearance_.ref_font.size_pt = view_->font_size_pt();
         refresh_geometry();
     }
+
+    /// @brief 驱动台自己的外观副本：用例改哪一项就改这里，改完调 `apply_appearance()` 交进控件。
+    [[nodiscard]] auto appearance() -> TerminalView::Appearance & { return appearance_; }
+
+    /// @brief 运行期把副本交进控件（裁决 7.52 的 S4①），再排帧并复算格网。
+    ///
+    /// 与 `zoom` 同一条分工：算式归控件，断言只问「改的那一项有没有抵达绘制与尺寸下发」，故格网
+    /// 由本类用自己的副本独立复算，而不是回读控件的输出当预期。
+    auto apply_appearance() -> void {
+        view_->apply_appearance(appearance_);
+        render();
+        refresh_geometry();
+    }
+
+    /// @brief 运行期换选区、复制与粘贴的口径（S4① 的第二条入口）。
+    auto apply_interaction_options(const TerminalView::InteractionOptions &options) -> void {
+        options_ = options;
+        view_->apply_interaction_options(options_);
+        render();
+    }
+
+    /// @brief 推进调度器 @p seconds 秒——一次 `tick` 至多触发一个到期任务，故翻相次数可直接数。
+    auto tick(double seconds) -> void { scheduler_.tick(seconds); }
+
+    /// @brief 控件当前生效的闪烁周期：区分「存进了成员」与「重新注册进调度器」两个观测点。
+    [[nodiscard]] auto blink_period() const -> std::chrono::milliseconds { return view_->blink_period(); }
+
+    /// @brief 回看位置距底的行数：与选区文本一起构成「视口没有被重建」的中间态读数。
+    [[nodiscard]] auto review_rows_from_bottom() const -> std::size_t { return view_->scrollback_rows_from_bottom(); }
 
     /// @brief 发一个指针事件：行列是**屏幕**坐标，落点取该格中心。
     ///
@@ -296,7 +339,7 @@ class Harness {
     /// 与 `refresh_geometry` 同一条算式（取驱动台自己那份已同步字号的字体），故不是把实现的输出
     /// 当预期；档位若误取回填后的格宽（含字距），本值与观测值就正好差一个字距。
     [[nodiscard]] auto raw_cell_width_px() const {
-        return au::render::FontEngine::monospace_cell(font_, scale_).cell_width_px;
+        return au::render::FontEngine::monospace_cell(appearance_.ref_font, scale_).cell_width_px;
     }
 
     /// @brief 控件当前是否持焦：指针 Press 的焦点归属由派发器决定，本用例要能证到它。
@@ -322,7 +365,7 @@ class Harness {
     }
 
     [[nodiscard]] auto geometry() const noexcept -> const GridGeometry & { return geometry_; }
-    [[nodiscard]] auto palette() const noexcept -> const PaletteSpec & { return palette_; }
+    [[nodiscard]] auto palette() const noexcept -> const PaletteSpec & { return appearance_.palette; }
     [[nodiscard]] auto scale() const noexcept -> float { return scale_; }
 
     [[nodiscard]] auto last_resize() const -> std::optional<Size> {
@@ -476,20 +519,22 @@ class Harness {
     /// @brief 独立复算一遍格网：绘制侧的几何必须能被测试侧重算出来，否则像素断言退化成
     ///        「拿实现自己的输出当预期」。字体与排版量取驱动台自己的副本。
     auto refresh_geometry() -> void {
-        const auto metrics = au::render::FontEngine::monospace_cell(font_, scale_);
+        const auto metrics = au::render::FontEngine::monospace_cell(appearance_.ref_font, scale_);
         const auto typed = borealis::ui::apply_typography(
             CellPixels{metrics.cell_width_px, metrics.cell_height_px, metrics.ascent_px},
-            static_cast<double>(scale_), typography_);
+            static_cast<double>(scale_), appearance_.typography);
         geometry_ = borealis::ui::make_geometry(
             typed.cells, scale_,
-            LogicalSize{static_cast<double>(box_.size.width), static_cast<double>(box_.size.height)}, kPaddingDp);
+            LogicalSize{static_cast<double>(box_.size.width), static_cast<double>(box_.size.height)},
+            appearance_.padding_dp);
     }
 
     au::Window window_ = make_window();  ///< 最先声明、最后析构：帧缓冲须活到取样结束。
-    PaletteSpec palette_{};
+    /// @brief 闪烁与去抖那类周期任务的驱动器；只在 `with_scheduler` 那一档用例里被播种成 current。
+    au::Scheduler scheduler_;
+    /// @brief 驱动台自己的外观副本（含字体、排版量、内边距、闪烁周期与回退链），须在 view_ 之前就位。
+    TerminalView::Appearance appearance_{};
     TerminalView::InteractionOptions options_{};  ///< 选区行为的可配项，须在 view_ 之前就位。
-    au::Font font_{};
-    Typography typography_{};  ///< 排版可调量，须在 view_ 之前就位。
     FakeConnection *connection_ = nullptr;  ///< 非拥有，会话持有。
     std::unique_ptr<Session> session_;
     std::shared_ptr<TerminalView> view_;
@@ -1443,6 +1488,204 @@ AURORA_TEST_CASE(fixed_cell_advance_is_the_raw_grid_width_and_follows_the_zoom) 
     const auto zoomed_raw = tight.raw_cell_width_px();
     AURORA_TEST_REQUIRE_MSG(zoomed_raw != raw, "the zoom must actually change the raw cell width");
     AURORA_TEST_CHECK_EQ(*tight.layout_options().fixed_cell_advance_px, static_cast<float>(zoomed_raw));
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_runtime_palette_change_repaints_the_slots_and_keeps_the_view_state) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const std::size_t rows = h.geometry().rows;
+    // 每行一种底色且文本互异（与回看那一例同一套素材），于是「色带落点」与「滚动位置」能在像素
+    // 层分开指认。底色只在 41..47 间轮转：SGR 48 是「取后续参数」的引导码，单独出现不是颜色。
+    std::string script = "\x1b[?25l";
+    for (std::size_t index = 0; index < rows + 6U; ++index) {
+        script += "\x1b[4";
+        script += static_cast<char>('0' + static_cast<int>(index % 7U) + 1);
+        script += "mline ";
+        script += static_cast<char>('A' + static_cast<int>(index % 26U));
+        script += "\x1b[0m\r\n";
+    }
+    h.feed(script);
+    h.scroll(2);
+    h.render();
+    constexpr std::size_t kSelectedRow = 5U;
+    h.pointer(au::MouseAction::Press, kSelectedRow, 0U);
+    h.pointer(au::MouseAction::Move, kSelectedRow, 1U);
+    h.pointer(au::MouseAction::Release, kSelectedRow, 1U);
+    h.render();
+    // 两份「改动之前就存在」的中间态：回看偏移与选区。视口一旦被重建，这两样会一起清零——
+    // 这正是裁决 7.52 的 S4① 否决「改完重建视口」那条选项的理由，故它必须在此被断到。
+    const auto selected_before = h.selected_text();
+    const auto back_before = h.review_rows_from_bottom();
+    AURORA_TEST_REQUIRE_MSG(selected_before.size() == 2U, "the witness needs a live selection to keep");
+    AURORA_TEST_REQUIRE(back_before == 2U);
+
+    // 现找一个当前画着 `basic[1]` 的屏幕行：素材按七色轮转，而回看把行号整体位移，照算式猜一格
+    // 就可能把「色带没跟上改色」读成「猜错了行」。选区那一行的底色已被替换，跳过。
+    const auto before = h.pixels();
+    const auto old_red = h.palette().basic[1];
+    std::size_t band_row = 0U;
+    bool band_found = false;
+    for (std::size_t row = 0U; row + 1U < rows && !band_found; ++row) {
+        if (row == kSelectedRow) {
+            continue;
+        }
+        if (h.cell_probe(before, row, 0U, 0.06) == old_red) {
+            band_row = row;
+            band_found = true;
+        }
+    }
+    AURORA_TEST_REQUIRE_MSG(band_found, "the fixture must put a basic[1] band inside the review window");
+
+    const RgbaColor new_red{9U, 214U, 41U, 255U};
+    const RgbaColor new_selection{200U, 30U, 170U, 255U};
+    auto &appearance = h.appearance();
+    appearance.palette.basic[1] = new_red;
+    appearance.palette.selection_color = new_selection;
+    h.apply_appearance();
+
+    const auto after = h.pixels();
+    AURORA_TEST_CHECK(h.cell_probe(after, band_row, 0U, 0.06) == new_red);
+    AURORA_TEST_CHECK(h.cell_probe(after, kSelectedRow, 0U, 0.06) == new_selection);
+    AURORA_TEST_CHECK_EQ(h.selected_text(), selected_before);
+    AURORA_TEST_CHECK_EQ(h.review_rows_from_bottom(), back_before);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_runtime_font_and_padding_change_retakes_the_grid_and_redownloads_the_size) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto before = h.geometry();
+    const auto resizes_before = h.resize_count();
+
+    // 字号与内边距同改：前者动格步长、后者动可视宽高，两条都是「行列数随之重算」的输入，而
+    // 下发只能有一次（运行期入口若自己直发一个中间值，去抖就白设了，裁决 7.47⑩ / 7.52 S4①）。
+    auto &appearance = h.appearance();
+    appearance.ref_font.size_pt = 18.0F;
+    appearance.padding_dp = 20.0F;
+    h.apply_appearance();
+
+    AURORA_TEST_REQUIRE_MSG(h.preflight(), "a runtime grid change must not leave half cells");
+    const auto &after = h.geometry();
+    AURORA_TEST_CHECK_MSG(after.cell_width > before.cell_width, "a larger point size widens the cell");
+    AURORA_TEST_CHECK_MSG(after.rows < before.rows && after.columns < before.columns,
+                          "a wider cell and a deeper padding must both shrink the grid");
+    AURORA_TEST_CHECK_MSG(h.font_size_pt() == 18.0F, "the reference font in the package must reach the view");
+
+    // 尺寸只经既有的下发腿走一次：`last_resize` 与驱动台自己按副本复算的格网逐值相等，故不是
+    // 「拿实现自己的输出当预期」。
+    AURORA_TEST_CHECK_EQ(h.resize_count(), resizes_before + 1U);
+    AURORA_TEST_REQUIRE(h.last_resize().has_value());
+    const auto sent = h.last_resize().value();
+    AURORA_TEST_CHECK(sent.columns == after.columns && sent.rows == after.rows);
+
+    // 新格网下的色带仍逐格对齐（`SPEC.FEAT.RENDER.05` 的「不裂」判据在运行期改外观这一档同样成立）。
+    // 色带必须写在改动之后：行数从 24 缩到个位数会把此前写下的那一行推进 scrollback，屏幕上那一行
+    // 于是只剩底色，三条探针就退化成「什么都没画」的空转判据。
+    h.feed("\x1b[?25l\x1b[4;1H\x1b[41mABC\x1b[49mD");
+    const auto px = h.pixels();
+    const auto &red = h.palette().basic[1];
+    const auto &background = h.palette().default_background;
+    AURORA_TEST_CHECK(h.cell_probe(px, 3U, 0U, 0.06) == red);
+    AURORA_TEST_CHECK(h.cell_probe(px, 3U, 2U, 0.94) == red);
+    AURORA_TEST_CHECK(h.cell_probe(px, 3U, 3U, 0.06) == background);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(an_applied_chain_keeps_the_letter_spacing_and_cell_advance_same_sourced) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 回退链没有 per-field 的 setter：框架的入口给出的是**整份**排版选项，装上即把量化字距与
+    // 固定格推进清成缺省值。运行期换链因此必须紧接触发一次度量重取，否则用户在面板里配的链
+    // 一装上去就把字距与网格对齐一起抹掉（裁决 7.50 的同源不变量 + 7.52 S4① 的第一条代价）。
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto raw = h.raw_cell_width_px();
+    AURORA_TEST_REQUIRE_MSG(raw > 0, "the framework must report a positive cell width to anchor the grid");
+    const double spacing_dp = static_cast<double>(raw) / 3.0;
+    h.appearance().typography = Typography{.letter_spacing_dp = spacing_dp};
+    h.apply_appearance();
+
+    const std::array<std::string_view, 2> expected{"Courier New", "MS Gothic"};
+    h.appearance().font_fallback_chain = {"Courier New", "MS Gothic"};
+    h.apply_appearance();
+    AURORA_TEST_REQUIRE(h.layout_options().fixed_cell_advance_px.has_value());
+    AURORA_TEST_CHECK_TRUE((std::ranges::equal(h.layout_options().fallback_chain_view(), expected)));
+    // 档位仍是**未含字距**的原始格宽，且「档位 + 字距 == 几何格步长 × scale」这条同源关系在装链之后
+    // 照旧成立：装链把两者一起抹掉时，这里两侧都对不上。
+    AURORA_TEST_CHECK_EQ(*h.layout_options().fixed_cell_advance_px, static_cast<float>(raw));
+    AURORA_TEST_CHECK_EQ(*h.layout_options().fixed_cell_advance_px + h.layout_options().letter_spacing,
+                         static_cast<float>(h.geometry().cell_width * h.scale()));
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_runtime_blink_period_change_re_registers_the_interval) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 闪烁任务只在挂载那一刻读 `Scheduler::current()`，故本例要把调度器播种进驱动台。
+    Harness h(test_palette(), TerminalView::InteractionOptions{}, Typography{}, {}, true);
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.set_focused(true);
+    h.feed("\x1b[3;1HAB");
+    h.render();
+
+    // 缺省周期 500 ms：推进 200 ms 还没到期，一格都不该翻。这一半把「周期真的在算」与「tick 顺带
+    // 画了一帧」分开，否则后面的交替就成了无参照的观察。
+    const auto settled = h.pixels();
+    h.tick(0.2);
+    h.render();
+    AURORA_TEST_CHECK_EQ(Harness::count_diff(h.pixels(), settled), 0U);
+    auto previous = settled;
+
+    auto &appearance = h.appearance();
+    appearance.blink_period = std::chrono::milliseconds{100};
+    h.apply_appearance();
+    AURORA_TEST_CHECK_EQ(h.blink_period(), std::chrono::milliseconds{100});
+
+    // 一次 `tick` 至多触发一个到期任务，故「每 tick 都换相位」就是「只有一条周期任务在跑」。
+    // 忘了取消旧句柄会在旧周期到期那一 tick 同时翻两次（画面回到原样），压根没重注册则整段不翻。
+    for (int round = 0; round < 4; ++round) {
+        h.tick(0.15);
+        h.render();
+        const auto frame = h.pixels();
+        // 光标格（行 2 列 2，块形）在 on 相被光标色整格盖住、off 相只剩底色，故取近格顶处比色。
+        AURORA_TEST_CHECK_MSG(h.cell_probe(frame, 2U, 2U, 0.12) != h.cell_probe(previous, 2U, 2U, 0.12),
+                              "the blink phase must flip once per period after a runtime period change");
+        previous = frame;
+    }
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_runtime_interaction_change_applies_to_the_next_read) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.feed("\x1b[?25l\x1b[3;1HAB   \x1b[4;1Htail");
+    h.pointer(au::MouseAction::Press, 2U, 0U);
+    h.pointer(au::MouseAction::Move, 3U, 3U);
+    h.pointer(au::MouseAction::Release, 3U, 3U);
+    h.render();
+    const std::string raw_text = h.selected_text();
+    AURORA_TEST_REQUIRE_MSG(raw_text.size() > 4U, "the witness needs trailing padding inside the selection");
+
+    TerminalView::InteractionOptions trimmed;
+    trimmed.copy.trim_trailing_space = true;
+    h.apply_interaction_options(trimmed);
+    // 选区一字未动、只换口径：下一次读就按新变换产出（裁决 7.52 的 S4① 第二条入口）。
+    AURORA_TEST_CHECK_EQ(h.selected_text(), "AB\ntail");
+    // 而存下的端点没被回头改写：换回缺省口径仍读出那一份原样文本。
+    h.apply_interaction_options(TerminalView::InteractionOptions{});
+    AURORA_TEST_CHECK_EQ(h.selected_text(), raw_text);
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif

@@ -3,12 +3,14 @@
 /// 测试说明: 以无头窗口 + 真实指针派发驱动「右键 → `plan_right_click` → 菜单 / 直接动作 →
 ///           剪贴板接缝 → `term::plan_paste` → 会话字节」这条链（`SPEC.FEAT.INTERACT.03` 的
 ///           右键与粘贴腿，裁决 7.41）。断言的是**链路**而非决策件与计划件本身（两者各有
-///           `utest_right_click` / `utest_paste` 逐条覆盖），值得单独证的有四件事：
+///           `utest_right_click` / `utest_paste` 逐条覆盖），值得单独证的有五件事：
 ///           ① 三态各自的分流与「无选区不覆盖剪贴板」；② 菜单由 `au::Popup` 挂在
 ///           `au::OverlayHost` 上，条目落点经真实命中测试，置灰的那一项点下去不产生任何动作；
 ///           ③ 剪贴板读写都发生在帧边界而非事件回调里（AGENTS.md §4.5 第 25 条），故
 ///           「点击之后、排帧之前什么都还没发生」是一条要显式断言的中间态；
-///           ④ 多行粘贴先确认再发送，未经确认（含没有浮层宿主可问）一个字节也不发。
+///           ④ 多行粘贴先确认再发送，未经确认（含没有浮层宿主可问）一个字节也不发；
+///           ⑤ 运行期换三态（裁决 7.52 的 S4① 第二条入口）只改「下一次右键」的处置，既不丢既有
+///           选区，也不把上一次的动作补发一遍。
 ///           节流的那一腿需要运行中的 `Scheduler`，此处按「无调度器即按次序一次发完」的退化
 ///           分支断言块序与内容（裁决 7.41⑥）。
 ///
@@ -201,6 +203,12 @@ class Harness {
         pointer(au::MouseAction::Press, au::MouseButton::Left, row, from_column);
         pointer(au::MouseAction::Move, au::MouseButton::Left, row, to_column);
         pointer(au::MouseAction::Release, au::MouseButton::Left, row, to_column);
+        render();
+    }
+
+    /// @brief 运行期换交互口径（裁决 7.52 的 S4① 第二条入口）：交进控件后排一帧。
+    auto apply_options(TerminalView::InteractionOptions options) -> void {
+        view_->apply_interaction_options(std::move(options));
         render();
     }
 
@@ -404,6 +412,30 @@ AURORA_TEST_CASE(paste_state_sends_the_clipboard_on_the_next_frame) {
     h.render();
     AURORA_TEST_CHECK_EQ(h.written(), "ls -la");
     AURORA_TEST_CHECK_EQ(h.confirm_calls, 0U);  // 单行不警告
+}
+
+AURORA_TEST_CASE(a_runtime_right_click_switch_changes_the_next_click) {
+    auto options = TerminalView::InteractionOptions{};
+    options.right_click = borealis::ui::RightClickAction::CopyOnSelect;
+    Harness h(options);
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.feed("\x1b[?25l\x1b[3;1HABCD");
+    h.drag_select(2U, 0U, 3U);
+    h.right_click(2U, 1U);
+    h.render();
+    AURORA_TEST_REQUIRE_EQ(h.copied.size(), 1U);
+    AURORA_TEST_REQUIRE(!h.menu_open());
+
+    // 运行期换成菜单态：裁决 7.52 的 S4① 走的是「不重建视口」那条路，故既不丢既有选区，也不
+    // 把上一次的动作补发一遍——变的只有「下一次右键」的处置。
+    options.right_click = borealis::ui::RightClickAction::ContextMenu;
+    h.apply_options(options);
+    AURORA_TEST_CHECK_EQ(h.selected_text(), "ABCD");
+    h.right_click(2U, 1U);
+    h.render();
+    AURORA_TEST_CHECK(h.menu_open());
+    AURORA_TEST_CHECK_EQ(h.write_calls, 1U);
+    AURORA_TEST_CHECK_EQ(h.copied.size(), 1U);
 }
 
 AURORA_TEST_CASE(bracketed_paste_wraps_the_text_verbatim_and_never_warns) {

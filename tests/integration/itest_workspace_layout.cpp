@@ -11,7 +11,8 @@
 ///              改内容态」）；
 ///           ④ 裸方向键照旧写字节、`Ctrl+Alt+方向键` 一个字节也不发却把把手推动了（认领证人）；
 ///           ⑤ 连续三次布局变更只结算一次且取最新值，净变化为零的第二次尾沿不再发（去抖的端到端
-///              形态，含「视口装上 sink 之后不得再直发 `Session::resize`」）；
+///              形态，含「视口装上 sink 之后不得再直发 `Session::resize`」）——面板运行期连改两次
+///              字号同理，两次都不发、尾沿一次交出最新格；
 ///           ⑥ chrome 三色、把手两态与焦点描边的**像素落点**——缝隙、把手中段、描边各在自己的格位上。
 ///
 ///           时钟口径：`GridSizeDebounce` 比的是真实 `steady_clock`，而 `Scheduler::tick` 推进的是
@@ -800,6 +801,43 @@ AURORA_TEST_CASE(continuous_resize_settles_once_with_the_latest_grid) {
     h.settle();
     AURORA_TEST_CHECK_EQ(h.dispatched_.size(), 2U);
     AURORA_TEST_CHECK_EQ(h.resize_count(1U), 1U);
+}
+
+AURORA_TEST_CASE(an_appearance_change_reaches_the_session_only_through_the_debounce) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.press(au::KeyCode::D, Harness::ctrl_shift());
+    h.render();
+    h.settle();
+    h.reset_counters();
+
+    // 运行期改外观（裁决 7.52 S4① 的第三条代价）在界面腿这一侧的证人：视口只标脏，行列数的下发
+    // 仍旧只走工作区层的去抖腿。面板里连改两次字号若直发中间值，静默窗口就白设了。
+    const auto bump = [&h](float size_pt) -> TerminalView::Appearance {
+        auto font = test_font();
+        font.size_pt = size_pt;
+        return TerminalView::Appearance{.palette = h.palette(), .ref_font = std::move(font), .typography = {},
+                                        .padding_dp = kPaddingDp,
+                                        .blink_period = std::chrono::milliseconds{kBlinkPeriodMs},
+                                        .font_fallback_chain = {}};
+    };
+    TerminalView *left = h.workspace().view_of(1U);
+    AURORA_TEST_REQUIRE(left != nullptr);
+
+    left->apply_appearance(bump(16.0F));
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.dispatched_.size(), 0U);
+    left->apply_appearance(bump(20.0F));
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.dispatched_.size(), 0U);
+
+    const GridSize latest{left->grid_geometry().columns, left->grid_geometry().rows};
+    h.settle();
+    AURORA_TEST_REQUIRE_EQ(h.dispatched_.size(), 1U);  // 右格净变化为零，因此不进「已下发」
+    AURORA_TEST_CHECK_EQ(h.dispatched_[0].first, 1U);
+    AURORA_TEST_CHECK(h.dispatched_[0].second == latest);
+    AURORA_TEST_CHECK_EQ(h.resize_count(1U), 1U);
+    AURORA_TEST_CHECK_EQ(h.resize_count(2U), 0U);
 }
 
 AURORA_TEST_CASE(armed_timer_settles_the_quiet_period_by_itself) {
