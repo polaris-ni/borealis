@@ -8,15 +8,21 @@
 // 外观页的四个专用控件（主题卡 / 16 格色板 / 字体族下拉 / 回退链重排表）、右侧实时预览盒、连接页与
 // 状态栏开关组、快捷键只读表、以及损坏配置的启动对话框。
 //
-// 三条决定形态的框架实测（裁决 7.56，其中两条已登记为缺口 G26 / G27）：
-// ① 浮层必须是**确实写子节点 bounds 的容器**：`Dialog` 与 `Scroll` 都不写 bounds，挂在
+// 三条决定形态的框架实测（裁决 7.56，其前两条曾登记为缺口 G26 / G27 并已于同日回货闭合，见裁决 7.57①）：
+// ① 浮层必须是**确实写子节点 bounds 的容器**：登记时 `Dialog` 与 `Scroll` 都不写 bounds，挂在
 //    `OverlayHost` 上就是抓不住的死浮层。故本件用 `Stack`（遮罩 `Canvas` + 卡片）承载 `Column` 卡片，
-//    行区取 `LazyList`——三者都落 bounds，真实点击才命中得到。
+//    行区取 `LazyList`。两条回货后本件**判定不迁回** `Dialog`（内层 `self × 0.8` 约束、遮罩不关面板、
+//    `show()` 带模态作用域，三条均与 S1 拍的同窗口非模态浮层不合，见裁决 7.57③）。
 // ② `OverlayHost` 给浮层的是**松约束**（min 0、max 自身），而 `Canvas` 的自动尺寸会夹到 100×100，
 //    故遮罩层须挂 `Modifier{}.fill_max_size()` 才铺满整窗；卡片用 `LayoutBuilder` 按实际可用尺寸钳位，
 //    于是稿面 1500×900 dp 在 960×640 dp 的窗口里不会溢出（S1「同窗口浮层」的物理前提）。
 // ③ `Button` 的标签绘制绕过 `StringTable::resolve()`（缺口 G28），故按钮文案一律经 `settings_label()`
 //    就地解析成显示串；`Text` 一侧仍交 `LocalizedString`（`settings_text()`）由框架就地查表。
+//
+// 一条在册的派发限制（缺口 G29，裁决 7.57④⑤）：`Dropdown` 的展开选项列画在主框之外而不占布局，
+// 而嵌套在容器里的溢出区进不了真实派发链（祖先按 `child.bounds()` 判包含），故「真点一个选项即提交」
+// 在回货前写不成判据。本件照旧给出活的 `Dropdown`（点主框会展开、绘制正确），并由
+// `itest_settings_panel` 留一条现状钉子钉住该事实——它随回货必须转红。
 //
 // 面板不认识 `config`，也不认识 `TerminalView`：装载 / 落盘 / 广播三条接缝由 `Hooks` 交装配层兑现
 // （`config/settings.h` 已 include `ui/palette.h`，反向 include 即 `config ⇄ ui` 模块环，与
@@ -104,7 +110,8 @@ public:
         return open_;
     }
 
-    /// @brief 切页：按新页重建浮层（`LazyList` 无 `set_count`，条目数变了只能整块重建）。
+    /// @brief 切页：按新页重建浮层。条目数变了可用 `LazyList::set_count` 就地改，但本件仍整块重建——
+    ///        序号 → 键的映射随页而变，只改条目数会让旧页的条目按新页的序号复述。
     /// @param page 目标页。
     auto select_page(SettingsPage page) -> void;
 
