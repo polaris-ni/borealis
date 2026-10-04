@@ -18,6 +18,11 @@
 ///              派发，卡片外那一点命中的是遮罩层本身，卡片内那一点命中的是卡片里的控件，点遮罩即关
 ///              面板。`Dialog` / `Scroll` 那两类不写 bounds 的容器（缺口 G26 / G27）在本用例里会直接
 ///              表现为「命中不到、点了不关」。
+///           ⑦ **一条现状钉子（缺口 G29，不是行为正确性判据）**：`Dropdown` 的选项面板是「覆盖绘制不占
+///              布局」的区域，控件只在 `on_hit_test` 里自陈那片矩形而不覆写链入口，而真实派发走的命中链
+///              由祖先按 `child.bounds()` 判包含，于是面板行里的下拉**点得到主框、点不到选项**。G29 回货
+///              后该例必须转红（届时改成「真点一个选项即提交」）；若面板先改走浮层自绘选项，它同样转红，
+///              那是删掉钉子的信号而不是 bug。
 ///
 ///           一条测试现场的必要构造：`OverlayHost` 的浮层序号是从「基础内容之后」起算的
 ///           （`add_overlay` 返回 `children_.size() - 1`），故宿主**必须**带一个基础子节点——生产路径
@@ -37,6 +42,7 @@
 #include "aurora/event/dispatcher.h"
 #include "aurora/event/focus.h"
 #include "aurora/i18n/string_table.h"
+#include "aurora/widget/dropdown.h"
 #include "aurora/widget/text.h"
 #include "aurora/widget/text_input.h"
 #include "borealis/config/form_transfer.h"
@@ -746,13 +752,19 @@ public:
     /// 浮层树是面板私有的，`LazyList` 还会回收窗口外的条目，故这里不另开观测点，而是问框架的命中
     /// 测试「这一点上是谁」。步长 4 dp 足够格住 56 dp 的行高，且落点在控件盒内而不压边界；起点 220 dp
     /// 跳过左导航列（宽 200 dp），免把导航按钮当成行区控件。
-    [[nodiscard]] auto find_first(std::string_view type_name) -> HitSpot {
+    /// @param room_below_dp 该控件的布局盒下沿到此窗口之间还要有的余量（dp）：要往下探覆盖绘制区的
+    ///        用例（下拉的选项面板）须取一个够格的行，否则探到的点出了窗口，判据测的是坐标钳位而不是派发。
+    [[nodiscard]] auto find_first(std::string_view type_name, float room_below_dp = 0.0F) -> HitSpot {
         for (float y = kCardEdgeDp + 4.0F; y < static_cast<float>(kWindowHeight) - kCardEdgeDp; y += 4.0F) {
             for (float x = 220.0F; x < static_cast<float>(kWindowWidth) - kCardEdgeDp; x += 4.0F) {
                 au::Widget *widget = hit(x, y);
-                if (widget != nullptr && type_name == widget->type_name()) {
-                    return HitSpot{.widget = widget, .x = x, .y = y};
+                if (widget == nullptr || type_name != widget->type_name()) {
+                    continue;
                 }
+                if (widget->paint_bounds().bottom() + room_below_dp > static_cast<float>(kWindowHeight) - kCardEdgeDp) {
+                    continue;
+                }
+                return HitSpot{.widget = widget, .x = x, .y = y};
             }
         }
         return HitSpot{};
@@ -856,6 +868,60 @@ AURORA_TEST_CASE(a_text_row_commits_only_when_focus_leaves) {
     AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
 }
 
+/// @brief 缺口 G29 的现状钉子：下拉的选项面板画在主框之下，那片区域**不进真实派发的命中链**。
+///
+/// 与本套件其余各例不同，本例断的是「框架现状不支持什么」，故它不证面板的行为正确，而是把一条会
+/// 随回货翻转的现状钉在案上：`Dropdown` 只在 `on_hit_test` 里自陈了覆盖绘制区（主框 + 展开的选项
+/// 面板），链入口 `on_hit_test_chain` 没有覆写；而祖先 `Container::on_hit_test_chain` 先按
+/// `child.bounds()` 判包含再递归，于是挂在 `LazyList` 行里的下拉，其选项永远到不了控件自己那一段
+/// 判定——「画得出来却点不动」。本例因此分两头断：按局部坐标直接问控件（会命中），按场景根走链
+/// （不命中）。**回货后本例必须转红**（那时链上应能命中该 `Dropdown`），届时把它改成「真点一个选项
+/// 即提交」；若面板先改走浮层自绘选项（规避件），本例的第一处 REQUIRE 同样转红，那是删钉子的信号。
+AURORA_TEST_CASE(a_dropdown_option_below_the_layout_box_is_not_dispatch_reachable_G29) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    // 下拉行集中在终端页（`terminal.long_line` / `bell` / `encoding` / `paste_newlines` / `right_click`），
+    // 面板默认落在外观页，故先翻页再探。
+    panel->select_page(SettingsPage::Terminal);
+    h.render();
+    // 取一个下方还有 40 dp 余量的下拉行：缺省主框高 30 dp、选项行高 26 dp，够探到第一行选项。
+    const HitSpot spot = h.find_first("Dropdown", 40.0F);
+    AURORA_TEST_REQUIRE(spot.widget != nullptr);
+    auto *dropdown = dynamic_cast<au::Dropdown *>(spot.widget);
+    AURORA_TEST_REQUIRE(dropdown != nullptr);
+    AURORA_TEST_REQUIRE(dropdown->option_count() > 1U);  // 少于两个选项就谈不上「选中另一个」
+
+    // 开：点主框那一点——它在布局盒之内，命中链可达，所以「展开」这一步是真实的。
+    h.click(spot.x, spot.y);
+    h.render();
+    AURORA_TEST_REQUIRE(dropdown->is_open());
+
+    const au::Rect box = dropdown->paint_bounds();
+    const float option_x = box.origin.x + box.size.width * 0.5F;
+    const float option_y = box.bottom() + 4.0F;  // 第一行选项之内（布局盒之外）
+
+    // 控件自己那一份命中判定确实接了这一点（`on_hit_test` 里那段 drop 矩形）——缺口不在控件侧的声明。
+    // 直接按局部坐标问它，等价于「祖先那一层若放行，派发会怎么走」。
+    AURORA_TEST_CHECK_EQ(
+        dropdown->hit_test(au::Point{.x = box.size.width * 0.5F, .y = box.size.height + 4.0F},
+                           au::Rect{.origin = au::Point{.x = 0.0F, .y = 0.0F}, .size = box.size},
+                           au::BuildContext{}),
+        static_cast<au::Widget *>(dropdown));
+    // 而从场景根走真实派发的那条入口（链）够不到：祖先先按 `child.bounds()` 判包含再递归。
+    AURORA_TEST_CHECK_NE(h.hit(option_x, option_y), static_cast<au::Widget *>(dropdown));
+
+    // 后果：那一点上的真实单击既不选中也不收起，选项面板对用户而言就是画出来却点不动的一排字。
+    const int before = dropdown->selected_index();
+    h.click(option_x, option_y);
+    h.render();
+    AURORA_TEST_CHECK_EQ(dropdown->selected_index(), before);
+    AURORA_TEST_CHECK_TRUE(dropdown->is_open());
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+}
+
 #else
 
 AURORA_TEST_CASE(the_scrim_covers_the_whole_window_and_a_real_click_closes_the_panel) {
@@ -863,6 +929,10 @@ AURORA_TEST_CASE(the_scrim_covers_the_whole_window_and_a_real_click_closes_the_p
 }
 
 AURORA_TEST_CASE(a_text_row_commits_only_when_focus_leaves) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_dropdown_option_below_the_layout_box_is_not_dispatch_reachable_G29) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 

@@ -10,13 +10,17 @@
 ///           「点击之后、排帧之前什么都还没发生」是一条要显式断言的中间态；
 ///           ④ 多行粘贴先确认再发送，未经确认（含没有浮层宿主可问）一个字节也不发；
 ///           ⑤ 运行期换三态（裁决 7.52 的 S4① 第二条入口）只改「下一次右键」的处置，既不丢既有
-///           选区，也不把上一次的动作补发一遍。
+///           选区，也不把上一次的动作补发一遍；
+///           ⑥ 生产的确认对话框（`aurora::confirm` 装进 `au::Dialog`）**内容进命中链**，故 Yes / No
+///           是可被真实指针派发点到的两枚按钮，而遮罩那一档既不误触发关闭也不穿透——这三条是
+///           Aurora 侧 G26 回货的接货证人（回货前链是空的，见裁决 7.55 登记的那条判据空洞）。
 ///           节流的那一腿需要运行中的 `Scheduler`，此处按「无调度器即按次序一次发完」的退化
 ///           分支断言块序与内容（裁决 7.41⑥）。
 ///
 ///           浮层内容盒用 `context_menu()` 取，条目落点按其高度分数算：两条目等高，故 1/4 处
 ///           是「复制」、3/4 处是「粘贴」——比照按钮内边距反推尺寸可靠。
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -225,7 +229,70 @@ class Harness {
         (void)pointer_dispatcher_.dispatch_mouse(root_.widget(), event, &focus_);
     }
 
+    /// @brief 命中链上问「这一点上是谁」——真实指针派发用的就是这一入口（兼容入口 `hit_test()` 不参与派发）。
+    [[nodiscard]] auto hit(float x_dp, float y_dp) -> au::Widget * {
+        const std::vector<au::HitNode> chain = root_.widget().hit_test_chain(
+            au::Point{.x = x_dp, .y = y_dp},
+            au::Rect{.origin = au::Point{.x = 0.0F, .y = 0.0F},
+                     .size = au::Size{.width = static_cast<float>(kWindowWidth), .height = static_cast<float>(kWindowHeight)}},
+            au::BuildContext{});
+        return chain.empty() ? nullptr : chain.back().ptr;
+    }
+
+    /// @brief 在一点上左键单击一次（按下即抬起）。
+    auto click(float x_dp, float y_dp) -> void {
+        au::MouseEvent event;
+        event.position = au::Point{.x = x_dp, .y = y_dp};
+        event.button = au::MouseButton::Left;
+        event.action = au::MouseAction::Press;
+        (void)pointer_dispatcher_.dispatch_mouse(root_.widget(), event, &focus_);
+        event.action = au::MouseAction::Release;
+        (void)pointer_dispatcher_.dispatch_mouse(root_.widget(), event, &focus_);
+    }
+
+    /// @brief 对话框按钮的落点：按阅读序（y 升、x 升）取第 `ordinal` 枚 `Button`。
+    ///
+    /// `confirm()` 给的是一行「Yes 在左、No 在右」，故 0 即 Yes。不复制按钮尺寸算式，而是问框架的
+    /// 命中测试——G26 回货要证的正是这条通道（内容不进命中链时，本函数返回空而不是猜一个点）。
+    /// 起点与步长取 4 dp：够格住按钮行，且落点落在盒内而不压边界。
+    struct ButtonSpot {
+        au::Widget *widget = nullptr;
+        float x = 0.0F;
+        float y = 0.0F;
+    };
+
+    [[nodiscard]] auto find_dialog_button(std::size_t ordinal) -> ButtonSpot {
+        const aurora::Dialog *dialog = view_->multiline_warning();
+        if (dialog == nullptr) {
+            return ButtonSpot{};
+        }
+        const au::Rect box = dialog->paint_bounds();
+        std::vector<au::Widget *> seen;
+        for (float y = box.origin.y + 4.0F; y < box.bottom(); y += 4.0F) {
+            for (float x = box.origin.x + 4.0F; x < box.right(); x += 4.0F) {
+                au::Widget *widget = hit(x, y);
+                if (widget == nullptr || std::string_view{"Button"} != widget->type_name()) {
+                    continue;
+                }
+                if (std::find(seen.begin(), seen.end(), widget) != seen.end()) {
+                    continue;
+                }
+                seen.push_back(widget);
+                if (seen.size() == ordinal + 1U) {
+                    return ButtonSpot{.widget = widget, .x = x, .y = y};
+                }
+            }
+        }
+        return ButtonSpot{};
+    }
+
+    [[nodiscard]] auto dialog_open() const -> bool {
+        const aurora::Dialog *dialog = view_->multiline_warning();
+        return dialog != nullptr && dialog->is_open();
+    }
+
     [[nodiscard]] auto menu_presented() const noexcept -> bool { return view_->context_menu() != nullptr; }
+
     [[nodiscard]] auto menu_open() const noexcept -> bool {
         return view_->context_menu() != nullptr && view_->context_menu()->is_open();
     }
@@ -532,6 +599,82 @@ AURORA_TEST_CASE(multiline_warning_holds_until_the_dialog_answers) {
     // 生产的确认腿是浮层上的模态对话框：多挂一个浮层，且在用户答话之前不发字节。
     AURORA_TEST_CHECK_EQ(h.overlay_count(), 1U);
     AURORA_TEST_CHECK(h.written().empty());
+}
+
+/// @brief G26 回货的接货证人：对话框的内容**进命中链**，于是「点 Yes 即粘贴」是真实派发而非替身。
+///
+/// 回货前这条链是空的（`Dialog` 只画不写子 bounds），本用例的 `find_dialog_button` 会返回空指针；
+/// 那一档判据空洞当时如实登记在裁决 7.55，本条把它补上。
+AURORA_TEST_CASE(the_dialog_yes_button_is_clicked_through_the_hit_chain) {
+    auto options = TerminalView::InteractionOptions{};
+    options.right_click = borealis::ui::RightClickAction::Paste;
+    Harness h(options, true, false);  // 走生产的模态对话框，不用替身扣回调
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.clipboard = "one\ntwo";
+    h.right_click(1U, 2U);
+    h.render();
+    AURORA_TEST_REQUIRE(h.dialog_open());
+
+    const Harness::ButtonSpot yes = h.find_dialog_button(0);
+    AURORA_TEST_REQUIRE(yes.widget != nullptr);  // 内容不入链时这里就是空
+    auto *button = dynamic_cast<au::Button *>(yes.widget);
+    AURORA_TEST_REQUIRE(button != nullptr);
+    // 阅读序第一枚确实是「Yes」：`confirm()` 给的是 Yes 在左、No 在右的一行，靠序号认不如认标签。
+    AURORA_TEST_CHECK_EQ(button->accessibility_label(), std::string{"Yes"});
+    AURORA_TEST_CHECK(h.hit(yes.x, yes.y) == yes.widget);  // 复判同一个点
+
+    h.click(yes.x, yes.y);
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.written(), "one\ntwo");  // 无调度器：按块序一次发完（裁决 7.41⑥）
+    AURORA_TEST_CHECK_FALSE(h.dialog_open());       // 答话即收起
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 1U);    // 收起是把浮层关掉，不是把浮层摘掉
+}
+
+AURORA_TEST_CASE(the_dialog_no_button_sends_nothing_and_closes) {
+    auto options = TerminalView::InteractionOptions{};
+    options.right_click = borealis::ui::RightClickAction::Paste;
+    Harness h(options, true, false);
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.clipboard = "one\ntwo";
+    h.right_click(1U, 2U);
+    h.render();
+
+    const Harness::ButtonSpot no = h.find_dialog_button(1);
+    AURORA_TEST_REQUIRE(no.widget != nullptr);
+    auto *button = dynamic_cast<au::Button *>(no.widget);
+    AURORA_TEST_REQUIRE(button != nullptr);
+    AURORA_TEST_CHECK_EQ(button->accessibility_label(), std::string{"No"});
+
+    h.click(no.x, no.y);
+    h.render();
+    AURORA_TEST_CHECK(h.written().empty());
+    AURORA_TEST_CHECK_FALSE(h.dialog_open());
+    // 拒绝之后请求作废：再右键一次会重新问，而不是把上一次的答案补发。
+    h.right_click(1U, 2U);
+    h.render();
+    AURORA_TEST_REQUIRE(h.dialog_open());
+    AURORA_TEST_CHECK(h.written().empty());
+}
+
+/// @brief G26 回货的另一半：遮罩只**吸收**点击（不触发 `on_close`，也不穿透到下层视口）。
+AURORA_TEST_CASE(a_click_on_the_dialog_scrim_answers_nothing) {
+    auto options = TerminalView::InteractionOptions{};
+    options.right_click = borealis::ui::RightClickAction::Paste;
+    Harness h(options, true, false);
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.clipboard = "one\ntwo";
+    h.right_click(1U, 2U);
+    h.render();
+    AURORA_TEST_REQUIRE(h.dialog_open());
+
+    // 窗角在内容盒之外（内容按 self×0.8 居中），落在遮罩上。
+    au::Widget *scrim = h.hit(4.0F, 4.0F);
+    AURORA_TEST_REQUIRE(scrim != nullptr);
+    AURORA_TEST_CHECK_EQ(std::string_view{scrim->type_name()}, std::string_view{"Dialog"});
+    h.click(4.0F, 4.0F);
+    h.render();
+    AURORA_TEST_CHECK(h.written().empty());
+    AURORA_TEST_CHECK(h.dialog_open());  // 遮罩不等于取消：对话框仍在等答话
 }
 
 AURORA_TEST_CASE(multiline_paste_without_a_host_sends_nothing) {

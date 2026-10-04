@@ -199,6 +199,13 @@ class TerminalView final : public aurora::LeafWidget {
     /// 按钮尺寸算式去猜哪一行是「复制」，而算式猜错时「点到了哪一项」就成了未知量。
     [[nodiscard]] auto context_menu() const noexcept -> const aurora::Popup *;
 
+    /// @brief 多行粘贴确认对话框的只读句柄，从未弹过警告即空指针（用例的落点与收起观测点）。
+    ///
+    /// 同 `context_menu()` 的理由：按钮位置由框架的 `Column`/`Row` 折算，用例拿不到对话框的盒就
+    /// 只能自己复制一套按钮尺寸算式去猜哪一枚是「Yes」；而「答话之后对话框自己收起」这条判据
+    /// 除本句柄无处可读（浮层仍挂在宿主上，`overlay_count()` 不因关闭而变）。
+    [[nodiscard]] auto multiline_warning() const noexcept -> const aurora::Dialog *;
+
     /// @brief 本帧的整格几何（dp 步长、行列数与内边距）——工作区层据此现算最小 pane 尺寸。
     ///
     /// 判据是 `max(20 列 × 格宽, 3 行 × 格高)`（裁决 7.47③），而格宽与内边距只有本控件知道；

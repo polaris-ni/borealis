@@ -234,6 +234,8 @@ auto TerminalView::set_overlay_host(aurora::OverlayHost &host) -> void { host_ =
 
 auto TerminalView::context_menu() const noexcept -> const aurora::Popup * { return menu_.get(); }
 
+auto TerminalView::multiline_warning() const noexcept -> const aurora::Dialog * { return multiline_warning_.get(); }
+
 auto TerminalView::set_presentation(Presentation presentation) -> void {
     presentation_ = std::move(presentation);
 }
