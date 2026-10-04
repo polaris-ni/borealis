@@ -6,6 +6,19 @@
 
 ---
 
+## v0.48（2026-10-04）G25 回货接货复验并**修正一句在册的迁移前置**（裁决 7.51，A.2 开放缺口清零）
+
+**动机**：裁决 7.47② 为定「本棒键位走哪条派发通道」而读源实测出的 **G25**（`KeyCombo::matches` 的修饰位整字节相等对锁定态位不可用，NumLock 开着时应用内快捷键整层不匹配）于 2026-10-04 回货——Aurora 当日活动分支 `dev-1.0.0-alpha.9.uat.2` 的 `cc2b65e5`（匹配屏蔽锁定态位）/ `72699290`（该位随消息流推进且不被幻影防护抹掉）/ `f6a4ca7b`（该仓文档回写）三条。本棒接货复验，结论入册为裁决 **7.51**（三条 + 代价 + 验收），并**修正一句在册结论**；本棒**零代码改动**（消费侧零改动本身就是验收）。
+
+- **匹配腿的形态（7.51①）**：`event/event.h` 新增 `AURORA_MODIFIER_PRESSABLE_MASK`（Shift | Control | Alt | Meta）与 `AURORA_MODIFIER_LOCK_MASK`（当前只有 `NumLock`）两条 namespace 级 `inline constexpr std::uint8_t`，并自陈二者须是 `ModifierKey` 全部已定义位的**无余划分**（新增锁定类位须并入锁定位掩码，否则落进两掩码之外的缝隙继续污染按位比较），该恒等式由该仓 `utest_shortcuts` 的位集用例钉住；`KeyCombo::matches` 改为两侧各取「可按住位」子集后再比。四条该仓刻意保留的口径本仓无异议：仍按**逐位相等**而非「包含」判定、注册侧带锁定态位的组合依然**静默表达不出来**（无 assert / 日志 / `Result`）、不给 `KeyCombo` 加 per-combo 的 NumLock 字段、不新增匹配档位。
+- **Win32 陈旧值腿与本仓的零改动（7.51②）**：`detail::ModifierKeyTracker` 拆成按住态与锁定态两份账（`lock_bit_for` 新增、`bit_for` **刻意**不含 `VK_NUMLOCK`、`apply` 三段分派且**只在 `down == true` 翻转**、`seed()` 按掩码拆分混装读数、`clear()` **只清按住态**、`get()` 回并集），故 `KeyEvent::modifiers` 的对外形状逐位不变；本仓全部修饰位读点都是**单 bit 测试**（折 `term::KeyPress` 的五位、`Ctrl` 缩放、`Alt` 块选），接线面恰为 **0 行**。实际受益是 `SPEC.FEAT.INTERACT.01` 的 keypad 两档分流（裁决 7.36②）不再读激活时刻的陈旧值——旧缺陷的症状是「激活时 NumLock 关、期间打开」后 `KP_7` **既**发 `CSI H`（Home）**又**随 `WM_CHAR '7'` 上屏，屏幕读作 `7ABC` 而正确形态 `AB7C`。
+- **一句修正（7.51③，本条的主要交付）**：原句「**G25 回货后键位可原样迁回 `ShortcutRegistry` 而不动任何判据**」散见九处（`SPECIFICATIONS.md` 的 7.47② 代价段 / A.2 的 G25 行 / A.3 尾段三处、`PLAN.md` §6 的 G25 行、`ARCHITECTURE.md` §3.5、`UI_WORKSPACE_INTERACT.draft.md` 差距 6、`workspace_keys.h` 文件头、`AGENTS.md` 的 §2 目录表格行与 §6 缺口账目条目；另 A.1 那条与该稿 D2 行虽不含此句亦同因本条改写），它把 (b) 当成了唯一前置，实测**不成立**——**(a) 腿照旧拦**（`set_key_pre_handler` 仍是「命中即消费、不再向焦点控件派发」，`ShortcutScope::Focus` 的判据仍是「本宿主有任一焦点控件」这个 **bool**，故就地重命名的 `TextInput` 持焦期间 `Alt+→` 与 `Ctrl+Shift+0` 依旧被抢走，与 7.47⑦ / 7.41 不容）；**(c) 腿也仍真**（赋值即替换），只是它拦的是「应用侧自装窗口 pre-handler」那条备选方案。据此 `SPEC.FEAT.WS.01` / `02` 的键位**照旧不经框架快捷键层**，仍走焦点 pane 的 `KeyPreFilter`；新口径登记为「本件只比四位与回货后框架 `matches` **逐位一致**，故未来迁移只是通道改道，`utest_workspace_keys` 那条 NumLock 判据届时由唯一证人降为冗余守卫（保留不删）」。
+- **验收**：构建 87/87 目标全成，非 e2e 通道 **32 项全绿**（在册 31 项 + `utest_tab_strip_layout`，后者属并行在途的标签条棒、本棒未触碰也不为它背书）；e2e 三条 2 绿，`etest_osc_clipboard` 以 `OpenClipboard, GetLastError=5` 失败并**以独立的 PowerShell `Set-Clipboard` 探针复现同一失败**，判为环境（会话锁屏，裁决 7.31①）而非回归——本次 Aurora diff 只及 `event/event.h`、`app/shortcuts.h`、`window/detail/win32_modifiers.h`、一个 demo 与该仓自有测试及其文档回写，不含任何剪贴板路径文件。本棒无代码改动故**无变异自证**；一句结论的修正以九处文档就地更正为准（原文保留、不覆写）。
+- **仍待人工 / 未落**：7.51② 的**小键盘真机腿**（解锁后目视，判据与两种屏幕读数已在册；本轮 `activate_window` 报「未能把目标窗置前」，前台窗类名 `Windows.UI.Core.CoreWindow`）；`SPEC.FEAT.PREF.04` 的键位可重绑开工前须先判 (a) 腿是否已由框架侧解决。附录 A.2 至此**开放缺口清零**，下一份可派发任务书不再来自框架缺口账目，而随 `SPEC.FEAT.WS.01` 的标签条界面腿与 `SPEC.FEAT.PREF.02` 的设置面板。
+- 文档回写：`SPECIFICATIONS.md` §7 增裁决 7.51（三条 + 代价 + 验收）、§7 追加范围改为「7.49–7.51 于 2026-10-04」、`SPEC.FEAT.WS.02` 实现约束段的 G25 括注改写、附录 A.1 的「快捷键的派发位置与匹配口径」行按回货改写（两条仍成立的理由与一条已闭合的判定分写）、A.2 的 G25 行改标**已闭合**（原三条事实与原处置段保留、那句「回货后可原样迁回」就地作废并注明）、A.3 尾段补回货记录；`ARCHITECTURE.md` §3.5 的三条理由改写成「只剩两条成立」；`PLAN.md` §6 的 G25 出账（划删线 + 回货形态 + 迁移前置修正）；`UI_WORKSPACE_INTERACT.draft.md` 的 D2 与差距 6 各补一句复核结论；`AGENTS.md` 的 §6「框架侧开放缺口」账目改为清零并新增本棒现状条目、§2 目录表格行里 `workspace_keys.h` 那句迁移前置同口径就地更正；`include/borealis/ui/workspace_keys.h` 文件头同口径更正。版本脚注 v0.47 → v0.48。
+
+---
+
 ## v0.47（2026-10-04）G23 / G24 回货接线：按族缺字回退链可配、固定格推进档位进绘制侧（裁决 7.50）
 
 **动机**：裁决 7.46 收尾时把字体棒剩下的两条框架缺口 **G23**（按族回退链无入口）与 **G24**（批量文本入口无「按网格强制单格推进」的档位）按 7.13① 派发 Aurora 侧，本仓当时**不等不绕**——回退链以「框架全局回退已足以让汉字显形」的形态交付、且**刻意不登记消费不到的配置键**，列位对齐由应用侧的 **run 断跑** 承担。两条已于 2026-10-04 回货（Aurora 当日活动分支 `dev-1.0.0-alpha.9.uat.2` 的 `6cfbe88d`，同批 `0b9781de` / `3d453562` / `d0cb1e47` 是其后三条 CI 修腿），本棒把它们接进本仓，落地口径入册为裁决 **7.50**（七条 + 代价 + 验收）。
