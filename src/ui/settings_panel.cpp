@@ -399,7 +399,13 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
             case ControlKind::Toggle: {
                 const bool on = value != nullptr && value->as_boolean().value_or(false);
                 auto sw = std::make_shared<aurora::Switch>(aurora::Reactive<bool>{on});
+                // 行高 56 dp 扣掉上下各 8 dp 内边距后给子项的是**紧约束 40 dp**，而开关的滑块直径按
+                // 自身盒高算（`bounds.height − 2×inset`），不锁高度就会被拉成 36 dp 的白饼、轨道只剩两侧细边。
+                sw->modifier.set(aurora::Modifier{}.height(24.0F));
                 sw->set_active_color(kAccent);
+                sw->set_inactive_color(kControlBg);
+                sw->set_border(kCardLine, 1.0F);
+                sw->set_thumb_color(kText);
                 sw->set_on_changed(
                     [this, key](bool next) -> void { commit(key, FormValue::boolean(next)); });
                 return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(sw))};
@@ -416,6 +422,10 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
                 }
                 auto spin = std::make_shared<aurora::SpinBox>(
                     initial, control.numeric.min, control.numeric.max, step);
+                spin->set_background(kControlBg);
+                spin->set_border_color(kCardLine);
+                spin->set_text_color(kText);
+                spin->set_arrow_color(kTextDim);
                 spin->set_suffix(control.unit);
                 spin->set_decimals(step < 1.0 ? 1 : 0);
                 spin->set_on_change([this, key, integral = control.domain == ValueDomain::Integral](double next) -> void {
@@ -434,6 +444,10 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
                     }
                 }
                 auto box = std::make_shared<aurora::Dropdown>(control.choices, initial);
+                box->set_box_color(kControlBg);
+                box->set_border_color(kCardLine);
+                box->set_text_color(kText);
+                box->set_arrow_color(kTextDim);
                 box->set_accent_color(kAccent);
                 box->set_on_change([this, key, choices = control.choices](int index) -> void {
                     if (index >= 0 && static_cast<std::size_t>(index) < choices.size()) {
@@ -448,8 +462,14 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
                 auto box = std::make_shared<BlurCommitText>();
                 box->set_value(form_value_as_text(value));
                 box->set_background(kControlBg);
+                // 框架的聚焦态底色缺省是近白 {245,248,255}，而本件文本色近白：不显式给就聚焦即白底白字，
+                // 故聚焦态只靠描边分档。
+                box->set_focused_background(kControlBg);
                 box->set_border_color(kCardLine);
+                box->set_focused_border_color(kAccent);
                 box->set_text_color(kText);
+                box->set_cursor_color(kText);
+                box->set_placeholder_color(kTextDim);
                 if (control.kind == ControlKind::OptionalHexInput) {
                     box->set_placeholder(settings_label("settings.action.unset"));
                 }
