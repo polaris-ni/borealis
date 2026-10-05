@@ -63,6 +63,7 @@
 #include "aurora/widget/text_input.h"
 #include "borealis/config/form_transfer.h"
 #include "borealis/config/settings.h"
+#include "borealis/config/themes.h"
 #include "borealis/ui/color_text.h"
 #include "borealis/ui/palette.h"
 #include "borealis/ui/right_click.h"
@@ -101,6 +102,9 @@ constexpr float kCardEdgeDp = 16.0F;
 /// 「面板用了别的词条 key」，而那正是本判据要抓的错。词条 key 与表列的对应另由 `i18n` 那条用例守。
 constexpr std::string_view kBadgeDeferred = "延后";
 constexpr std::string_view kBadgeNextSession = "下次会话生效";
+/// CJK-LITERAL: locale-output - 同上，A1-b 的「自定义」是第三枚角标，且它不来自表列而是来自「色板
+/// 与该主题默认不逐槽相等」这条状态，故只能按文案判。
+constexpr std::string_view kBadgeCustomized = "自定义";
 
 /// @brief 反向核对表里某一页的键序列（表内次序即面板的排版次序）。
 [[nodiscard]] auto catalog_keys(SettingsPage page) -> std::vector<std::string> {
@@ -159,7 +163,18 @@ auto check_key_sequence(std::string_view what, const std::vector<std::string> &g
     }
 }
 
-/// @brief 存储侧与绘制侧的三条接缝替身：只数「被调了几次」并留下最后一次搬到的配置。
+/// @brief 从真实主题表造候选（卡片次序即该表次序，与装配层 `src/main.cpp` 同一搬法）。
+///
+/// 判据 A1-a 要「卡名逐字来自主题表」，用例侧因此拿同一份表独立比，而不是把名字抄进断言。
+[[nodiscard]] auto builtin_theme_choices() -> std::vector<SettingsPanel::ThemeChoice> {
+    std::vector<SettingsPanel::ThemeChoice> out;
+    for (const borealis::config::BuiltinTheme &theme : borealis::config::builtin_themes()) {
+        out.push_back(SettingsPanel::ThemeChoice{.name = std::string{theme.name}, .palette = theme.palette});
+    }
+    return out;
+}
+
+/// @brief 存储侧与绘制侧的接缝替身：只数「被调了几次」并留下最后一次搬到的配置。
 ///
 /// 落盘走真实的 `config::apply_form()`，于是一条判据同时过「表单 → 成员」的搬运腿；基线随成功落盘
 /// 推进，和真实 `Store` 一样——重开面板该读到的是最新的那份，而不是面板自己留着的那份。
@@ -177,11 +192,17 @@ public:
     /// 「面板与表分叉」的三种现场都只能由装载侧造（少一键 / 表外的键 / 形态族不符），
     /// 而三条接缝都按整份表单说话，故这里换的是**装载**这一条腿而不是逐键接缝。
     std::function<std::vector<FormEntry>()> load_script;
+    /// @brief 交回面板的主题候选（缺省即真实 `config::builtin_themes()` 的整套）。
+    ///
+    /// 清空它就是造出「当前主题名不在候选表里」的现场：没有可比基线，A1-b 的「自定义」与
+    /// 「恢复主题默认」的禁用态都由这一档决定。
+    std::vector<SettingsPanel::ThemeChoice> theme_choices = builtin_theme_choices();
 
     /// @brief 交出一副挂到本替身上的 `Hooks`。
     ///
-    /// 三个闭包都按 `this` 取值而不是按建立时的快照，故 `hooks()` 交出之后仍可改 `load_script` 与
-    /// `fail_persist`——面板每次 `open()` 才走装载腿，分叉现场因此能在同一个面板实例上逐次注入。
+    /// 各闭包都按 `this` 取值而不是按建立时的快照，故 `hooks()` 交出之后仍可改 `load_script`、
+    /// `fail_persist` 与 `theme_choices`——装载腿每次 `open()` 走一次、候选腿每次重建浮层走一次，
+    /// 分叉现场因此能在同一个面板实例上逐次注入。
     [[nodiscard]] auto hooks() -> SettingsPanel::Hooks {
         return SettingsPanel::Hooks{
             .load =
@@ -207,6 +228,10 @@ public:
                 [this](const borealis::ui::SettingsForm &form) -> void {
                     ++broadcast_calls;
                     broadcast.push_back(borealis::config::apply_form(form, base));
+                },
+            .themes =
+                [this]() -> std::vector<SettingsPanel::ThemeChoice> {
+                    return theme_choices;
                 },
         };
     }
@@ -399,9 +424,8 @@ AURORA_TEST_CASE(deferred_and_next_session_rows_carry_their_badges) {
             const SettingsControl *control = borealis::ui::find_settings_control(row.key);
             AURORA_TEST_REQUIRE(control != nullptr);
             AURORA_TEST_CHECK_EQ(row.badge, expected_badge(*control));
+            // 主题卡与 16 格色板在 #114 第一棒落成可交互区段，故这里只剩三类专用形态仍是占位。
             AURORA_TEST_CHECK_EQ(row.editable, control->consumer != ConsumerStatus::Absent &&
-                                                   control->kind != ControlKind::ThemePicker &&
-                                                   control->kind != ControlKind::SwatchGrid &&
                                                    control->kind != ControlKind::FontDropdown &&
                                                    control->kind != ControlKind::FamilyList &&
                                                    control->kind != ControlKind::ReadOnlyTable);
@@ -438,14 +462,17 @@ AURORA_TEST_CASE(dedicated_control_rows_show_a_readonly_summary) {
 
     panel.select_page(SettingsPage::Appearance);
     const auto rows = panel.visible_rows();
-    // 16 格色板：本棒不给可点的格子，但当前值必须如实显示（否则用户看不到自己现在是什么配色）。
-    const SettingsPanel::VisibleRow *grid = find_row(rows, "appearance.palette.basic");
-    AURORA_TEST_REQUIRE(grid != nullptr);
-    AURORA_TEST_CHECK_FALSE(grid->editable);
-    AURORA_TEST_CHECK_EQ(grid->summary.size(), 16U * 7U + 15U);
-    AURORA_TEST_CHECK_EQ(grid->summary.substr(0, 7), borealis::ui::color_to_hex(probe.base.appearance.palette.basic[0]));
-    AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.theme")->summary, probe.base.appearance.theme);
-    AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.font_family")->summary, probe.base.appearance.font_family);
+    // 仍未落地的专用形态：如实显示当前值，而不是给一个「点了没反应」的控件（S9 / D3-a 同口径）。
+    const SettingsPanel::VisibleRow *family = find_row(rows, "appearance.font_family");
+    AURORA_TEST_REQUIRE(family != nullptr);
+    AURORA_TEST_CHECK_FALSE(family->editable);
+    AURORA_TEST_CHECK_EQ(family->summary, probe.base.appearance.font_family);
+    // 空回退链的摘要也是空串：它是「不注入按族链」而不是「链上有一个空族名」。
+    AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.font_fallback_chain")->summary.empty());
+    // 主题卡与 16 格色板已落成区段：可交互，且摘要留空——当前色在格子自己的绘制闭包与常驻编辑器里，
+    // 行上再显示一份就是第二个真值源。
+    AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.theme")->editable);
+    AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.palette.basic")->editable);
     // 空回退链的摘要也是空串：它是「不注入按族链」而不是「链上有一个空族名」。
     AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.font_fallback_chain")->summary.empty());
     // 可交互行的摘要一律留空——值在它自己的控件里，两处同时显示就是第二个真值源。
@@ -695,6 +722,103 @@ AURORA_TEST_CASE(reopening_reloads_the_copy_from_the_store) {
     AURORA_TEST_REQUIRE(panel.form().value("appearance.font_size_pt") != nullptr);
     AURORA_TEST_CHECK_EQ(*panel.form().value("appearance.font_size_pt")->as_real(), 20.0);
     AURORA_TEST_CHECK_FALSE(panel.form().has_unsaved_changes());
+}
+
+/// @brief 判据 A1-a：主题卡的次序、名字与四格样例都逐字来自 `config::builtin_themes()`。
+///
+/// 名字取的是**存储键名**而不是显示文案（裁决 7.61①）：`BuiltinTheme` 只有 `name` 一个字段，而那句
+/// 「显示文案另经 `StringTable`」是未落地的规划——词条表里从未登记八套主题名，而查表失败的实测回退是
+/// **空串**（G28 那条教训）。自造一份名表就是第二个真值源，故卡片显示的就是存储键。
+/// 四格样例由用例侧按同一份色板**独立折一次**（前 / 背 / 光标 / `basic[1]`，光标未配按裁决 7.25③ 回落
+/// 前景色，即裁决 7.61② 那条「强调格无数据来源」的处置），而不是取面板算好的那一份，否则「第三格取错
+/// 槽」这类错误结构上抓不到。
+AURORA_TEST_CASE(the_theme_cards_follow_the_builtin_theme_table_in_order) {
+    borealis::ui::install_settings_strings();
+    StoreProbe probe;
+    au::Node root;
+    std::shared_ptr<au::Widget> base;
+    std::shared_ptr<au::OverlayHost> host = make_host(base, root);
+    au::ShortcutRegistry shortcuts;
+    SettingsPanel panel{*host, shortcuts, probe.hooks()};
+    panel.open();
+
+    const auto themes = borealis::config::builtin_themes();
+    const auto cards = panel.theme_cards();
+    AURORA_TEST_REQUIRE_EQ(cards.size(), themes.size());
+    std::size_t selected = 0;
+    for (std::size_t i = 0; i < cards.size(); ++i) {
+        AURORA_TEST_TRACE(std::string{themes[i].name});
+        AURORA_TEST_CHECK_EQ(cards[i].name, std::string{themes[i].name});
+        const borealis::ui::PaletteSpec &palette = themes[i].palette;
+        const std::vector<std::string> want{
+            borealis::ui::color_to_hex(palette.default_foreground),
+            borealis::ui::color_to_hex(palette.default_background),
+            borealis::ui::color_to_hex(palette.cursor_color.value_or(palette.default_foreground)),
+            borealis::ui::color_to_hex(palette.basic[1])};
+        for (std::size_t j = 0; j < want.size(); ++j) {
+            AURORA_TEST_CHECK_EQ(cards[i].samples[j], want[j]);
+        }
+        if (cards[i].selected) {
+            ++selected;
+            AURORA_TEST_CHECK_EQ(cards[i].name, probe.base.appearance.theme);
+        }
+    }
+    AURORA_TEST_CHECK_EQ(selected, 1U);  // 选中态唯一，且就是表单点名的那一套
+    // 缺省配置就是 dracula 的那一份，所以既没有「自定义」角标也没有任何色差（判据 A1-b 的反面）。
+    AURORA_TEST_CHECK_FALSE(panel.is_palette_customized());
+    AURORA_TEST_CHECK_TRUE(find_row(panel.visible_rows(), "appearance.theme")->badge.empty());
+}
+
+/// @brief 判据 A1-b：改一格色板就在**主题行**挂「自定义」，改回来它就消失，且它不是第十张卡。
+AURORA_TEST_CASE(a_changed_slot_puts_customized_on_the_theme_row_not_a_tenth_card) {
+    borealis::ui::install_settings_strings();
+    StoreProbe probe;
+    au::Node root;
+    std::shared_ptr<au::Widget> base;
+    std::shared_ptr<au::OverlayHost> host = make_host(base, root);
+    au::ShortcutRegistry shortcuts;
+    SettingsPanel panel{*host, shortcuts, probe.hooks()};
+    panel.open();
+
+    const std::size_t card_count = panel.theme_cards().size();
+    AURORA_TEST_REQUIRE(card_count > 0U);
+    const auto table = panel.form().value("appearance.palette.basic")->as_color_table();
+    AURORA_TEST_REQUIRE(table.has_value());
+    const std::vector<RgbaColor> before = *table;
+
+    AURORA_TEST_REQUIRE_EQ(panel.commit_slot("appearance.palette.basic", 5U, "#0A0B0C"), CommitIssue::None);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 1U);  // 色板行是「已接线 ∧ 即时」
+    AURORA_TEST_CHECK_TRUE(panel.is_palette_customized());
+    AURORA_TEST_CHECK_EQ(find_row(panel.visible_rows(), "appearance.theme")->badge, std::string{kBadgeCustomized});
+    AURORA_TEST_CHECK_EQ(panel.theme_cards().size(), card_count);  // 「自定义」不另起一张卡
+
+    // 改回来：角标与色差都消失，但**落盘会再多一次**——成功落盘会把基线推进到刚写出的那份，
+    // 于是「改回原值」相对新基线是一次真改动（与 `a_reverted_change_neither_persists_nor_broadcasts`
+    // ② 的注释同一条口径，那里之所以不多发是因为中间那次落盘失败了）。
+    AURORA_TEST_REQUIRE_EQ(panel.commit_slot("appearance.palette.basic", 5U,
+                                             borealis::ui::color_to_hex(before[5])),
+                           CommitIssue::None);
+    AURORA_TEST_CHECK_FALSE(panel.is_palette_customized());
+    AURORA_TEST_CHECK_TRUE(find_row(panel.visible_rows(), "appearance.theme")->badge.empty());
+    AURORA_TEST_CHECK_EQ(panel.theme_cards().size(), card_count);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 2U);
+    AURORA_TEST_CHECK_FALSE(panel.form().is_dirty("appearance.palette.basic"));
+
+    // 四张单格槽（前景 / 背景 / 光标 / 选区）也参与「自定义」判定，不是只有那 16 格：把光标色改成
+    // 主题默认之外的一档，角标必须挂上——只比 16 格的实现会在这一条上静默放行。
+    const FormValue *cursor_before = panel.form().value("appearance.palette.cursor");
+    AURORA_TEST_REQUIRE(cursor_before != nullptr);
+    const std::optional<RgbaColor> cursor = cursor_before->as_color();
+    AURORA_TEST_REQUIRE(cursor.has_value());
+    AURORA_TEST_REQUIRE_EQ(panel.commit("appearance.palette.cursor",
+                                        FormValue::color(borealis::ui::RgbaColor{
+                                            .red = static_cast<std::uint8_t>(cursor->red == 0xFF ? 0x00 : 0xFF),
+                                            .green = cursor->green,
+                                            .blue = cursor->blue})),
+                           CommitIssue::None);
+    AURORA_TEST_CHECK_TRUE(panel.is_palette_customized());
+    AURORA_TEST_CHECK_EQ(find_row(panel.visible_rows(), "appearance.theme")->badge, std::string{kBadgeCustomized});
 }
 
 #ifdef AURORA_BACKEND_HEADLESS
@@ -968,11 +1092,14 @@ AURORA_TEST_CASE(a_text_row_commits_only_when_focus_leaves) {
     std::unique_ptr<SettingsPanel> panel = h.attach(probe);
     h.open(*panel);
 
-    const HitSpot spot = h.find_first("TextInput");
+    // 排除常驻的色板编辑器：它也是一只 `TextInput`，且排在前景色那行之前，不排掉就探到了它。
+    const HitSpot spot = h.find_first("TextInput", 0.0F, [&panel](au::Widget *widget) -> bool {
+        return widget != panel->swatch_input();
+    });
     AURORA_TEST_REQUIRE(spot.widget != nullptr);
     auto *box = dynamic_cast<au::TextInput *>(spot.widget);
     AURORA_TEST_REQUIRE(box != nullptr);
-    // 认行：外观页第一个文本框是「默认前景色」，初值就是那份配置的 HEX。
+    // 认行：外观页第一个「非编辑器」文本框是「默认前景色」，初值就是那份配置的 HEX。
     const std::string initial = borealis::ui::color_to_hex(probe.base.appearance.palette.default_foreground);
     AURORA_TEST_REQUIRE_EQ(box->value(), initial);
 
@@ -1147,22 +1274,36 @@ AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_is_still_not_dispatch_
 ///
 /// 刻意**不**按键位取控件：滚动之后视口里第一枚关闭态开关是哪一行的哪个键，是排版与偏移的函数而不是本件的
 /// 契约，故这里只认「提交确实走完了表单与落盘」那一段，键名交给既有的按键用例去守。
+///
+/// 滚轮落点取终端页第 0 行那枚步进器：外观页在 #114 之后被两个区段（主题卡 + 16 格色板）把通用控件行整体
+/// 下推，offset 0 的可见带里根本没有开关，而本例要的开关在终端页只往下滚几档就在带内。落点本身要的是
+/// 「确实落在行区内」这一条，故由 `row_scroll()` 在派发链上现问而不是猜一个坐标。
 AURORA_TEST_CASE(a_row_control_still_commits_after_the_row_area_has_been_scrolled) {
     borealis::ui::install_settings_strings();
     Harness h;
     StoreProbe probe;
     std::unique_ptr<SettingsPanel> panel = h.attach(probe);
     h.open(*panel);
+    panel->select_page(SettingsPage::Terminal);
+    h.render();
 
+    const HitSpot anchor = h.find_first("SpinBox");
+    AURORA_TEST_REQUIRE(anchor.widget != nullptr);
+    au::Scroll *area = h.row_scroll(anchor.x, anchor.y);
+    AURORA_TEST_REQUIRE(area != nullptr);
+    AURORA_TEST_REQUIRE_EQ(area->offset_y(), 0.0F);
+
+    // 先把开关送进可见带（八档 × 16 dp ＝ 内容上移 128 dp），再按本例的判据往下走。
+    for (int notch = 0; notch < 8; ++notch) {
+        h.scroll(anchor.x, anchor.y, -1.0F);
+    }
+    h.render();
     const HitSpot spot = h.find_first(
         "Switch", 0.0F, [](au::Widget *widget) -> bool {
             auto *sw = dynamic_cast<au::Switch *>(widget);
             return sw != nullptr && !sw->value();
         });
     AURORA_TEST_REQUIRE(spot.widget != nullptr);
-    au::Scroll *area = h.row_scroll(spot.x, spot.y);
-    AURORA_TEST_REQUIRE(area != nullptr);
-    AURORA_TEST_REQUIRE_EQ(area->offset_y(), 0.0F);
 
     // 三档 × 框架缺省 `step` 16 dp ＝ 内容上移 48 dp（负 `delta_y` 是往下滚，符号约定同 `ScrollViewport`）。
     for (int notch = 0; notch < 3; ++notch) {
@@ -1202,7 +1343,9 @@ AURORA_TEST_CASE(a_row_control_still_commits_after_the_row_area_has_been_scrolle
 /// 「一定是底色」的点（盒内靠上，避开字形与 1 dp 描边），断它不亮。
 ///
 /// 两处刻意的前提：开关只取**关闭态**那一枚（开启态轨道是本仓的强调色 `kAccent{189,147,249}`，拿「不亮」
-/// 判它会把正确实现读成红）；下拉放在切页之后问，而切页是整块重建，故此前各例的控件指针到那一句就不可再用。
+/// 判它会把正确实现读成红）；步进器与开关两腿放在**终端页**，因为外观页 #114 的两个区段把第 8 行以后的
+/// 通用控件推出了可见带，而终端页第一行就是步进器。开关在那一页也排在第 8 行之后，故先真滚若干档再探——
+/// 判据只认「滚完之后确实命中一枚关闭态开关」，不去赌排版算出来的偏移。
 AURORA_TEST_CASE(the_editable_controls_paint_the_chrome_colors_not_the_light_defaults) {
     borealis::ui::install_settings_strings();
     Harness h;
@@ -1211,7 +1354,10 @@ AURORA_TEST_CASE(the_editable_controls_paint_the_chrome_colors_not_the_light_def
     h.open(*panel);
 
     // 文本行：未聚焦与聚焦两态都得是深色底（框架的浅色缺省正是聚焦那一态最亮）。
-    const HitSpot text_spot = h.find_first("TextInput");
+    // 排除常驻的色板编辑器：它同属「本件交出 chrome」的那一处，但判据要认行，故取前景色那一框。
+    const HitSpot text_spot = h.find_first("TextInput", 0.0F, [&panel](au::Widget *widget) -> bool {
+        return widget != panel->swatch_input();
+    });
     AURORA_TEST_REQUIRE(text_spot.widget != nullptr);
     auto *box = dynamic_cast<au::TextInput *>(text_spot.widget);
     AURORA_TEST_REQUIRE(box != nullptr);
@@ -1222,12 +1368,23 @@ AURORA_TEST_CASE(the_editable_controls_paint_the_chrome_colors_not_the_light_def
     AURORA_TEST_REQUIRE(box->is_focused());
     AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(text_spot, 0.9, 0.15)));
 
+    panel->select_page(SettingsPage::Terminal);
+    h.render();
+
     // 步进器：框底（数值文本从 y=8 起、箭头区在右侧 22 dp 之内，故取盒内靠上的中部）。
     const HitSpot spin_spot = h.find_first("SpinBox");
     AURORA_TEST_REQUIRE(spin_spot.widget != nullptr);
     AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(spin_spot, 0.5, 0.12)));
 
     // 开关关闭态轨道：缺省 {180,180,180} 是全部浅色缺省里最低的一档，仍必须被这条线抓住。
+    // 往下滚 8 档（框架缺省 `step` 16 dp ＝ 内容上移 128 dp）把终端页第 8 行那四枚开关送进可见带。
+    au::Scroll *area = h.row_scroll(spin_spot.x, spin_spot.y);
+    AURORA_TEST_REQUIRE(area != nullptr);
+    for (int notch = 0; notch < 8; ++notch) {
+        h.scroll(spin_spot.x, spin_spot.y, -1.0F);
+    }
+    h.render();
+    AURORA_TEST_CHECK_GT(area->offset_y(), 0.0F);
     const HitSpot toggle_spot = h.find_first(
         "Switch", 0.0F, [](au::Widget *widget) -> bool {
             auto *sw = dynamic_cast<au::Switch *>(widget);
@@ -1238,8 +1395,6 @@ AURORA_TEST_CASE(the_editable_controls_paint_the_chrome_colors_not_the_light_def
     AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(toggle_spot, 0.8, 0.5)));
 
     // 下拉主框（选项面板与主框共用同一份 `box_color_`，故主框这一读也守住了展开的那一片）。
-    panel->select_page(SettingsPage::Terminal);
-    h.render();
     const HitSpot dropdown_spot = h.find_first("Dropdown");
     AURORA_TEST_REQUIRE(dropdown_spot.widget != nullptr);
     AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(dropdown_spot, 0.5, 0.12)));
@@ -1286,6 +1441,254 @@ AURORA_TEST_CASE(a_button_label_comes_from_the_framework_string_table_G28) {
     AURORA_TEST_CHECK_EQ(matched_key, std::string{"settings.close"});
 }
 
+/// @brief 判据 S6 / A1-a 的点击腿：真点一张卡就把那一套的色值整份写进表单，一次落盘 + 一次即时广播。
+///
+/// 切主题落 **6 个键**（`appearance.theme` + 16 格 + 前景 / 背景 / 光标 / 选区），而三枚用户开关
+/// （`bold_is_bright` / `min_contrast_enabled` / `min_contrast`）**不由主题派生**（`config/themes.cpp`
+/// 一套都不带），故它们必须一字不动。本例因此同时守两头：把切主题实现成「逐键提交六次」就是六次写文件，
+/// 实现成「连开关一起换」就抹掉了用户自己的选择。
+///
+/// 落点是卡上的画布（外层 `Stack` 收点击，派发 deepest→root 冒泡到它），故点样例格与点卡名一样生效。
+AURORA_TEST_CASE(clicking_a_theme_card_writes_six_keys_persists_once_and_broadcasts_once) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    const auto themes = borealis::config::builtin_themes();
+    AURORA_TEST_REQUIRE(themes.size() > 1U);
+    const std::size_t target = 1U;  // 缺省主题居首（dracula），第二张就是「换一套」的那个动作
+    au::Widget *card = panel->theme_card(target);
+    AURORA_TEST_REQUIRE(card != nullptr);
+    const HitSpot spot = h.find_first("Canvas", 0.0F, [card](au::Widget *widget) -> bool {
+        return widget == card;
+    });
+    AURORA_TEST_REQUIRE(spot.widget != nullptr);
+    const float center_x = spot.box.origin.x + spot.box.size.width * 0.5F;
+    const float center_y = spot.box.origin.y + spot.box.size.height * 0.5F;
+    AURORA_TEST_REQUIRE_MSG(h.hit(center_x, center_y) == card,
+                            "the measured card center is not dispatch-reachable");
+
+    // 三枚开关的**点前快照**：`StoreProbe::base` 会在成功落盘后推进（那就是存储侧的当前值），
+    // 所以拿点后的 `probe.base` 比等于让实现自己出题——「切主题连开关一起改」那种实现会把两边一起改掉，
+    // 判据就此空转。快照取在点击之前。
+    const bool bold_before = probe.base.appearance.palette.bold_is_bright;
+    const bool contrast_before = probe.base.appearance.palette.min_contrast_enabled;
+    const double threshold_before = probe.base.appearance.palette.min_contrast;
+
+    const std::size_t persisted_before = probe.persist_calls;
+    const std::size_t broadcast_before = probe.broadcast_calls;
+    h.click(center_x, center_y);
+    h.render();
+
+    const borealis::ui::PaletteSpec &next = themes[target].palette;
+    AURORA_TEST_REQUIRE(panel->form().value("appearance.theme") != nullptr);
+    AURORA_TEST_CHECK_EQ(*panel->form().value("appearance.theme")->as_text(), std::string{themes[target].name});
+    const auto table = panel->form().value("appearance.palette.basic")->as_color_table();
+    AURORA_TEST_REQUIRE(table.has_value());
+    AURORA_TEST_REQUIRE_EQ(table->size(), next.basic.size());
+    for (std::size_t slot = 0; slot < table->size(); ++slot) {
+        AURORA_TEST_CHECK_EQ((*table)[slot], next.basic[slot]);
+    }
+    AURORA_TEST_CHECK_TRUE(*panel->form().value("appearance.palette.foreground") ==
+                           FormValue::color(next.default_foreground));
+    AURORA_TEST_CHECK_TRUE(*panel->form().value("appearance.palette.background") ==
+                           FormValue::color(next.default_background));
+    // 可缺省的两格按「未配 / 配了」两态比，而不是把未配折成某个色（A2-b 的同一口径）。
+    const auto expect_slot = [](const std::optional<RgbaColor> &color) -> FormValue {
+        return color.has_value() ? FormValue::color(*color) : FormValue::unset_color();
+    };
+    AURORA_TEST_CHECK_TRUE(*panel->form().value("appearance.palette.cursor") == expect_slot(next.cursor_color));
+    AURORA_TEST_CHECK_TRUE(*panel->form().value("appearance.palette.selection") ==
+                           expect_slot(next.selection_color));
+
+    // 三枚用户开关一字未动：它们不由主题派生（对比的是点前快照）。
+    AURORA_TEST_CHECK_TRUE(*panel->form().value("appearance.palette.bold_is_bright") ==
+                           FormValue::boolean(bold_before));
+    AURORA_TEST_CHECK_TRUE(*panel->form().value("appearance.palette.min_contrast_enabled") ==
+                           FormValue::boolean(contrast_before));
+    AURORA_TEST_CHECK_TRUE(*panel->form().value("appearance.palette.min_contrast") ==
+                           FormValue::real(threshold_before));
+
+    // 一次落盘 + 一次广播（逐键提交会写成 6 次，那是本例要抓的形态）。
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, persisted_before + 1U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, broadcast_before + 1U);
+    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
+    AURORA_TEST_CHECK_FALSE(panel->is_palette_customized());  // 换到预置套即回到「非自定义」
+    // 编辑器的「当前值」跟着整份换色：它指着 0 格，而 0 格刚被换成新主题的默认色。
+    auto *editor = dynamic_cast<au::TextInput *>(panel->swatch_input());
+    AURORA_TEST_REQUIRE(editor != nullptr);
+    AURORA_TEST_CHECK_EQ(editor->value(), borealis::ui::color_to_hex(next.basic[0]));
+    const auto cards = panel->theme_cards();
+    AURORA_TEST_REQUIRE_EQ(cards.size(), themes.size());  // 次序与张数都没变
+    std::size_t selected = 0;
+    for (std::size_t i = 0; i < cards.size(); ++i) {
+        if (cards[i].selected) {
+            ++selected;
+            AURORA_TEST_CHECK_EQ(i, target);
+        }
+    }
+    AURORA_TEST_CHECK_EQ(selected, 1U);
+}
+
+/// @brief 判据 A2-a：点一格 → 那只常驻编辑器换指向并给出该格当前值；失焦那一刻只改那一格。
+///
+/// 判据文明令禁止「16 个常驻输入框」，本件只有一只编辑器，代价是「当前值」与输入框共用同一控件
+/// （裁决 7.61③：`Modifier` 没有可见性位，按创建 / 销毁表达「换指向」要整块重建浮层，会抹掉滚动偏移与
+/// 输入焦点）。于是后半条判据必须**逐格比**落盘内容：其余 15 格一字不动才是「点一格改一格」。
+AURORA_TEST_CASE(clicking_a_swatch_slot_repoints_the_editor_and_blur_commits_only_that_slot) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    AURORA_TEST_REQUIRE_EQ(panel->selected_swatch(), 0U);
+    auto *editor = dynamic_cast<au::TextInput *>(panel->swatch_input());
+    AURORA_TEST_REQUIRE(editor != nullptr);
+    const auto table = panel->form().value("appearance.palette.basic")->as_color_table();
+    AURORA_TEST_REQUIRE(table.has_value());
+    const std::vector<RgbaColor> before = *table;
+    AURORA_TEST_CHECK_EQ(editor->value(), borealis::ui::color_to_hex(before[0]));
+
+    au::Widget *tile = panel->swatch_slot(3U);
+    AURORA_TEST_REQUIRE(tile != nullptr);
+    const HitSpot spot = h.find_first("Canvas", 0.0F, [tile](au::Widget *widget) -> bool {
+        return widget == tile;
+    });
+    AURORA_TEST_REQUIRE(spot.widget != nullptr);
+    h.click(spot.box.origin.x + spot.box.size.width * 0.5F, spot.box.origin.y + spot.box.size.height * 0.5F);
+    h.render();
+
+    AURORA_TEST_CHECK_EQ(panel->selected_swatch(), 3U);
+    AURORA_TEST_CHECK_EQ(editor->value(), borealis::ui::color_to_hex(before[3]));
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);  // 点一格是换指向，不是提交
+
+    editor->set_value("#0A0B0C");
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);  // 逐字符不提交（S14 同一条口径）
+    editor->on_focus_change(false);
+    h.render();
+
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
+    AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 1U);
+    const auto &written = probe.persisted[0].appearance.palette.basic;
+    AURORA_TEST_REQUIRE_EQ(written.size(), before.size());
+    for (std::size_t slot = 0; slot < written.size(); ++slot) {
+        AURORA_TEST_CHECK_EQ(written[slot], slot == 3U ? borealis::ui::color_from_hex("#0A0B0C").value()
+                                                       : before[slot]);
+    }
+}
+
+/// @brief S6① 的逐档恢复：改过选中格之后按「恢复主题默认」只把那一格换回基线色。
+AURORA_TEST_CASE(the_reset_button_restores_only_the_selected_slot) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    const auto table = panel->form().value("appearance.palette.basic")->as_color_table();
+    AURORA_TEST_REQUIRE(table.has_value());
+    // 先**真点**第 5 格把编辑器指过去，再改那一格：编辑器的缺省指向是 0 格，若不先移开，
+    // 「恢复错格」（把 0 格当成选中格恢复）这类实现在本例里结构与不可见——恢复 0 格恰好也是那一格。
+    au::Widget *tile = panel->swatch_slot(5U);
+    AURORA_TEST_REQUIRE(tile != nullptr);
+    const HitSpot tile_spot = h.find_first("Canvas", 0.0F, [tile](au::Widget *widget) -> bool {
+        return widget == tile;
+    });
+    AURORA_TEST_REQUIRE(tile_spot.widget != nullptr);
+    h.click(tile_spot.box.origin.x + tile_spot.box.size.width * 0.5F,
+            tile_spot.box.origin.y + tile_spot.box.size.height * 0.5F);
+    h.render();
+    const std::size_t slot = panel->selected_swatch();  // 编辑器当前指向的那一格
+    AURORA_TEST_REQUIRE_EQ(slot, 5U);
+    // 改那一格走**编辑器 + 失焦**这条真实通路，而不是 `commit_slot` 的编程入口：后者不动编辑器的文本，
+    // 于是「恢复之后编辑器必须回位」那句判据会被「编辑器一直是基线值」蒙过去（变异自证实测过一次）。
+    auto *editor = dynamic_cast<au::TextInput *>(panel->swatch_input());
+    AURORA_TEST_REQUIRE(editor != nullptr);
+    editor->set_value("#0A0B0C");
+    editor->on_focus_change(false);
+    h.render();
+    AURORA_TEST_REQUIRE(panel->is_palette_customized());
+    AURORA_TEST_REQUIRE_EQ(editor->value(), "#0A0B0C");  // 改过之后编辑器里就是那一个新值
+
+    au::Button *reset = nullptr;
+    const HitSpot spot = h.find_first("Button", 0.0F, [&reset](au::Widget *widget) -> bool {
+        auto *button = dynamic_cast<au::Button *>(widget);
+        if (button == nullptr) {
+            return false;
+        }
+        if (button->accessibility_label() != borealis::ui::settings_label("settings.action.theme_default")) {
+            return false;
+        }
+        reset = button;
+        return true;
+    });
+    AURORA_TEST_REQUIRE(spot.widget != nullptr);
+    AURORA_TEST_REQUIRE(reset != nullptr);
+    AURORA_TEST_REQUIRE_MSG(reset->wants_click(), "a theme with a baseline must offer the per-slot reset");
+
+    const std::size_t persisted_before = probe.persist_calls;
+    h.click(spot.box.origin.x + spot.box.size.width * 0.5F, spot.box.origin.y + spot.box.size.height * 0.5F);
+    h.render();
+
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, persisted_before + 1U);
+    AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 2U);
+    const auto &restored = probe.persisted[1].appearance.palette.basic;
+    const auto &changed = probe.persisted[0].appearance.palette.basic;
+    for (std::size_t i = 0; i < restored.size(); ++i) {
+        AURORA_TEST_CHECK_EQ(restored[i], i == slot ? borealis::config::theme_palette(probe.base.appearance.theme)
+                                                              .basic[i]
+                                                    : changed[i]);
+    }
+    AURORA_TEST_CHECK_FALSE(panel->is_palette_customized());
+    AURORA_TEST_CHECK_TRUE(find_row(panel->visible_rows(), "appearance.theme")->badge.empty());
+    // 编辑器的「当前值」跟着回位：恢复的是那一格的值，而那一格正被编辑器指着。
+    AURORA_TEST_CHECK_EQ(editor->value(),
+                         borealis::ui::color_to_hex(
+                             borealis::config::theme_palette(probe.base.appearance.theme).basic[slot]));
+}
+
+/// @brief 无基线的现场（当前主题名不在候选表里）：角标照挂，但「恢复主题默认」禁用且点了不落盘。
+///
+/// 这是 7.38⑥ F-b「不给一个会失灵的按钮」在本件的那一档：框架的禁用态降级绘制并忽略点击
+/// （`Button::wants_click()` 即 `enabled && on_click` 那句），故这里既判形态也判既成事实。
+AURORA_TEST_CASE(an_unlisted_theme_name_disables_the_reset_button) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    probe.theme_choices.clear();  // 候选表交空＝没有可比基线，无从谈「主题默认」
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    AURORA_TEST_CHECK_TRUE(panel->theme_cards().empty());
+    AURORA_TEST_CHECK_TRUE(panel->is_palette_customized());
+    AURORA_TEST_CHECK_EQ(find_row(panel->visible_rows(), "appearance.theme")->badge, std::string{kBadgeCustomized});
+
+    au::Button *reset = nullptr;
+    const HitSpot spot = h.find_first("Button", 0.0F, [&reset](au::Widget *widget) -> bool {
+        auto *button = dynamic_cast<au::Button *>(widget);
+        if (button == nullptr) {
+            return false;
+        }
+        if (button->accessibility_label() != borealis::ui::settings_label("settings.action.theme_default")) {
+            return false;
+        }
+        reset = button;
+        return true;
+    });
+    AURORA_TEST_REQUIRE(spot.widget != nullptr);
+    AURORA_TEST_REQUIRE(reset != nullptr);
+    AURORA_TEST_CHECK_FALSE(reset->wants_click());
+
+    h.click(spot.box.origin.x + spot.box.size.width * 0.5F, spot.box.origin.y + spot.box.size.height * 0.5F);
+    h.render();
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
+}
+
 #else
 
 AURORA_TEST_CASE(the_scrim_covers_the_whole_window_and_a_real_click_closes_the_panel) {
@@ -1313,6 +1716,22 @@ AURORA_TEST_CASE(the_editable_controls_paint_the_chrome_colors_not_the_light_def
 }
 
 AURORA_TEST_CASE(a_button_label_comes_from_the_framework_string_table_G28) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(clicking_a_theme_card_writes_six_keys_persists_once_and_broadcasts_once) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(clicking_a_swatch_slot_repoints_the_editor_and_blur_commits_only_that_slot) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_reset_button_restores_only_the_selected_slot) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(an_unlisted_theme_name_disables_the_reset_button) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
