@@ -14,8 +14,10 @@
 #include "settings_panel.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -60,6 +62,48 @@ constexpr float kStatusWidthDp = 176.0F;  ///< 状态列宽：最长角标是「
 constexpr float kCardMaxWidthDp = 1040.0F;
 constexpr float kCardMaxHeightDp = 680.0F;
 constexpr float kCardMarginDp = 16.0F;  ///< 卡片与窗口边的最小留白。
+
+// ---- 外观页两个区段的排版量（判据文 §4 A1-a / A2-a，尺寸按 `UI_SETTINGS.draft.svg` 量得）----
+constexpr float kThemeCardHeightDp = 64.0F;
+constexpr std::size_t kThemeCardPerRow = 4;  ///< 每行几张卡：`Scroll` 只竖向滚动，八套必须换行而非挤成一横排。
+constexpr float kSwatchTileWidthDp = 48.0F;
+constexpr float kSwatchTileHeightDp = 26.0F;
+constexpr std::size_t kSwatchPerRow = 8;  ///< 16 格分两行。
+constexpr float kSectionGapDp = 6.0F;     ///< 区段内行与行的间距。
+
+/// @brief 色板格数：从 `PaletteSpec::basic` 的长度取，而不是在本件再写一遍 16。
+///
+/// 判据 A2-a 的「16 格」与表单的 `TableSizeWrong` 都判该长度，此处硬写一个数字就是第三份真值源。
+/// 取一份缺省 `PaletteSpec` 来读长度（MSVC 的 `std::array::size` 不是静态成员，不能按类型直调）。
+const std::size_t kPaletteSlotCount = PaletteSpec{}.basic.size();
+
+/// @brief 两个区段各自归属的行键：卡片与色板都是**一行**的区段（角标、状态列与提交都落在那一行上）。
+constexpr std::string_view kThemeKey{"appearance.theme"};
+constexpr std::string_view kPaletteKey{"appearance.palette.basic"};
+
+/// @brief `ui::RgbaColor` → 框架颜色（逐字段搬，alpha 参与）。
+///
+/// 与 `terminal_view.cpp` 的同名件各自一份而非共享：那是绘制侧的文件内私有实现，本件按裁决 D1①
+/// 不去动它，两处都没有公共头可放（公共头上放一个 POD 互转函数就是给 widget 层开公共接缝）。
+[[nodiscard]] auto to_color(const RgbaColor &color) noexcept -> aurora::Color {
+    return aurora::Color{color.red, color.green, color.blue, color.alpha};
+}
+
+/// @brief 一张主题卡的四个样例色：次序＝前 / 背 / 光标 / `basic[1]`（文件头②）。
+///
+/// 绘制闭包与 `theme_cards()` 共用本函数，故「界面上看到的四格」与「用例读到的四格」不会各算一遍。
+/// 光标未配时按裁决 7.25③ 的算式回落前景色，与绘制侧同源。
+[[nodiscard]] auto theme_samples(const PaletteSpec &palette) noexcept -> std::array<RgbaColor, 4> {
+    return {palette.default_foreground,
+            palette.default_background,
+            palette.cursor_color.value_or(palette.default_foreground),
+            palette.basic[1]};
+}
+
+/// @brief 色板的可选槽 → 表单值：没配就是一张「未配」，不是黑色（A2-b 的两态在值上也要不同）。
+[[nodiscard]] auto slot_value(const std::optional<RgbaColor> &color) -> FormValue {
+    return color.has_value() ? FormValue::color(*color) : FormValue::unset_color();
+}
 
 /// @brief 步进器的档位（自拍项，裁决 7.56）：跨度千级者按百推进，整数档按一推进，
 ///          实数档在窄跨度（行高、对比度、字距）按 0.1 推进。
@@ -192,6 +236,11 @@ auto SettingsPanel::close() -> void {
     }
     status_texts_.clear();
     rows_.clear();
+    theme_canvases_.clear();
+    theme_labels_.clear();
+    swatch_canvases_.clear();
+    swatch_editor_.reset();
+    swatch_reset_button_.reset();
 }
 
 auto SettingsPanel::select_page(SettingsPage page) -> void {
@@ -213,7 +262,7 @@ auto SettingsPanel::visible_rows() const -> std::vector<VisibleRow> {
             .key = control->key,
             .kind = control->kind,
             .editable = editable,
-            .badge = badge_for(*control),
+            .badge = badge_text(*control),
             .summary = editable ? std::string{} : value_summary(*control),
         });
     }
@@ -250,6 +299,74 @@ auto SettingsPanel::commit_unset(std::string_view key) -> CommitIssue {
     return outcome.issue;
 }
 
+auto SettingsPanel::commit_slot(std::string_view key, std::size_t slot, std::string_view text) -> CommitIssue {
+    const SettingsControl *control = find_settings_control(key);
+    if (control == nullptr) {
+        return CommitIssue::UnknownKey;
+    }
+    const CommitOutcome outcome = form_.commit_color_slot(key, slot, text);
+    after_commit(key, *control, outcome.issue);
+    return outcome.issue;
+}
+
+auto SettingsPanel::theme_cards() const -> std::vector<ThemeCardView> {
+    const std::string current = current_theme_name();
+    std::vector<ThemeCardView> out;
+    out.reserve(theme_choices_.size());
+    for (const ThemeChoice &choice : theme_choices_) {
+        ThemeCardView card{.name = choice.name, .selected = choice.name == current};
+        const std::array<RgbaColor, 4> samples = theme_samples(choice.palette);
+        for (std::size_t i = 0; i < samples.size(); ++i) {
+            card.samples[i] = color_to_hex(samples[i]);
+        }
+        out.push_back(std::move(card));
+    }
+    return out;
+}
+
+auto SettingsPanel::is_palette_customized() const -> bool {
+    const PaletteSpec *baseline = theme_baseline();
+    if (baseline == nullptr) {
+        // 没有可比基线就不能声称当前色板是任何一套的默认（判据 A1-b 的「改过」在这里的最强形态）。
+        return true;
+    }
+    const std::vector<RgbaColor> table = palette_table_from_form();
+    if (table.size() != baseline->basic.size()) {
+        return true;
+    }
+    for (std::size_t slot = 0; slot < table.size(); ++slot) {
+        if (table[slot] != baseline->basic[slot]) {
+            return true;
+        }
+    }
+    // 四个单格槽逐档比：没装载的那一档按「与基线不同」判，面板画不出的一格不该被说成是主题默认。
+    const std::pair<std::string_view, FormValue> slots[] = {
+        {"appearance.palette.foreground", FormValue::color(baseline->default_foreground)},
+        {"appearance.palette.background", FormValue::color(baseline->default_background)},
+        {"appearance.palette.cursor", slot_value(baseline->cursor_color)},
+        {"appearance.palette.selection", slot_value(baseline->selection_color)},
+    };
+    for (const auto &[key, expected] : slots) {
+        const FormValue *actual = form_.value(key);
+        if (actual == nullptr || *actual != expected) {
+            return true;
+        }
+    }
+    return false;
+}
+
+auto SettingsPanel::theme_card(std::size_t index) const -> aurora::Widget * {
+    return index < theme_canvases_.size() ? theme_canvases_[index].get() : nullptr;
+}
+
+auto SettingsPanel::swatch_slot(std::size_t index) const -> aurora::Widget * {
+    return index < swatch_canvases_.size() ? swatch_canvases_[index].get() : nullptr;
+}
+
+auto SettingsPanel::swatch_input() const -> aurora::Widget * {
+    return swatch_editor_.get();
+}
+
 auto SettingsPanel::collect_rows() const -> std::vector<const SettingsControl *> {
     std::vector<const SettingsControl *> out;
     for (const SettingsControl &control : settings_catalog()) {
@@ -267,6 +384,14 @@ auto SettingsPanel::rebuild_overlay() -> void {
     }
     rows_ = collect_rows();
     status_texts_.assign(rows_.size(), nullptr);
+    // 候选表每次建浮层现取（与字体族目录同一条分工，裁决 7.46③），派生态的控件指针一律先清：
+    // 新页可能根本没有这两个区段，留着旧指针会让 `theme_cards()` 与刷新腿读到上一张卡的孤儿。
+    theme_choices_ = hooks_.themes ? hooks_.themes() : std::vector<ThemeChoice>{};
+    theme_canvases_.clear();
+    theme_labels_.clear();
+    swatch_canvases_.clear();
+    swatch_editor_.reset();
+    swatch_reset_button_.reset();
 
     // 遮罩层：`Canvas` 的自动尺寸会夹到 100×100，故必须 fill_max_size 才铺满整窗（裁决 7.56⑤）。
     auto scrim = std::make_shared<aurora::Canvas>([](aurora::Painter &painter, const aurora::Rect &bounds) -> void {
@@ -380,29 +505,244 @@ auto SettingsPanel::build_row(std::size_t ordinal) -> aurora::Node {
         return aurora::Node{};
     }
     const SettingsControl &control = *rows_[ordinal];
+    // 两个专用区段各占多行高度，故在行的分派处就拐出去：它们仍是一行 catalog 键（角标、状态列与提交
+    // 都落在那一行上），只是内容不是一条 56 dp 的行盒。
+    if (control.kind == ControlKind::ThemePicker) {
+        return build_theme_section(ordinal);
+    }
+    if (control.kind == ControlKind::SwatchGrid) {
+        return build_swatch_section(ordinal);
+    }
     const bool editable = is_editable(control);
 
-    auto label = std::make_shared<aurora::Text>(
-        aurora::TextProps{.content = settings_text(control.key), .text_color = editable ? kText : kTextDim});
-    label->modifier.set(aurora::Modifier{}.expand());
-
-    auto status = std::make_shared<aurora::Text>(aurora::TextProps{
-        .content = badge_for(control), .text_color = kTextDim, .text_align = aurora::TextAlign::Right});
-    status->modifier.set(aurora::Modifier{}.width(kStatusWidthDp));
-    if (ordinal < status_texts_.size()) {
-        status_texts_[ordinal] = status;  // 条目构建器只在序号有效时才登记指针
-    }
-
+    auto [label, status] = build_header(ordinal, control, editable);
     auto row = std::make_shared<aurora::Row>(aurora::RowProps{
-        .children = {aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(label))},
-                     aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(status))},
-                     build_control(control, editable)},
+        .children = {std::move(label), std::move(status), build_control(control, editable)},
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
         .gap = 12.0F,
     });
     row->modifier.set(aurora::Modifier{}.fill_max_width().height(kRowExtentDp).padding(aurora::EdgeInsets{
         .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(row))};
+}
+
+auto SettingsPanel::build_header(std::size_t ordinal, const SettingsControl &control, bool editable)
+    -> std::pair<aurora::Node, aurora::Node> {
+    auto label = std::make_shared<aurora::Text>(
+        aurora::TextProps{.content = settings_text(control.key), .text_color = editable ? kText : kTextDim});
+    label->modifier.set(aurora::Modifier{}.expand());
+
+    auto status = std::make_shared<aurora::Text>(aurora::TextProps{
+        .content = badge_text(control), .text_color = kTextDim, .text_align = aurora::TextAlign::Right});
+    status->modifier.set(aurora::Modifier{}.width(kStatusWidthDp));
+    if (ordinal < status_texts_.size()) {
+        status_texts_[ordinal] = status;  // 条目构建器只在序号有效时才登记指针
+    }
+    return {aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(label))},
+            aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(status))}};
+}
+
+auto SettingsPanel::build_theme_section(std::size_t ordinal) -> aurora::Node {
+    const SettingsControl &control = *rows_[ordinal];
+    auto [label, status] = build_header(ordinal, control, true);
+    auto header = std::make_shared<aurora::Row>(aurora::RowProps{
+        .children = {std::move(label), std::move(status)},
+        .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
+        .gap = 12.0F,
+    });
+    header->modifier.set(aurora::Modifier{}.fill_max_width());
+
+    // `LayoutBuilder` 在约束变化时会重跑整棵子树，故本区段的派生态指针在这里先清——
+    // 不清就会一轮比一轮长，而刷新腿只认最后那批。
+    theme_canvases_.clear();
+    theme_labels_.clear();
+    std::vector<aurora::Node> cards;
+    cards.reserve(theme_choices_.size());
+    for (std::size_t index = 0; index < theme_choices_.size(); ++index) {
+        const std::string name = theme_choices_[index].name;
+        auto canvas = std::make_shared<aurora::Canvas>([this, index](aurora::Painter &painter,
+                                                                     const aurora::Rect &box) -> void {
+            paint_theme_card(painter, box, index);
+        });
+        // 点击挂在画布上而不是外层 `Stack` 上：链上「只有可点或含可点后代者入链」，纯展示的画布根本
+        // 不会被派发交回（`Widget::hit_test_chain`），那样 `theme_card()` 就点不到。画布 `fill_max_size`
+        // 铺满整张卡，故落点即使在卡名那一档也一样命中它——`Text` 无可点语义，链会继续往下找。
+        canvas->modifier.set(aurora::Modifier{}.fill_max_size().clickable(
+            [this, name]() -> void { apply_theme(name); }));
+        theme_canvases_.push_back(canvas);
+
+        auto card_label = std::make_shared<aurora::Text>(
+            aurora::TextProps{.content = name, .text_color = theme_choices_[index].name == current_theme_name()
+                                                       ? kText
+                                                       : kTextDim});
+        // 卡名落在下沿那一档：画布的样例四格在上半部、分隔线在中线，名字不能压到它们。
+        card_label->modifier.set(aurora::Modifier{}.padding(
+            aurora::EdgeInsets{.left = 10.0F, .top = 36.0F, .right = 0.0F, .bottom = 0.0F}));
+        theme_labels_.push_back(card_label);
+
+        // 卡 = 一张画尽底色/样例/描边/勾的画布 + 叠在其上的卡名。`Stack` 确实写子节点 bounds（裁决 7.56①），
+        // 故整张卡可命中；外层 `Stack` 与画布各挂一份同一个闭包，落在卡名、样例还是留白上都同样切主题。
+        auto card = std::make_shared<aurora::Stack>(std::vector<aurora::Node>{
+            aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(canvas))},
+            aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(card_label))}});
+        card->modifier.set(aurora::Modifier{}
+                               .height(kThemeCardHeightDp)
+                               .expand()
+                               .clickable([this, name]() -> void { apply_theme(name); }));
+        cards.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(card))});
+    }
+
+    std::vector<aurora::Node> bands;
+    for (std::size_t begin = 0; begin < cards.size(); begin += kThemeCardPerRow) {
+        std::vector<aurora::Node> band;
+        for (std::size_t i = begin; i < std::min(begin + kThemeCardPerRow, cards.size()); ++i) {
+            band.push_back(std::move(cards[i]));
+        }
+        auto row = std::make_shared<aurora::Row>(
+            aurora::RowProps{.children = std::move(band), .gap = kSectionGapDp});
+        row->modifier.set(aurora::Modifier{}.fill_max_width());
+        bands.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(row))});
+    }
+
+    auto body = std::make_shared<aurora::Column>(
+        aurora::ColumnProps{.children = std::move(bands), .gap = kSectionGapDp});
+    body->modifier.set(aurora::Modifier{}.fill_max_width());
+    auto section = std::make_shared<aurora::Column>(aurora::ColumnProps{
+        .children = {aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(header))},
+                     aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(body))}},
+        .gap = kSectionGapDp,
+    });
+    section->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+        .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
+    return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(section))};
+}
+
+auto SettingsPanel::build_swatch_section(std::size_t ordinal) -> aurora::Node {
+    const SettingsControl &control = *rows_[ordinal];
+    auto [label, status] = build_header(ordinal, control, true);
+    auto header = std::make_shared<aurora::Row>(aurora::RowProps{
+        .children = {std::move(label), std::move(status)},
+        .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
+        .gap = 12.0F,
+    });
+    header->modifier.set(aurora::Modifier{}.fill_max_width());
+
+    swatch_canvases_.clear();
+    std::vector<aurora::Node> swatch_nodes;
+    swatch_nodes.reserve(kPaletteSlotCount);
+    for (std::size_t slot = 0; slot < kPaletteSlotCount; ++slot) {
+        auto tile = std::make_shared<aurora::Canvas>(
+            kSwatchTileWidthDp, kSwatchTileHeightDp, [this, slot](aurora::Painter &painter,
+                                                                 const aurora::Rect &box) -> void {
+                paint_swatch(painter, box, slot);
+            });
+        tile->modifier.set(
+            aurora::Modifier{}.clickable([this, slot]() -> void { select_swatch(slot); }));
+        swatch_canvases_.push_back(tile);
+        swatch_nodes.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(tile))});
+    }
+
+    std::vector<aurora::Node> bands;
+    for (std::size_t begin = 0; begin < swatch_nodes.size(); begin += kSwatchPerRow) {
+        std::vector<aurora::Node> band;
+        for (std::size_t i = begin; i < std::min(begin + kSwatchPerRow, swatch_nodes.size()); ++i) {
+            band.push_back(std::move(swatch_nodes[i]));
+        }
+        auto row = std::make_shared<aurora::Row>(aurora::RowProps{.children = std::move(band), .gap = 4.0F});
+        row->modifier.set(aurora::Modifier{}.fill_max_width());
+        bands.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(row))});
+    }
+
+    // 编辑器行：A2-a 要「点一格 → 下方给出该格 HEX 输入、当前值与恢复主题默认」，这里给的是**同一个**
+    // 常驻输入框换指向（文件头③）。它与通用 HEX 行共用一套着色与失焦才提交的口径（S14）。
+    auto editor = std::make_shared<BlurCommitText>();
+    editor->set_background(kControlBg);
+    editor->set_focused_background(kControlBg);
+    editor->set_border_color(kCardLine);
+    editor->set_focused_border_color(kAccent);
+    editor->set_text_color(kText);
+    editor->set_cursor_color(kText);
+    editor->set_placeholder_color(kTextDim);
+    editor->set_on_submit([this](const std::string &text) -> void {
+        commit_slot(kPaletteKey, selected_swatch_, text);
+    });
+    editor->commit = [this](const std::string &text) -> void {
+        commit_slot(kPaletteKey, selected_swatch_, text);
+    };
+    editor->modifier.set(aurora::Modifier{}.width(120.0F));
+    swatch_editor_ = editor;
+    sync_swatch_editor();
+
+    auto reset = std::make_shared<aurora::Button>(aurora::ButtonProps{
+        .label = settings_text("settings.action.theme_default"),
+        .color = kControlBg,
+        .on_color = kText,
+        .border_color = kCardLine,
+        .border_width = 1.0F,
+    });
+    reset->set_on_click([this]() -> void { reset_swatch_to_theme_default(); });
+    // 主题名不在候选表里时没有「主题默认」可恢复：按钮禁用（框架的禁用态降级绘制并忽略点击），
+    // 而不是留一个点了没反应的按钮（S9 / D3-a 同口径）。
+    reset->set_disabled_colors(kControlBg, kTextDim);
+    reset->set_enabled(theme_baseline() != nullptr);
+    swatch_reset_button_ = reset;
+
+    auto editor_row = std::make_shared<aurora::Row>(aurora::RowProps{
+        .children = {aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(editor))},
+                     aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(reset))}},
+        .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
+        .gap = 6.0F,
+    });
+    editor_row->modifier.set(aurora::Modifier{}.fill_max_width());
+
+    std::vector<aurora::Node> children;
+    children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(header))});
+    for (aurora::Node &band : bands) {
+        children.push_back(std::move(band));
+    }
+    children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(editor_row))});
+    auto section = std::make_shared<aurora::Column>(
+        aurora::ColumnProps{.children = std::move(children), .gap = kSectionGapDp});
+    section->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+        .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
+    return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(section))};
+}
+
+auto SettingsPanel::paint_theme_card(aurora::Painter &painter, const aurora::Rect &box, std::size_t index)
+    const -> void {
+    painter.fill_rounded_rect(box, 6.0F, kControlBg);
+    if (index >= theme_choices_.size()) {
+        return;
+    }
+    const std::array<RgbaColor, 4> samples = theme_samples(theme_choices_[index].palette);
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        painter.fill_rect(aurora::Rect{aurora::Point{box.origin.x + 10.0F + 16.0F * static_cast<float>(i),
+                                                     box.origin.y + 10.0F},
+                                       aurora::Size{12.0F, 12.0F}},
+                          to_color(samples[i]));
+    }
+    painter.draw_line(aurora::Point{box.origin.x + 10.0F, box.origin.y + 30.0F},
+                      aurora::Point{box.right() - 10.0F, box.origin.y + 30.0F}, 1.0F, kCardLine);
+
+    const bool selected = theme_choices_[index].name == current_theme_name();
+    painter.draw_rounded_border(box, 6.0F, selected ? 2.0F : 1.0F, selected ? kAccent : kCardLine);
+    if (selected) {
+        // A1-a 的「选中卡在右下角给勾」：三条折线一个拐，画在卡名那一档的右端。
+        painter.stroke_polyline(std::vector<aurora::Point>{aurora::Point{box.right() - 18.0F, box.bottom() - 16.0F},
+                                                           aurora::Point{box.right() - 14.0F, box.bottom() - 12.0F},
+                                                           aurora::Point{box.right() - 6.0F, box.bottom() - 22.0F}},
+                                2.0F, kAccent);
+    }
+}
+
+auto SettingsPanel::paint_swatch(aurora::Painter &painter, const aurora::Rect &box, std::size_t slot)
+    const -> void {
+    const std::vector<RgbaColor> table = palette_table_from_form();
+    const RgbaColor color = slot < table.size() ? table[slot] : RgbaColor{};
+    painter.fill_rounded_rect(box, 3.0F, to_color(color));
+    if (slot == selected_swatch_) {
+        painter.draw_rounded_border(box, 3.0F, 2.0F, kAccent);
+    }
 }
 
 auto SettingsPanel::build_control(const SettingsControl &control, bool editable) -> aurora::Node {
@@ -518,6 +858,7 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
             }
             case ControlKind::ThemePicker:
             case ControlKind::SwatchGrid:
+                break;  // 两个区段不是「一行的控件腿」，在 `build_row` 的分派处就已建完，走不到这里。
             case ControlKind::FontDropdown:
             case ControlKind::FamilyList:
             case ControlKind::ReadOnlyTable:
@@ -542,7 +883,10 @@ auto SettingsPanel::after_commit(std::string_view key, const SettingsControl &co
         set_status(ordinal, settings_issue_text(issue));
         return;
     }
-    set_status(ordinal, badge_for(control));
+    set_status(ordinal, badge_text(control));
+    // 两个区段的当前值都在 `form_` 里，故每次成功提交都要重跑那一腿派生态：画布重绘、卡名亮度、
+    // 恢复按钮可用性与主题行的「自定义」角标。
+    refresh_palette_views();
     if (!form_.is_dirty(key)) {
         return;  // 改了又改回来：既不落盘也不广播
     }
@@ -579,6 +923,151 @@ auto SettingsPanel::badge_for(const SettingsControl &control) -> std::string {
         out += settings_label("settings.badge.next_session");
     }
     return out;
+}
+
+auto SettingsPanel::badge_text(const SettingsControl &control) const -> std::string {
+    std::string out = badge_for(control);
+    // A1-b：「自定义」不是第十张卡，而是任一 palette 槽与主题默认不逐档相等时挂在**主题行**上的状态。
+    if (control.key == kThemeKey && is_palette_customized()) {
+        if (!out.empty()) {
+            out += " · ";
+        }
+        out += settings_label("settings.badge.customized");
+    }
+    return out;
+}
+
+auto SettingsPanel::current_theme_name() const -> std::string {
+    const FormValue *value = form_.value(kThemeKey);
+    if (value == nullptr) {
+        return {};
+    }
+    return value->as_text().value_or(std::string{});
+}
+
+auto SettingsPanel::theme_baseline() const -> const PaletteSpec * {
+    const std::string name = current_theme_name();
+    for (const ThemeChoice &choice : theme_choices_) {
+        if (choice.name == name) {
+            return &choice.palette;
+        }
+    }
+    return nullptr;  // 名字不在候选表里：没有可比基线，也没有可恢复的「主题默认」
+}
+
+auto SettingsPanel::palette_table_from_form() const -> std::vector<RgbaColor> {
+    const FormValue *value = form_.value(kPaletteKey);
+    if (value == nullptr) {
+        return {};
+    }
+    return value->as_color_table().value_or(std::vector<RgbaColor>{});
+}
+
+auto SettingsPanel::apply_theme(const std::string &name) -> void {
+    const auto choice = std::find_if(theme_choices_.begin(), theme_choices_.end(),
+                                     [&name](const ThemeChoice &candidate) -> bool {
+                                         return candidate.name == name;
+                                     });
+    const SettingsControl *control = find_settings_control(kThemeKey);
+    if (choice == theme_choices_.end() || control == nullptr) {
+        return;  // 画不出来的卡不会有回调，而 catalog 行随表单装载必然存在
+    }
+    const PaletteSpec &palette = choice->palette;
+    // S6①「切主题＝整份色值取新主题的默认值」：一次写完主题名 + 五档色值键。三枚用户开关
+    //（`bold_is_bright` / `min_contrast_enabled` / `min_contrast`）不由主题派生（`src/config/themes.cpp`
+    // 一套都不带），故本函数一字不碰它们。
+    struct Write {
+        std::string_view key;
+        FormValue value;
+    };
+    const std::vector<Write> writes = {
+        {kThemeKey, FormValue::text(name)},
+        {kPaletteKey, FormValue::color_table({palette.basic.begin(), palette.basic.end()})},
+        {"appearance.palette.foreground", FormValue::color(palette.default_foreground)},
+        {"appearance.palette.background", FormValue::color(palette.default_background)},
+        {"appearance.palette.cursor", slot_value(palette.cursor_color)},
+        {"appearance.palette.selection", slot_value(palette.selection_color)},
+    };
+    for (const Write &write : writes) {
+        const CommitOutcome outcome = form_.commit_value(write.key, write.value);
+        if (outcome.issue != CommitIssue::None) {
+            // 主题表就是装载侧的默认值来源，故这一步理论上走不到；走到了既不落盘也不广播，
+            // 并把原因写进主题行的状态列（界面上不存在「点了没反应」的通路）。
+            after_commit(kThemeKey, *control, outcome.issue);
+            AURORA_LOG_WARN("settings", "theme rejected by the form, nothing persisted: ", write.key);
+            return;
+        }
+    }
+    bool persisted = true;
+    if (form_.has_unsaved_changes() && hooks_.persist) {
+        // 一次切主题＝一次写文件：整份表单落盘，而不是六键各 flush 一次。
+        if (const auto reason = hooks_.persist(form_); reason.has_value()) {
+            AURORA_LOG_ERROR("settings", "persist failed, keep the form dirty: ", *reason);
+            persisted = false;
+        } else {
+            form_.note_persisted();
+        }
+    }
+    if (persisted && apply_scope(*control) == ApplyScope::PersistAndApplyNow && hooks_.broadcast) {
+        hooks_.broadcast(form_);
+    }
+    sync_swatch_editor();
+    refresh_palette_views();
+}
+
+auto SettingsPanel::select_swatch(std::size_t slot) -> void {
+    if (slot >= kPaletteSlotCount) {
+        return;
+    }
+    selected_swatch_ = slot;
+    sync_swatch_editor();
+    refresh_palette_views();
+}
+
+auto SettingsPanel::reset_swatch_to_theme_default() -> void {
+    const PaletteSpec *baseline = theme_baseline();
+    if (baseline == nullptr) {
+        return;  // 无基线时按钮是禁用态（框架的禁用态忽略点击），这里只是第二道
+    }
+    commit_slot(kPaletteKey, selected_swatch_, color_to_hex(baseline->basic[selected_swatch_]));
+    // 恢复是一次程序性写值，编辑器必须跟着换：用户看到的文本框内容就是刚写进去的那一档。
+    sync_swatch_editor();
+}
+
+auto SettingsPanel::sync_swatch_editor() -> void {
+    if (swatch_editor_ == nullptr) {
+        return;
+    }
+    const std::vector<RgbaColor> table = palette_table_from_form();
+    swatch_editor_->set_value(selected_swatch_ < table.size() ? color_to_hex(table[selected_swatch_])
+                                                              : std::string{});
+}
+
+auto SettingsPanel::refresh_palette_views() -> void {
+    const std::string current = current_theme_name();
+    for (const std::shared_ptr<aurora::Canvas> &canvas : theme_canvases_) {
+        canvas->mark_needs_paint();
+    }
+    for (const std::shared_ptr<aurora::Canvas> &canvas : swatch_canvases_) {
+        canvas->mark_needs_paint();
+    }
+    for (std::size_t i = 0; i < theme_labels_.size(); ++i) {
+        const bool selected = i < theme_choices_.size() && theme_choices_[i].name == current;
+        theme_labels_[i]->color(selected ? kText : kTextDim);
+        theme_labels_[i]->mark_needs_paint();
+    }
+    if (swatch_reset_button_ != nullptr) {
+        swatch_reset_button_->set_enabled(theme_baseline() != nullptr);
+    }
+    // 「自定义」挂在主题行的状态列上，故本行状态列也要跟着重算（该行不在当前页时序号循环找不到它，静默跳过）。
+    if (const SettingsControl *control = find_settings_control(kThemeKey); control != nullptr) {
+        for (std::size_t ordinal = 0; ordinal < rows_.size(); ++ordinal) {
+            if (rows_[ordinal]->key == kThemeKey) {
+                set_status(ordinal, badge_text(*control));
+                break;
+            }
+        }
+    }
 }
 
 auto SettingsPanel::value_summary(const SettingsControl &control) const -> std::string {
@@ -626,6 +1115,7 @@ auto SettingsPanel::is_editable(const SettingsControl &control) -> bool {
             return true;
         case ControlKind::ThemePicker:
         case ControlKind::SwatchGrid:
+            return true;  // 两个区段在 `build_row` 就分派出去，本函数只为行表与观察面给出可交互判据
         case ControlKind::FontDropdown:
         case ControlKind::FamilyList:
         case ControlKind::ReadOnlyTable:

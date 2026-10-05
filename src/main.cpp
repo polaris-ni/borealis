@@ -14,6 +14,7 @@
 #include "borealis/config/form_transfer.h"
 #include "borealis/config/settings.h"
 #include "borealis/config/store.h"
+#include "borealis/config/themes.h"
 #include "borealis/session/clipboard_outbox.h"
 #include "borealis/session/session.h"
 #include "borealis/term/width.h"
@@ -170,6 +171,16 @@ auto main() -> int {
         const borealis::config::Settings next = borealis::config::apply_form(form, store.settings());
         view->apply_appearance(make_appearance(next, catalog));
         view->apply_interaction_options(make_interaction(next));
+    };
+    // 主题候选表交进面板（裁决 7.61①）：`BuiltinTheme` 只带存储键名，卡面就逐字显示那串字，
+    // 于是「卡片次序与名字」的唯一真源仍是 `config::builtin_themes()`，面板侧不另立一份显示名表。
+    hooks.themes = []() -> std::vector<borealis::ui::SettingsPanel::ThemeChoice> {
+        std::vector<borealis::ui::SettingsPanel::ThemeChoice> out;
+        for (const borealis::config::BuiltinTheme &theme : borealis::config::builtin_themes()) {
+            out.push_back(borealis::ui::SettingsPanel::ThemeChoice{
+                .name = std::string{theme.name}, .palette = theme.palette});
+        }
+        return out;
     };
     borealis::ui::SettingsPanel panel{*host, app.shortcuts(), std::move(hooks)};
 

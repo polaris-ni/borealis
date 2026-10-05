@@ -30,6 +30,8 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"settings.page.connection", "连接"},
     {"settings.page.shortcuts", "快捷键"},
     {"settings.action.unset", "未配"},
+    {"settings.action.theme_default", "恢复主题默认"},
+    {"settings.badge.customized", "自定义"},
     {"settings.badge.deferred", "延后"},
     {"settings.badge.next_session", "下次会话生效"},
 

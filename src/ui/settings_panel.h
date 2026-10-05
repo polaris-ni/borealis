@@ -3,9 +3,9 @@
 // ============================================================
 // 设置面板的界面腿本体（src/ui/settings_panel.h）
 // ------------------------------------------------------------
-// `codespec/UI_SETTINGS.draft.md` 屏 3 的落地第一棒（裁决 7.52 把 S1~S16 全部自拍为建议项）：
-// 本棒交付**四页骨架 + 六类通用行控件 + 表单落盘与广播接线**，其余按判据文 §8 的分工留给后续棒——
-// 外观页的四个专用控件（主题卡 / 16 格色板 / 字体族下拉 / 回退链重排表）、右侧实时预览盒、连接页与
+// `codespec/UI_SETTINGS.draft.md` 屏 3 的落地（裁决 7.52 把 S1~S16 全部自拍为建议项）：
+// 交付**四页骨架 + 六类通用行控件 + 主题卡区段 + 16 格色板区段 + 表单落盘与广播接线**，其余按判据文
+// §8 的分工留给后续棒——外观页余下两个专用控件（字体族下拉 / 回退链重排表）、右侧实时预览盒、连接页与
 // 状态栏开关组、快捷键只读表、以及损坏配置的启动对话框。
 //
 // 三条决定形态的框架实测（裁决 7.56，其前两条曾登记为缺口 G26 / G27 并已于同日回货闭合，见裁决 7.57①）：
@@ -30,8 +30,23 @@
 // 选项即提交」在回货前写不成判据。框架回货形态是 `Widget::extra_hit_box()` 钩子加祖先那一层的合并门
 // （`child.bounds().contains(...) || child.covers_extra_hit_box(...)`），`Dropdown` 已覆写该钩子，于是面板
 // 「还落在所在行 bounds 内」的那一段选项现走真实派发，那条钉子用例随之翻成正向行为用例。门只问**直接子**
-// 自己的申报、不随祖先上传，而面板每行都是 `LazyList → Row → Dropdown` 的三层嵌套，故伸出行下沿之外的残段
+// 自己的申报、不随祖先上传，而面板每行都是 `Column → Row → Dropdown` 的三层嵌套，故伸出行下沿之外的残段
 // 仍不可达——登记为 **G30**，本件不为此自造覆盖层或改写挂载点（不等不绕，裁决 7.13①）。
+//
+// 外观页两个区段（主题卡 / 16 格色板）的三条口径，都是判据文与代码相撞处（裁决 7.61 拍板）：
+// ① 卡片名**逐字取 `themes.h` 的存储键名**（`dracula` 而非 `Dracula`）。判据 A1-a 那句「显示名逐字等于
+//    `themes.h`」在代码里没有第三个可指的对象——预置表只有 `name` 一个字段，另立一张中文名表就是视觉稿
+//    与 schema 之外的第二份真值源（同 §3 第 1 条「以代码为准」的处置）。
+// ② 卡片的四格样例取**前 / 背 / 光标 / `basic[1]`**。A1-a 写的第三格是「强调」，而 `PaletteSpec` 里没有
+//    强调色、八套预置的 `ChromeOverride::accent` 又全为空（chrome 覆盖不在首版，裁决 7.26②），故那一格
+//    没有数据来源；光标色是同一份色板里既真实又与前后两格拉开对比的那一档。
+// ③ A2-a 的「点一格 → 下方给出该格 HEX 输入」实现为**把常驻的那一个输入框指向所点的那格**，而不是每格
+//    现建一个输入框——本条真正禁止的是「16 个常驻输入框」，而 `Modifier` 没有可见性位（裁决 7.60③），
+//    按创建/销毁去表达「只有选中格有输入框」就得整块重建浮层，那会把滚动偏移与输入焦点一起抹掉。
+//
+// 三个区段的当前值都**不进控件自己的存储**：每张卡、每一格都是一个读 `form_` 的绘制闭包，改动之后
+// 只 `mark_needs_paint()`。于是「面板显示的色」与「表单里的色」在结构上不可能分叉，代价是重绘由本件显式
+// 触发而不是由 reactive 值驱动。
 //
 // 面板不认识 `config`，也不认识 `TerminalView`：装载 / 落盘 / 广播三条接缝由 `Hooks` 交装配层兑现
 // （`config/settings.h` 已 include `ui/palette.h`，反向 include 即 `config ⇄ ui` 模块环，与
@@ -45,17 +60,23 @@
 // 私有头（裁决 D1① 同口径）：本件含框架类型，不进 `include/borealis/`。
 // ============================================================
 
+#include <array>
 #include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "aurora/app/shortcuts.h"
+#include "aurora/render/painter.h"
 #include "aurora/theming/theme.h"
+#include "aurora/widget/button.h"
+#include "aurora/widget/canvas.h"
 #include "aurora/widget/popup.h"
 #include "aurora/widget/text.h"
+#include "aurora/widget/text_input.h"
 
 #include "borealis/ui/settings_catalog.h"
 #include "borealis/ui/settings_form.h"
@@ -74,9 +95,19 @@ namespace borealis::ui {
 /// 那条快捷键——留着它，面板关闭后 `Escape` 就会静默吞掉发往会话的按键。析构时若还开着同样收口。
 class SettingsPanel {
 public:
+    /// @brief 主题卡区段的一条候选：存储键名 + 该主题的整套色板。
+    ///
+    /// 由装配层从 `config::builtin_themes()` 搬值（同 `TerminalView` 的字体族目录那条分工，裁决 7.46③）：
+    /// 本件含框架类型而 `config/settings.h` 已 include 本域头，面板直接 include 它就是 `config ⇄ ui` 模块环。
+    /// 色板整份交出而不是只交名字：卡片样例、切主题时写入的六格、以及「恢复主题默认」的基线都取自它。
+    struct ThemeChoice {
+        std::string name;          ///< 存储键名，同时就是卡片上显示的那串字（见文件头①）。
+        PaletteSpec palette{};     ///< 该主题的整套色值。
+    };
+
     /// @brief 面板与存储侧、绘制侧的全部接缝（struct-of-回调，同 `WorkspaceView::Hooks` 的形态）。
     ///
-    /// 三条都按**整份表单**说话而不是按单键：落盘要的是「一次替换 + 一次 flush」，广播要的是
+    /// 前三条都按**整份表单**说话而不是按单键：落盘要的是「一次替换 + 一次 flush」，广播要的是
     /// 「一份完整配置搬进控件」，逐键接缝会把落盘拆成 N 次写文件。
     struct Hooks {
         /// @brief 取当前配置的每个落盘叶子键（装配层经 `config::form_entries()` 搬值）。
@@ -86,6 +117,8 @@ public:
         std::function<std::optional<std::string>(const SettingsForm &)> persist;
         /// @brief 把整份表单的当前值搬进运行中的视口（仅「已接线 ∧ 即时」的提交会触发）。
         std::function<void(const SettingsForm &)> broadcast;
+        /// @brief 取主题候选（卡片次序即此表的次序，装配层从 `config::builtin_themes()` 搬值）。
+        std::function<std::vector<ThemeChoice>()> themes;
     };
 
     /// @brief 面板当前页上的一行（用例据此核对「面板画的键」与反向核对表一致，判据文 §8 判据①）。
@@ -96,9 +129,9 @@ public:
     struct VisibleRow {
         std::string key;       ///< 落盘点号路径。
         ControlKind kind{};    ///< 控件形态。
-        bool editable{};       ///< 该行的控件是否可交互（`Absent` 与专用控件的占位行都是 false）。
-        std::string badge{};   ///< 角标文案（「延后」/「下次会话生效」/两者并列），无角标为空。
-        std::string summary{}; ///< 占位行的只读值摘要；可交互行为空（值就在它自己的控件里）。
+        bool editable{};       ///< 该行的控件是否可交互（`Absent` 与仍未落地的专用形态都是 false）。
+        std::string badge{};   ///< 角标文案（「延后」/「下次会话生效」/两者并列，主题行另挂「自定义」），无角标为空。
+        std::string summary{}; ///< 未落地形态的只读值摘要；可交互行为空（值就在它自己的控件里）。
     };
 
     SettingsPanel(aurora::OverlayHost &host, aurora::ShortcutRegistry &shortcuts, Hooks hooks);
@@ -155,6 +188,45 @@ public:
     /// @param key 落盘点号路径。
     auto commit_unset(std::string_view key) -> CommitIssue;
 
+    /// @brief 改 16 格色板的一格（A2-a：逐格点选，提交走该行的 HEX 输入框）。
+    /// @param key 该行的路径，须为 `ColorTable` 域。
+    /// @param slot 格序号 0..15。
+    /// @param text 该格的 `#RRGGBB` 文本。
+    auto commit_slot(std::string_view key, std::size_t slot, std::string_view text) -> CommitIssue;
+
+    /// @brief 主题卡区段的当前状态，次序＝候选表次序。
+    ///
+    /// 交出来而不是只画在树上：A1-a 的三条判据（名字逐字、四格样例、选中卡在右下角给勾）都要与
+    /// `config::builtin_themes()` 比，读浮层树里的 `Text` 反而要把排版坐标也算进判据。
+    /// `samples` 是四格样例的 `#RRGGBB` 文本，次序＝前 / 背 / 光标 / `basic[1]`（文件头②）。
+    struct ThemeCardView {
+        std::string name{};                  ///< 卡片显示名。
+        bool selected{};                     ///< 是否是当前表单点名的那一套。
+        std::array<std::string, 4> samples{};
+    };
+
+    /// @brief 主题卡区段的当前状态（候选表为空时为空表）。
+    [[nodiscard]] auto theme_cards() const -> std::vector<ThemeCardView>;
+
+    /// @brief 当前 palette 六格是否与该主题名对应的预置色板不逐槽相等（判据 A1-b 的「自定义」状态）。
+    ///
+    /// 主题名不在候选表里时**没有可比基线**，此时判为已改过：界面无法声称当前色板是任何一套的默认。
+    [[nodiscard]] auto is_palette_customized() const -> bool;
+
+    /// @brief 第 index 张主题卡的控件（用例据此按真实命中链点它）；越界或该区段未画时为空。
+    [[nodiscard]] auto theme_card(std::size_t index) const -> aurora::Widget *;
+
+    /// @brief 第 index 格色板的控件（同上）。
+    [[nodiscard]] auto swatch_slot(std::size_t index) const -> aurora::Widget *;
+
+    /// @brief 色板编辑器那个常驻 HEX 输入框的控件（用例读它的 `value()` 判 A2-a 的「当前值」）。
+    [[nodiscard]] auto swatch_input() const -> aurora::Widget *;
+
+    /// @brief 色板编辑器当前指向的格序号。
+    [[nodiscard]] auto selected_swatch() const noexcept -> std::size_t {
+        return selected_swatch_;
+    }
+
 private:
     /// @brief 按当前页取行表（表内次序即排版次序，只收本页、只收装载成功的键）。
     [[nodiscard]] auto collect_rows() const -> std::vector<const SettingsControl *>;
@@ -172,6 +244,48 @@ private:
     /// @brief 建某行的控件腿：六类通用形态给真控件，五类专用形态给只读的值摘要（占位）。
     [[nodiscard]] auto build_control(const SettingsControl &control, bool editable) -> aurora::Node;
 
+    /// @brief 建一行的表头（标签 + 状态列）；通用行与两个区段共用，故状态列的登记点只有一处。
+    /// @param ordinal 该行在当前页的序号（状态列的索引锚）。
+    [[nodiscard]] auto build_header(std::size_t ordinal, const SettingsControl &control, bool editable)
+        -> std::pair<aurora::Node, aurora::Node>;
+
+    /// @brief 建主题卡区段：表头 + 每行四张卡（`Scroll` 只竖向滚动，故八套必须换行而不是一列八张）。
+    [[nodiscard]] auto build_theme_section(std::size_t ordinal) -> aurora::Node;
+
+    /// @brief 建 16 格色板区段：表头 + 每行八格 + 常驻的编辑器行（一格 HEX 输入 + 「恢复主题默认」）。
+    [[nodiscard]] auto build_swatch_section(std::size_t ordinal) -> aurora::Node;
+
+    /// @brief 画一张主题卡：底色、四格样例、分隔线、描边与选中勾（闭包在绘制时读 `form_`）。
+    auto paint_theme_card(aurora::Painter &painter, const aurora::Rect &box, std::size_t index) const -> void;
+
+    /// @brief 画一格色板：该格当前色 + 选中描边（同上一条，读时现取）。
+    auto paint_swatch(aurora::Painter &painter, const aurora::Rect &box, std::size_t slot) const -> void;
+
+    /// @brief 切主题（S6）：整份色值六格取新主题的默认值，一次落盘 + 一次广播。
+    auto apply_theme(const std::string &name) -> void;
+
+    /// @brief 把色板编辑器指向第 slot 格（A2-a 的「点一格」那一腿）。
+    auto select_swatch(std::size_t slot) -> void;
+
+    /// @brief 把选中格恢复成当前主题的默认色（S6① 的逐档恢复）；无基线时按钮处于禁用态，走不到这里。
+    auto reset_swatch_to_theme_default() -> void;
+
+    /// @brief 表单里当前那 16 格色板；该行没装载或形态不合时回空表。
+    [[nodiscard]] auto palette_table_from_form() const -> std::vector<RgbaColor>;
+
+    /// @brief 当前主题名对应的预置色板；名字不在候选表里时为空（即没有可比基线）。
+    [[nodiscard]] auto theme_baseline() const -> const PaletteSpec *;
+
+    /// @brief 表单里 `appearance.theme` 当前点名的那套（没装载或不是文本时为空串）。
+    [[nodiscard]] auto current_theme_name() const -> std::string;
+
+    /// @brief 刷新两个区段的一切派生态：卡片与色板重绘、卡名亮度、恢复按钮可用性、主题行「自定义」角标。
+    auto refresh_palette_views() -> void;
+
+    /// @brief 把编辑器文本框的内容换成选中格的当前值（只在选中格换了或整份色板换了时调，
+    ///        提交之后不调——否则会抹掉用户正在敲的半截文本，S14 的那半条）。
+    auto sync_swatch_editor() -> void;
+
     /// @brief 提交后的公共腿：刷新状态列、按需落盘、按需广播。
     auto after_commit(std::string_view key, const SettingsControl &control, CommitIssue issue) -> void;
 
@@ -184,10 +298,14 @@ private:
     /// @brief 该行的角标文案（「延后」/「下次会话生效」/两者并列），无角标时为空串。
     [[nodiscard]] static auto badge_for(const SettingsControl &control) -> std::string;
 
+    /// @brief 该行状态列的文案：`badge_for` 的两枚目录折成角标，主题行再挂 A1-b 的「自定义」。
+    [[nodiscard]] auto badge_text(const SettingsControl &control) const -> std::string;
+
     /// @brief 专用控件行的只读值摘要（本棒不编辑它们，只把当前值如实显示出来）。
     [[nodiscard]] auto value_summary(const SettingsControl &control) const -> std::string;
 
-    /// @brief 一行是否可交互：`Absent` 一律灰置，专用控件形态在本棒是占位。
+    /// @brief 一行是否可交互：`Absent` 一律灰置，专用控件形态里只有仍未落地的三类（字体族下拉 / 回退链
+    ///        重排表 / 快捷键只读表）在本件是占位。
     [[nodiscard]] static auto is_editable(const SettingsControl &control) -> bool;
 
     aurora::OverlayHost &host_;       ///< 浮层宿主（装配层的场景根，非拥有）。
@@ -203,6 +321,14 @@ private:
     int escape_binding_ = 0;           ///< `Escape` 绑定的 id；0 = 未登记。
     std::vector<const SettingsControl *> rows_{};  ///< 当前页行表（与 `status_texts_` 同序）。
     std::vector<std::shared_ptr<aurora::Text>> status_texts_{};  ///< 各行状态列控件，按序号。
+
+    std::vector<ThemeChoice> theme_choices_{};  ///< 每次建浮层时经 `Hooks::themes` 现取（卡片次序即其次序）。
+    std::size_t selected_swatch_ = 0;           ///< 色板编辑器当前指向的格，缺省 0 格（编辑器是常驻的）。
+    std::vector<std::shared_ptr<aurora::Canvas>> theme_canvases_{};  ///< 主题卡画布，按候选表序。
+    std::vector<std::shared_ptr<aurora::Text>> theme_labels_{};      ///< 卡名，与上一条同序（选中态换亮度）。
+    std::vector<std::shared_ptr<aurora::Canvas>> swatch_canvases_{}; ///< 16 格画布，按格序。
+    std::shared_ptr<aurora::TextInput> swatch_editor_{};             ///< 常驻的 HEX 输入框。
+    std::shared_ptr<aurora::Button> swatch_reset_button_{};          ///< 「恢复主题默认」，无基线时禁用。
 };
 
 }  // namespace borealis::ui
