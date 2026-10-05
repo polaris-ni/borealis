@@ -186,8 +186,10 @@ auto SettingsPanel::close() -> void {
         shortcuts_.remove(escape_binding_);
         escape_binding_ = 0;
     }
-    host_.remove_overlay(overlay_index_);
-    overlay_index_ = 0;
+    if (overlay_index_.has_value()) {
+        host_.remove_overlay(*overlay_index_);
+        overlay_index_.reset();
+    }
     status_texts_.clear();
     rows_.clear();
 }
@@ -259,9 +261,9 @@ auto SettingsPanel::collect_rows() const -> std::vector<const SettingsControl *>
 }
 
 auto SettingsPanel::rebuild_overlay() -> void {
-    if (overlay_index_ != 0) {
-        host_.remove_overlay(overlay_index_);
-        overlay_index_ = 0;
+    if (overlay_index_.has_value()) {
+        host_.remove_overlay(*overlay_index_);
+        overlay_index_.reset();
     }
     rows_ = collect_rows();
     status_texts_.assign(rows_.size(), nullptr);
@@ -292,7 +294,7 @@ auto SettingsPanel::build_card() -> aurora::Node {
                                             SettingsPage::Connection,
                                             SettingsPage::Shortcuts}) {
                 auto props = aurora::ButtonProps{};
-                props.label = settings_label(page_title_key(page));
+                props.label = settings_text(page_title_key(page));
                 props.color = page == page_ ? kAccent : kNavBg;
                 props.on_color = page == page_ ? kWindowBg : kText;
                 props.corner_radius = 0.0F;
@@ -324,7 +326,7 @@ auto SettingsPanel::build_card() -> aurora::Node {
             body->modifier.set(aurora::Modifier{}.fill_max_width().expand());
 
             auto close_button = std::make_shared<aurora::Button>(aurora::ButtonProps{
-                .label = settings_label("settings.close"),
+                .label = settings_text("settings.close"),
                 .color = kControlBg,
                 .on_color = kText,
                 .border_color = kCardLine,
@@ -484,7 +486,7 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
                     // 「未配」是一次显式动作而不是空串（裁决 7.27③）：空文本既可能是未配也可能是畸形值，
                     // 只有这个按钮把槽位置成未配。
                     auto unset = std::make_shared<aurora::Button>(aurora::ButtonProps{
-                        .label = settings_label("settings.action.unset"),
+                        .label = settings_text("settings.action.unset"),
                         .color = kControlBg,
                         .on_color = kText,
                         .border_color = kCardLine,

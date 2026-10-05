@@ -15,14 +15,14 @@
 //    **回落到缺省档的 tag**，故只有把缺省档设成 `zh`，`tr()` 出来的标签才真显中文。表本身没有
 //    `default_locale()` 读点，所以这里的 `Locale` 常量是面板侧的唯一副本。
 //
-// 一处框架实测（裁决 7.56，已登记为缺口 **G28**）：`Button::label` 与 `Text::content` 同为
-// `LocalizedString`，但只有 `Text` 在绘制路径查表（`widget/text.h` 的
-// `content.get().resolve(&default_string_table(), ...)`）。`Button` 的 `paint_label` 把
-// `label.get().text` 直接交 `measure_width` / `draw_text`，而同件的 `accessibility_label()` 却
-// 走 `resolve()`，故 `tr()` 造出的实例（`text` 恒空）在按钮上是**空白标签而朗读得到译文**。
-// 于是按钮文案走 `settings_label()`（本件就地解析），`Text` 一侧交 `LocalizedString`。
-// `Switch` / `SpinBox` / `Dropdown` / `TextInput` 的文本属性本来就是 `std::string`（无查表路径），
-// 与按钮同口径由调用方给显示串。
+// 一处框架实测（曾登记为缺口 **G28**，已回货闭合，裁决 7.59）：`Button::label` 与 `Text::content` 同为
+// `LocalizedString`，但登记时只有 `Text` 在绘制路径查表——`Button` 的 `paint_label` 直读
+// `label.get().text`，而同件 `accessibility_label()` 却走 `resolve()`，故 `tr()` 造出的实例（`text` 恒空）
+// 在按钮上是**空白标签而朗读得到译文**。回货形态是 `Button::resolved_label(ctx)` 成为布局与绘制的唯一
+// 显示串来源（解析结果与 `cached_text_width_/height_` 配套缓存在 `cached_display_text_`，无障碍复用同串），
+// 于是按钮文案与 `Text` 一样直接交 `LocalizedString`。`settings_label()` 因此**只留给收 `std::string` 的
+// 入口**（`Text::placeholder`、`Command::title`、角标拼接）——那些入口本就没有查表路径，调用方给显示串
+// 才是唯一形态，不属本条缺口。
 //
 // 私有头（裁决 D1① 同口径）：本件含框架类型，不进 `include/borealis/`。
 // ============================================================
@@ -55,7 +55,9 @@ auto install_settings_strings() -> void;
 
 /// @brief 就地解析成显示串。
 ///
-/// 只给框架**不查表**的那几个入口用（`Button` 的标签，见文件头那条实测），其余一律优先 `settings_text()`。
+/// 只给框架**不收 `LocalizedString`** 的入口用（`Text::placeholder`、`Command::title`、角标拼接，
+/// 见文件头那条实测的后半段）；收 `LocalizedString` 的属性（`Text::content`、`Button::label`）一律
+/// 优先 `settings_text()`，由框架就地查表。
 /// @param key 词条 key。
 /// @param args 模板参数，默认为空。
 [[nodiscard]] auto settings_label(std::string_view key, std::vector<aurora::LocalizedString> args = {}) -> std::string;

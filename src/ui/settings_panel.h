@@ -16,13 +16,18 @@
 // ② `OverlayHost` 给浮层的是**松约束**（min 0、max 自身），而 `Canvas` 的自动尺寸会夹到 100×100，
 //    故遮罩层须挂 `Modifier{}.fill_max_size()` 才铺满整窗；卡片用 `LayoutBuilder` 按实际可用尺寸钳位，
 //    于是稿面 1500×900 dp 在 960×640 dp 的窗口里不会溢出（S1「同窗口浮层」的物理前提）。
-// ③ `Button` 的标签绘制绕过 `StringTable::resolve()`（缺口 G28），故按钮文案一律经 `settings_label()`
-//    就地解析成显示串；`Text` 一侧仍交 `LocalizedString`（`settings_text()`）由框架就地查表。
+// ③ `Button` 的标签绘制曾绕过 `StringTable::resolve()`（缺口 G28，已回货闭合，见裁决 7.59）：现在框架
+//    自己的 `resolved_label()` 就是它 `on_layout` / `on_paint` 的唯一显示串来源，故按钮文案可直接交
+//    `LocalizedString`（`settings_text()`）与 `Text` 同源。`settings_label()` 仍留给收 `std::string`
+//    的入口（`Text::placeholder`、角标等）——那些入口本就没有查表路径。
 //
-// 一条在册的派发限制（缺口 G29，裁决 7.57④⑤）：`Dropdown` 的展开选项列画在主框之外而不占布局，
-// 而嵌套在容器里的溢出区进不了真实派发链（祖先按 `child.bounds()` 判包含），故「真点一个选项即提交」
-// 在回货前写不成判据。本件照旧给出活的 `Dropdown`（点主框会展开、绘制正确），并由
-// `itest_settings_panel` 留一条现状钉子钉住该事实——它随回货必须转红。
+// 一条曾在册的派发限制（缺口 G29，已回货但**只闭合一层**，见裁决 7.59）：`Dropdown` 的展开选项列画在主框
+// 之外而不占布局，而嵌套在容器里的溢出区进不了真实派发链（祖先按 `child.bounds()` 判包含），故「真点一个
+// 选项即提交」在回货前写不成判据。框架回货形态是 `Widget::extra_hit_box()` 钩子加祖先那一层的合并门
+// （`child.bounds().contains(...) || child.covers_extra_hit_box(...)`），`Dropdown` 已覆写该钩子，于是面板
+// 「还落在所在行 bounds 内」的那一段选项现走真实派发，那条钉子用例随之翻成正向行为用例。门只问**直接子**
+// 自己的申报、不随祖先上传，而面板每行都是 `LazyList → Row → Dropdown` 的三层嵌套，故伸出行下沿之外的残段
+// 仍不可达——登记为 **G30**，本件不为此自造覆盖层或改写挂载点（不等不绕，裁决 7.13①）。
 //
 // 面板不认识 `config`，也不认识 `TerminalView`：装载 / 落盘 / 广播三条接缝由 `Hooks` 交装配层兑现
 // （`config/settings.h` 已 include `ui/palette.h`，反向 include 即 `config ⇄ ui` 模块环，与
@@ -187,7 +192,10 @@ private:
     SettingsForm form_{std::vector<FormEntry>{}};  ///< 副本；未打开时是空表。
     SettingsPage page_ = SettingsPage::Appearance;
     bool open_ = false;
-    std::size_t overlay_index_ = 0;    ///< 本面板浮层在宿主子节点里的序号（重建时用）。
+    /// 本面板浮层在宿主子节点里的序号（重建时用）。宿主没有基础内容时 `add_overlay` 返回
+    /// `std::nullopt`（框架 G29 回货后的口径：那种序号恒被 `remove_overlay` 当基础内容拒收），
+    /// 故这里以「无浮层」为缺省，而不是拿 0 当哨兵。
+    std::optional<std::size_t> overlay_index_{};
     int escape_binding_ = 0;           ///< `Escape` 绑定的 id；0 = 未登记。
     std::vector<const SettingsControl *> rows_{};  ///< 当前页行表（与 `status_texts_` 同序）。
     std::vector<std::shared_ptr<aurora::Text>> status_texts_{};  ///< 各行状态列控件，按序号。
