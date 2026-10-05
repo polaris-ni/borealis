@@ -2352,6 +2352,68 @@ AURORA_TEST_CASE(escape_releases_a_keyboard_chain_grab_before_it_closes_the_pane
     AURORA_TEST_CHECK_EQ(h.shortcuts().count(), 0U);
 }
 
+/// @brief 行区交回无障碍通道的滚动读数是「视口占内容的比例」，而不是旧式把跨度当分母（G33 回货的消费腿）。
+///
+/// 登记这条缺口的正是 #130 那次真机走查：`IScrollProvider::get_VerticalViewSize` 报 99.2126%，反解恰是
+/// 126/127（旧式 `max/(max+1)*100`），而无头侧独立量得本仓行区的可滚跨度正是 126 dp——那条读数当场把走查
+/// 带偏成「视口≈内容 ⇒ 没什么可滚」，于是裁决 7.63⑥ 一度规定本仓**不采信**该读数。回货给
+/// `AccessibilityScrollRange` 补了 `viewport` / `content` 两个量，UIA 侧的分母第一次是真内容高。
+///
+/// 本例钉两件事，缺一就对那次误判没有免疫力：① **两个量的来源**是本仓这一控件的几何（`viewport` 等于行区
+/// 自身的盒高、`max - min` 等于 `content - viewport`）——算式正确而输入陈旧仍是错的读数，而这只有消费侧能验；
+/// ② **读数的量级**与旧式分离（在有真跨度的行区上，比值式必然低于 `max/(max+1)` 那一档）。
+/// 第三条断「滚动只动 `position`、两个量不动」，即 `VerticalPercent` 说「看到哪儿」而 `VerticalViewSize` 说
+/// 「看到多少」这两句在本仓消费面上互不串味（回货判据 ③ 的语义自洽）。
+AURORA_TEST_CASE(the_row_area_reports_a_viewport_over_content_ratio_to_the_a11y_channel_G33) {
+    Harness h;
+    StoreProbe probe;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    panel->select_page(SettingsPage::Terminal);
+    h.render();
+
+    // 锚点与行区容器的取法沿用 G27 那条消费腿：行区是 `Scroll`，故沿真实派发链现问而不猜坐标。
+    const HitSpot anchor = h.find_first("SpinBox");
+    AURORA_TEST_REQUIRE(anchor.widget != nullptr);
+    au::Scroll *area = h.row_scroll(anchor.x, anchor.y);
+    AURORA_TEST_REQUIRE(area != nullptr);
+
+    const auto range = area->accessibility_scroll();
+    AURORA_TEST_REQUIRE_MSG(range.has_value(), "the row area exposes no scroll range at all");
+
+    // ① 两个量与本仓几何同源：视口＝行区控件自身的盒高，跨度＝内容 − 视口（框架头注那条不变量）。
+    //    这两句排在跨度前提**之前**，因为「算式正确而输入陈旧」正是登记时那次误判的形态，鉴别力要单独观测。
+    AURORA_TEST_CHECK_NEAR(range->viewport, area->paint_bounds().size.height, 1.0);
+    AURORA_TEST_CHECK_NEAR(range->max - range->min, range->content - range->viewport, 1.0);
+
+    // 前提：这是一份**真有跨度**的读数。无跨度时新旧两式都报 100，量级那条判别就失去鉴别力。
+    AURORA_TEST_REQUIRE_GT(range->max, 50.0);
+    AURORA_TEST_REQUIRE_GT(range->content, range->viewport);
+    AURORA_TEST_CHECK_EQ(range->min, 0.0);
+
+    // ② UIA 那一条读数取 viewport/content，而**不是**登记时的 max/(max+1)。
+    const double view_size = au::compute_vertical_view_size(*range);
+    AURORA_TEST_CHECK_NEAR(view_size, range->viewport / range->content * 100.0, 1e-3);
+    const double stale_reading = range->max / (range->max + 1.0) * 100.0;  // 99.2% 那一档的旧式
+    AURORA_TEST_CHECK_LT(view_size, stale_reading);
+    AURORA_TEST_TRACE(std::to_string(range->viewport) + " / " + std::to_string(range->content) + " / " +
+                      std::to_string(range->max) + " / " + std::to_string(view_size) + " / " +
+                      std::to_string(stale_reading));
+
+    // ③ 滚三档（框架缺省 `step` 16 dp × 3）之后只有 `position` 走，两个量逐字不动。
+    const double position_before = range->position;
+    for (int notch = 0; notch < 3; ++notch) {
+        h.scroll(anchor.x, anchor.y, -1.0F);  // 负方向是往下滚（`ScrollViewport` 的符号约定）
+    }
+    h.render();
+    const auto scrolled = area->accessibility_scroll();
+    AURORA_TEST_REQUIRE(scrolled.has_value());
+    AURORA_TEST_CHECK_GT(scrolled->position, position_before);
+    AURORA_TEST_CHECK_NEAR(scrolled->viewport, range->viewport, 0.5);
+    AURORA_TEST_CHECK_NEAR(scrolled->content, range->content, 0.5);
+    AURORA_TEST_CHECK_NEAR(au::compute_vertical_view_size(*scrolled), view_size, 0.5);
+}
+
 #else
 
 AURORA_TEST_CASE(the_scrim_covers_the_whole_window_and_a_real_click_closes_the_panel) {
@@ -2415,6 +2477,10 @@ AURORA_TEST_CASE(the_candidate_append_is_open_until_the_chain_reaches_the_framew
 }
 
 AURORA_TEST_CASE(escape_releases_a_keyboard_chain_grab_before_it_closes_the_panel) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_row_area_reports_a_viewport_over_content_ratio_to_the_a11y_channel_G33) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
