@@ -22,9 +22,14 @@
 ///              的区域，回货前它进不了真实派发的命中链（祖先按 `child.bounds()` 判包含），本套件当时以此
 ///              留一条现状钉子。框架补上 `Widget::extra_hit_box()` 与祖先下降闸的合并判定后，钉子翻成正向
 ///              判据：盒外那一段选项带按链能命中该 `Dropdown`，其上的真实单击选中另一档、收起面板、只落盘
-///              不广播。**回货只闭合一层**——追加盒只并「直接子」的申报，孙辈的申报不随祖先上传，故面板伸出
-///              所在行之外的那一段仍不可达，本套件另留一条钉子（新缺口 G30，含「控件申报覆盖、控件兼容入口也认、
-///              唯独祖先闸不认」的形态证明）。
+///              不广播。**回货只闭合了一层**——追加盒当时只并「直接子」的申报，孙辈的申报不随祖先上传，故
+///              面板伸出所在行之外的那一段仍不可达，本套件据此另留一条钉子（新缺口 G30）。G30 的回货把这一句
+///              翻正：`covers_extra_hit_box()` 升级为**子树聚合**（自身 ∪ 逐子节点按 `bounds().origin` 折算递归，
+///              折算与 `on_hit_test_chain` 的下降式同构），那一段因此**可达**（`the_option_panel_below_the_
+///              enclosing_row_now_reaches_the_dispatch_chain_G30`）。但可达之后仍**点不准**：祖先的内边距平移
+///              没进 `HitNode.origin`，派发器据以本地化的坐标比该控件的绘制位置大 8 dp，`Dropdown` 按本地纵
+///              坐标反算的选项序号因此整体下移一格——登记为 **G31**，其现状钉子是
+///              `the_dispatched_local_position_of_a_padded_row_child_is_shifted_G31`。
 ///           ⑧ **按钮标签由框架查表**（缺口 G28 的接货复验，裁决 7.59）：本件那三枚按钮原样交回
 ///              `LocalizedString` 之后，显示串仍是词条表给的那一条；查表没发生就回退到实例自己的 `text`，
 ///              而 `tr()` 造出的实例那份 text 恒空。
@@ -34,11 +39,27 @@
 ///              （命中时经 `offset_y_` 换算），于是本套件的每一处探针都改成按真实派发结果量窗口坐标
 ///              （`Harness::reachable_box`），并新增一条「滚过一段之后真点一行开关即提交」的证人：它是
 ///              G27 回货（滚动容器的内容进得了命中链）在面板生产路径上的消费腿。
+///           ⑩ **回退链重排区段**（裁决 7.52 的 S8，#114 第二棒）：这一行的值是一个**有序族名数组**，
+///              控件形态因此不是「一个输入框」而是三件事——链内条目（可上移 / 下移 / 移除）、按输入过滤
+///              的候选池、以及四档提示文案（空链 / 已达上限 / 已被截断 / 没有匹配）。判据取四条腿：
+///              条目次序与可用性标记**从表单读回**（表单是权威，控件只是它的投影）、一次结构变更
+///              **恰落盘一次并恰广播一次**（该键 `Wired ∧ Immediate`）、超出框架上限的链**照全量画**而只
+///              关掉追加口（静默截断会把用户配的族抹掉）、以及 `Escape` 在键盘抓取态下**先交还抓取**而
+///              不关面板。指针拖拽换位在无头环境不可判（框架 `end_drag` 只在 `reduce_motion` 或位移不足
+///              半格时立即结算），故换位判据一律走按钮与键盘两条同步路径。另有两条实测随本段入册：
+///              **`show` 翻转不标脏布局**（框架把它当测量输入，写它不失效任何缓存），于是候选池必须由
+///              调用方补布局脏，而在一次滚动之后叶子的脏**到不了渲染根**（`Node::~Node` 无条件清子节点
+///              的布局父指针，缺口 **G32**），故本套件的候选用例同时是面板那两次补脏的证人；而**禁用态的
+///              `Button` 照样在命中链里**（框架只在 `wants_click()` 上分档，`Button` 没有覆盖任何命中
+///              入口），故「达上限时点不动」的证人是真点一次并判它既不落盘也不广播，另加一条「浮层还在」
+///              ——点击被遮罩接走也会关掉面板，那一档计数同样不变。登记时本段写作「禁用按钮不进命中链、
+///              扫不到它」，该句实测不成立并已就地更正。
 ///
 ///           一条测试现场的必要构造：`OverlayHost` 的浮层序号是从「基础内容之后」起算的
 ///           （`add_overlay` 返回 `children_.size() - 1`，回货后宿主无基础内容时返回 `std::nullopt`），
 ///           故宿主**必须**带一个基础子节点——生产路径上那是终端视口，本用例给一个 `Text`。
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -55,8 +76,10 @@
 #include "aurora/event/dispatcher.h"
 #include "aurora/event/focus.h"
 #include "aurora/i18n/string_table.h"
+#include "aurora/render/font_engine.h"
 #include "aurora/widget/button.h"
 #include "aurora/widget/dropdown.h"
+#include "aurora/widget/reorderable_list.h"
 #include "aurora/widget/scroll.h"
 #include "aurora/widget/switch.h"
 #include "aurora/widget/text.h"
@@ -84,6 +107,7 @@ using borealis::ui::CommitIssue;
 using borealis::ui::ConsumerStatus;
 using borealis::ui::ControlKind;
 using borealis::ui::EffectLevel;
+using borealis::ui::FontFamilyEntry;
 using borealis::ui::FormEntry;
 using borealis::ui::FormValue;
 using borealis::ui::RgbaColor;
@@ -97,6 +121,13 @@ constexpr int kWindowHeight = 600;
 /// `clamp(900-32, 480, 1040) × clamp(600-32, 320, 680)` ＝ 868×568，居中后四周各留 16 dp。
 /// 遮罩命中用例就取这个环带里的一点。
 constexpr float kCardEdgeDp = 16.0F;
+
+/// 通用控件行的两个几何量（`src/ui/settings_panel.cpp` 的 `kRowExtentDp` 与 `build_row` 里那份 `EdgeInsets`
+/// 的上下档）：下面两条下拉用例要把探点摆在「所在行**之外**」，而行的可达框只到控件自己的盒下沿为止（行高
+/// 56 ＝ 内边距 8 + 控件 40 + 内边距 8），故行顶与行底必须由这两个量算出来而不是靠量——量到的是控件的框，
+/// 不是行的框。写常数而不是现问控件：行高与内边距是面板自己的排版契约（判据文 §1），改它就该让用例转红。
+constexpr float kRowExtentDp = 56.0F;
+constexpr float kRowPaddingDp = 8.0F;
 
 /// CJK-LITERAL: locale-output - 断言的是面板上那两枚角标的**最终文案**，换成英文就等价于
 /// 「面板用了别的词条 key」，而那正是本判据要抓的错。词条 key 与表列的对应另由 `i18n` 那条用例守。
@@ -174,6 +205,26 @@ auto check_key_sequence(std::string_view what, const std::vector<std::string> &g
     return out;
 }
 
+/// 回退链容量的真值源在框架头（面板与本套件各取一次而不互抄，与裁决 7.50 的同一分工）：「已达上限」
+/// 与「超出上限」两档提示都把这一个数字经词条的位置参数 `{0}` 交出去。
+constexpr std::size_t kChainCapacity = aurora::render::AURORA_TEXT_FALLBACK_CHAIN_MAX;
+
+/// @brief 把链的视图折成纯族名序列（逐位比次序时不必在每条断言里重复写 `.family`）。
+[[nodiscard]] auto chain_families(const std::vector<SettingsPanel::ChainItem> &items) -> std::vector<std::string> {
+    std::vector<std::string> out;
+    out.reserve(items.size());
+    for (const SettingsPanel::ChainItem &item : items) {
+        out.push_back(item.family);
+    }
+    return out;
+}
+
+/// @brief 回退链的一条判据写法：次序即语义（回退顺序），故逐位比而不是比集合。
+auto check_chain_sequence(std::string_view what, const std::vector<std::string> &got,
+                          const std::vector<std::string> &want) -> void {
+    check_key_sequence(what, got, want);
+}
+
 /// @brief 存储侧与绘制侧的接缝替身：只数「被调了几次」并留下最后一次搬到的配置。
 ///
 /// 落盘走真实的 `config::apply_form()`，于是一条判据同时过「表单 → 成员」的搬运腿；基线随成功落盘
@@ -197,6 +248,18 @@ public:
     /// 清空它就是造出「当前主题名不在候选表里」的现场：没有可比基线，A1-b 的「自定义」与
     /// 「恢复主题默认」的禁用态都由这一档决定。
     std::vector<SettingsPanel::ThemeChoice> theme_choices = builtin_theme_choices();
+    /// @brief 交回面板的字体族目录（缺省是一小张确定表，与装配层交「真实目录」同一形态）。
+    ///
+    /// 用例侧要的只是「候选池随输入收窄」与「链内族名被排除」两条可判行为，故这里给一张小表而不是
+    /// 真去枚举系统字体目录（那是同步 IO，且内容随机器变）。清空它就是造出「一个候选都没有」的现场。
+    std::vector<FontFamilyEntry> family_catalog{
+        FontFamilyEntry{.family = "Cascadia Code", .monospace = true},
+        FontFamilyEntry{.family = "Consolas", .monospace = true},
+        FontFamilyEntry{.family = "DejaVu Sans Mono", .monospace = true},
+        FontFamilyEntry{.family = "Fira Code", .monospace = true},
+        FontFamilyEntry{.family = "JetBrains Mono", .monospace = true},
+        FontFamilyEntry{.family = "Noto Sans Mono", .monospace = true},
+    };
 
     /// @brief 交出一副挂到本替身上的 `Hooks`。
     ///
@@ -232,6 +295,10 @@ public:
             .themes =
                 [this]() -> std::vector<SettingsPanel::ThemeChoice> {
                     return theme_choices;
+                },
+            .families =
+                [this]() -> std::vector<FontFamilyEntry> {
+                    return family_catalog;
                 },
         };
     }
@@ -424,10 +491,10 @@ AURORA_TEST_CASE(deferred_and_next_session_rows_carry_their_badges) {
             const SettingsControl *control = borealis::ui::find_settings_control(row.key);
             AURORA_TEST_REQUIRE(control != nullptr);
             AURORA_TEST_CHECK_EQ(row.badge, expected_badge(*control));
-            // 主题卡与 16 格色板在 #114 第一棒落成可交互区段，故这里只剩三类专用形态仍是占位。
+            // 主题卡与 16 格色板在 #114 第一棒落成可交互区段，回退链在第二棒落成重排区段，
+            // 故这里只剩「字体族下拉（形态待裁决）」与「快捷键只读表」两类专用形态仍是占位。
             AURORA_TEST_CHECK_EQ(row.editable, control->consumer != ConsumerStatus::Absent &&
                                                    control->kind != ControlKind::FontDropdown &&
-                                                   control->kind != ControlKind::FamilyList &&
                                                    control->kind != ControlKind::ReadOnlyTable);
         }
     }
@@ -467,14 +534,12 @@ AURORA_TEST_CASE(dedicated_control_rows_show_a_readonly_summary) {
     AURORA_TEST_REQUIRE(family != nullptr);
     AURORA_TEST_CHECK_FALSE(family->editable);
     AURORA_TEST_CHECK_EQ(family->summary, probe.base.appearance.font_family);
-    // 空回退链的摘要也是空串：它是「不注入按族链」而不是「链上有一个空族名」。
-    AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.font_fallback_chain")->summary.empty());
-    // 主题卡与 16 格色板已落成区段：可交互，且摘要留空——当前色在格子自己的绘制闭包与常驻编辑器里，
-    // 行上再显示一份就是第二个真值源。
+    // 主题卡、16 格色板与回退链三处已落成区段：可交互，且摘要留空——当前值在它们自己的控件里，行上
+    // 再显示一份就是第二个真值源。回退链那条空链显示的也不是「空摘要」而是「空列表 + 一句提示」，
+    // 故它满足的是下面那条「可交互行摘要一律留空」的通则，这里只把它从占位行的名单里摘出来。
     AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.theme")->editable);
     AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.palette.basic")->editable);
-    // 空回退链的摘要也是空串：它是「不注入按族链」而不是「链上有一个空族名」。
-    AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.font_fallback_chain")->summary.empty());
+    AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.font_fallback_chain")->editable);
     // 可交互行的摘要一律留空——值在它自己的控件里，两处同时显示就是第二个真值源。
     // 只判这一个方向：占位行的摘要可以是空串（缺省值本就是空文本的 FreeText 与空回退链都是）。
     for (const SettingsPanel::VisibleRow &row : rows) {
@@ -821,6 +886,115 @@ AURORA_TEST_CASE(a_changed_slot_puts_customized_on_the_theme_row_not_a_tenth_car
     AURORA_TEST_CHECK_EQ(find_row(panel.visible_rows(), "appearance.theme")->badge, std::string{kBadgeCustomized});
 }
 
+/// @brief 回退链区段把表单里的那份链**逐位**投影成条目，并按链长给出四档提示中的相应一档。
+///
+/// 判据取「视图 ＝ 表单的投影」而不是「视图 ＝ 控件树的状态」：链的唯一权威是 `form_`（裁决 7.52 的 S3①），
+/// 次序即语义（回退顺序），故逐位比而不是比集合。四档提示里两档带位置参数（上限数），用例侧按同一个
+/// 框架常量独立复算，而不是把数字抄进断言。
+AURORA_TEST_CASE(the_chain_section_projects_the_form_and_the_hint_tracks_its_length) {
+    borealis::ui::install_settings_strings();
+    StoreProbe probe;
+    probe.base.appearance.font_fallback_chain = {"Fira Code", "Consolas", "Cascadia Code"};
+    au::Node root;
+    std::shared_ptr<au::Widget> base;
+    std::shared_ptr<au::OverlayHost> host = make_host(base, root);
+    au::ShortcutRegistry shortcuts;
+    SettingsPanel panel{*host, shortcuts, probe.hooks()};
+    panel.open();
+
+    const SettingsPanel::ChainView chain = panel.chain_view();
+    check_chain_sequence("chain entries", chain_families(chain.items),
+                         {"Fira Code", "Consolas", "Cascadia Code"});
+    // 首项没有「上移」、末项没有「下移」——与 `move_chain_item()` 的越界不动是同一判据的两道（7.38⑥ F-b）。
+    AURORA_TEST_CHECK_FALSE(chain.items[0].can_move_up);
+    AURORA_TEST_CHECK_TRUE(chain.items[0].can_move_down);
+    AURORA_TEST_CHECK_TRUE(chain.items[2].can_move_up);
+    AURORA_TEST_CHECK_FALSE(chain.items[2].can_move_down);
+    AURORA_TEST_CHECK_FALSE(chain.at_capacity);
+    AURORA_TEST_CHECK_TRUE(chain.hint.empty());  // 有链、未达上限、没有过滤文本：无提示
+
+    // 空链那一档：它是「不注入按族链」而不是「链上有一个空族名」，故提示必须显式说出来。
+    AURORA_TEST_CHECK_EQ(panel.commit("appearance.font_fallback_chain", FormValue::text_list({})), CommitIssue::None);
+    AURORA_TEST_CHECK_TRUE(panel.chain_view().items.empty());
+    AURORA_TEST_CHECK_EQ(panel.chain_view().hint, borealis::ui::settings_label("settings.chain.empty"));
+
+    // 恰达上限：追加口关死，提示说的是「已达上限」。
+    std::vector<std::string> full;
+    for (std::size_t i = 0; i < kChainCapacity; ++i) {
+        full.push_back("Family " + std::to_string(i));
+    }
+    AURORA_TEST_CHECK_EQ(panel.commit("appearance.font_fallback_chain", FormValue::text_list(full)),
+                         CommitIssue::None);
+    AURORA_TEST_REQUIRE_EQ(panel.chain_view().items.size(), kChainCapacity);
+    AURORA_TEST_CHECK_TRUE(panel.chain_view().at_capacity);
+    AURORA_TEST_CHECK_EQ(panel.chain_view().hint,
+                         borealis::ui::settings_label("settings.chain.full",
+                                                      {au::LocalizedString{std::to_string(kChainCapacity)}}));
+
+    // 超出上限：本件**不裁数据**（擅自裁到前 N 项会让用户改别的一行时把存储里那几条静默抹掉），
+    // 故这里既判「全量仍在」也判「提示换档」，两档必须互异——只判非空会被「提示写错档」读成绿。
+    full.push_back("Family over");
+    AURORA_TEST_CHECK_EQ(panel.commit("appearance.font_fallback_chain", FormValue::text_list(full)),
+                         CommitIssue::None);
+    AURORA_TEST_REQUIRE_EQ(panel.chain_view().items.size(), kChainCapacity + 1U);
+    AURORA_TEST_CHECK_TRUE(panel.chain_view().at_capacity);
+    AURORA_TEST_CHECK_EQ(panel.chain_view().hint,
+                         borealis::ui::settings_label("settings.chain.truncated",
+                                                      {au::LocalizedString{std::to_string(kChainCapacity)}}));
+    AURORA_TEST_CHECK_TRUE(panel.chain_view().hint != borealis::ui::settings_label(
+                             "settings.chain.full", {au::LocalizedString{std::to_string(kChainCapacity)}}));
+}
+
+/// @brief 一次改链 ＝ 一次落盘 + 一次即时广播（该键 `Wired ∧ Immediate`，判据文 A5-a 的那条计数线）。
+///
+/// 「切主题实现成逐键提交就是六次写文件」那条主题卡判据在回退链上的对应形态：一次结构性改动若拆成
+/// 逐键提交，运行中的视口就会被 N 份半成品链各广播一次。
+AURORA_TEST_CASE(a_chain_structural_change_persists_once_and_broadcasts_once) {
+    borealis::ui::install_settings_strings();
+    StoreProbe probe;
+    au::Node root;
+    std::shared_ptr<au::Widget> base;
+    std::shared_ptr<au::OverlayHost> host = make_host(base, root);
+    au::ShortcutRegistry shortcuts;
+    SettingsPanel panel{*host, shortcuts, probe.hooks()};
+    panel.open();
+
+    const SettingsControl *control = borealis::ui::find_settings_control("appearance.font_fallback_chain");
+    AURORA_TEST_REQUIRE(control != nullptr);
+    // 前置条件：这条判据之所以能同时要求「广播一次」，是因为该键既已接线又属即时生效档。
+    AURORA_TEST_CHECK_EQ(borealis::ui::apply_scope(*control), ApplyScope::PersistAndApplyNow);
+
+    AURORA_TEST_CHECK_EQ(panel.commit("appearance.font_fallback_chain",
+                                       FormValue::text_list({"Consolas", "Cascadia Code"})),
+                         CommitIssue::None);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 1U);
+    AURORA_TEST_CHECK_FALSE(panel.form().has_unsaved_changes());
+    AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 1U);
+    check_chain_sequence("what actually got written", probe.persisted.front().appearance.font_fallback_chain,
+                         {"Consolas", "Cascadia Code"});
+    AURORA_TEST_REQUIRE_EQ(probe.broadcast.size(), 1U);
+    check_chain_sequence("what the viewport was handed", probe.broadcast.front().appearance.font_fallback_chain,
+                         {"Consolas", "Cascadia Code"});
+
+    // 把同一条链原样再交一次：脏标记按值比较，故这一次既不写盘也不广播（链形态上的 S3①）。
+    // 这里不写「改回装载的那一份」——成功落盘已把基线推进到刚写出的那份，改回去相对新基线是一次真改动
+    // （那一条腿由 `a_reverted_change_neither_persists_nor_broadcasts` 以失败落盘守住基线不动的形态）。
+    AURORA_TEST_CHECK_EQ(panel.commit("appearance.font_fallback_chain",
+                                      FormValue::text_list({"Consolas", "Cascadia Code"})),
+                         CommitIssue::None);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 1U);
+    AURORA_TEST_CHECK_FALSE(panel.form().has_unsaved_changes());
+
+    // 清空是相对基线的真改动：再落一次，且写出去的那份就是空链。
+    AURORA_TEST_CHECK_EQ(panel.commit("appearance.font_fallback_chain", FormValue::text_list({})), CommitIssue::None);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 2U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 2U);
+    AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 2U);
+    check_chain_sequence("the emptied chain", probe.persisted[1].appearance.font_fallback_chain, {});
+}
+
 #ifdef AURORA_BACKEND_HEADLESS
 
 namespace {
@@ -1038,6 +1212,59 @@ public:
 
     [[nodiscard]] auto overlay_count() const -> std::size_t { return host_->overlay_count(); }
 
+    /// @brief 面板登记的快捷键表（`Escape` 的交接腿要经它派发，与 `open()` 登记的是同一份）。
+    [[nodiscard]] auto shortcuts() -> au::ShortcutRegistry & { return shortcuts_; }
+
+    /// @brief 量出该控件可达框的心点（先确认「派发链在这一点上确实交回它」）。
+    ///
+    /// 真实点击的坐标一律由此推，而不是控件自己的 `paint_bounds()`：行区是 `Scroll` 之后那份 bounds 是
+    /// 内容坐标（见 `reachable_box` 的注），拿它当窗口坐标点就会点错一行。
+    /// @param widget 期望命中的控件。
+    /// @param x_dp 已知命中它的一点的横坐标（`find_first` 给出）。
+    /// @param y_dp 已知命中它的一点的纵坐标。
+    /// @return 框心（窗口坐标）；该控件不可达时为空。
+    [[nodiscard]] auto pointer_to(au::Widget *widget, float x_dp, float y_dp) -> std::optional<au::Point> {
+        if (widget == nullptr) {
+            return std::nullopt;
+        }
+        const au::Rect box = reachable_box(widget, x_dp, y_dp);
+        const au::Point center{.x = box.origin.x + box.size.width * 0.5F, .y = box.origin.y + box.size.height * 0.5F};
+        AURORA_TEST_REQUIRE_MSG(hit(center.x, center.y) == widget, "the computed center is not claimed by the widget");
+        return center;
+    }
+
+    /// @brief 向当前焦点控件发一段真实文本输入（不经 `set_value()`——那条路不触发 `on_changed`）。
+    ///
+    /// 框架的 `TextInputEvent` 只投递给 `FocusManager::focused()`，故调用前须先真点击那一格把焦点交过去；
+    /// 焦点不在本件上时派发返回 false，用例据此转红而不是静默写进别的控件。
+    /// @param text UTF-8 文本片段（逐字符喂入以走真实编辑路径）。
+    /// @return 是否被焦点控件消费。
+    [[nodiscard]] auto type(std::string_view text) -> bool {
+        bool handled = false;
+        for (const char ch : text) {
+            au::TextInputEvent event;
+            event.text = std::string(1U, ch);
+            handled = au::EventDispatcher::dispatch(root_.widget(), event, focus_) || handled;
+        }
+        return handled;
+    }
+
+    /// @brief 焦点管理器（回退链的键盘抓取腿要把焦点交给列表本体，与 `src/main.cpp` 派初始焦点同一条入口）。
+    [[nodiscard]] auto focus_manager() -> au::FocusManager & { return focus_; }
+
+    /// @brief 向当前焦点控件发一次真实按键（`Down`；键盘重排与文本腿都经这条派发）。
+    ///
+    /// 走 `EventDispatcher` 而不是直接调控件的 `on_key_event`：后者绕过了「本控件是否认领这一键」那道闸
+    /// （`wants_navigation_keys()` / `wants_activation_keys()`），而回退链的键盘腿恰恰由那道闸决定。
+    /// @param key 框架键码。
+    /// @return 是否被焦点控件消费。
+    [[nodiscard]] auto press(au::KeyCode key) -> bool {
+        au::KeyEvent event;
+        event.key = static_cast<int>(key);
+        event.action = au::KeyAction::Down;
+        return au::EventDispatcher::dispatch(root_.widget(), event, focus_);
+    }
+
 private:
     [[nodiscard]] static auto make_window() -> au::Window {
         auto surface = std::make_unique<au::HeadlessSurface>();
@@ -1053,6 +1280,83 @@ private:
     au::ShortcutRegistry shortcuts_;
     aurora::EventDispatcher dispatcher_;  ///< 本驱动台私有的连击判定与指针捕获状态。
 };
+
+/// 回退链那一行的三种按钮，按本件交出的指针取（不是按坐标取：坐标要经区段高度与滚动偏移两处换算）。
+enum class ChainButton {
+    Up,
+    Down,
+    Remove,
+};
+
+/// @brief 把链区段的按钮送进派发可见带，并交回「真实派发命中它」的那一点与可达框。
+///
+/// 外观页在 #114 之后被主题卡与 16 格色板两个区段把通用行整体下推，回退链排在两者之后，故 offset 0 的
+/// 可见带里根本没有它（`a_row_control_still_commits_after_the_row_area_has_been_scrolled` 在同一现象下
+/// 写过一条滚轮腿）。**滚到哪一档不是判据**，所以这里每滚一段就重新做一次真实派发扫描，命中即止；
+/// 一次都扫不到时返回空 `HitSpot`，由调用点的 `REQUIRE(spot.widget != nullptr)` 转红。
+/// 一轮 12 格（无头环境一格实测 16 dp ⇒ 192 dp）而上限 20 轮：七条条目时过滤框已深到约 1300 dp，
+/// 原来五轮（960 dp）就够不着了，而步长不会跳过目标——可见带 506 dp、链区段里最小的一件控件也有 32 dp，
+/// 二者之和远大于 192 dp。
+/// @param h 驱动台。
+/// @param panel 面板（按钮指针表在每次结构变更后重建，故按当前值现取）。
+/// @param which 取哪一档按钮。
+/// @param index 条目序号（与链内次序同序）。
+/// @return 该按钮的命中点与窗口坐标下的可达框；未找到时 `widget` 为空。
+[[nodiscard]] auto reveal_chain_button(Harness &h, SettingsPanel &panel, ChainButton which, std::size_t index)
+    -> HitSpot {
+    HitSpot spot;
+    for (int attempt = 0; attempt < 20 && spot.widget == nullptr; ++attempt) {
+        au::Widget *const want = which == ChainButton::Up ? panel.chain_up_button(index)
+                                   : which == ChainButton::Down ? panel.chain_down_button(index)
+                                                                : panel.chain_remove_button(index);
+        if (want != nullptr) {
+            spot = h.find_first("Button", 0.0F, [want](au::Widget *widget) -> bool { return widget == want; });
+        }
+        if (spot.widget == nullptr) {
+            for (int notch = 0; notch < 12; ++notch) {
+                h.scroll(450.0F, 300.0F, -1.0F);  // 负方向是往下滚（`ScrollViewport` 的符号约定）
+            }
+            h.render();
+        }
+    }
+    return spot;
+}
+
+/// @brief 链区段的候选池按钮：同样要先把它送进可见带（池在列表之下，比按钮那一段更靠下）。
+[[nodiscard]] auto reveal_chain_candidate(Harness &h, SettingsPanel &panel, std::size_t slot) -> HitSpot {
+    HitSpot spot;
+    for (int attempt = 0; attempt < 20 && spot.widget == nullptr; ++attempt) {
+        au::Widget *const want = panel.chain_candidate(slot);
+        if (want != nullptr) {
+            spot = h.find_first("Button", 0.0F, [want](au::Widget *widget) -> bool { return widget == want; });
+        }
+        if (spot.widget == nullptr) {
+            for (int notch = 0; notch < 12; ++notch) {
+                h.scroll(450.0F, 300.0F, -1.0F);
+            }
+            h.render();
+        }
+    }
+    return spot;
+}
+
+/// @brief 把链区段的过滤框送进可见带并交回那一点（过滤框在列表之左下一档，滚动量与按钮那一段同源）。
+[[nodiscard]] auto reveal_chain_filter(Harness &h, SettingsPanel &panel) -> HitSpot {
+    HitSpot spot;
+    for (int attempt = 0; attempt < 20 && spot.widget == nullptr; ++attempt) {
+        au::Widget *const want = panel.chain_filter_input();
+        if (want != nullptr) {
+            spot = h.find_first("TextInput", 0.0F, [want](au::Widget *widget) -> bool { return widget == want; });
+        }
+        if (spot.widget == nullptr) {
+            for (int notch = 0; notch < 12; ++notch) {
+                h.scroll(450.0F, 300.0F, -1.0F);
+            }
+            h.render();
+        }
+    }
+    return spot;
+}
 
 }  // namespace
 
@@ -1205,20 +1509,115 @@ AURORA_TEST_CASE(clicking_an_open_dropdown_option_in_its_own_extra_hit_box_commi
     AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());  // 落盘成功后脏标记已推进
 }
 
-/// @brief G29 的回货只闭合了一层：面板伸出**所在行之外**的那一段仍进不了派发链（新登记缺口 G30）。
+/// @brief G30 的回货复验（正向）：面板伸出**所在行之外**的那一段进得了派发链。
 ///
-/// 追加命中盒的申报是**逐层只问直接子**的，孙辈的申报不随祖先上传。本件的嵌套是
-/// `Scroll → Column → Row → Dropdown`（行区容器由 `LazyList` 改为 `Scroll` + `Column` 之后，`Dropdown`
-/// 从「直接子」降成「孙辈」，而 `Column` 的下降闸问的是那一行 `Row` 自己的申报），故面板只有「还落在
-/// 该行 bounds 内」的那一段可点：行高 56 dp、上下内边距各 8 dp，布局盒下沿再往下 8 dp 就到行的尽头，
-/// 而面板贴着盒下沿还有整条一条选项（高 26 dp）。本例取 +12 dp 处，即行下沿之外 4 dp。
+/// 本例曾是「G29 的回货只闭合一层」的钉子（裁决 7.59⑤ 在册，并明写「追加盒沿祖先链并成子树并集回货后
+/// 本例必须转红」）。回货形态是 `covers_extra_hit_box()` 从「只问直接子自己申报」升级为**子树聚合**：
+/// 自身那份申报 ∪ 逐子节点按 `bounds().origin` 折算后递归问同一入口，而折算式与 `on_hit_test_chain` 的
+/// 下降式逐字同构。本件的嵌套是 `Scroll → Column → Row → Dropdown`，登记时门就断在 `Column` / `Row` 那两层
+/// 不申报（控件说自己可达、祖先说不可达），故面板只有仍落在行盒内的那一段可达。聚合之后孙辈的申报随祖先
+/// 上传，那一段因此可达——本例判的正是这一条，而且**只判这一条**。
 ///
-/// 三条断言合起来是**这条缺口的形态证明**而不是「没点上」的观测：控件申报覆盖、控件自己的兼容入口也认，
-/// 唯独祖先下降闸不认。追加盒沿祖先链并成子树并集回货后本例必须转红。
+/// 为什么把「真实单击即提交」那一半留给下一条用例而不是写在本例里：回货闭合的是「可达」，那一点上的点击
+/// 落进哪一条选项带归**派发本地化**管，而后者撞出一处新病灶（附录 A.2 的 **G31**：祖先的内边距平移没进
+/// `HitNode.origin`）。两件事各自有证人，合成一例就会让 G31 回货时不知道该翻哪一半。
 ///
-/// 一条反空转前提已经做成断言：探点在视口下沿之上（`find_first` 的 40 dp 余量只是挑行启发，见其参数注），
-/// 故它测的是「祖先闸不认」而不是 `Scroll` 的视口裁剪——后者会把肉眼不可见的那一段一并判成不可达，那种绿是假绿。
-AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_is_still_not_dispatch_reachable_G30) {
+/// 三条前提照旧逐条钉住，只是第三条换了方向：① 控件自己申报覆盖；② 探点既在自身布局盒**之外**、也在
+/// **所在行的可达框之外**（行高 56 dp、上下内边距各 8 dp；仍属本行的那一段由上一条 G29 用例守，拿它翻
+/// 正向等于什么都没翻）；③ 探点在**视口**之内——`Scroll` 的聚合覆写带视口钳位，视口外那段的不可达测的是
+/// 裁剪而不是祖先链，那种红/绿都算假。回货同批给 `Dropdown` 加了限高 / 翻转 / 滚动，本行两档共 52 dp 远在
+/// 视口高之内，故本例判的仍是「那一段可达」而不是滚动偏移。
+AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_now_reaches_the_dispatch_chain_G30) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    probe.base.terminal.ambiguous_width = borealis::term::AmbiguousWidth::Wide;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    panel->select_page(SettingsPage::Terminal);
+    h.render();
+    const HitSpot spot = h.find_first("Dropdown", 40.0F, [](au::Widget *widget) -> bool {
+        const auto *dropdown = dynamic_cast<au::Dropdown *>(widget);
+        return dropdown != nullptr && dropdown->option_count() == 2U;
+    });
+    AURORA_TEST_REQUIRE(spot.widget != nullptr);
+    auto *dropdown = dynamic_cast<au::Dropdown *>(spot.widget);
+    AURORA_TEST_REQUIRE(dropdown != nullptr);
+    AURORA_TEST_REQUIRE_EQ(dropdown->selected_index(), 1);
+
+    // 闭态先量出所在行：沿派发链从最深一格往回找最近的一个 `Row`（行区的嵌套是 `Scroll → Column → Row`）。
+    // 取它的**记录 origin**当行盒顶，并由下面那条 `spot.box.origin.y - row_top == 8` 证明这个读数就是行的
+    // 绘制顶——行自己上没有平移（平移只发生在它给子节点的那一段），故这一层的 origin 与绘制顶逐字相等。
+    const std::vector<au::HitNode> closed = h.chain_at(spot.x, spot.y);
+    const au::HitNode *row_node = nullptr;
+    for (std::size_t i = closed.size(); i-- > 1;) {
+        if (std::string_view{closed[i].ptr->type_name()} == std::string_view{"Row"}) {
+            row_node = &closed[i];
+            break;
+        }
+    }
+    AURORA_TEST_REQUIRE(row_node != nullptr);
+    const float row_top = row_node->origin.y;
+
+    h.click(spot.x, spot.y);
+    h.render();
+    AURORA_TEST_REQUIRE(dropdown->is_open());
+
+    const au::Rect layout = dropdown->paint_bounds();  // 只取它的**尺寸**：那是控件自身坐标空间里的量
+    const float option_x = spot.box.origin.x + layout.size.width * 0.5F;
+    const au::Point local{.x = layout.size.width * 0.5F, .y = layout.size.height + 12.0F};
+    const float option_y = spot.box.origin.y + local.y;
+    const au::BuildContext ctx{};
+
+    AURORA_TEST_REQUIRE(std::abs(spot.box.size.height - layout.size.height) <= 1.0F);
+    // 行的绘制顶 ＝ 下拉的绘制顶 − 行的上内边距（8 dp）。这一句同时钉住两件事：本例用的行顶读数与绘制同源，
+    // 以及「行给子节点留的那 8 dp」在下拉的命中坐标空间里确实存在——G31 的病灶正是这份量没进 origin。
+    AURORA_TEST_REQUIRE_MSG(std::abs(spot.box.origin.y - row_top - kRowPaddingDp) <= 1.0F,
+                            "the enclosing row's recorded origin is not its painted top");
+    // 反空转：探点在视口之内（视口下沿＝卡片下沿＝窗口下沿减 `kCardEdgeDp`）。
+    AURORA_TEST_REQUIRE_MSG(option_y < static_cast<float>(kWindowHeight) - kCardEdgeDp,
+                            "the probe point is outside the scroll viewport");
+    // 反空转：探点确在**所在行之外**——少了这一句，本例就退化成重复上一条 G29 用例守的那一段。
+    AURORA_TEST_REQUIRE_MSG(option_y > row_top + kRowExtentDp, "the probe point is still inside the enclosing row");
+    AURORA_TEST_REQUIRE_MSG(dropdown->covers_extra_hit_box(local, ctx), "the open panel does not cover the probed point");
+    AURORA_TEST_REQUIRE_MSG(local.y >= layout.size.height, "the probed point is inside the widget's own layout box");
+
+    // 回货前后唯一翻转的那一句：登记时按链走场景根拿到的是祖先（行），回货后是这只下拉自己。
+    AURORA_TEST_REQUIRE_MSG(h.hit(option_x, option_y) == static_cast<au::Widget *>(dropdown),
+                            "the extra hit box still does not propagate up the ancestor chain");
+    // 而且是以「祖先开闸 + 自身入链」两段的合取进来的：链上仍留着那一行作为它的祖先。
+    const std::vector<au::HitNode> open = h.chain_at(option_x, option_y);
+    AURORA_TEST_REQUIRE_EQ(open.back().ptr, static_cast<au::Widget *>(dropdown));
+    AURORA_TEST_REQUIRE(std::any_of(open.begin(), open.end(),
+                                    [row_node](const au::HitNode &node) { return node.ptr == row_node->ptr; }));
+    // 面板未被限高/翻转（回货同批新增的两条）：本行两档共 52 dp 远在一个 506 dp 的视口之内。
+    AURORA_TEST_REQUIRE_EQ(dropdown->selected_index(), 1);
+    AURORA_TEST_CHECK_TRUE(dropdown->is_open());
+}
+
+/// @brief G31 的病灶证人（现状钉子）：祖先的内边距平移没进 `HitNode.origin`，于是派发本地坐标与绘制位置错位。
+///
+/// 上一条用例证明那一段**可达**，本条证明可达之后**点不准**，两者是两件事：G30 的回货只动祖先闸，而这里
+/// 判的是派发器把窗口坐标折成控件本地坐标所用的那份 origin。读源与实测两条同向（不是推断）：
+/// ① 绘制侧 `Widget::render_into` 给子节点的是 `local.origin + tf.translation`（`src/aurora/widget/widget.cpp`
+///    恒等快速路径），`Modifier::transform` 把 `Padding` / `PaddingEdges` / `Align` / `Offset` 折进
+///    `translation`（`src/aurora/modifier/modifier.cpp`）；
+/// ② 命中侧 `Container::on_hit_test_chain` 下传的全局 origin 是 `bounds.origin + cb.origin`，**没有**同一份
+///    `translation`，而下降时判定子节点包含关系用的却是已经减掉平移的 `local_adj`。于是「按链可达」与
+///    「到达后本地坐标」两套读数各算一份，差值恰是沿途累计的内边距/对齐平移；
+/// ③ 派发器逐节点写 `e.local_position = e.position - node.origin`（`src/aurora/event/dispatcher.cpp`），
+///    所以控件收到的是 ② 那份、与 ① 画出来的位置错位。
+///
+/// 实测的差值是 **8 dp**（本仓每一行 `Modifier{}.padding(EdgeInsets{8,...})` 的上内边距），且逐节点 origin
+/// 相等可直接看出：链上那只下拉的 origin 与**它所在行**的 origin 同一个 y，而它的绘制顶低 8 dp。多数控件
+/// 只在「命中/未命中」上用本地坐标，这一格错位不可见；带**细粒度分带**的控件就现形——`Dropdown` 按
+/// `local.y` 反算选项序号，于是点击落在某条选项带的下沿 8 dp 时选中**下一条**，真机上就是「照着下沿点却
+/// 选错档」。同一条算式还被本仓面板的把手拖拽与步进共用，故本例把它做成 origin 的形态证明而不是「没点上」：
+/// 回货后差值归零，本例转红，正半（真点行外那一段即提交）随 `G30` 那条用例一起翻。
+///
+/// 刻意**不**写成本仓的规避：改行内边距、把下拉挪出 padding、或换 `Popup` 挂载点都是「绕」（裁决 7.13①
+/// 的不等不绕口径），且第 ② 条是公共 API 契约层面的不对称，任何消费者都会踩。
+AURORA_TEST_CASE(the_dispatched_local_position_of_a_padded_row_child_is_shifted_G31) {
     borealis::ui::install_settings_strings();
     Harness h;
     StoreProbe probe;
@@ -1235,33 +1634,42 @@ AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_is_still_not_dispatch_
     auto *dropdown = dynamic_cast<au::Dropdown *>(spot.widget);
     AURORA_TEST_REQUIRE(dropdown != nullptr);
 
+    const std::vector<au::HitNode> closed = h.chain_at(spot.x, spot.y);
+    const au::HitNode *row_node = nullptr;
+    for (std::size_t i = closed.size(); i-- > 1;) {
+        if (std::string_view{closed[i].ptr->type_name()} == std::string_view{"Row"}) {
+            row_node = &closed[i];
+            break;
+        }
+    }
+    AURORA_TEST_REQUIRE(row_node != nullptr);
+
     h.click(spot.x, spot.y);
     h.render();
     AURORA_TEST_REQUIRE(dropdown->is_open());
 
-    const au::Rect layout = dropdown->paint_bounds();  // 只取它的**尺寸**：那是控件自身坐标空间里的量
+    const au::Rect layout = dropdown->paint_bounds();
     const float option_x = spot.box.origin.x + layout.size.width * 0.5F;
     const au::Point local{.x = layout.size.width * 0.5F, .y = layout.size.height + 12.0F};
     const float option_y = spot.box.origin.y + local.y;
-    const au::BuildContext ctx{};
 
-    AURORA_TEST_REQUIRE(std::abs(spot.box.size.height - layout.size.height) <= 1.0F);
-    // 反空转：探针点在视口之内（少了这一句，下面那句「不可达」就可能测的是 `Scroll` 的视口裁剪而非祖先闸）。
-    AURORA_TEST_REQUIRE_MSG(option_y < static_cast<float>(kWindowHeight) - kCardEdgeDp,
-                            "the probe point is outside the scroll viewport");
-    // 反空转：探点上有控件认领（视口之下或卡片之外的点也会「不是下拉」，那种绿证的是裁剪而不是闸）。
-    AURORA_TEST_REQUIRE_MSG(h.hit(option_x, option_y) != nullptr, "the probe point is claimed by nobody");
-    AURORA_TEST_REQUIRE_MSG(dropdown->covers_extra_hit_box(local, ctx), "the open panel does not cover the probed point");
-    // 兼容入口与祖先闸共用同一份 `panel_box()`，故它认——「控件认、闸不认」的分叉正是本条缺口的内容。
-    AURORA_TEST_REQUIRE_MSG(dropdown->hit_test(local, layout, ctx) == static_cast<au::Widget *>(dropdown),
-                            "the widget's own hit test does not claim the point either");
-    AURORA_TEST_CHECK_MSG(h.hit(option_x, option_y) != static_cast<au::Widget *>(dropdown),
-                          "G30 closed: the extra hit box now propagates up the ancestor chain");
-    // 既成事实的另一半：面板画在那里、点了没反应——既不选中也不提交。
+    // 病灶本体：那只下拉在链上的 origin 就是**它所在行**的 origin，行给它的 8 dp 上内边距没被带下来。
+    const std::vector<au::HitNode> open = h.chain_at(option_x, option_y);
+    AURORA_TEST_REQUIRE_EQ(open.back().ptr, static_cast<au::Widget *>(dropdown));
+    AURORA_TEST_CHECK_EQ(open.back().origin.y, row_node->origin.y);
+    // 与绘制顶相差一份内边距（`spot.box` 是真实派发量出来的可达框，即绘制顶）。差值取整 dp 判等：可达框按
+    // 1 dp 步进量化，故两侧各允许 1 dp 余量。
+    AURORA_TEST_CHECK_NEAR(spot.box.origin.y - open.back().origin.y, kRowPaddingDp, 1.0F);
+    // 于是派发器写给该控件的本地纵坐标比它自己的绘制坐标大 8 dp：这一点在绘制空间里落在第一条选项带
+    // （窗口 [绘制顶 + 30, 绘制顶 + 56)）内，而在 origin 反算出的坐标空间里已经越到第二条带。
+    AURORA_TEST_CHECK_GT(option_y - open.back().origin.y, layout.size.height + kRowPaddingDp);
+    // 后果（佐证，非承重判据）：那一点上的真实单击既不选中另一档，也不将提交交回表单。
     h.click(option_x, option_y);
     h.render();
     AURORA_TEST_CHECK_EQ(dropdown->selected_index(), 1);
+    AURORA_TEST_CHECK_FALSE(dropdown->is_open());
     AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
 }
 
 /// @brief 行区滚下去之后仍然点得动：滚动偏移非零时，按量出来的新位置真点一行开关即提交。
@@ -1689,6 +2097,260 @@ AURORA_TEST_CASE(an_unlisted_theme_name_disables_the_reset_button) {
     AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
 }
 
+/// @brief 真点链行的下移 / 上移 / 移除三枚按钮：次序当场改变，且一次结构变更恰落盘一次、恰广播一次。
+///
+/// 换位判据为什么落在按钮而不在拖拽：无头通道不跑帧泵，框架 `ReorderableList::end_drag()` 只在
+/// `reduce_motion` 或位移不足半格时立即结算，指针拖拽的落位因此在本通道不可判（文件头⑩）。按钮与键盘
+/// 是两条同步路径，本例走按钮、`escape_releases_...` 那条走键盘。
+///
+/// 三枚按钮全落在 48 dp 手柄带之左（`set_drag_handle(true)` 让列表把右侧那条带收作自己的起拖区，带内的
+/// 落点连条目都拿不到），故这里按**指针身份**取按钮而不是按坐标猜：`reveal_chain_button` 在真实派发上量
+/// 出可达框，行区是 `Scroll` 之后内容子节点的 bounds 是内容坐标，拿它当窗口坐标点就会点错一行。
+///
+/// 首项的上移只判形态（`Button::wants_click()` 即 `enabled && on_click`，禁用者不进命中链，故"真点它"
+/// 在结构上不存在——同 `an_unlisted_theme_name_disables_the_reset_button` 的口径，不伪造点击）。
+/// 每次结构变更后条目都重建，按钮指针表跟着换序，故下一枚要重新按身份找。
+AURORA_TEST_CASE(clicking_the_chain_move_buttons_reorders_and_removes_with_one_commit_each) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    probe.base.appearance.font_fallback_chain = {"Fira Code", "Consolas", "Cascadia Code"};
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    AURORA_TEST_REQUIRE_MSG(panel->chain_list() != nullptr, "the chain section was not built");
+    AURORA_TEST_REQUIRE(panel->chain_up_button(0) != nullptr);
+    AURORA_TEST_CHECK_FALSE(panel->chain_up_button(0)->wants_click());  // 首项无「上移」
+    AURORA_TEST_REQUIRE(panel->chain_down_button(0) != nullptr);
+    AURORA_TEST_CHECK_TRUE(panel->chain_down_button(0)->wants_click());
+
+    const HitSpot down_first = reveal_chain_button(h, *panel, ChainButton::Down, 0);
+    AURORA_TEST_REQUIRE_MSG(down_first.widget != nullptr, "the chain's down button is not dispatch-reachable");
+    h.click(down_first.x, down_first.y);
+    h.render();
+    check_chain_sequence("after moving the head down", chain_families(panel->chain_view().items),
+                         {"Consolas", "Fira Code", "Cascadia Code"});
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 1U);  // 该键 `Wired ∧ Immediate`：一次改链一次广播
+    AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 1U);
+    // 落点归属由写出去的那一份配置说话（次序即回退顺序，故逐位比）。
+    check_chain_sequence("what the move wrote", probe.persisted.front().appearance.font_fallback_chain,
+                         {"Consolas", "Fira Code", "Cascadia Code"});
+    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
+
+    const HitSpot up_second = reveal_chain_button(h, *panel, ChainButton::Up, 1);
+    AURORA_TEST_REQUIRE_MSG(up_second.widget != nullptr, "the rebuilt row's up button is not dispatch-reachable");
+    h.click(up_second.x, up_second.y);
+    h.render();
+    check_chain_sequence("moved back", chain_families(panel->chain_view().items),
+                         {"Fira Code", "Consolas", "Cascadia Code"});
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 2U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 2U);
+
+    const HitSpot remove_head = reveal_chain_button(h, *panel, ChainButton::Remove, 0);
+    AURORA_TEST_REQUIRE_MSG(remove_head.widget != nullptr, "the rebuilt row's remove button is not dispatch-reachable");
+    h.click(remove_head.x, remove_head.y);
+    h.render();
+    check_chain_sequence("after removing the head", chain_families(panel->chain_view().items),
+                         {"Consolas", "Cascadia Code"});
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 3U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 3U);
+    // 可用性是「序号 × 条目数」的函数：移除之后新末项的下移跟着禁用，而首项的上移仍禁用。
+    AURORA_TEST_REQUIRE(panel->chain_down_button(1) != nullptr);
+    AURORA_TEST_CHECK_FALSE(panel->chain_down_button(1)->wants_click());
+    AURORA_TEST_CHECK_TRUE(panel->chain_view().items[1].can_move_up);
+    AURORA_TEST_CHECK_FALSE(panel->chain_view().items[1].can_move_down);
+}
+
+/// @brief 过滤框：键入只收窄候选池，内容**永不进表单**；点一条候选才是一次结构变更。
+///
+/// 三条腿各钉一件事：
+/// ① 键入本身既不落盘也不广播（`chain_filter_` 是普通 `TextInput` 而非失焦提交的 `BlurCommitText`——
+///    失焦提交会把一串族名当成配置值写进表单，文件头「添加族」段）；
+/// ② 已在链内的族名**不再给第二次追加口**（本例的目录里含 `"co"` 的族有三档，池里只有两档，
+///    第三档 `Fira Code` 正在链内）；
+/// ③ 刚追加成功的那一档随即从池里消失（同一个排除判据的动态形态），于是「过滤非空 ∧ 零档」把提示推到
+///    「没有匹配」那一档（与「空链」「已达上限」「已被截断」互异，四档提示的互异性由
+///    `the_chain_section_projects_the_form_and_the_hint_tracks_its_length` 判）。
+///
+/// 键入走真实 `TextInputEvent` 派发（先真点过滤框把焦点交过去），因为框架 `TextInput::set_value()`
+/// 不触发 `on_changed`——那条通道写进去本件读不到，判据就成了假的（裁决 7.56 在册的那条边界）。
+AURORA_TEST_CASE(typing_in_the_chain_filter_narrows_the_pool_without_touching_the_form) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    probe.base.appearance.font_fallback_chain = {"Fira Code"};
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    const HitSpot filter = reveal_chain_filter(h, *panel);
+    AURORA_TEST_REQUIRE_MSG(filter.widget != nullptr, "the chain's filter box is not dispatch-reachable");
+    h.click(filter.x, filter.y);  // 焦点交给过滤框（`TextInputEvent` 只投给 focused）
+    h.render();
+    AURORA_TEST_REQUIRE_MSG(h.type("co"), "the filter box did not take the typed text");
+    h.render();
+
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
+    const SettingsPanel::ChainView filtered = panel->chain_view();
+    check_chain_sequence("the pool narrowed to the catalog's matches outside the chain", filtered.candidates,
+                         {"Cascadia Code", "Consolas"});
+    check_chain_sequence("typing left the chain alone", chain_families(filtered.items), {"Fira Code"});
+    AURORA_TEST_CHECK_TRUE(filtered.hint.empty());  // 有匹配：四档提示都不该亮
+
+    // 再收窄一格：`consol` 只剩 `Consolas` 一档（池宽随输入变窄是本区段的行为，不是框架的）。
+    AURORA_TEST_REQUIRE_MSG(h.type("nsol"), "the filter box did not take the second text run");
+    h.render();
+    check_chain_sequence("the pool narrowed again", panel->chain_view().candidates, {"Consolas"});
+    AURORA_TEST_CHECK_TRUE(panel->chain_view().hint.empty());
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+
+    // 点第一条：这一次才是结构变更（落盘 + 广播各一次）。
+    const HitSpot candidate = reveal_chain_candidate(h, *panel, 0);
+    AURORA_TEST_REQUIRE_MSG(candidate.widget != nullptr, "the candidate button is not dispatch-reachable");
+    auto *candidate_button = dynamic_cast<au::Button *>(candidate.widget);
+    AURORA_TEST_REQUIRE(candidate_button != nullptr);
+    AURORA_TEST_CHECK_TRUE(candidate_button->wants_click());
+    h.click(candidate.x, candidate.y);
+    h.render();
+    check_chain_sequence("appending the picked candidate", chain_families(panel->chain_view().items),
+                         {"Fira Code", "Consolas"});
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 1U);
+    AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 1U);
+    check_chain_sequence("what the append wrote", probe.persisted.front().appearance.font_fallback_chain,
+                         {"Fira Code", "Consolas"});
+
+    // 刚追加的那一档随即从池里消失（② 那条排除腿的动态形态），于是过滤非空而零档 ⇒ 提示换到「没有匹配」。
+    // 用户面对空池子时得能分辨「没筛中」与「链已满」，四档提示因此互异。
+    AURORA_TEST_CHECK_TRUE(panel->chain_view().candidates.empty());
+    AURORA_TEST_CHECK_EQ(panel->chain_view().hint, borealis::ui::settings_label("settings.chain.no_match"));
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);  // 提示换档不是第二次提交
+}
+
+/// @brief 追加口在链长到达框架上限那一档关死：上限之下一格点得动，恰达上限时同一档真点既不落盘也不广播。
+///
+/// 判据写成**一对**而不是各判一半，是因为「达上限时点不动」单独一条有两条假绿路径：池子被算成空（本例
+/// 先判 `candidates` 仍列出那一档），或压根没滚到那一段（本例先在上限之下真点成功过一次）。
+/// 上限之那一格真点生效后，`Consolas` 进了链因而从池里消失（② 那条排除腿），池子剩下两档且**仍列出**
+/// ——只是禁用。一条口径在此更正（登记时本例写作「禁用态的按钮按 `wants_click()` 就不进命中链」，实测不
+/// 成立）：`Button` 没有覆盖任何命中入口，框架只在派发那一步按 `wants_click()` 分档，故禁用按钮照样在链
+/// 里、照样扫得到。于是「点了不动」的证人只能是**真点一次**并判它既不落盘也不广播，另加一条「浮层还在」
+/// ——点击若被遮罩层接走就会关掉面板，那一档计数同样不变，是一条假绿路径。
+AURORA_TEST_CASE(the_candidate_append_is_open_until_the_chain_reaches_the_framework_capacity) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    std::vector<std::string> nearly_full;
+    for (std::size_t i = 0; i + 1U < kChainCapacity; ++i) {
+        nearly_full.push_back("Family " + std::to_string(i));
+    }
+    probe.base.appearance.font_fallback_chain = nearly_full;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    const HitSpot filter = reveal_chain_filter(h, *panel);
+    AURORA_TEST_REQUIRE_MSG(filter.widget != nullptr, "the chain's filter box is not dispatch-reachable");
+    h.click(filter.x, filter.y);
+    h.render();
+    AURORA_TEST_REQUIRE_MSG(h.type("co"), "the filter box did not take the typed text");
+    h.render();
+    // 目录里含 "co" 的三档都不在链上（链上叫 `Family i`），故池里三档、上限之下全部可点。
+    check_chain_sequence("the pool below the cap", panel->chain_view().candidates,
+                         {"Cascadia Code", "Consolas", "Fira Code"});
+    AURORA_TEST_CHECK_FALSE(panel->chain_view().at_capacity);
+
+    const HitSpot pick = reveal_chain_candidate(h, *panel, 1);
+    AURORA_TEST_REQUIRE_MSG(pick.widget != nullptr, "a candidate is not dispatch-reachable below the cap");
+    h.click(pick.x, pick.y);
+    h.render();
+    nearly_full.push_back("Consolas");
+    check_chain_sequence("the append landed at the tail", chain_families(panel->chain_view().items), nearly_full);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 1U);
+
+    // 恰达上限：追加口关死（A5-a）。`Consolas` 已进链故从池里消失，剩下两档仍列出但都不吃点击。
+    AURORA_TEST_REQUIRE(panel->chain_view().items.size() == kChainCapacity);
+    AURORA_TEST_CHECK_TRUE(panel->chain_view().at_capacity);
+    check_chain_sequence("the pool at the cap still lists matches", panel->chain_view().candidates,
+                         {"Cascadia Code", "Fira Code"});
+    AURORA_TEST_CHECK_EQ(panel->chain_view().hint,
+                         borealis::ui::settings_label("settings.chain.full",
+                                                      {au::LocalizedString{std::to_string(kChainCapacity)}}));
+    for (std::size_t slot = 0; slot < 2U; ++slot) {
+        AURORA_TEST_REQUIRE(panel->chain_candidate(slot) != nullptr);
+        AURORA_TEST_CHECK_FALSE(panel->chain_candidate(slot)->wants_click());
+        const HitSpot dead = reveal_chain_candidate(h, *panel, slot);
+        AURORA_TEST_REQUIRE_MSG(dead.widget != nullptr, "the disabled candidate is not dispatch-reachable");
+        h.click(dead.x, dead.y);
+        h.render();
+    }
+    check_chain_sequence("the disabled clicks changed the chain", chain_families(panel->chain_view().items),
+                         nearly_full);
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 1U);  // 点击没被遮罩接走（那会关掉面板，计数同样不动）
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);  // 上面那一次追加之后没有第二次提交
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 1U);
+    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
+}
+
+/// @brief 链正被抓在键盘上时 `Escape` 先交还抓取而不关面板（S8 那条交接腿，文件头③）。
+///
+/// 判据的根据是框架的两条既有语义相叠：面板的 `Escape` 挂在 `ShortcutScope::Global`，而全局快捷键
+/// **先于任何控件**消费（裁决 7.51③ 理由 (a)）；`ReorderableList::on_key_event` 里那一档
+/// `Escape → cancel_keyboard_grab()` 因此永远轮不到执行。不先问一句的话，用户正按着 Space 搬一项时
+/// 敲 `Escape` 会连面板一起关掉，而那一项还悬在半空。本例把这一次交接走成真实按键：焦点交给列表本体
+/// （与 `src/main.cpp` 派初始焦点同一条入口），`Space` 经派发器落到控件的抓取路径。
+///
+/// 抓取与取消都不动数据，故全程 persist / broadcast 恒 0；`cancel_keyboard_grab()` 会把光标放回抓取前
+/// 的位置，链的次序逐字不变。交还之后第二次 `Escape` 才关面板并解绑（登记与解绑那一腿由非无头通道的
+/// `escape_closes_the_panel_and_unbinds_itself` 守，本例只判交接那一句之后的第二次）。
+AURORA_TEST_CASE(escape_releases_a_keyboard_chain_grab_before_it_closes_the_panel) {
+    Harness h;
+    StoreProbe probe;
+    probe.base.appearance.font_fallback_chain = {"Fira Code", "Consolas", "Cascadia Code"};
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    auto *list = dynamic_cast<au::ReorderableList<std::string> *>(panel->chain_list());
+    AURORA_TEST_REQUIRE(list != nullptr);
+    AURORA_TEST_REQUIRE_MSG(list->keyboard_reorder(), "the framework's keyboard reorder path is off");
+
+    h.focus_manager().set_focus(panel->chain_list());
+    h.render();
+    // 获焦即把键盘光标落到首个可见项（框架 `on_focus_change` 的语义，不是本件放的），故这里判前提而非设值。
+    AURORA_TEST_REQUIRE_MSG(list->keyboard_index() >= 0, "focusing the chain list did not place the keyboard cursor");
+
+    AURORA_TEST_REQUIRE_MSG(h.press(au::KeyCode::Space), "the chain list did not claim the activation key");
+    AURORA_TEST_REQUIRE(list->is_keyboard_grabbed());
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);  // 抓取不是提交
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+
+    auto escape = []() -> au::KeyEvent {
+        au::KeyEvent event;
+        event.key = static_cast<int>(au::KeyCode::Escape);
+        event.action = au::KeyAction::Down;
+        return event;
+    }();
+
+    // 面板闭包里那句 `cancel_keyboard_grab()` 是承重的：返真即原地不动，面板与浮层都还在。
+    AURORA_TEST_REQUIRE(h.shortcuts().handle(escape, false));
+    AURORA_TEST_CHECK_TRUE(panel->is_open());
+    AURORA_TEST_CHECK_FALSE(list->is_keyboard_grabbed());
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 1U);
+    AURORA_TEST_CHECK_EQ(h.shortcuts().count(), 1U);  // 解绑只发生在关面板那一刻
+    check_chain_sequence("the cancelled grab left the order alone", chain_families(panel->chain_view().items),
+                         {"Fira Code", "Consolas", "Cascadia Code"});
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+
+    // 没有抓取的那一次才关面板：交接腿不能把 `Escape` 永久吞在链上。
+    AURORA_TEST_REQUIRE(h.shortcuts().handle(escape, false));
+    AURORA_TEST_CHECK_FALSE(panel->is_open());
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 0U);
+    AURORA_TEST_CHECK_EQ(h.shortcuts().count(), 0U);
+}
+
 #else
 
 AURORA_TEST_CASE(the_scrim_covers_the_whole_window_and_a_real_click_closes_the_panel) {
@@ -1703,7 +2365,11 @@ AURORA_TEST_CASE(clicking_an_open_dropdown_option_in_its_own_extra_hit_box_commi
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
-AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_is_still_not_dispatch_reachable_G30) {
+AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_now_reaches_the_dispatch_chain_G30) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_dispatched_local_position_of_a_padded_row_child_is_shifted_G31) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
@@ -1732,6 +2398,22 @@ AURORA_TEST_CASE(the_reset_button_restores_only_the_selected_slot) {
 }
 
 AURORA_TEST_CASE(an_unlisted_theme_name_disables_the_reset_button) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(clicking_the_chain_move_buttons_reorders_and_removes_with_one_commit_each) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(typing_in_the_chain_filter_narrows_the_pool_without_touching_the_form) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_candidate_append_is_open_until_the_chain_reaches_the_framework_capacity) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(escape_releases_a_keyboard_chain_grab_before_it_closes_the_panel) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
