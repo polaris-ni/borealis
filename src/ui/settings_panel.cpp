@@ -30,8 +30,8 @@
 #include "aurora/widget/containers.h"
 #include "aurora/widget/dropdown.h"
 #include "aurora/widget/layout_builder.h"
-#include "aurora/widget/lazy_list.h"
 #include "aurora/widget/radio_spin.h"
+#include "aurora/widget/scroll.h"
 #include "aurora/widget/stack.h"
 #include "aurora/widget/switch.h"
 #include "aurora/widget/text.h"
@@ -311,10 +311,23 @@ auto SettingsPanel::build_card() -> aurora::Node {
             });
             nav_column->modifier.set(aurora::Modifier{}.width(kNavWidthDp).fill_max_height().background(kNavBg));
 
-            auto rows = std::make_shared<aurora::LazyList>(
-                static_cast<int>(rows_.size()),
-                [this](int index) -> aurora::Node { return build_row(static_cast<std::size_t>(index)); },
-                kRowExtentDp);
+            // 行区是 `Scroll` + `Column` 而不是 `LazyList`：后者的 `item_extent` 是**全局**固定行高，
+            // 而外观页的四类专用区段（主题卡 / 16 格色板 / 字体族 / 回退链）各自要占多行高度。
+            // 内容一次全量建好（每页 ≤30 行），换来的是可变行高与「滚动偏移折回内容坐标」的命中链
+            // ——后者正是 G27 回货给 `Scroll` 补上的那条腿，故本件对它的真实点击另配一例证人。
+            std::vector<aurora::Node> row_nodes;
+            row_nodes.reserve(rows_.size());
+            for (std::size_t ordinal = 0; ordinal < rows_.size(); ++ordinal) {
+                row_nodes.push_back(build_row(ordinal));
+            }
+            auto rows_column = std::make_shared<aurora::Column>(aurora::ColumnProps{
+                .children = std::move(row_nodes),
+                .gap = 0.0F,
+            });
+            rows_column->modifier.set(aurora::Modifier{}.fill_max_width());
+            auto rows = std::make_shared<aurora::Scroll>(aurora::ScrollProps{
+                .child = aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(rows_column))},
+            });
             rows->modifier.set(aurora::Modifier{}.fill_max_width().expand());
 
             auto body = std::make_shared<aurora::Row>(aurora::RowProps{
@@ -356,8 +369,8 @@ auto SettingsPanel::build_card() -> aurora::Node {
             });
             card->modifier.set(aurora::Modifier{}.size(width, height).background(kCardBg, 8.0F).border(
                 1.0F, kCardLine));
-            // 卡片重建时状态列一律作废：条目构建器会在本帧之后重新登记存活实例的指针。
-            status_texts_.assign(rows_.size(), nullptr);
+            // 状态列指针在这里登记（`build_row` 已把每行的状态列建好），故本处**不得**再清空——
+            // 行区改全量实例化之后，构建与这段代码在同一次布局里先后发生，倒空就把刚登记的指针抹掉了。
             return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(card))};
         })};
 }
@@ -387,7 +400,7 @@ auto SettingsPanel::build_row(std::size_t ordinal) -> aurora::Node {
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
         .gap = 12.0F,
     });
-    row->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+    row->modifier.set(aurora::Modifier{}.fill_max_width().height(kRowExtentDp).padding(aurora::EdgeInsets{
         .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(row))};
 }
