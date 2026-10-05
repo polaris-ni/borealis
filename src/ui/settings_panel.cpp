@@ -630,7 +630,6 @@ auto SettingsPanel::build_card() -> aurora::Node {
             // 行区改全量实例化之后，构建与这段代码在同一次布局里先后发生，倒空就把刚登记的指针抹掉了。
             return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(card))};
         });
-    card_builder_ = builder;
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(builder))};
 }
 
@@ -1454,21 +1453,16 @@ auto SettingsPanel::refresh_chain_candidates() -> void {
         chain_candidates_[slot]->show = visible;
     }
     if (!shifted.empty()) {
-        // 翻转 `show` 必须**手工补两次布局脏**，两次各自守住一条实测到的框架行为：
-        // ① 框架把 `show` 当测量输入（`Widget::layout` 在 show 为假时直接回零盒，且早于布局缓存那一支），
-        //    但写它不标脏布局，于是祖先按缓存复用「零盒」那次的尺寸，候选按钮从此量不出高度、进不了
-        //    命中链（实测：过滤出两档后 `size()` 恒 0x0）。框架文档自陈「`mark_needs_layout()` 只能沿
-        //    显式标脏路径失效缓存」，补脏归调用方。
-        // ② 只标叶子在有断链时到不了渲染根：一次滚动之后，浮层卡片那一列的 `layout_parent()` 变成空
-        //    （`Node::~Node` 无条件 `set_layout_parent(nullptr)`，副本析构即断链，登记为 **G32**），
-        //    `request_frame` 沿父链上溯时把这次脏**静默丢弃**，那一帧根本不重排。故再标卡片外层那只
-        //    `LayoutBuilder`：它在断链之上，标它能把脏送到根（根据此整树重排），而 `LayoutBuilder::on_layout`
-        //    每次都重新登记子节点的父指针，断链与零盒在同一帧一起修好。
+        // 翻转 `show` 必须**手工补布局脏**：框架把 `show` 当测量输入（`Widget::layout` 在 show 为假时直接
+        // 回零盒，且该早返回早于布局缓存那一支），但写它不标脏布局，于是祖先按缓存复用「零盒」那次的尺寸，
+        // 候选按钮从此量不出高度、进不了命中链（实测：过滤出两档后 `size()` 恒 0x0）。框架文档自陈
+        // 「`mark_needs_layout()` 只能沿显式标脏路径失效缓存」，补脏归调用方。
+        // 只标叶子即可：脏沿 `layout_parent_` 上溯到渲染根，而那条父链自 **G32** 回货（Aurora `1b3fe58c`：
+        // `Node` 析构不再清父指针，改由父侧在真正摘除时清）之后不会再被临时句柄抹断。登记时这里还多标一层
+        // 卡片外层的 `LayoutBuilder` 以绕过断链，框架侧的变异自证把那种「应用侧顺手多标祖先脏」判为**掩盖而
+        // 非修复**，故随回货一并撤除。
         for (aurora::Button *button : shifted) {
             button->mark_needs_layout();
-        }
-        if (card_builder_ != nullptr) {
-            card_builder_->mark_needs_layout();
         }
     }
 
