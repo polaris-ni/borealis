@@ -26,10 +26,13 @@
 ///              面板伸出所在行之外的那一段仍不可达，本套件据此另留一条钉子（新缺口 G30）。G30 的回货把这一句
 ///              翻正：`covers_extra_hit_box()` 升级为**子树聚合**（自身 ∪ 逐子节点按 `bounds().origin` 折算递归，
 ///              折算与 `on_hit_test_chain` 的下降式同构），那一段因此**可达**（`the_option_panel_below_the_
-///              enclosing_row_now_reaches_the_dispatch_chain_G30`）。但可达之后仍**点不准**：祖先的内边距平移
+///              enclosing_row_now_reaches_the_dispatch_chain_G30`）。可达之后曾仍**点不准**：祖先的内边距平移
 ///              没进 `HitNode.origin`，派发器据以本地化的坐标比该控件的绘制位置大 8 dp，`Dropdown` 按本地纵
-///              坐标反算的选项序号因此整体下移一格——登记为 **G31**，其现状钉子是
-///              `the_dispatched_local_position_of_a_padded_row_child_is_shifted_G31`。
+///              坐标反算的选项序号因此整体下移一格（缺口 **G31**）。G31 的回货把命中侧与绘制侧收敛为**同一个
+///              `content_origin`**（`bounds.origin + 修饰链平移`），故那条现状钉子翻成
+///              `a_real_click_below_the_enclosing_row_picks_the_option_under_it_G31`：真点行外那一段的第一条
+///              选项带即选中该档并走完整条提交腿。两条用例各判一层（可达 / 点得准），合成一例就会在只回货
+///              其一时不知道该翻哪一半。
 ///           ⑧ **按钮标签由框架查表**（缺口 G28 的接货复验，裁决 7.59）：本件那三枚按钮原样交回
 ///              `LocalizedString` 之后，显示串仍是词条表给的那一条；查表没发生就回退到实例自己的 `text`，
 ///              而 `tr()` 造出的实例那份 text 恒空。
@@ -48,8 +51,11 @@
 ///              不关面板。指针拖拽换位在无头环境不可判（框架 `end_drag` 只在 `reduce_motion` 或位移不足
 ///              半格时立即结算），故换位判据一律走按钮与键盘两条同步路径。另有两条实测随本段入册：
 ///              **`show` 翻转不标脏布局**（框架把它当测量输入，写它不失效任何缓存），于是候选池必须由
-///              调用方补布局脏，而在一次滚动之后叶子的脏**到不了渲染根**（`Node::~Node` 无条件清子节点
-///              的布局父指针，缺口 **G32**），故本套件的候选用例同时是面板那两次补脏的证人；而**禁用态的
+///              调用方补布局脏，而本套件的候选用例就是那一次补脏的证人。补的处数随回货从两处降为一处：
+///              登记时只标叶子那份脏**到不了渲染根**（一次滚动之后 `Node::~Node` 无条件清子节点的布局父
+///              指针，缺口 **G32**），故还要多标一层卡片外层 `LayoutBuilder`；G32 回货后断链不复存在，
+///              撤掉那层祖先补脏两例照旧绿（变异证明：去掉叶子补脏则两例同红），而框架侧把「应用侧顺手
+///              多标祖先脏」判为掩盖而非修复，故补偿随之撤除；另**禁用态的
 ///              `Button` 照样在命中链里**（框架只在 `wants_click()` 上分档，`Button` 没有覆盖任何命中
 ///              入口），故「达上限时点不动」的证人是真点一次并判它既不落盘也不广播，另加一条「浮层还在」
 ///              ——点击被遮罩接走也会关掉面板，那一档计数同样不变。登记时本段写作「禁用按钮不进命中链、
@@ -1519,8 +1525,9 @@ AURORA_TEST_CASE(clicking_an_open_dropdown_option_in_its_own_extra_hit_box_commi
 /// 上传，那一段因此可达——本例判的正是这一条，而且**只判这一条**。
 ///
 /// 为什么把「真实单击即提交」那一半留给下一条用例而不是写在本例里：回货闭合的是「可达」，那一点上的点击
-/// 落进哪一条选项带归**派发本地化**管，而后者撞出一处新病灶（附录 A.2 的 **G31**：祖先的内边距平移没进
-/// `HitNode.origin`）。两件事各自有证人，合成一例就会让 G31 回货时不知道该翻哪一半。
+/// 落进哪一条选项带归**派发本地化**管，而后者当时撞出一处新病灶（附录 A.2 的 **G31**：祖先的内边距平移
+/// 没进 `HitNode.origin`）。两件事各自有证人，合成一例就会在 G31 回货时不知道该翻哪一半——现在它回货了，
+/// 于是本例翻的是「行的记录 origin 与子节点绘制顶同源」那一句，下一例翻的是「真点即选中所点那一档」。
 ///
 /// 三条前提照旧逐条钉住，只是第三条换了方向：① 控件自己申报覆盖；② 探点既在自身布局盒**之外**、也在
 /// **所在行的可达框之外**（行高 56 dp、上下内边距各 8 dp；仍属本行的那一段由上一条 G29 用例守，拿它翻
@@ -1546,8 +1553,9 @@ AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_now_reaches_the_dispat
     AURORA_TEST_REQUIRE_EQ(dropdown->selected_index(), 1);
 
     // 闭态先量出所在行：沿派发链从最深一格往回找最近的一个 `Row`（行区的嵌套是 `Scroll → Column → Row`）。
-    // 取它的**记录 origin**当行盒顶，并由下面那条 `spot.box.origin.y - row_top == 8` 证明这个读数就是行的
-    // 绘制顶——行自己上没有平移（平移只发生在它给子节点的那一段），故这一层的 origin 与绘制顶逐字相等。
+    // 取它的记录 origin 当**行给子节点的内容顶**。G31 回货后这一读数与绘制同源（`content_origin`＝
+    // bounds origin + 修饰链平移，行那 8 dp 上内边距已经折进去），于是它与下拉的绘制顶**逐字相等**；
+    // 登记时两者差的恰是那份内边距，故下面那两条断言在回货前后各成立一侧。
     const std::vector<au::HitNode> closed = h.chain_at(spot.x, spot.y);
     const au::HitNode *row_node = nullptr;
     for (std::size_t i = closed.size(); i-- > 1;) {
@@ -1570,15 +1578,18 @@ AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_now_reaches_the_dispat
     const au::BuildContext ctx{};
 
     AURORA_TEST_REQUIRE(std::abs(spot.box.size.height - layout.size.height) <= 1.0F);
-    // 行的绘制顶 ＝ 下拉的绘制顶 − 行的上内边距（8 dp）。这一句同时钉住两件事：本例用的行顶读数与绘制同源，
-    // 以及「行给子节点留的那 8 dp」在下拉的命中坐标空间里确实存在——G31 的病灶正是这份量没进 origin。
-    AURORA_TEST_REQUIRE_MSG(std::abs(spot.box.origin.y - row_top - kRowPaddingDp) <= 1.0F,
-                            "the enclosing row's recorded origin is not its painted top");
+    // 行的记录 origin ＝ 下拉的绘制顶：行的 8 dp 上内边距已经折进 `HitNode.origin`（G31 的回货形态）。
+    // 登记时这一句差 8 dp，而那 8 dp 正是 G31 的病灶量；两侧的断言各自只能成立一侧，故本例在回货前红、
+    // 回货后绿，不是同义反复。
+    AURORA_TEST_REQUIRE_MSG(std::abs(spot.box.origin.y - row_top) <= 1.0F,
+                            "the enclosing row's recorded origin is not its content top");
     // 反空转：探点在视口之内（视口下沿＝卡片下沿＝窗口下沿减 `kCardEdgeDp`）。
     AURORA_TEST_REQUIRE_MSG(option_y < static_cast<float>(kWindowHeight) - kCardEdgeDp,
                             "the probe point is outside the scroll viewport");
-    // 反空转：探点确在**所在行之外**——少了这一句，本例就退化成重复上一条 G29 用例守的那一段。
-    AURORA_TEST_REQUIRE_MSG(option_y > row_top + kRowExtentDp, "the probe point is still inside the enclosing row");
+    // 反空转：探点确在**所在行之外**——少了这一句，本例就退化成重复上一条 G29 用例守的那一段。行给子项的
+    // 内容高是 56 − 2×8 ＝ 40 dp，而 `row_top` 如今就是内容顶，故行外界的算式随同源这条一起就地更正。
+    AURORA_TEST_REQUIRE_MSG(option_y > row_top + kRowExtentDp - 2.0F * kRowPaddingDp,
+                            "the probe point is still inside the enclosing row");
     AURORA_TEST_REQUIRE_MSG(dropdown->covers_extra_hit_box(local, ctx), "the open panel does not cover the probed point");
     AURORA_TEST_REQUIRE_MSG(local.y >= layout.size.height, "the probed point is inside the widget's own layout box");
 
@@ -1595,29 +1606,25 @@ AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_now_reaches_the_dispat
     AURORA_TEST_CHECK_TRUE(dropdown->is_open());
 }
 
-/// @brief G31 的病灶证人（现状钉子）：祖先的内边距平移没进 `HitNode.origin`，于是派发本地坐标与绘制位置错位。
+/// @brief G31 的回货复验（正向）：行外那一段上的真实单击，选中的是**眼睛看到的那一档**。
 ///
-/// 上一条用例证明那一段**可达**，本条证明可达之后**点不准**，两者是两件事：G30 的回货只动祖先闸，而这里
-/// 判的是派发器把窗口坐标折成控件本地坐标所用的那份 origin。读源与实测两条同向（不是推断）：
-/// ① 绘制侧 `Widget::render_into` 给子节点的是 `local.origin + tf.translation`（`src/aurora/widget/widget.cpp`
-///    恒等快速路径），`Modifier::transform` 把 `Padding` / `PaddingEdges` / `Align` / `Offset` 折进
-///    `translation`（`src/aurora/modifier/modifier.cpp`）；
-/// ② 命中侧 `Container::on_hit_test_chain` 下传的全局 origin 是 `bounds.origin + cb.origin`，**没有**同一份
-///    `translation`，而下降时判定子节点包含关系用的却是已经减掉平移的 `local_adj`。于是「按链可达」与
-///    「到达后本地坐标」两套读数各算一份，差值恰是沿途累计的内边距/对齐平移；
-/// ③ 派发器逐节点写 `e.local_position = e.position - node.origin`（`src/aurora/event/dispatcher.cpp`），
-///    所以控件收到的是 ② 那份、与 ① 画出来的位置错位。
+/// 本例曾是现状钉子（裁决 7.62⑤ 在册，并明写「回货后差值归零、本例转红，正半随 G30 那条一起翻」）。
+/// 回货形态是命中链与绘制**共用同一个 `content_origin`**：`Widget::hit_test` / `hit_test_chain` 的
+/// `self_box.origin` 取 `bounds.origin + tf.translation`，而 `render_into` 给子节点的正是这同一份平移量，
+/// `Modifier::transform` 把 Padding / PaddingEdges / Align / Offset 一律折进 `translation`（框架据此禁止
+/// 命中侧再写一份「要不要加内边距」）。
 ///
-/// 实测的差值是 **8 dp**（本仓每一行 `Modifier{}.padding(EdgeInsets{8,...})` 的上内边距），且逐节点 origin
-/// 相等可直接看出：链上那只下拉的 origin 与**它所在行**的 origin 同一个 y，而它的绘制顶低 8 dp。多数控件
-/// 只在「命中/未命中」上用本地坐标，这一格错位不可见；带**细粒度分带**的控件就现形——`Dropdown` 按
-/// `local.y` 反算选项序号，于是点击落在某条选项带的下沿 8 dp 时选中**下一条**，真机上就是「照着下沿点却
-/// 选错档」。同一条算式还被本仓面板的把手拖拽与步进共用，故本例把它做成 origin 的形态证明而不是「没点上」：
-/// 回货后差值归零，本例转红，正半（真点行外那一段即提交）随 `G30` 那条用例一起翻。
+/// 判据的承重那一句是**选项序号**而不是「点得动」——可达由上一条用例守。`Dropdown` 按派发器写来的本地纵
+/// 坐标反算序号，本行的量值是算好的：行给下拉的紧约束盒 40 dp、面板从框架自己的 `box_height_` ＝ 30 dp
+/// 起铺、选项行高 26 dp ⇒ 第一条带占窗口坐标 [绘制顶 + 30, 绘制顶 + 56)。探点取 `绘制顶 + 40 + 12`，即
+/// 第一条带内距其下沿 4 dp 处。若 origin 仍缺行那 8 dp 上内边距，控件收到的本地纵坐标就是 60 而落进第二条
+/// 带 [56, 82)，而第二条带恰是**当前已选**的那档（`Wide`）——于是「少一份平移」的实现在本例里表现为
+/// 序号一动不动、面板不收起、也不落盘，与回货后的读数结构上不可能同时为绿。这就是本例的非空转根据。
 ///
-/// 刻意**不**写成本仓的规避：改行内边距、把下拉挪出 padding、或换 `Popup` 挂载点都是「绕」（裁决 7.13①
-/// 的不等不绕口径），且第 ② 条是公共 API 契约层面的不对称，任何消费者都会踩。
-AURORA_TEST_CASE(the_dispatched_local_position_of_a_padded_row_child_is_shifted_G31) {
+/// 行为那一半判四条：真点之后 ① 选中的是第一条（`narrow`）、② 面板收起、③ 恰一次落盘且**零广播**
+/// （该键 `Wired ∧ NextSession`，判据文 §4 B3-a 的两条标签不冲突）、④ 表单读回 `narrow` 且脏标记随落盘
+/// 成功推进。origin 与绘制顶同源另判一句，且以**真实派发量出来的可达框**为基准而不是取实现的输出。
+AURORA_TEST_CASE(a_real_click_below_the_enclosing_row_picks_the_option_under_it_G31) {
     borealis::ui::install_settings_strings();
     Harness h;
     StoreProbe probe;
@@ -1633,43 +1640,37 @@ AURORA_TEST_CASE(the_dispatched_local_position_of_a_padded_row_child_is_shifted_
     AURORA_TEST_REQUIRE(spot.widget != nullptr);
     auto *dropdown = dynamic_cast<au::Dropdown *>(spot.widget);
     AURORA_TEST_REQUIRE(dropdown != nullptr);
-
-    const std::vector<au::HitNode> closed = h.chain_at(spot.x, spot.y);
-    const au::HitNode *row_node = nullptr;
-    for (std::size_t i = closed.size(); i-- > 1;) {
-        if (std::string_view{closed[i].ptr->type_name()} == std::string_view{"Row"}) {
-            row_node = &closed[i];
-            break;
-        }
-    }
-    AURORA_TEST_REQUIRE(row_node != nullptr);
+    AURORA_TEST_REQUIRE_EQ(dropdown->selected_index(), 1);
 
     h.click(spot.x, spot.y);
     h.render();
     AURORA_TEST_REQUIRE(dropdown->is_open());
 
-    const au::Rect layout = dropdown->paint_bounds();
+    const au::Rect layout = dropdown->paint_bounds();  // 只取它的**尺寸**：那是控件自身坐标空间里的量
     const float option_x = spot.box.origin.x + layout.size.width * 0.5F;
     const au::Point local{.x = layout.size.width * 0.5F, .y = layout.size.height + 12.0F};
     const float option_y = spot.box.origin.y + local.y;
+    const au::BuildContext ctx{};
 
-    // 病灶本体：那只下拉在链上的 origin 就是**它所在行**的 origin，行给它的 8 dp 上内边距没被带下来。
+    // 三条前提：可达、在自身布局盒之外、且申报覆盖为真（缺任何一条，下面的单击就测不到「行外那一段」）。
+    AURORA_TEST_REQUIRE_MSG(local.y >= layout.size.height, "the probed point is inside the widget's own layout box");
+    AURORA_TEST_REQUIRE_MSG(dropdown->covers_extra_hit_box(local, ctx), "the open panel does not cover the probed point");
     const std::vector<au::HitNode> open = h.chain_at(option_x, option_y);
     AURORA_TEST_REQUIRE_EQ(open.back().ptr, static_cast<au::Widget *>(dropdown));
-    AURORA_TEST_CHECK_EQ(open.back().origin.y, row_node->origin.y);
-    // 与绘制顶相差一份内边距（`spot.box` 是真实派发量出来的可达框，即绘制顶）。差值取整 dp 判等：可达框按
-    // 1 dp 步进量化，故两侧各允许 1 dp 余量。
-    AURORA_TEST_CHECK_NEAR(spot.box.origin.y - open.back().origin.y, kRowPaddingDp, 1.0F);
-    // 于是派发器写给该控件的本地纵坐标比它自己的绘制坐标大 8 dp：这一点在绘制空间里落在第一条选项带
-    // （窗口 [绘制顶 + 30, 绘制顶 + 56)）内，而在 origin 反算出的坐标空间里已经越到第二条带。
-    AURORA_TEST_CHECK_GT(option_y - open.back().origin.y, layout.size.height + kRowPaddingDp);
-    // 后果（佐证，非承重判据）：那一点上的真实单击既不选中另一档，也不将提交交回表单。
+    // 同源的那一句：链上写的 origin 与真实派发量出来的绘制顶一致（登记时差 8 dp，即行的上内边距）。
+    AURORA_TEST_CHECK_NEAR(open.back().origin.y, spot.box.origin.y, 1.0F);
+
     h.click(option_x, option_y);
     h.render();
-    AURORA_TEST_CHECK_EQ(dropdown->selected_index(), 1);
+    AURORA_TEST_CHECK_EQ(dropdown->selected_index(), 0);
     AURORA_TEST_CHECK_FALSE(dropdown->is_open());
-    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
     AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+    AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 1U);
+    AURORA_TEST_CHECK_TRUE(probe.persisted[0].terminal.ambiguous_width == borealis::term::AmbiguousWidth::Narrow);
+    AURORA_TEST_REQUIRE(panel->form().value("terminal.ambiguous_width") != nullptr);
+    AURORA_TEST_CHECK_TRUE(*panel->form().value("terminal.ambiguous_width")->as_text() == std::string{"narrow"});
+    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
 }
 
 /// @brief 行区滚下去之后仍然点得动：滚动偏移非零时，按量出来的新位置真点一行开关即提交。
@@ -2369,7 +2370,7 @@ AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_now_reaches_the_dispat
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
-AURORA_TEST_CASE(the_dispatched_local_position_of_a_padded_row_child_is_shifted_G31) {
+AURORA_TEST_CASE(a_real_click_below_the_enclosing_row_picks_the_option_under_it_G31) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
