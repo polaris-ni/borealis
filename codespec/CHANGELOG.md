@@ -6,6 +6,66 @@
 
 ---
 
+## v0.64（2026-10-05）**G31 / G32 接货复验出账 + 登记 G34**：一条钉子按预诺翻成正向行为用例，一层断链补偿按预诺撤除，同批复验撞出一条诊断告警缺陷（裁决 7.64）
+
+**动机**：v0.62 登记的两条缺口（G31 派发 origin 不含祖先的 modifier 平移、G32 `Node::~Node()` 抹断仍存活控件的布局父链）同日随
+Aurora 当日活动分支 `1b3fe58c` 到货。本棒做接货复验并兑现两条登记时写下的预诺：G31 的钉子「回货后差值归零即令其转红」，
+G32 的补偿「回货后若成冗余随本条一并撤除并在裁决里记账」。
+
+**G31 的复验结论是「同源了，故本仓 0 行改动」**：回货形态是一条匿名件 `content_origin(widget_origin, tf) = widget_origin +
+tf.translation` 同时成为绘制侧（`render_into` → `paint_content`）与命中侧（`Widget::hit_test` / `hit_test_chain` 的
+`self_box.origin`）的唯一原点算式，`HitNode.origin` 与交给 `covers_own_extra_hit_box` 的 `ancestor_offset` 都取它，
+而 `Align` / `Offset` / `Padding` 三种平移一律由 `Modifier::transform` 折进同一份 `translation`，即三条回货判据逐条对上。
+本仓面板从未自算平移补偿，故生产代码零改动，出账动作只有**翻判据**：
+`the_dispatched_local_position_of_a_padded_row_child_is_shifted_G31` →
+`a_real_click_below_the_enclosing_row_picks_the_option_under_it_G31`（真点行外那一段的第一条选项带即选中该档、收起面板、
+只落盘 1 次广播 0 次），G30 例里「行的记录 origin ＝ 其内容顶」由登记时的差 8 dp 转为逐位相符（容差 1 dp）。
+**「可达」与「点准」各由一条用例守的分工经变异实测有效**：把命中侧那两处 `content_origin(bounds.origin, tf)` 单点退回
+`bounds.origin` 而**不动绘制侧**那一处，两例各在自己那一句转红（origin 报 `134 vs 142`、差值恰 8 dp，且 `selected_index()`
+停在原档、落盘 0 次）；若两侧同退则是**等价变异**（两边一起挪，关系照样成立），故变异点必须单侧——这一点写进裁决以免下棒重复踩。
+
+**G32 的复验结论是「撤补偿，且登记时那句口径是错的」**：`Node::~Node()` 不再清 `layout_parent_`，摘除全部改走父侧
+（`detach_child_layout_parent` 只在 `child->layout_parent() == this` 时清以免误清别人的父链，
+`detach_all_children_layout_parent()` 遍历可写的 `child_nodes_mut()`；调用点是 `~Container` / `~SingleChild` 的
+**析构体首行**加 `remove_child` / `adopt_children` / `set_children` / `set_child` 四条换子路径——放基类 `~Widget`
+会因派生部分已析构而分派到空实现、静默漏清）。本仓据此让 `refresh_chain_candidates()` 里那层卡片祖先补脏退役
+（`card_builder_` 成员、赋值与头注一并删除），**撤除后 `itest_settings_panel` 33 例全绿**：两条候选用例都在一次真实滚动
+批次之后才按指针身份取候选按钮，故父链不再被抹断、那层补脏不再承重。变异自证反向也做了——再去掉叶子那一处
+`mark_needs_layout()` 则 `typing_in_the_chain_filter_narrows_the_pool_without_touching_the_form` 与
+`the_candidate_append_is_open_until_the_chain_reaches_the_framework_capacity` **同红**，即「`show` 是测量输入而不是脏源」
+那条承重补脏保留。**一处自我更正入册**：G32 登记时本行所写的「那只 `LayoutBuilder` 的补脏是为了 `show` 翻转立刻生效、
+而不是为了让脏爬上断掉的父链」与裁决 7.62③④ 及代码注释②自陈相反；实测结论是两处各守一件事，已在附录 A.2 该行就地更正。
+该仓的变异自证要求（「只在应用侧顺手多标一层祖先脏而不清断链 ⇒ 转红」）与本仓这次撤除是同一句话的两侧。
+
+**同批复验撞出一条诊断缺陷，登记 G34**：`detach_all_children_layout_parent()` 由容器析构体首行调用，而那一刻子控件仍被
+容器持有、尚未析构，于是 `detach_child_layout_parent` 对**每一个子节点**都走进告警分支——与该函数自己的注释
+（「被清的是仍存活控件的父指针，真正销毁控件的路径不经本函数」）正好相反，即 G32 的回货判据 ② 只做到「断链可见」而没做到
+「只在异常时可见」。实测行数（同一二进制，按 `layout parent detached` 计数）：`itest_settings_panel` 33 例 **3696 行**、
+`itest_right_click_paste` 77 行、`itest_workspace_layout` 32 行，而 `utest_config` 与 `itest_render_viewport` 各 0 行——
+刷屏量与「反复重建 widget 子树」的次数成正比，足以把一次真断链埋在噪声里。同处第二条小缺陷：`AURORA_LOG_WARN` 是类型安全
+可变参数**拼接**而非 printf，故文案里的 `%s` 原样输出、`child->type_name()` 附在整句末尾（实测以 `... render rootText`
+结尾）。本仓按 §5「不等不绕」**不消音、不改级别、不给 `~Container` 打补丁**，可派发任务书已随裁决 7.64⑦ 在会话内产出
+（判别式建议取既有 a11y 守卫同口径的 `Node::use_count() == 1`）。
+
+**两处排期判据随之改口**：#114 余件 A4（字体族下拉）待人拍板的理由从「一条形态约束 + G31 漂移」收窄为**只剩那条形态约束**
+（外加「本机 200+ 族如何挑选与排序在两侧都无依据」，裁决 7.64⑨）；#130 面板行区真机走查的三条候选机制里
+「布局父链断裂」一条随 G32 回货被结构上排除，未结那一腿（真机真实滚轮）不变（裁决 7.64⑧）。#115 实时预览盒的落位已由人
+拍板取**卡片底部横条 140 dp**，其代价（卡片高度预算与行区可视行数减少）与形态写进裁决 7.64⑩ 并在
+`UI_SETTINGS.draft.md` §1 / §4 就地更正。
+
+**验收**：`itest_settings_panel` **33 例全绿**，非 e2e 通道 `ctest -E etest_` **37 项全绿**（44.56 s）；三次变异注入各有
+转红证人（命中侧单点退回 → G31 例与 G30 例各红一句；去叶子补脏 → 两条候选用例同红），每次重链前删 `build/**/*.ilk`。
+Aurora 树复验后已还原为 `1b3fe58c` 且 `git status --porcelain` 为空。**未复跑吞吐门禁**（本棒只在面板打开与结构变更时
+生效，不进每帧绘制与布局路径，基准三场景不含面板）。真机走查照旧未做（会话锁屏下 `SendInput` 静默失效，裁决 7.31①），
+故本条不宣称面板「可用」。
+
+**改动面**：生产代码 `src/ui/settings_panel.{h,cpp}`（撤补偿，只减不增）、用例 `tests/integration/itest_settings_panel.cpp`
+（翻判据 + 文件头 ⑦⑩ 两段改写）、文档（`SPECIFICATIONS.md` §7 裁决 7.64 与附录 A.2 的 G31 / G32 改闭合形态 + 新增 G34 行、
+`PLAN.md` §6 三条与 §2 的 `PREF.02` 行、`AGENTS.md` §6 缺口账目与本棒条目、本条、`UI_SETTINGS.draft.md` §1 / §4）。
+#114 余件（A4 待拍）与 #115 / #116 / #117、#130 走查结项、G33 / G34 回货复验照旧在册。
+
+---
+
 ## v0.63（2026-10-05）**面板行区真机走查开一轮未结 + 登记 G33**：三条假设被读源与无头实测排除，一条无障碍读数缺陷被证成缺口，本棒零代码改动（裁决 7.63）
 
 **动机**：v0.62 那句「真机走查未做」在会话解锁后开跑。走查面取的是设置面板行区的滚动——它是 #114 三棒里唯一一条「无头断的是派发、真机才断得出像素」的判据。
