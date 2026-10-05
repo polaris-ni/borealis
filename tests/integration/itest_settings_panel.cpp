@@ -28,11 +28,18 @@
 ///           ⑧ **按钮标签由框架查表**（缺口 G28 的接货复验，裁决 7.59）：本件那三枚按钮原样交回
 ///              `LocalizedString` 之后，显示串仍是词条表给的那一条；查表没发生就回退到实例自己的 `text`，
 ///              而 `tr()` 造出的实例那份 text 恒空。
+///           ⑨ **行区是滚动容器而不是固定行高的列表**（裁决 7.60）：`LazyList` 的 `item_extent` 是**全局**
+///              一档，表达不出 #114 那种「主题卡 / 16 格色板 / 下拉」高低不等的行，故行区取 `Scroll` +
+///              `Column` 全量实例化。换容器就把坐标模型换掉了——`Scroll` 的内容子节点 bounds 是**内容坐标**
+///              （命中时经 `offset_y_` 换算），于是本套件的每一处探针都改成按真实派发结果量窗口坐标
+///              （`Harness::reachable_box`），并新增一条「滚过一段之后真点一行开关即提交」的证人：它是
+///              G27 回货（滚动容器的内容进得了命中链）在面板生产路径上的消费腿。
 ///
 ///           一条测试现场的必要构造：`OverlayHost` 的浮层序号是从「基础内容之后」起算的
 ///           （`add_overlay` 返回 `children_.size() - 1`，回货后宿主无基础内容时返回 `std::nullopt`），
 ///           故宿主**必须**带一个基础子节点——生产路径上那是终端视口，本用例给一个 `Text`。
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -50,6 +57,7 @@
 #include "aurora/i18n/string_table.h"
 #include "aurora/widget/button.h"
 #include "aurora/widget/dropdown.h"
+#include "aurora/widget/scroll.h"
 #include "aurora/widget/switch.h"
 #include "aurora/widget/text.h"
 #include "aurora/widget/text_input.h"
@@ -699,6 +707,10 @@ struct HitSpot {
     au::Widget *widget = nullptr;
     float x = 0.0F;
     float y = 0.0F;
+    /// 派发链在**窗口坐标**里确实交回该控件的那块矩形（由 `Harness::reachable_box` 量出）。
+    /// 记它而不是记控件的 `paint_bounds()`：行区是 `Scroll` 之后，内容子节点的 bounds 是**内容坐标**，
+    /// 拿它当窗口坐标用就会差一个「视口顶边 − 滚动偏移」，而那个量正是本件要在运行期变的。
+    au::Rect box{.origin = au::Point{.x = -1.0F, .y = -1.0F}, .size = au::Size{.width = 0.0F, .height = 0.0F}};
 };
 
 /// @brief 「这块底色仍属深色 chrome」的判据线（三通道都不亮于它，且像素不透明）。
@@ -754,26 +766,78 @@ public:
 
     /// @brief 命中测试：这一点上的最深控件（根在原点，故窗口逻辑 dp 即根局部坐标）。
     ///
-    /// 取的是**命中链**而非兼容入口 `hit_test`：后者语义为「命中即止」，而 `LazyList` 为了让滚轮落在
-    /// 整视口而刻意让它返回自身（其 `on_hit_test` 上方有注释说明）。真实指针派发走链，判据必须与派发
-    /// 同源，否则行区里的每一个控件都会被我读成「抓不住」。
+    /// 取的是**命中链**而非兼容入口 `hit_test`：后者语义为「命中即止」，而两类滚动容器（`Scroll` 的
+    /// `on_hit_test`、`LazyList` 的同名覆写）为了让滚轮落在整视口上而刻意返回自身。真实指针派发走链，
+    /// 判据必须与派发同源，否则行区里的每一个控件都会被我读成「抓不住」。
     [[nodiscard]] auto hit(float x_dp, float y_dp) -> au::Widget * {
-        const std::vector<au::HitNode> chain = root_.widget().hit_test_chain(
+        const std::vector<au::HitNode> chain = chain_at(x_dp, y_dp);
+        return chain.empty() ? nullptr : chain.back().ptr;
+    }
+
+    /// @brief 派发链的完整一段（由浅入深），滚动用例要从中取「行区那个 `Scroll`」这一层。
+    [[nodiscard]] auto chain_at(float x_dp, float y_dp) -> std::vector<au::HitNode> {
+        return root_.widget().hit_test_chain(
             au::Point{.x = x_dp, .y = y_dp},
             au::Rect{.origin = au::Point{.x = 0.0F, .y = 0.0F},
                      .size = au::Size{.width = static_cast<float>(kWindowWidth),
                                       .height = static_cast<float>(kWindowHeight)}},
             au::BuildContext{});
-        return chain.empty() ? nullptr : chain.back().ptr;
     }
 
-    /// @brief 在窗口内扫描，取出第一个指定类型的控件**以及命中它的那一点**。
+    /// @brief 行区的滚动容器：沿命中链取第一个 `Scroll`（链上没有则空）。
+    [[nodiscard]] auto row_scroll(float x_dp, float y_dp) -> au::Scroll * {
+        for (const au::HitNode &node : chain_at(x_dp, y_dp)) {
+            auto *scroll = dynamic_cast<au::Scroll *>(node.ptr);
+            if (scroll != nullptr) {
+                return scroll;
+            }
+        }
+        return nullptr;
+    }
+
+    /// @brief 量出「派发链在窗口坐标里确实交回这个控件」的矩形（1 dp 步进，含端点）。
     ///
-    /// 浮层树是面板私有的，`LazyList` 还会回收窗口外的条目，故这里不另开观测点，而是问框架的命中
-    /// 测试「这一点上是谁」。步长 4 dp 足够格住 56 dp 的行高，且落点在控件盒内而不压边界；起点 220 dp
+    /// 下拉的两处探针与 chrome 的两处取色都由本函数量的框推，而**不**由控件 `paint_bounds().origin` 推：
+    /// 行区改成 `Scroll` + `Column` 之后，内容子节点的 bounds 是**内容坐标**（框架 `scroll.h` 的「几何与命中
+    /// 契约」一节自陈这与 `LazyList` / `GridView` 的视口坐标模型不同，后者写 `index * extent - offset`，
+    /// 而 `Scroll` 命中时把局部点**加上** `offset_y_` 换算回去），拿它当窗口坐标点去派发或取色，就会差一个
+    /// 「视口顶边 − 滚动偏移」——偏移还是本件要在运行期改的量。本函数只在真实派发结果上量，不引入第二个
+    /// 坐标假设；它同时也就是「该控件在视口内可见的那一段」，故裁掉的正是肉眼不可见的那一段。
+    /// @param widget 期望命中的控件（矩形以「这一行/列上命中它」为准）。
+    /// @param x_dp 已知命中它的一点的横坐标（由 `find_first` 给出，从这里向四侧展开）。
+    /// @param y_dp 已知命中它的一点的纵坐标。
+    /// @return 窗口坐标下的可达矩形；四向各自止步于「不再命中该控件」或窗口边界。
+    [[nodiscard]] auto reachable_box(au::Widget *widget, float x_dp, float y_dp) -> au::Rect {
+        float top = y_dp;
+        while (top - 1.0F >= 0.0F && hit(x_dp, top - 1.0F) == widget) {
+            top -= 1.0F;
+        }
+        float bottom = y_dp;
+        while (bottom + 1.0F < static_cast<float>(kWindowHeight) && hit(x_dp, bottom + 1.0F) == widget) {
+            bottom += 1.0F;
+        }
+        float left = x_dp;
+        while (left - 1.0F >= 0.0F && hit(left - 1.0F, y_dp) == widget) {
+            left -= 1.0F;
+        }
+        float right = x_dp;
+        while (right + 1.0F < static_cast<float>(kWindowWidth) && hit(right + 1.0F, y_dp) == widget) {
+            right += 1.0F;
+        }
+        return au::Rect{
+            .origin = au::Point{.x = left, .y = top},
+            .size = au::Size{.width = right - left + 1.0F, .height = bottom - top + 1.0F}};
+    }
+
+    /// @brief 在窗口内扫描，取出第一个指定类型的控件**以及命中它的那一点与其窗口坐标下的可达框**。
+    ///
+    /// 浮层树是面板私有的，行区又是 `Scroll`（内容整体实例化，不做回收），故这里不另开观测点，而是问框架
+    /// 的命中测试「这一点上是谁」。步长 4 dp 足够格住 56 dp 的行高，且落点在控件盒内而不压边界；起点 220 dp
     /// 跳过左导航列（宽 200 dp），免把导航按钮当成行区控件。
-    /// @param room_below_dp 该控件的布局盒下沿到此窗口之间还要有的余量（dp）：要往下探覆盖绘制区的
-    ///        用例（下拉的选项面板）须取一个够格的行，否则探到的点出了窗口，判据测的是坐标钳位而不是派发。
+    /// @param room_below_dp 该控件的**可达框**下沿到视口下沿之间还要有的余量（dp）：要往下探覆盖绘制区的
+    ///        用例（下拉的选项面板）须取一个够格的行，否则探到的点出了视口。**这一参数只是扫描时的挑行
+    ///        启发**——实测把它按内容坐标算仍不转红（被挑中的那行两种读数都在视口内），故「探点在视口内」
+    ///        那句反空转前提写在各用例里作为断言，而不是靠本参数的算术守住。
     /// @param accept 附加筛选（按控件实例）：chrome 用例要的是「关闭态的开关」，同类型的另一档底色
     ///        是强调色，拿它判「底色不亮」会把正确实现读成红。
     [[nodiscard]] auto find_first(std::string_view type_name, float room_below_dp = 0.0F,
@@ -787,10 +851,11 @@ public:
                 if (accept && !accept(widget)) {
                     continue;
                 }
-                if (widget->paint_bounds().bottom() + room_below_dp > static_cast<float>(kWindowHeight) - kCardEdgeDp) {
+                const au::Rect box = reachable_box(widget, x, y);
+                if (box.bottom() + room_below_dp > static_cast<float>(kWindowHeight) - kCardEdgeDp) {
                     continue;
                 }
-                return HitSpot{.widget = widget, .x = x, .y = y};
+                return HitSpot{.widget = widget, .x = x, .y = y, .box = box};
             }
         }
         return HitSpot{};
@@ -810,11 +875,18 @@ public:
         return RgbaColor{data[index], data[index + 1U], data[index + 2U], data[index + 3U]};
     }
 
-    /// @brief 一个控件盒内 (fx, fy) 分数处的像素色。
-    [[nodiscard]] auto probe(const au::Widget *widget, double fx, double fy) const -> RgbaColor {
-        const au::Rect box = widget->paint_bounds();
-        return pixel(box.origin.x + static_cast<float>(box.size.width * fx),
-                     box.origin.y + static_cast<float>(box.size.height * fy));
+    /// @brief 一个可达框内 (fx, fy) 分数处的像素色，并先钉住「这一点的归属就是那个控件」。
+    ///
+    /// 取色点一律由 `HitSpot` 里量出来的**窗口坐标**框推，而不是控件的 `paint_bounds()`：行区是 `Scroll`
+    /// 之后那份 bounds 是内容坐标，直接当帧缓冲下标就会读到视口之外（卡片底、甚至遮罩）的像素。而
+    /// `chrome_is_dark` 是「不亮」这一条松判据——卡片底与导航列本就够暗，取错点的读数照样是绿的，那种绿
+    /// 既守不到本件 chrome 也守不到框架缺省。故这里把「取色点归该控件所有」做成取色的**前提**：坐标空间
+    /// 一旦用错，本例立刻转红而不是静默放宽。
+    [[nodiscard]] auto probe(const HitSpot &spot, double fx, double fy) -> RgbaColor {
+        const float x = spot.box.origin.x + static_cast<float>(spot.box.size.width * fx);
+        const float y = spot.box.origin.y + static_cast<float>(spot.box.size.height * fy);
+        AURORA_TEST_REQUIRE_MSG(hit(x, y) == spot.widget, "the sampled pixel is not claimed by the control under test");
+        return pixel(x, y);
     }
 
     /// @brief 发一个真实指针事件（按下即抬起由调用方各发一次）。
@@ -830,6 +902,14 @@ public:
     auto click(float x_dp, float y_dp) -> void {
         pointer(au::MouseAction::Press, x_dp, y_dp);
         pointer(au::MouseAction::Release, x_dp, y_dp);
+    }
+
+    /// @brief 在一点上发一次真实滚轮事件（`delta_y` 正方向为向上滚，即偏移减小；框架 `ScrollViewport` 的符号约定）。
+    auto scroll(float x_dp, float y_dp, float delta_y) -> void {
+        au::ScrollEvent event;
+        event.position = au::Point{.x = x_dp, .y = y_dp};
+        event.delta_y = delta_y;
+        (void)au::EventDispatcher::dispatch(root_.widget(), event);
     }
 
     [[nodiscard]] auto overlay_count() const -> std::size_t { return host_->overlay_count(); }
@@ -956,19 +1036,29 @@ AURORA_TEST_CASE(clicking_an_open_dropdown_option_in_its_own_extra_hit_box_commi
     h.render();
     AURORA_TEST_REQUIRE(dropdown->is_open());
 
-    const au::Rect box = dropdown->paint_bounds();
-    const float option_x = box.origin.x + box.size.width * 0.5F;
+    const au::Rect layout = dropdown->paint_bounds();  // 只取它的**尺寸**：那是控件自身坐标空间里的量
+    const float option_x = spot.box.origin.x + layout.size.width * 0.5F;
     // 探的那一点取在自身布局盒**之外**的第一条选项带里：行给下拉的紧约束是 40 dp，而面板贴着框架的
     // `box_height_`＝30 dp 之后铺开，故盒下沿再往下的 8 dp 仍属第一条选项、也仍属那一行。
-    const au::Point local{.x = option_x - box.origin.x, .y = box.size.height + 4.0F};
-    const float option_y = box.origin.y + local.y;
+    // 纵坐标以 `spot.box`（窗口坐标，闭态量得）为上沿基准，而非 `layout.origin`（内容坐标）。
+    const au::Point local{.x = layout.size.width * 0.5F, .y = layout.size.height + 4.0F};
+    const float option_y = spot.box.origin.y + local.y;
     const au::BuildContext ctx{};
 
+    // 量的可达框与控件自报的盒高相差不到 1 dp（`reachable_box` 以 1 dp 步进的量化余量），故下面按窗口坐标
+    // 点出去的那一探针，与该点在控件自身坐标空间里的申报 `local`，指的是同一片区域。相差更多只可能是这一
+    // 行被视口或某个祖先裁掉了一部分，那时本例的前提就不再成立，而不是「判据红」。
+    AURORA_TEST_REQUIRE(std::abs(spot.box.size.height - layout.size.height) <= 1.0F);
+    // 反空转前提：探针点在视口之内（视口下沿＝卡片下沿＝窗口下沿减 `kCardEdgeDp`）。`find_first` 的 40 dp
+    // 余量只是让它别挑到底部那一行，而**判据**是这一句——少了它，「祖先闸不认」就可能被读成 `Scroll`
+    // 的视口裁剪，那种绿测的是裁剪而不是派发。
+    AURORA_TEST_REQUIRE_MSG(option_y < static_cast<float>(kWindowHeight) - kCardEdgeDp,
+                            "the probe point is outside the scroll viewport");
     // 三条前提逐条钉住，免得正向判据退化成「碰巧命中一个盒内的点」：
     // ① 这一点由该控件自己申报在追加命中盒之内（G29 的那份声明就在这里）。
     AURORA_TEST_REQUIRE_MSG(dropdown->covers_extra_hit_box(local, ctx), "the open panel does not cover the probed point");
     // ② 且它在控件的布局盒之外——回货前祖先只按布局盒判包含，那一段永远进不了链。
-    AURORA_TEST_REQUIRE_MSG(local.y >= box.size.height, "the probed point is inside the widget's own layout box");
+    AURORA_TEST_REQUIRE_MSG(local.y >= layout.size.height, "the probed point is inside the widget's own layout box");
     // ③ 按真实派发链走场景根**能**命中该控件（回货前恒不成立，是翻转本例的直接证据）。
     AURORA_TEST_REQUIRE_MSG(h.hit(option_x, option_y) == static_cast<au::Widget *>(dropdown),
                             "the dispatch chain still does not reach the dropdown through its ancestor");
@@ -990,13 +1080,17 @@ AURORA_TEST_CASE(clicking_an_open_dropdown_option_in_its_own_extra_hit_box_commi
 
 /// @brief G29 的回货只闭合了一层：面板伸出**所在行之外**的那一段仍进不了派发链（新登记缺口 G30）。
 ///
-/// 追加命中盒的申报是**逐层问直接子**的，孙辈的申报不随祖先上传；`LazyList` 前向遍历完 `live_` 之后没有
-/// 一个条目认领这一点，于是把整视口收下（其 `on_hit_test` 为了让滚轮落在视口上而刻意返回自身，见框架该处
-/// 注释）。嵌套在行里的下拉因此只有「还落在该行 bounds 内」的那一段面板可点：行高 56 dp、上下内边距各 8 dp，
-/// 布局盒下沿再往下 8 dp 就到行的尽头，而面板贴着盒下沿还有整条一条选项。本例取 +12 dp 处。
+/// 追加命中盒的申报是**逐层只问直接子**的，孙辈的申报不随祖先上传。本件的嵌套是
+/// `Scroll → Column → Row → Dropdown`（行区容器由 `LazyList` 改为 `Scroll` + `Column` 之后，`Dropdown`
+/// 从「直接子」降成「孙辈」，而 `Column` 的下降闸问的是那一行 `Row` 自己的申报），故面板只有「还落在
+/// 该行 bounds 内」的那一段可点：行高 56 dp、上下内边距各 8 dp，布局盒下沿再往下 8 dp 就到行的尽头，
+/// 而面板贴着盒下沿还有整条一条选项（高 26 dp）。本例取 +12 dp 处，即行下沿之外 4 dp。
 ///
 /// 三条断言合起来是**这条缺口的形态证明**而不是「没点上」的观测：控件申报覆盖、控件自己的兼容入口也认，
 /// 唯独祖先下降闸不认。追加盒沿祖先链并成子树并集回货后本例必须转红。
+///
+/// 一条反空转前提已经做成断言：探点在视口下沿之上（`find_first` 的 40 dp 余量只是挑行启发，见其参数注），
+/// 故它测的是「祖先闸不认」而不是 `Scroll` 的视口裁剪——后者会把肉眼不可见的那一段一并判成不可达，那种绿是假绿。
 AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_is_still_not_dispatch_reachable_G30) {
     borealis::ui::install_settings_strings();
     Harness h;
@@ -1018,15 +1112,21 @@ AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_is_still_not_dispatch_
     h.render();
     AURORA_TEST_REQUIRE(dropdown->is_open());
 
-    const au::Rect box = dropdown->paint_bounds();
-    const float option_x = box.origin.x + box.size.width * 0.5F;
-    const au::Point local{.x = option_x - box.origin.x, .y = box.size.height + 12.0F};
-    const float option_y = box.origin.y + local.y;
+    const au::Rect layout = dropdown->paint_bounds();  // 只取它的**尺寸**：那是控件自身坐标空间里的量
+    const float option_x = spot.box.origin.x + layout.size.width * 0.5F;
+    const au::Point local{.x = layout.size.width * 0.5F, .y = layout.size.height + 12.0F};
+    const float option_y = spot.box.origin.y + local.y;
     const au::BuildContext ctx{};
 
+    AURORA_TEST_REQUIRE(std::abs(spot.box.size.height - layout.size.height) <= 1.0F);
+    // 反空转：探针点在视口之内（少了这一句，下面那句「不可达」就可能测的是 `Scroll` 的视口裁剪而非祖先闸）。
+    AURORA_TEST_REQUIRE_MSG(option_y < static_cast<float>(kWindowHeight) - kCardEdgeDp,
+                            "the probe point is outside the scroll viewport");
+    // 反空转：探点上有控件认领（视口之下或卡片之外的点也会「不是下拉」，那种绿证的是裁剪而不是闸）。
+    AURORA_TEST_REQUIRE_MSG(h.hit(option_x, option_y) != nullptr, "the probe point is claimed by nobody");
     AURORA_TEST_REQUIRE_MSG(dropdown->covers_extra_hit_box(local, ctx), "the open panel does not cover the probed point");
     // 兼容入口与祖先闸共用同一份 `panel_box()`，故它认——「控件认、闸不认」的分叉正是本条缺口的内容。
-    AURORA_TEST_REQUIRE_MSG(dropdown->hit_test(local, box, ctx) == static_cast<au::Widget *>(dropdown),
+    AURORA_TEST_REQUIRE_MSG(dropdown->hit_test(local, layout, ctx) == static_cast<au::Widget *>(dropdown),
                             "the widget's own hit test does not claim the point either");
     AURORA_TEST_CHECK_MSG(h.hit(option_x, option_y) != static_cast<au::Widget *>(dropdown),
                           "G30 closed: the extra hit box now propagates up the ancestor chain");
@@ -1035,6 +1135,63 @@ AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_is_still_not_dispatch_
     h.render();
     AURORA_TEST_CHECK_EQ(dropdown->selected_index(), 1);
     AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+}
+
+/// @brief 行区滚下去之后仍然点得动：滚动偏移非零时，按量出来的新位置真点一行开关即提交。
+///
+/// 行区容器由 `LazyList` 换成 `Scroll` + `Column` 是为 #114 那些高低不等的行（固定 `item_extent` 表达不出
+/// 「主题卡 + 16 格色板 + 下拉」同列混排），代价是内容子节点的 bounds 从此是**内容坐标**，命中须经
+/// `offset_y_` 换算回内容空间（框架 `scroll.h` 的「几何与命中契约」一节）。那条换算只有框架自己的用例守，
+/// 故本件在生产路径上补这一条：它同时是 G27 回货（滚动容器的内容进得了真实命中链）在面板上的消费证人，
+/// 也是 #114 每一根的落地前提——外观页 30 行 × 56 dp 本来就放不下，不滚就没有「看不见的行」这件事。
+///
+/// 刻意**不**按键位取控件：滚动之后视口里第一枚关闭态开关是哪一行的哪个键，是排版与偏移的函数而不是本件的
+/// 契约，故这里只认「提交确实走完了表单与落盘」那一段，键名交给既有的按键用例去守。
+AURORA_TEST_CASE(a_row_control_still_commits_after_the_row_area_has_been_scrolled) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    const HitSpot spot = h.find_first(
+        "Switch", 0.0F, [](au::Widget *widget) -> bool {
+            auto *sw = dynamic_cast<au::Switch *>(widget);
+            return sw != nullptr && !sw->value();
+        });
+    AURORA_TEST_REQUIRE(spot.widget != nullptr);
+    au::Scroll *area = h.row_scroll(spot.x, spot.y);
+    AURORA_TEST_REQUIRE(area != nullptr);
+    AURORA_TEST_REQUIRE_EQ(area->offset_y(), 0.0F);
+
+    // 三档 × 框架缺省 `step` 16 dp ＝ 内容上移 48 dp（负 `delta_y` 是往下滚，符号约定同 `ScrollViewport`）。
+    for (int notch = 0; notch < 3; ++notch) {
+        h.scroll(spot.x, spot.y, -1.0F);
+    }
+    h.render();
+    AURORA_TEST_CHECK_GT(area->offset_y(), 0.0F);
+    // 内容真的在窗口里挪了：同一个坐标上现在认领的不是那枚开关（挪开了，或落在行间隙上）。
+    // 少了这一句，本例就只是「读到一个非零偏移」而没有证到派发面跟着挪。
+    AURORA_TEST_REQUIRE(h.hit(spot.x, spot.y) != spot.widget);
+
+    const HitSpot moved = h.find_first(
+        "Switch", 0.0F, [](au::Widget *widget) -> bool {
+            auto *sw = dynamic_cast<au::Switch *>(widget);
+            return sw != nullptr && !sw->value();
+        });
+    AURORA_TEST_REQUIRE(moved.widget != nullptr);
+    auto *toggle = dynamic_cast<au::Switch *>(moved.widget);
+    AURORA_TEST_REQUIRE(toggle != nullptr);
+    const float switch_x = moved.box.origin.x + moved.box.size.width * 0.5F;
+    const float switch_y = moved.box.origin.y + moved.box.size.height * 0.5F;
+    AURORA_TEST_REQUIRE_MSG(h.hit(switch_x, switch_y) == moved.widget,
+                            "the measured box center is not dispatch-reachable after scrolling");
+
+    h.click(switch_x, switch_y);
+    h.render();
+    AURORA_TEST_CHECK_TRUE(toggle->value());
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
+    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());  // 落盘成功后脏标记已推进
 }
 
 /// @brief chrome 色值交接：六类通用行控件必须吃本仓自己的深色 chrome，而不是框架控件的浅色主题缺省。
@@ -1058,17 +1215,17 @@ AURORA_TEST_CASE(the_editable_controls_paint_the_chrome_colors_not_the_light_def
     AURORA_TEST_REQUIRE(text_spot.widget != nullptr);
     auto *box = dynamic_cast<au::TextInput *>(text_spot.widget);
     AURORA_TEST_REQUIRE(box != nullptr);
-    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(box, 0.9, 0.15)));
+    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(text_spot, 0.9, 0.15)));
     h.click(text_spot.x, text_spot.y);
     h.render();
     // 没真的聚焦上就根本没走聚焦态那条绘制分支，这一句是本例的前提而不是附带观察。
     AURORA_TEST_REQUIRE(box->is_focused());
-    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(box, 0.9, 0.15)));
+    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(text_spot, 0.9, 0.15)));
 
     // 步进器：框底（数值文本从 y=8 起、箭头区在右侧 22 dp 之内，故取盒内靠上的中部）。
     const HitSpot spin_spot = h.find_first("SpinBox");
     AURORA_TEST_REQUIRE(spin_spot.widget != nullptr);
-    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(spin_spot.widget, 0.5, 0.12)));
+    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(spin_spot, 0.5, 0.12)));
 
     // 开关关闭态轨道：缺省 {180,180,180} 是全部浅色缺省里最低的一档，仍必须被这条线抓住。
     const HitSpot toggle_spot = h.find_first(
@@ -1078,14 +1235,14 @@ AURORA_TEST_CASE(the_editable_controls_paint_the_chrome_colors_not_the_light_def
         });
     AURORA_TEST_REQUIRE(toggle_spot.widget != nullptr);
     AURORA_TEST_CHECK_EQ(static_cast<int>(toggle_spot.widget->paint_bounds().size.height), 24);
-    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(toggle_spot.widget, 0.8, 0.5)));
+    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(toggle_spot, 0.8, 0.5)));
 
     // 下拉主框（选项面板与主框共用同一份 `box_color_`，故主框这一读也守住了展开的那一片）。
     panel->select_page(SettingsPage::Terminal);
     h.render();
     const HitSpot dropdown_spot = h.find_first("Dropdown");
     AURORA_TEST_REQUIRE(dropdown_spot.widget != nullptr);
-    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(dropdown_spot.widget, 0.5, 0.12)));
+    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(dropdown_spot, 0.5, 0.12)));
 }
 
 /// @brief G28 的接货复验：按钮标签交回框架的 i18n 查表，本件不再预先解析成 `std::string`。
@@ -1144,6 +1301,10 @@ AURORA_TEST_CASE(clicking_an_open_dropdown_option_in_its_own_extra_hit_box_commi
 }
 
 AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_is_still_not_dispatch_reachable_G30) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_row_control_still_commits_after_the_row_area_has_been_scrolled) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
