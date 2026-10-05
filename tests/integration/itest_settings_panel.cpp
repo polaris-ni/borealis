@@ -18,15 +18,20 @@
 ///              派发，卡片外那一点命中的是遮罩层本身，卡片内那一点命中的是卡片里的控件，点遮罩即关
 ///              面板。`Dialog` / `Scroll` 那两类不写 bounds 的容器（缺口 G26 / G27）在本用例里会直接
 ///              表现为「命中不到、点了不关」。
-///           ⑦ **一条现状钉子（缺口 G29，不是行为正确性判据）**：`Dropdown` 的选项面板是「覆盖绘制不占
-///              布局」的区域，控件只在 `on_hit_test` 里自陈那片矩形而不覆写链入口，而真实派发走的命中链
-///              由祖先按 `child.bounds()` 判包含，于是面板行里的下拉**点得到主框、点不到选项**。G29 回货
-///              后该例必须转红（届时改成「真点一个选项即提交」）；若面板先改走浮层自绘选项，它同样转红，
-///              那是删掉钉子的信号而不是 bug。
+///           ⑦ **下拉的选项走真实派发**（缺口 G29 的接货复验，裁决 7.59）：选项面板是「覆盖绘制不占布局」
+///              的区域，回货前它进不了真实派发的命中链（祖先按 `child.bounds()` 判包含），本套件当时以此
+///              留一条现状钉子。框架补上 `Widget::extra_hit_box()` 与祖先下降闸的合并判定后，钉子翻成正向
+///              判据：盒外那一段选项带按链能命中该 `Dropdown`，其上的真实单击选中另一档、收起面板、只落盘
+///              不广播。**回货只闭合一层**——追加盒只并「直接子」的申报，孙辈的申报不随祖先上传，故面板伸出
+///              所在行之外的那一段仍不可达，本套件另留一条钉子（新缺口 G30，含「控件申报覆盖、控件兼容入口也认、
+///              唯独祖先闸不认」的形态证明）。
+///           ⑧ **按钮标签由框架查表**（缺口 G28 的接货复验，裁决 7.59）：本件那三枚按钮原样交回
+///              `LocalizedString` 之后，显示串仍是词条表给的那一条；查表没发生就回退到实例自己的 `text`，
+///              而 `tr()` 造出的实例那份 text 恒空。
 ///
 ///           一条测试现场的必要构造：`OverlayHost` 的浮层序号是从「基础内容之后」起算的
-///           （`add_overlay` 返回 `children_.size() - 1`），故宿主**必须**带一个基础子节点——生产路径
-///           上那是终端视口，本用例给一个 `Text`。空宿主的返回序号是 0，而 0 正是面板「未登记」的哨兵值。
+///           （`add_overlay` 返回 `children_.size() - 1`，回货后宿主无基础内容时返回 `std::nullopt`），
+///           故宿主**必须**带一个基础子节点——生产路径上那是终端视口，本用例给一个 `Text`。
 
 #include <cstddef>
 #include <cstdint>
@@ -43,6 +48,7 @@
 #include "aurora/event/dispatcher.h"
 #include "aurora/event/focus.h"
 #include "aurora/i18n/string_table.h"
+#include "aurora/widget/button.h"
 #include "aurora/widget/dropdown.h"
 #include "aurora/widget/switch.h"
 #include "aurora/widget/text.h"
@@ -229,7 +235,7 @@ public:
     out_base = std::make_shared<au::Text>(
         aurora::TextProps{.content = std::string{"base"}, .text_color = au::Color{0, 0, 0, 0xFF}});
     out_root = au::Node{out_base};
-    host->add_overlay(au::Node{out_base});  // 占住子节点 [0]：基础内容
+    (void)host->add_overlay(au::Node{out_base});  // 占住子节点 [0]：基础内容
     return host;
 }
 
@@ -717,7 +723,7 @@ public:
         host_ = std::make_shared<au::OverlayHost>();
         base_ = std::make_shared<au::Text>(
             aurora::TextProps{.content = std::string{"base"}, .text_color = au::Color{0, 0, 0, 0xFF}});
-        host_->add_overlay(au::Node{base_});
+        (void)host_->add_overlay(au::Node{base_});
         root_ = au::Node{std::static_pointer_cast<au::Widget>(host_)};
         focus_.set_root(&root_.widget());
         render();
@@ -909,31 +915,41 @@ AURORA_TEST_CASE(a_text_row_commits_only_when_focus_leaves) {
     AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
 }
 
-/// @brief 缺口 G29 的现状钉子：下拉的选项面板画在主框之下，那片区域**不进真实派发的命中链**。
+/// @brief G29 的接货复验（可达的那一段）：展开的下拉选项面板进了真实派发链，于是「真点一个选项即提交」
+///        写成正向判据。
 ///
-/// 与本套件其余各例不同，本例断的是「框架现状不支持什么」，故它不证面板的行为正确，而是把一条会
-/// 随回货翻转的现状钉在案上：`Dropdown` 只在 `on_hit_test` 里自陈了覆盖绘制区（主框 + 展开的选项
-/// 面板），链入口 `on_hit_test_chain` 没有覆写；而祖先 `Container::on_hit_test_chain` 先按
-/// `child.bounds()` 判包含再递归，于是挂在 `LazyList` 行里的下拉，其选项永远到不了控件自己那一段
-/// 判定——「画得出来却点不动」。本例因此分两头断：按局部坐标直接问控件（会命中），按场景根走链
-/// （不命中）。**回货后本例必须转红**（那时链上应能命中该 `Dropdown`），届时把它改成「真点一个选项
-/// 即提交」；若面板先改走浮层自绘选项（规避件），本例的第一处 REQUIRE 同样转红，那是删钉子的信号。
-AURORA_TEST_CASE(a_dropdown_option_below_the_layout_box_is_not_dispatch_reachable_G29) {
+/// 本例曾是「框架现状不支持什么」的钉子（钉子在裁决 7.57④⑤，CHANGELOG v0.57 / v0.58 在册并明写「回货后
+/// 必须转红」）。回货形态是 `Widget::extra_hit_box(ctx)` 把「画在自身布局盒之外、仍归本件接管」的那片矩形
+/// **交给祖先的下降闸**（`child.bounds().contains(local) || child.covers_extra_hit_box(local - origin, ctx)`），
+/// 而 `Dropdown` 的覆写取的就是它与 `on_hit_test` 同源的那一份 `panel_box()`（缺省 `nullopt` ⇒ 未覆写的控件
+/// 与改动前逐位等价）。于是本例两头都翻向正向：按链走场景根**能**命中该 `Dropdown`，且那一点上的真实单击
+/// 选中 0 号档、收起面板、并把提交交回表单。
+///
+/// 目标选项固定取 0 号，故装载基线预置成 `Wide`（1 号）；探的那一点取在自身布局盒**之外**的那一段选项带里
+/// （回货前那一段永远进不了链，盒内的那一段本来就可达，拿它翻正向等于什么都没翻）。落盘而非广播是因为这一行
+/// `terminal.ambiguous_width` 是「接缝待开 ∧ 下次会话生效」——`apply_scope()` 把它折成只落盘（判据文 B3-a），
+/// 所以面板改了它也不该动运行中的视口。选项行高 26 dp 是框架缺省且本件未改（`set_item_height` 未被调用）。
+/// 本例只闭合到「那一格仍属所在行」为止，再往外的残段见下一条用例。
+AURORA_TEST_CASE(clicking_an_open_dropdown_option_in_its_own_extra_hit_box_commits_G29) {
     borealis::ui::install_settings_strings();
     Harness h;
     StoreProbe probe;
+    probe.base.terminal.ambiguous_width = borealis::term::AmbiguousWidth::Wide;  // 让 0 号档成为「改变取值」的那一档
     std::unique_ptr<SettingsPanel> panel = h.attach(probe);
     h.open(*panel);
-    // 下拉行集中在终端页（`terminal.long_line` / `bell` / `encoding` / `paste_newlines` / `right_click`），
-    // 面板默认落在外观页，故先翻页再探。
+    // 下拉行集中在终端页，面板默认落在外观页，故先翻页再探。
     panel->select_page(SettingsPage::Terminal);
     h.render();
-    // 取一个下方还有 40 dp 余量的下拉行：缺省主框高 30 dp、选项行高 26 dp，够探到第一行选项。
-    const HitSpot spot = h.find_first("Dropdown", 40.0F);
+    // 认行：终端页只有 `terminal.ambiguous_width` 是两档下拉（`paste_newlines` / `right_click` 各三档，
+    // 而 `long_line` / `bell` 因未接线只画只读摘要、根本不出 `Dropdown`）。
+    const HitSpot spot = h.find_first("Dropdown", 40.0F, [](au::Widget *widget) -> bool {
+        const auto *dropdown = dynamic_cast<au::Dropdown *>(widget);
+        return dropdown != nullptr && dropdown->option_count() == 2U;
+    });
     AURORA_TEST_REQUIRE(spot.widget != nullptr);
     auto *dropdown = dynamic_cast<au::Dropdown *>(spot.widget);
     AURORA_TEST_REQUIRE(dropdown != nullptr);
-    AURORA_TEST_REQUIRE(dropdown->option_count() > 1U);  // 少于两个选项就谈不上「选中另一个」
+    AURORA_TEST_REQUIRE_EQ(dropdown->selected_index(), 1);  // 预置的 Wide 经表单搬进了控件的选中位
 
     // 开：点主框那一点——它在布局盒之内，命中链可达，所以「展开」这一步是真实的。
     h.click(spot.x, spot.y);
@@ -942,24 +958,82 @@ AURORA_TEST_CASE(a_dropdown_option_below_the_layout_box_is_not_dispatch_reachabl
 
     const au::Rect box = dropdown->paint_bounds();
     const float option_x = box.origin.x + box.size.width * 0.5F;
-    const float option_y = box.bottom() + 4.0F;  // 第一行选项之内（布局盒之外）
+    // 探的那一点取在自身布局盒**之外**的第一条选项带里：行给下拉的紧约束是 40 dp，而面板贴着框架的
+    // `box_height_`＝30 dp 之后铺开，故盒下沿再往下的 8 dp 仍属第一条选项、也仍属那一行。
+    const au::Point local{.x = option_x - box.origin.x, .y = box.size.height + 4.0F};
+    const float option_y = box.origin.y + local.y;
+    const au::BuildContext ctx{};
 
-    // 控件自己那一份命中判定确实接了这一点（`on_hit_test` 里那段 drop 矩形）——缺口不在控件侧的声明。
-    // 直接按局部坐标问它，等价于「祖先那一层若放行，派发会怎么走」。
-    AURORA_TEST_CHECK_EQ(
-        dropdown->hit_test(au::Point{.x = box.size.width * 0.5F, .y = box.size.height + 4.0F},
-                           au::Rect{.origin = au::Point{.x = 0.0F, .y = 0.0F}, .size = box.size},
-                           au::BuildContext{}),
-        static_cast<au::Widget *>(dropdown));
-    // 而从场景根走真实派发的那条入口（链）够不到：祖先先按 `child.bounds()` 判包含再递归。
-    AURORA_TEST_CHECK_NE(h.hit(option_x, option_y), static_cast<au::Widget *>(dropdown));
+    // 三条前提逐条钉住，免得正向判据退化成「碰巧命中一个盒内的点」：
+    // ① 这一点由该控件自己申报在追加命中盒之内（G29 的那份声明就在这里）。
+    AURORA_TEST_REQUIRE_MSG(dropdown->covers_extra_hit_box(local, ctx), "the open panel does not cover the probed point");
+    // ② 且它在控件的布局盒之外——回货前祖先只按布局盒判包含，那一段永远进不了链。
+    AURORA_TEST_REQUIRE_MSG(local.y >= box.size.height, "the probed point is inside the widget's own layout box");
+    // ③ 按真实派发链走场景根**能**命中该控件（回货前恒不成立，是翻转本例的直接证据）。
+    AURORA_TEST_REQUIRE_MSG(h.hit(option_x, option_y) == static_cast<au::Widget *>(dropdown),
+                            "the dispatch chain still does not reach the dropdown through its ancestor");
 
-    // 后果：那一点上的真实单击既不选中也不收起，选项面板对用户而言就是画出来却点不动的一排字。
-    const int before = dropdown->selected_index();
+    // 那一点上的真实单击：选中 0 号、收起、提交交回表单，并按该行的生效档位只落盘不广播。
     h.click(option_x, option_y);
     h.render();
-    AURORA_TEST_CHECK_EQ(dropdown->selected_index(), before);
-    AURORA_TEST_CHECK_TRUE(dropdown->is_open());
+    AURORA_TEST_CHECK_EQ(dropdown->selected_index(), 0);
+    AURORA_TEST_CHECK_FALSE(dropdown->is_open());
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+    AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 1U);
+    // 落点归属由「写出去的那一份配置」说话，而不是由排版次序推断。
+    AURORA_TEST_CHECK_TRUE(probe.persisted[0].terminal.ambiguous_width == borealis::term::AmbiguousWidth::Narrow);
+    AURORA_TEST_REQUIRE(panel->form().value("terminal.ambiguous_width") != nullptr);
+    AURORA_TEST_CHECK_TRUE(*panel->form().value("terminal.ambiguous_width")->as_text() == std::string{"narrow"});
+    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());  // 落盘成功后脏标记已推进
+}
+
+/// @brief G29 的回货只闭合了一层：面板伸出**所在行之外**的那一段仍进不了派发链（新登记缺口 G30）。
+///
+/// 追加命中盒的申报是**逐层问直接子**的，孙辈的申报不随祖先上传；`LazyList` 前向遍历完 `live_` 之后没有
+/// 一个条目认领这一点，于是把整视口收下（其 `on_hit_test` 为了让滚轮落在视口上而刻意返回自身，见框架该处
+/// 注释）。嵌套在行里的下拉因此只有「还落在该行 bounds 内」的那一段面板可点：行高 56 dp、上下内边距各 8 dp，
+/// 布局盒下沿再往下 8 dp 就到行的尽头，而面板贴着盒下沿还有整条一条选项。本例取 +12 dp 处。
+///
+/// 三条断言合起来是**这条缺口的形态证明**而不是「没点上」的观测：控件申报覆盖、控件自己的兼容入口也认，
+/// 唯独祖先下降闸不认。追加盒沿祖先链并成子树并集回货后本例必须转红。
+AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_is_still_not_dispatch_reachable_G30) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    probe.base.terminal.ambiguous_width = borealis::term::AmbiguousWidth::Wide;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    panel->select_page(SettingsPage::Terminal);
+    h.render();
+    const HitSpot spot = h.find_first("Dropdown", 40.0F, [](au::Widget *widget) -> bool {
+        const auto *dropdown = dynamic_cast<au::Dropdown *>(widget);
+        return dropdown != nullptr && dropdown->option_count() == 2U;
+    });
+    AURORA_TEST_REQUIRE(spot.widget != nullptr);
+    auto *dropdown = dynamic_cast<au::Dropdown *>(spot.widget);
+    AURORA_TEST_REQUIRE(dropdown != nullptr);
+
+    h.click(spot.x, spot.y);
+    h.render();
+    AURORA_TEST_REQUIRE(dropdown->is_open());
+
+    const au::Rect box = dropdown->paint_bounds();
+    const float option_x = box.origin.x + box.size.width * 0.5F;
+    const au::Point local{.x = option_x - box.origin.x, .y = box.size.height + 12.0F};
+    const float option_y = box.origin.y + local.y;
+    const au::BuildContext ctx{};
+
+    AURORA_TEST_REQUIRE_MSG(dropdown->covers_extra_hit_box(local, ctx), "the open panel does not cover the probed point");
+    // 兼容入口与祖先闸共用同一份 `panel_box()`，故它认——「控件认、闸不认」的分叉正是本条缺口的内容。
+    AURORA_TEST_REQUIRE_MSG(dropdown->hit_test(local, box, ctx) == static_cast<au::Widget *>(dropdown),
+                            "the widget's own hit test does not claim the point either");
+    AURORA_TEST_CHECK_MSG(h.hit(option_x, option_y) != static_cast<au::Widget *>(dropdown),
+                          "G30 closed: the extra hit box now propagates up the ancestor chain");
+    // 既成事实的另一半：面板画在那里、点了没反应——既不选中也不提交。
+    h.click(option_x, option_y);
+    h.render();
+    AURORA_TEST_CHECK_EQ(dropdown->selected_index(), 1);
     AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
 }
 
@@ -1014,6 +1088,47 @@ AURORA_TEST_CASE(the_editable_controls_paint_the_chrome_colors_not_the_light_def
     AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(dropdown_spot.widget, 0.5, 0.12)));
 }
 
+/// @brief G28 的接货复验：按钮标签交回框架的 i18n 查表，本件不再预先解析成 `std::string`。
+///
+/// 回货形态是 `Button::resolved_label(ctx)` 成为它 `on_layout` / `on_paint` 的**唯一**显示串来源
+/// （解析结果连同实测宽高一起缓存进 `cached_display_text_`），`accessibility_label()` 复用同一份缓存，
+/// 故本件那三枚按钮（四枚导航、关闭、恢复主题默认）可以原样收 `LocalizedString`。
+///
+/// 本例守的是**按钮交 `LocalizedString` 之后仍有人查表**：框架不查（回货前 `paint_label` 直读
+/// `label.text`）或本件写错 key，显示串都是空串——`settings_text()` 走 `tr()`，而查表失败时框架回退到
+/// 实例自己的 `text`，那份 text 恒空。它不区分「框架查表」与「本件预先解析成 `std::string` 再交出」两种
+/// 形态（两者给出同一个显示串），故这里以「显示串逐字等于本件按同一张表查出的那一条」为判据，
+/// 而不伪造一条只抓后者的断言。
+AURORA_TEST_CASE(a_button_label_comes_from_the_framework_string_table_G28) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    const HitSpot spot = h.find_first("Button");
+    AURORA_TEST_REQUIRE(spot.widget != nullptr);
+    auto *button = dynamic_cast<au::Button *>(spot.widget);
+    AURORA_TEST_REQUIRE(button != nullptr);
+
+    // 布局与绘制已跑过一帧，故这里读到的就是 `resolved_label()` 缓存下来的那一份。
+    const std::string shown = button->accessibility_label();
+    AURORA_TEST_CHECK_FALSE(shown.empty());  // 框架查表失败回退 `LocalizedString::text`，而 `tr()` 的 text 恒空
+    AURORA_TEST_CHECK_MSG(shown.find("settings.") == std::string::npos, "the button shows a raw locale key");
+    int matched = 0;
+    std::string matched_key{};
+    for (std::string_view key : {"settings.close", "settings.action.unset", "settings.page.appearance",
+                                 "settings.page.terminal", "settings.page.connection", "settings.page.shortcuts"}) {
+        if (shown == borealis::ui::settings_label(key)) {
+            ++matched;
+            matched_key = std::string{key};
+        }
+    }
+    AURORA_TEST_REQUIRE_MSG(matched == 1, "the button label matches none or several of the panel's entries: " + shown);
+    // 扫到的是卡片右上角那一枚（行区里的「恢复主题默认」在更下方，且导航列被扫描起点 220 dp 排除在外）。
+    AURORA_TEST_CHECK_EQ(matched_key, std::string{"settings.close"});
+}
+
 #else
 
 AURORA_TEST_CASE(the_scrim_covers_the_whole_window_and_a_real_click_closes_the_panel) {
@@ -1024,11 +1139,19 @@ AURORA_TEST_CASE(a_text_row_commits_only_when_focus_leaves) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
-AURORA_TEST_CASE(a_dropdown_option_below_the_layout_box_is_not_dispatch_reachable_G29) {
+AURORA_TEST_CASE(clicking_an_open_dropdown_option_in_its_own_extra_hit_box_commits_G29) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_is_still_not_dispatch_reachable_G30) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
 AURORA_TEST_CASE(the_editable_controls_paint_the_chrome_colors_not_the_light_defaults) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_button_label_comes_from_the_framework_string_table_G28) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
