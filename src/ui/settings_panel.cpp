@@ -25,7 +25,9 @@
 
 #include "aurora/core/log.h"
 #include "aurora/event/keycode.h"
+#include "aurora/i18n/string_table.h"
 #include "aurora/modifier/modifier.h"
+#include "aurora/render/font_engine.h"
 #include "aurora/render/painter.h"
 #include "aurora/widget/button.h"
 #include "aurora/widget/canvas.h"
@@ -63,7 +65,7 @@ constexpr float kCardMaxWidthDp = 1040.0F;
 constexpr float kCardMaxHeightDp = 680.0F;
 constexpr float kCardMarginDp = 16.0F;  ///< 卡片与窗口边的最小留白。
 
-// ---- 外观页两个区段的排版量（判据文 §4 A1-a / A2-a，尺寸按 `UI_SETTINGS.draft.svg` 量得）----
+// ---- 外观页三个区段的排版量（判据文 §4 A1-a / A2-a / A5-a，尺寸按 `UI_SETTINGS.draft.svg` 量得）----
 constexpr float kThemeCardHeightDp = 64.0F;
 constexpr std::size_t kThemeCardPerRow = 4;  ///< 每行几张卡：`Scroll` 只竖向滚动，八套必须换行而非挤成一横排。
 constexpr float kSwatchTileWidthDp = 48.0F;
@@ -71,15 +73,29 @@ constexpr float kSwatchTileHeightDp = 26.0F;
 constexpr std::size_t kSwatchPerRow = 8;  ///< 16 格分两行。
 constexpr float kSectionGapDp = 6.0F;     ///< 区段内行与行的间距。
 
+constexpr float kChainItemHeightDp = 32.0F;   ///< 链条目行高（列表给子项的是紧约束宽 + 无限高，故条目自锁）。
+constexpr float kChainOrdinalWidthDp = 24.0F; ///< 序号列宽：两位足够（链上限是个位数）。
+constexpr float kChainButtonWidthDp = 36.0F;  ///< 上移 / 下移 / 移除三枚按钮的宽度。
+constexpr float kChainFilterWidthDp = 180.0F;  ///< 过滤框宽。
+constexpr float kChainHandleBandDp = 48.0F;    ///< 列表自留的手柄带（框架 `AURORA_HANDLE_BAND` 的同值口径）。
+constexpr std::size_t kChainCandidateRows = 6; ///< 候选池一次列几档（常驻按钮数，多余的那几档隐藏）。
+
+/// @brief 回退链的容量上限：框架侧截断的那个数字，本件取同一个真值源而不是另写一个 8。
+///
+/// 截断发生在框架的 `TextLayoutOpts::with_fallback_chain()`（`render/font_engine.h`）且对用户不可见，
+/// 故面板必须在界面上自己判、自己说（判据文 A5-a；裁决 7.50 记的那条代价）。
+constexpr std::size_t kChainCapacity = aurora::render::AURORA_TEXT_FALLBACK_CHAIN_MAX;
+
 /// @brief 色板格数：从 `PaletteSpec::basic` 的长度取，而不是在本件再写一遍 16。
 ///
 /// 判据 A2-a 的「16 格」与表单的 `TableSizeWrong` 都判该长度，此处硬写一个数字就是第三份真值源。
 /// 取一份缺省 `PaletteSpec` 来读长度（MSVC 的 `std::array::size` 不是静态成员，不能按类型直调）。
 const std::size_t kPaletteSlotCount = PaletteSpec{}.basic.size();
 
-/// @brief 两个区段各自归属的行键：卡片与色板都是**一行**的区段（角标、状态列与提交都落在那一行上）。
+/// @brief 三个区段各自归属的行键：卡片、色板与链都是**一行**的区段（角标、状态列与提交都落在那一行上）。
 constexpr std::string_view kThemeKey{"appearance.theme"};
 constexpr std::string_view kPaletteKey{"appearance.palette.basic"};
+constexpr std::string_view kChainKey{"appearance.font_fallback_chain"};
 
 /// @brief `ui::RgbaColor` → 框架颜色（逐字段搬，alpha 参与）。
 ///
@@ -116,6 +132,64 @@ constexpr std::string_view kPaletteKey{"appearance.palette.basic"};
         return 1.0;
     }
     return span >= 60.0 ? 1.0 : 0.1;
+}
+
+/// @brief ASCII 小写折叠（只对 A–Z 生效，其余字节原样）。
+///
+/// 族名比较走折叠而不是逐字节：框架的族名匹配本身是逐字节精确、区分大小写的（裁决 7.46③ 那条实测，
+/// 拼错的族名静默回落），故**候选侧**必须给出与框架不同的更宽口径——用户在过滤框里敲 `cas` 时，把
+/// `Cascadia Code` 排除掉是不合直觉的。本函数只服务候选池的匹配与「是否已在链内」的判定，不改写也不
+/// 重新拼写族名本身（交进表单的那一串永远是目录里的原样）。
+[[nodiscard]] auto ascii_lower(std::string_view text) -> std::string {
+    std::string out{text};
+    for (char &ch : out) {
+        if (ch >= 'A' && ch <= 'Z') {
+            ch = static_cast<char>(ch - 'A' + 'a');
+        }
+    }
+    return out;
+}
+
+/// @brief 回退链区段的提示行文案（四档互斥，次序即优先级）。
+///
+/// 提示是**本区段自己**的状态而非某次提交的失败原因，故它落在区段内的独立一行而不占用行的状态列：
+/// 状态列由 `after_commit` 写角标，两处共用就会在每次改链后把提示抹掉。上限数经词条的位置参数交出
+/// （`{0}`），因为那个数字的真值源在框架头里而不是本件（`kChainCapacity`）。
+///
+/// 第一条（超出上限）是本件**不改数据**的直接后果：装载值长于上限时列表照单全画，只说明「超出部分
+/// 不参与绘制」。面板若擅自裁到前 N 项，用户打开面板改别的一行就会把存储里那两条静默抹掉。
+[[nodiscard]] auto chain_hint_text(const std::vector<std::string> &items, std::string_view filter,
+                                   std::size_t candidate_count) -> aurora::LocalizedString {
+    const aurora::LocalizedString capacity{std::to_string(kChainCapacity)};
+    if (items.size() > kChainCapacity) {
+        return settings_text("settings.chain.truncated", {capacity});
+    }
+    if (items.size() == kChainCapacity) {
+        return settings_text("settings.chain.full", {capacity});
+    }
+    if (items.empty()) {
+        return settings_text("settings.chain.empty");
+    }
+    if (!filter.empty() && candidate_count == 0U) {
+        return settings_text("settings.chain.no_match");
+    }
+    return aurora::LocalizedString{std::string{}};
+}
+
+/// @brief 把提示文案就地解析成显示串（观察面交的是文本而不是词条 key，用例才不必再引一次表）。
+///
+/// 绘制侧不走这里：`chain_hint_` 的 `content` 收的是 `LocalizedString`，框架在绘制时自己查表。
+[[nodiscard]] auto resolve_hint(const aurora::LocalizedString &hint) -> std::string {
+    return hint.resolve(&aurora::default_string_table(), settings_locale());
+}
+
+/// @brief 回退链列表区段的高度：按条目数全部展开（上限是链容量，故最多 `kChainCapacity` 行）。
+///
+/// 必须显式给出：`ReorderableList::on_layout` 在**无界约束**下回落 `320×480`（文件头①），而行区的
+/// `Scroll` + `Column` 给子项的纵向约束是无界的。空链也要占一行，否则「链为空」那一档的提示连同
+/// 列表一起塌成零高，用户看不到区段。溢出由行区的 `Scroll` 承担，故这里不再自设可见行数上限。
+[[nodiscard]] auto chain_section_height_dp(std::size_t item_count) -> float {
+    return static_cast<float>(std::max<std::size_t>(item_count, 1U)) * kChainItemHeightDp;
 }
 
 /// @brief 表单值 → 文本框初值（HEX 走 `ui::color_to_hex`，数字按整数或一位小数呈现）。
@@ -214,8 +288,16 @@ auto SettingsPanel::open() -> void {
     rebuild_overlay();
     if (escape_binding_ == 0) {
         // 关闭键挂 Global：面板内的控件都可获焦，挂 Focus 反而在焦点落在遮罩层时失灵（S2①）。
+        // 闭包先问回退链「有没有正被抓在键盘上的那一项」：全局快捷键在任何控件之前消费（裁决 7.51③
+        // 理由 (a)），不先问的话，用户在链里正按着 Space 搬一项时敲 Escape 会连面板一起关掉，而那一项
+        // 还悬在半空。放下抓取就原地不动——这是本件与框架之间的一次交接，不是缺口（同裁决 7.58 的判法）。
         escape_binding_ = shortcuts_.add(aurora::KeyCombo(aurora::ModifierKey::None, aurora::KeyCode::Escape),
-                                         [this]() -> void { close(); },
+                                         [this]() -> void {
+                                             if (chain_list_ != nullptr && chain_list_->cancel_keyboard_grab()) {
+                                                 return;
+                                             }
+                                             close();
+                                         },
                                          aurora::ShortcutScope::Global,
                                          "settings.close");
     }
@@ -241,6 +323,7 @@ auto SettingsPanel::close() -> void {
     swatch_canvases_.clear();
     swatch_editor_.reset();
     swatch_reset_button_.reset();
+    clear_chain_state();
 }
 
 auto SettingsPanel::select_page(SettingsPage page) -> void {
@@ -367,6 +450,53 @@ auto SettingsPanel::swatch_input() const -> aurora::Widget * {
     return swatch_editor_.get();
 }
 
+auto SettingsPanel::chain_view() const -> ChainView {
+    ChainView out;
+    // 次序与内容一律回读表单而不是读派生态：面板显示的链与落盘的链必须同源（文件头「三个区段的当前值都
+    // 不进控件自己的存储」同一条纪律），用例判的也是「表单里那一份」而不是控件树。
+    const std::vector<std::string> items = chain_items_from_form();
+    out.items.reserve(items.size());
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        out.items.push_back(ChainItem{
+            .family = items[i],
+            .can_move_up = i > 0U,
+            .can_move_down = i + 1U < items.size(),
+        });
+    }
+    for (const std::string &candidate : candidate_names_) {
+        if (!candidate.empty()) {
+            out.candidates.push_back(candidate);
+        }
+    }
+    out.at_capacity = items.size() >= kChainCapacity;
+    out.hint = resolve_hint(chain_hint_text(items, chain_filter_text_, out.candidates.size()));
+    return out;
+}
+
+auto SettingsPanel::chain_up_button(std::size_t index) const -> aurora::Widget * {
+    return index < chain_up_buttons_.size() ? chain_up_buttons_[index].get() : nullptr;
+}
+
+auto SettingsPanel::chain_down_button(std::size_t index) const -> aurora::Widget * {
+    return index < chain_down_buttons_.size() ? chain_down_buttons_[index].get() : nullptr;
+}
+
+auto SettingsPanel::chain_remove_button(std::size_t index) const -> aurora::Widget * {
+    return index < chain_remove_buttons_.size() ? chain_remove_buttons_[index].get() : nullptr;
+}
+
+auto SettingsPanel::chain_candidate(std::size_t index) const -> aurora::Widget * {
+    return index < chain_candidates_.size() ? chain_candidates_[index].get() : nullptr;
+}
+
+auto SettingsPanel::chain_filter_input() const -> aurora::Widget * {
+    return chain_filter_.get();
+}
+
+auto SettingsPanel::chain_list() const -> aurora::Widget * {
+    return chain_list_.get();
+}
+
 auto SettingsPanel::collect_rows() const -> std::vector<const SettingsControl *> {
     std::vector<const SettingsControl *> out;
     for (const SettingsControl &control : settings_catalog()) {
@@ -385,13 +515,15 @@ auto SettingsPanel::rebuild_overlay() -> void {
     rows_ = collect_rows();
     status_texts_.assign(rows_.size(), nullptr);
     // 候选表每次建浮层现取（与字体族目录同一条分工，裁决 7.46③），派生态的控件指针一律先清：
-    // 新页可能根本没有这两个区段，留着旧指针会让 `theme_cards()` 与刷新腿读到上一张卡的孤儿。
+    // 新页可能根本没有这些区段，留着旧指针会让 `theme_cards()` 与刷新腿读到上一张卡的孤儿。
     theme_choices_ = hooks_.themes ? hooks_.themes() : std::vector<ThemeChoice>{};
+    family_catalog_ = hooks_.families ? hooks_.families() : std::vector<FontFamilyEntry>{};
     theme_canvases_.clear();
     theme_labels_.clear();
     swatch_canvases_.clear();
     swatch_editor_.reset();
     swatch_reset_button_.reset();
+    clear_chain_state();
 
     // 遮罩层：`Canvas` 的自动尺寸会夹到 100×100，故必须 fill_max_size 才铺满整窗（裁决 7.56⑤）。
     auto scrim = std::make_shared<aurora::Canvas>([](aurora::Painter &painter, const aurora::Rect &bounds) -> void {
@@ -407,7 +539,7 @@ auto SettingsPanel::rebuild_overlay() -> void {
 }
 
 auto SettingsPanel::build_card() -> aurora::Node {
-    return aurora::Node{std::make_shared<aurora::LayoutBuilder>(
+    auto builder = std::make_shared<aurora::LayoutBuilder>(
         [this](const aurora::BuildContext &, const aurora::Constraints &c) -> aurora::Node {
             const float width = std::clamp(c.max.width - 2.0F * kCardMarginDp, 480.0F, kCardMaxWidthDp);
             const float height = std::clamp(c.max.height - 2.0F * kCardMarginDp, 320.0F, kCardMaxHeightDp);
@@ -497,7 +629,9 @@ auto SettingsPanel::build_card() -> aurora::Node {
             // 状态列指针在这里登记（`build_row` 已把每行的状态列建好），故本处**不得**再清空——
             // 行区改全量实例化之后，构建与这段代码在同一次布局里先后发生，倒空就把刚登记的指针抹掉了。
             return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(card))};
-        })};
+        });
+    card_builder_ = builder;
+    return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(builder))};
 }
 
 auto SettingsPanel::build_row(std::size_t ordinal) -> aurora::Node {
@@ -505,13 +639,16 @@ auto SettingsPanel::build_row(std::size_t ordinal) -> aurora::Node {
         return aurora::Node{};
     }
     const SettingsControl &control = *rows_[ordinal];
-    // 两个专用区段各占多行高度，故在行的分派处就拐出去：它们仍是一行 catalog 键（角标、状态列与提交
+    // 三个专用区段各占多行高度，故在行的分派处就拐出去：它们仍是一行 catalog 键（角标、状态列与提交
     // 都落在那一行上），只是内容不是一条 56 dp 的行盒。
     if (control.kind == ControlKind::ThemePicker) {
         return build_theme_section(ordinal);
     }
     if (control.kind == ControlKind::SwatchGrid) {
         return build_swatch_section(ordinal);
+    }
+    if (control.kind == ControlKind::FamilyList) {
+        return build_chain_section(ordinal);
     }
     const bool editable = is_editable(control);
 
@@ -745,6 +882,176 @@ auto SettingsPanel::paint_swatch(aurora::Painter &painter, const aurora::Rect &b
     }
 }
 
+auto SettingsPanel::build_chain_section(std::size_t ordinal) -> aurora::Node {
+    const SettingsControl &control = *rows_[ordinal];
+    auto [label, status] = build_header(ordinal, control, true);
+    auto header = std::make_shared<aurora::Row>(aurora::RowProps{
+        .children = {std::move(label), std::move(status)},
+        .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
+        .gap = 12.0F,
+    });
+    header->modifier.set(aurora::Modifier{}.fill_max_width());
+
+    // 条目指针表在本函数开头清一次：卡片是 `LayoutBuilder`，本闭包在每次布局都会重跑（裁决 7.61 在
+    // 主题卡那一区撞过的同一条），不清就会留下上一版的孤儿指针并被刷新腿写值。
+    chain_up_buttons_.clear();
+    chain_down_buttons_.clear();
+    chain_remove_buttons_.clear();
+    chain_candidates_.clear();
+    candidate_names_.clear();
+
+    chain_items_ = std::make_shared<aurora::State<std::vector<std::string>>>(chain_items_from_form());
+    chain_list_ = std::make_shared<aurora::ReorderableList<std::string>>(
+        chain_items_,
+        [this](const std::string &family, int index) -> aurora::Node {
+            const std::size_t i = static_cast<std::size_t>(index);
+            const std::size_t count = chain_items_ == nullptr ? 0U : chain_items_->get().size();
+
+            auto ordinal_text = make_text(std::to_string(i + 1U), kTextDim);
+            ordinal_text.widget().modifier.set(aurora::Modifier{}.width(kChainOrdinalWidthDp));
+            auto name_text = make_text(family, kText);
+            name_text.widget().modifier.set(aurora::Modifier{}.expand());
+
+            // 三枚按钮全部落在手柄带之左：`set_drag_handle(true)` 让列表把右侧 48 dp 收作自己的
+            // 起拖区（带内的落点连条目都拿不到，文件头②），带内由本件自绘一幅 grip 点阵。
+            const auto make_arrow = [this](std::string_view key, bool enabled,
+                                           std::function<void()> action) -> std::shared_ptr<aurora::Button> {
+                auto button = std::make_shared<aurora::Button>(aurora::ButtonProps{
+                    .color = kControlBg,
+                    .on_color = kText,
+                    .corner_radius = 3.0F,
+                    .border_color = kCardLine,
+                    .border_width = 1.0F,
+                    .min_width = kChainButtonWidthDp,
+                });
+                button->label = settings_text(key);
+                button->set_disabled_colors(kControlBg, kTextDim);
+                button->set_enabled(enabled);
+                button->set_on_click(std::move(action));
+                button->modifier.set(aurora::Modifier{}.width(kChainButtonWidthDp));
+                return button;
+            };
+            auto up = make_arrow("settings.chain.up", i > 0U, [this, i]() -> void { move_chain_item(i, -1); });
+            auto down = make_arrow("settings.chain.down", i + 1U < count, [this, i]() -> void { move_chain_item(i, 1); });
+            auto remove = make_arrow("settings.chain.remove", true, [this, i]() -> void { remove_chain_item(i); });
+            chain_up_buttons_.push_back(up);
+            chain_down_buttons_.push_back(down);
+            chain_remove_buttons_.push_back(remove);
+
+            auto grip = std::make_shared<aurora::Canvas>(
+                kChainHandleBandDp, kChainItemHeightDp, [this](aurora::Painter &painter, const aurora::Rect &box) -> void {
+                    paint_chain_handle(painter, box);
+                });
+
+            auto item = std::make_shared<aurora::Row>(aurora::RowProps{
+                .children = {std::move(ordinal_text),
+                             std::move(name_text),
+                             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(up))},
+                             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(down))},
+                             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(remove))},
+                             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(grip))}},
+                .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
+                .gap = 6.0F,
+            });
+            item->modifier.set(aurora::Modifier{}.fill_max_width().height(kChainItemHeightDp));
+            return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(item))};
+        },
+        0.0F);
+    chain_list_->set_drag_handle(true);
+    chain_list_->set_on_reorder([this](int, int) -> void {
+        // 框架在 `reorder()` 内已改写完数据源并 `invalidate()`，但那一次重建发生在下一次布局里；本件把
+        // 它拉进这个回调内同步做完，于是按钮指针表在回调返回时就是新的（异步重建会让刷新腿读到旧指针）。
+        rebuild_chain_rows(chain_list_->data());
+        commit_chain();
+    });
+
+    chain_list_holder_ = std::make_shared<aurora::Column>(aurora::ColumnProps{
+        .children = {aurora::Node{std::static_pointer_cast<aurora::Widget>(chain_list_)}},
+        .gap = 0.0F,
+    });
+    chain_list_holder_->modifier.set(aurora::Modifier{}.fill_max_width().height(
+        chain_section_height_dp(chain_items_->get().size())));
+
+    // 过滤框：普通 `TextInput` 而不是 `BlurCommitText`——它的内容**永不进表单**（文件头「添加族」段），
+    // 失焦提交反而会把一串族名当成配置值写进去。
+    chain_filter_ = std::make_shared<aurora::TextInput>();
+    chain_filter_->set_background(kControlBg);
+    chain_filter_->set_focused_background(kControlBg);
+    chain_filter_->set_border_color(kCardLine);
+    chain_filter_->set_focused_border_color(kAccent);
+    chain_filter_->set_text_color(kText);
+    chain_filter_->set_cursor_color(kText);
+    chain_filter_->set_placeholder_color(kTextDim);
+    chain_filter_->set_placeholder(settings_label("settings.chain.filter"));
+    chain_filter_->set_on_changed([this](const std::string &text) -> void {
+        chain_filter_text_ = text;
+        refresh_chain_candidates();
+    });
+    chain_filter_->modifier.set(aurora::Modifier{}.width(kChainFilterWidthDp));
+
+    // 候选池是**常驻**的 N 枚按钮，换候选只改标签与 `show`（文件头「添加族」段：200+ 族不能撑开一个
+    // 无上限浮层，而 `Reactive<bool> show` 为假时该控件量成零盒且不参与命中与绘制，故不需要销毁重建，
+    // 命中序号因此稳定）。槽位号在闭包里捕获，点击时按 `candidate_names_` 的当前内容取族名。
+    std::vector<aurora::Node> candidate_nodes;
+    candidate_nodes.reserve(kChainCandidateRows);
+    for (std::size_t slot = 0; slot < kChainCandidateRows; ++slot) {
+        auto button = std::make_shared<aurora::Button>(aurora::ButtonProps{
+            .color = kControlBg,
+            .on_color = kText,
+            .corner_radius = 3.0F,
+            .border_color = kCardLine,
+            .border_width = 1.0F,
+        });
+        button->set_disabled_colors(kControlBg, kTextDim);
+        button->set_on_click([this, slot]() -> void {
+            if (slot < candidate_names_.size() && !candidate_names_[slot].empty()) {
+                append_chain_family(candidate_names_[slot]);
+            }
+        });
+        button->modifier.set(aurora::Modifier{}.fill_max_width().height(kChainItemHeightDp));
+        button->show = false;  // 建好即隐藏：只有过滤出候选时才现形
+        chain_candidates_.push_back(button);
+        candidate_names_.emplace_back();
+        candidate_nodes.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(button))});
+    }
+    auto pool = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(candidate_nodes), .gap = 4.0F});
+    pool->modifier.set(aurora::Modifier{}.fill_max_width());
+
+    chain_hint_ = std::make_shared<aurora::Text>(aurora::TextProps{.content = std::string{}, .text_color = kTextDim});
+    chain_hint_->modifier.set(aurora::Modifier{}.fill_max_width());
+
+    std::vector<aurora::Node> children;
+    children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(header))});
+    // 三件成员交**副本**而不是 `std::move`：`static_pointer_cast` 的右值重载会把成员清空，而区段建完之后
+    // 还要经这三只指针改高度、改过滤文本与换提示文案（`rebuild_chain_rows` / `refresh_chain_candidates`）。
+    children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(chain_list_holder_)});
+    children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(chain_filter_)});
+    children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(pool))});
+    children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(chain_hint_)});
+    auto section = std::make_shared<aurora::Column>(
+        aurora::ColumnProps{.children = std::move(children), .gap = kSectionGapDp});
+    section->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+        .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
+
+    refresh_chain_candidates();
+    return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(section))};
+}
+
+auto SettingsPanel::paint_chain_handle(aurora::Painter &painter, const aurora::Rect &box) const -> void {
+    // 三行等长短横：框架的手柄带只留命中区、**不画 grip**（文件头②），故起拖落点必须由本件画出可见
+    // 形状，否则用户无从知道右边那 48 dp 是可以抓的。
+    constexpr float kDotWidthDp = 12.0F;
+    constexpr float kDotHeightDp = 2.0F;
+    constexpr float kDotGapDp = 3.0F;
+    const float total_h = kDotHeightDp * 3.0F + kDotGapDp * 2.0F;
+    const float top = box.origin.y + (box.size.height - total_h) * 0.5F;
+    const float left = box.origin.x + (box.size.width - kDotWidthDp) * 0.5F;
+    for (std::size_t row = 0; row < 3U; ++row) {
+        const float y = top + (kDotHeightDp + kDotGapDp) * static_cast<float>(row);
+        painter.fill_rect(aurora::Rect{aurora::Point{left, y}, aurora::Size{kDotWidthDp, kDotHeightDp}}, kTextDim);
+    }
+}
+
 auto SettingsPanel::build_control(const SettingsControl &control, bool editable) -> aurora::Node {
     const std::string key = control.key;
     const FormValue *value = form_.value(key);
@@ -858,9 +1165,9 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
             }
             case ControlKind::ThemePicker:
             case ControlKind::SwatchGrid:
-                break;  // 两个区段不是「一行的控件腿」，在 `build_row` 的分派处就已建完，走不到这里。
-            case ControlKind::FontDropdown:
             case ControlKind::FamilyList:
+                break;  // 三个区段不是「一行的控件腿」，在 `build_row` 的分派处就已建完，走不到这里。
+            case ControlKind::FontDropdown:
             case ControlKind::ReadOnlyTable:
                 break;  // 专用控件形态不可交互（is_editable 已先判掉），落下面的占位分支。
         }
@@ -1070,6 +1377,177 @@ auto SettingsPanel::refresh_palette_views() -> void {
     }
 }
 
+auto SettingsPanel::chain_items_from_form() const -> std::vector<std::string> {
+    if (const FormValue *value = form_.value(kChainKey); value != nullptr) {
+        if (const auto chain = value->as_text_list(); chain.has_value()) {
+            return *chain;
+        }
+    }
+    return {};
+}
+
+auto SettingsPanel::rebuild_chain_rows(std::vector<std::string> next) -> void {
+    if (chain_items_ == nullptr || chain_list_ == nullptr) {
+        return;  // 区段没画（当前页不是外观页，或面板关着）：结构性改动无从发生
+    }
+    const std::size_t count = next.size();
+    // 指针表先清：下面那一次同步重建会按新次序逐条重新登记，留着旧条目就会多出尾巴。
+    chain_up_buttons_.clear();
+    chain_down_buttons_.clear();
+    chain_remove_buttons_.clear();
+    chain_items_->set(std::move(next));
+    chain_list_->invalidate();
+    // 长度不变而次序变时框架不会自动重建（`rebuild_if_needed()` 只认长度差），故 `invalidate()` 之后
+    // 立刻自己调一次：重建本发生在下一次布局里，拉到此处是为了让本函数返回时按钮指针与数据同序。
+    chain_list_->rebuild_if_needed();
+    if (chain_list_holder_ != nullptr) {
+        chain_list_holder_->modifier.set(aurora::Modifier{}.fill_max_width().height(chain_section_height_dp(count)));
+    }
+    refresh_chain_views();
+}
+
+auto SettingsPanel::refresh_chain_views() -> void {
+    // 上移 / 下移 / 移除三枚按钮的可用性在条目构造时就按「序号 + 条目数」算好了（次序一变就重建），
+    // 故此处剩下的派生态只有候选池与提示行。
+    refresh_chain_candidates();
+}
+
+auto SettingsPanel::refresh_chain_candidates() -> void {
+    const std::vector<std::string> items = chain_items_ != nullptr ? chain_items_->get() : chain_items_from_form();
+    const std::string needle = ascii_lower(chain_filter_text_);
+    // 空过滤时**不列任何候选**：目录里 200+ 族，摆哪 N 档都是一次没有依据的挑选（而且用户看不到剩下的），
+    // 故池子只在过滤文本非空时现形，此时列出的就是「按目录次序的前 N 个匹配项」。
+    std::vector<std::string> matched;
+    if (!needle.empty()) {
+        for (const FontFamilyEntry &entry : family_catalog_) {
+            const std::string lowered = ascii_lower(entry.family);
+            if (lowered.find(needle) == std::string::npos) {
+                continue;
+            }
+            const bool already_in = std::any_of(items.begin(), items.end(),
+                                                [&lowered](const std::string &family) {
+                                                    return ascii_lower(family) == lowered;
+                                                });
+            if (already_in) {
+                continue;  // 已在链内的族不再给第二次追加口（同一族出现两次没有意义）
+            }
+            matched.push_back(entry.family);
+            if (matched.size() >= kChainCandidateRows) {
+                break;
+            }
+        }
+    }
+
+    const bool at_capacity = items.size() >= kChainCapacity;
+    candidate_names_.assign(chain_candidates_.size(), std::string{});
+    std::vector<aurora::Button *> shifted;
+    for (std::size_t slot = 0; slot < chain_candidates_.size(); ++slot) {
+        const bool visible = slot < matched.size();
+        if (chain_candidates_[slot]->show.get() != visible) {
+            shifted.push_back(chain_candidates_[slot].get());
+        }
+        if (visible) {
+            candidate_names_[slot] = matched[slot];
+        }
+        chain_candidates_[slot]->set_label(visible ? matched[slot] : std::string{});
+        chain_candidates_[slot]->set_enabled(visible && !at_capacity);  // 达上限时追加口关死（A5-a）
+        chain_candidates_[slot]->show = visible;
+    }
+    if (!shifted.empty()) {
+        // 翻转 `show` 必须**手工补两次布局脏**，两次各自守住一条实测到的框架行为：
+        // ① 框架把 `show` 当测量输入（`Widget::layout` 在 show 为假时直接回零盒，且早于布局缓存那一支），
+        //    但写它不标脏布局，于是祖先按缓存复用「零盒」那次的尺寸，候选按钮从此量不出高度、进不了
+        //    命中链（实测：过滤出两档后 `size()` 恒 0x0）。框架文档自陈「`mark_needs_layout()` 只能沿
+        //    显式标脏路径失效缓存」，补脏归调用方。
+        // ② 只标叶子在有断链时到不了渲染根：一次滚动之后，浮层卡片那一列的 `layout_parent()` 变成空
+        //    （`Node::~Node` 无条件 `set_layout_parent(nullptr)`，副本析构即断链，登记为 **G32**），
+        //    `request_frame` 沿父链上溯时把这次脏**静默丢弃**，那一帧根本不重排。故再标卡片外层那只
+        //    `LayoutBuilder`：它在断链之上，标它能把脏送到根（根据此整树重排），而 `LayoutBuilder::on_layout`
+        //    每次都重新登记子节点的父指针，断链与零盒在同一帧一起修好。
+        for (aurora::Button *button : shifted) {
+            button->mark_needs_layout();
+        }
+        if (card_builder_ != nullptr) {
+            card_builder_->mark_needs_layout();
+        }
+    }
+
+    if (chain_hint_ != nullptr) {
+        chain_hint_->content = chain_hint_text(items, chain_filter_text_, matched.size());
+        chain_hint_->mark_needs_paint();
+    }
+}
+
+auto SettingsPanel::commit_chain() -> void {
+    if (chain_items_ == nullptr) {
+        return;
+    }
+    // 表单是唯一权威：一次结构性改动交一次提交，于是「已接线 ∧ 即时」的该行在一次改链里恰好落盘一次、
+    // 广播一次（`apply_scope()` 的既有腿，判据文 A5-a）。提交不可能失败——`SettingsForm` 对
+    // `FamilyChain` 只判形态（本件交出的永远是 `text_list`），故这里没有回滚分支可写。
+    commit(kChainKey, FormValue::text_list(chain_items_->get()));
+}
+
+auto SettingsPanel::move_chain_item(std::size_t index, int delta) -> void {
+    if (chain_items_ == nullptr || chain_list_ == nullptr) {
+        return;
+    }
+    const std::size_t count = chain_items_->get().size();
+    if (index >= count) {
+        return;
+    }
+    const int target = static_cast<int>(index) + delta;
+    if (target < 0 || static_cast<std::size_t>(target) >= count) {
+        return;  // 越界即不动：与首 / 末项那枚按钮的禁用态是同一判据的两道
+    }
+    // 换位算式不在本件重述（`std::rotate` 语义在框架的 `reorder()` 里），提交发生在它的回调内。
+    chain_list_->reorder(static_cast<int>(index), target);
+}
+
+auto SettingsPanel::remove_chain_item(std::size_t index) -> void {
+    if (chain_items_ == nullptr) {
+        return;
+    }
+    std::vector<std::string> next = chain_items_->get();
+    if (index >= next.size()) {
+        return;
+    }
+    next.erase(next.begin() + static_cast<std::ptrdiff_t>(index));
+    rebuild_chain_rows(std::move(next));
+    commit_chain();
+}
+
+auto SettingsPanel::append_chain_family(const std::string &family) -> void {
+    if (chain_items_ == nullptr) {
+        return;
+    }
+    std::vector<std::string> next = chain_items_->get();
+    const std::string lowered = ascii_lower(family);
+    if (next.size() >= kChainCapacity || std::any_of(next.begin(), next.end(),
+                                                     [&lowered](const std::string &item) {
+                                                         return ascii_lower(item) == lowered;
+                                                     })) {
+        return;  // 达上限或已在链内：候选池在那两档本就不显示（或已禁用）它，这里是第二道
+    }
+    next.push_back(family);
+    rebuild_chain_rows(std::move(next));
+    commit_chain();
+}
+
+auto SettingsPanel::clear_chain_state() -> void {
+    chain_items_.reset();
+    chain_list_.reset();
+    chain_list_holder_.reset();
+    chain_filter_.reset();
+    chain_hint_.reset();
+    chain_up_buttons_.clear();
+    chain_down_buttons_.clear();
+    chain_remove_buttons_.clear();
+    chain_candidates_.clear();
+    candidate_names_.clear();
+    chain_filter_text_.clear();
+}
+
 auto SettingsPanel::value_summary(const SettingsControl &control) const -> std::string {
     const FormValue *value = form_.value(control.key);
     if (value == nullptr) {
@@ -1115,9 +1593,9 @@ auto SettingsPanel::is_editable(const SettingsControl &control) -> bool {
             return true;
         case ControlKind::ThemePicker:
         case ControlKind::SwatchGrid:
-            return true;  // 两个区段在 `build_row` 就分派出去，本函数只为行表与观察面给出可交互判据
-        case ControlKind::FontDropdown:
         case ControlKind::FamilyList:
+            return true;  // 三个区段在 `build_row` 就分派出去，本函数只为行表与观察面给出可交互判据
+        case ControlKind::FontDropdown:
         case ControlKind::ReadOnlyTable:
             return false;  // 专用控件随后续棒落地（本棒先如实显示当前值而不是给个死控件）
     }

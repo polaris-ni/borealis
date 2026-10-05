@@ -35,6 +35,18 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"settings.badge.deferred", "延后"},
     {"settings.badge.next_session", "下次会话生效"},
 
+    // ---- 回退链区段（A5-a：顺序可改、逐行可删、末尾追加）----
+    // 上限的数字**不写进模板**：它的真值源是框架头里的 `AURORA_TEXT_FALLBACK_CHAIN_MAX`，故经 `{0}`
+    // 位置参数交出（裁决 7.62）。三枚按钮的字形是符号而非词，仍留本表（同一张上屏文案表）。
+    {"settings.chain.up", "↑"},
+    {"settings.chain.down", "↓"},
+    {"settings.chain.remove", "✕"},
+    {"settings.chain.filter", "输入族名以添加"},
+    {"settings.chain.empty", "回退链为空：只走框架的全局默认链"},
+    {"settings.chain.full", "已达上限 {0} 项：追加口已关闭"},
+    {"settings.chain.truncated", "链长超过上限 {0}：超出部分不参与绘制"},
+    {"settings.chain.no_match", "没有匹配的族名"},
+
     // ---- 外观域 ----
     {"appearance.theme", "主题"},
     {"appearance.palette.basic", "16 色重映射"},

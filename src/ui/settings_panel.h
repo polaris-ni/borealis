@@ -4,9 +4,9 @@
 // 设置面板的界面腿本体（src/ui/settings_panel.h）
 // ------------------------------------------------------------
 // `codespec/UI_SETTINGS.draft.md` 屏 3 的落地（裁决 7.52 把 S1~S16 全部自拍为建议项）：
-// 交付**四页骨架 + 六类通用行控件 + 主题卡区段 + 16 格色板区段 + 表单落盘与广播接线**，其余按判据文
-// §8 的分工留给后续棒——外观页余下两个专用控件（字体族下拉 / 回退链重排表）、右侧实时预览盒、连接页与
-// 状态栏开关组、快捷键只读表、以及损坏配置的启动对话框。
+// 交付**四页骨架 + 六类通用行控件 + 主题卡区段 + 16 格色板区段 + 回退链区段 + 表单落盘与广播接线**，
+// 其余按判据文 §8 的分工留给后续棒——外观页余下一个专用控件（字体族下拉，其形态待人拍板）、右侧实时
+// 预览盒、连接页与状态栏开关组、快捷键只读表、以及损坏配置的启动对话框。
 //
 // 三条决定形态的框架实测（裁决 7.56，其前两条曾登记为缺口 G26 / G27 并已于同日回货闭合，见裁决 7.57①）：
 // ① 浮层必须是**确实写子节点 bounds 的容器**：登记时 `Dialog` 与 `Scroll` 都不写 bounds，挂在
@@ -25,13 +25,20 @@
 //    `LocalizedString`（`settings_text()`）与 `Text` 同源。`settings_label()` 仍留给收 `std::string`
 //    的入口（`Text::placeholder`、角标等）——那些入口本就没有查表路径。
 //
-// 一条曾在册的派发限制（缺口 G29，已回货但**只闭合一层**，见裁决 7.59）：`Dropdown` 的展开选项列画在主框
-// 之外而不占布局，而嵌套在容器里的溢出区进不了真实派发链（祖先按 `child.bounds()` 判包含），故「真点一个
-// 选项即提交」在回货前写不成判据。框架回货形态是 `Widget::extra_hit_box()` 钩子加祖先那一层的合并门
-// （`child.bounds().contains(...) || child.covers_extra_hit_box(...)`），`Dropdown` 已覆写该钩子，于是面板
-// 「还落在所在行 bounds 内」的那一段选项现走真实派发，那条钉子用例随之翻成正向行为用例。门只问**直接子**
-// 自己的申报、不随祖先上传，而面板每行都是 `Column → Row → Dropdown` 的三层嵌套，故伸出行下沿之外的残段
-// 仍不可达——登记为 **G30**，本件不为此自造覆盖层或改写挂载点（不等不绕，裁决 7.13①）。
+// 一条曾在册的派发限制（G29 回货只闭合一层，其残段登记为 G30，**该残段亦已于同日回货闭合**，见裁决
+// 7.62）：`Dropdown` 的展开选项列画在主框之外而不占布局，而嵌套在容器里的溢出区进不了真实派发链（祖先
+// 按 `child.bounds()` 判包含），故「真点一个选项即提交」在回货前写不成判据。回货形态是
+// `Widget::extra_hit_box()` 的申报**沿祖先链聚合**（`covers_extra_hit_box()` = 自身申报 ∪ 子树聚合，
+// 逐子按 `bounds().origin` 折算），于是面板每一行 `Column → Row → Dropdown` 的三层嵌套都能把孙辈的申报
+// 递到祖先那道下降闸，那条现状钉子随之翻成正向行为用例。同批回货另两处：`Dropdown::panel_box` 改为可
+// 向上翻转、按窗口限高且可滚；而原缺口里「兄弟行压住面板」那一条不修（`Container::on_paint` 前向绘制而
+// 链逆序下降是框架的既有语义），代之以一条**形态约束**——列表行内不得使用「覆盖绘制而不占布局」的控件。
+// 接货时另实测到两条，均已登记：**G31** 是派发落点的折算缺一项（祖先的 modifier translation 没进
+// `HitNode.origin`），行内控件收到的本地坐标比其绘制位置偏一个行上内边距，按该坐标反算的档位因此错一格；
+// 本件把「行外那一段可达」与「漂移现状」拆成两条用例，回货后漂移归零时后者转红即为出账信号。**G32** 是
+// `Node::~Node` 结尾无条件 `set_layout_parent(nullptr)`——Node 是可共享句柄，副本析构时控件仍在世，于是
+// 任何一次临时句柄析构都抹掉活控件的布局父指针，后代脏标记沿父链上溯时被静默丢弃。本件不为此自造覆盖层
+// 或改写挂载点（不等不绕，裁决 7.13①）。
 //
 // 外观页两个区段（主题卡 / 16 格色板）的三条口径，都是判据文与代码相撞处（裁决 7.61 拍板）：
 // ① 卡片名**逐字取 `themes.h` 的存储键名**（`dracula` 而非 `Dracula`）。判据 A1-a 那句「显示名逐字等于
@@ -47,6 +54,34 @@
 // 三个区段的当前值都**不进控件自己的存储**：每张卡、每一格都是一个读 `form_` 的绘制闭包，改动之后
 // 只 `mark_needs_paint()`。于是「面板显示的色」与「表单里的色」在结构上不可能分叉，代价是重绘由本件显式
 // 触发而不是由 reactive 值驱动。
+//
+// 回退链区段（#114 第二棒，判据文 A5-a / 裁决 7.52 的 S8）的五条框架实测决定了它的形态：
+// ① `ReorderableList::on_layout` 在**无界约束**下回落 `Size{320, 480}`，而行区给每一行的是紧约束宽度、
+//    高度由内容自定；不锁高度就会得到一个 480 dp 的空洞。故区段按 `clamp(条目数, 1, 可见档数) × 行高`
+//    显式锁高（条目数在构建闭包里是已知的——`build_row` 按 `form_` 的当前链建它）。
+// ② `set_drag_handle(true)` 的那一条 48 dp 手柄带由**列表自留**：`on_hit_test_chain` 对带内的落点返回空表
+//    （框架注释自陈：条目自带 `Button` 会消费 Press 令整项拖拽起不来，故手柄带是列表自己的作用域），
+//    而列表**不画 grip**。于是每行的上移 / 下移 / 移除三枚按钮必须落在 `width - 48` 之左，带内由本件自绘
+//    一幅 grip 点阵。取 `drag_handle(false)`（整项可拖）则条目里的按钮全部抓不到 Press，故不可选。
+// ③ 面板的 `Escape` 挂在 `ShortcutScope::Global`，而全局快捷键**先于任何控件**消费（裁决 7.51③ 理由 (a)），
+//    故链正被抓在键盘上时 `Escape` 会关掉面板而不是放下那一项。处置是在关闭闭包里先试
+//    `cancel_keyboard_grab()`，它返真就原地不动——属**交接而非缺口**（同裁决 7.58 对 chrome setter 的判法）。
+// ④ 指针拖拽的落位要经每帧 `tick`（`end_drag()` 只在 `reduce_motion` 或位移不足 0.5 dp 时立即提交），
+//    无头通道不跑帧泵，故换位判据一律走上移 / 下移按钮与键盘 Drop 两条同步路径；拖拽归框架自有用例与
+//    真机走查，本件不伪造绿灯。
+// ⑤ `show` 是**测量输入而不是脏源**：`Widget::layout` 在它为假时直接回零盒（且早于布局缓存那一支），而
+//    写它不标脏布局，于是候选池翻转之后祖先按缓存复用「零盒」那次的尺寸，按钮既量不出高度也进不了命中
+//    链。补脏要补**两处**才生效（实测与逐条理由见 `refresh_chain_candidates()`）：翻转的叶子各一次，外加
+//    卡片外层那只 `LayoutBuilder` 一次——后者是 G32 断链之下叶子那份脏到不了渲染根的补救。
+//
+// 「添加族」不取判据文 S8 ① 写的「下拉」，理由三条（裁决 7.62）：本机字体目录实测 200+ 族，而 G30 回货
+// 虽然把浮层做成了可翻转 / 限高 / 可滚，同批却立了「列表行内不得使用覆盖绘制不占布局的控件」那条形态
+// 约束——下拉的面板正是不占布局、只靠 `extra_hit_box` 申报才可达的那一类，再加 G31 那条派发坐标漂移，
+// 把 200+ 档塞进**行内**下拉既违该约束也不是可判形态；`LazyList` 按序号回收条目而过滤会把命中序号交给
+// 派发链；框架的链上限截断发生在绘制侧而对用户不可见（`TextLayoutOpts::with_fallback_chain` 截到
+// `AURORA_TEXT_FALLBACK_CHAIN_MAX`）。故换成**过滤输入框 + 固定候选行池**：常驻 N 枚按钮，按键时只改
+// `set_label` 与 `show`（`Reactive<bool> show` 为假时尺寸是零盒且不进命中链，零盒仍占布局故不属上面那条
+// 形态约束），代价是候选区一次最多列 N 项、且不再是下拉。A4（字体族下拉）的形态照旧待人拍板。
 //
 // 面板不认识 `config`，也不认识 `TerminalView`：装载 / 落盘 / 广播三条接缝由 `Hooks` 交装配层兑现
 // （`config/settings.h` 已 include `ui/palette.h`，反向 include 即 `config ⇄ ui` 模块环，与
@@ -71,13 +106,18 @@
 
 #include "aurora/app/shortcuts.h"
 #include "aurora/render/painter.h"
+#include "aurora/state/state.h"
 #include "aurora/theming/theme.h"
 #include "aurora/widget/button.h"
 #include "aurora/widget/canvas.h"
+#include "aurora/widget/containers.h"
+#include "aurora/widget/layout_builder.h"
 #include "aurora/widget/popup.h"
+#include "aurora/widget/reorderable_list.h"
 #include "aurora/widget/text.h"
 #include "aurora/widget/text_input.h"
 
+#include "borealis/ui/font_choice.h"
 #include "borealis/ui/settings_catalog.h"
 #include "borealis/ui/settings_form.h"
 
@@ -119,6 +159,12 @@ public:
         std::function<void(const SettingsForm &)> broadcast;
         /// @brief 取主题候选（卡片次序即此表的次序，装配层从 `config::builtin_themes()` 搬值）。
         std::function<std::vector<ThemeChoice>()> themes;
+        /// @brief 取字体族目录（回退链区段的候选来源，装配层从**主窗口共用那一份**目录搬值，S16）。
+        ///
+        /// 交的是 `ui::FontFamilyEntry` 而非框架的 `render::FontFamilyInfo`：本件已有这条搬运纪律
+        /// （裁决 7.46③，目录只在装配阶段枚举一次，`list_font_families()` 首次调用是同步 IO）。
+        /// 候选**不**按等宽性过滤——回退链的存在理由正是「主族缺字时找另一个面」，另一个面不必等宽。
+        std::function<std::vector<FontFamilyEntry>()> families;
     };
 
     /// @brief 面板当前页上的一行（用例据此核对「面板画的键」与反向核对表一致，判据文 §8 判据①）。
@@ -227,6 +273,43 @@ public:
         return selected_swatch_;
     }
 
+    /// @brief 回退链区段的一行：族名与两个可移动方向。
+    struct ChainItem {
+        std::string family{};   ///< 族名，逐字来自表单里的那一份。
+        bool can_move_up{};     ///< 不是首项（首项的上移按钮是禁用态，7.38⑥ F-b 的同一口径）。
+        bool can_move_down{};   ///< 不是末项。
+    };
+
+    /// @brief 回退链区段的当前状态。
+    ///
+    /// 与 `theme_cards()` 同一条理由：A5-a 的三条判据（顺序可改、逐行可删、末尾追加）都要与表单里的
+    /// 那份链比，读浮层树里的 `Text` 反而要把排版坐标也算进判据。`candidates` 是**已过滤、已排除链内
+    /// 族名**之后、真正摆在候选池里的那几档（次序即池内次序），故用例能判「池宽是否随输入变窄」这一类
+    /// 只属于本区段的行为。`hint` 是已解析的提示文案（空链 / 已达上限 / 已截断 / 没有匹配四档之一）。
+    struct ChainView {
+        std::vector<ChainItem> items{};
+        std::vector<std::string> candidates{};
+        std::string hint{};
+        bool at_capacity{};  ///< 链长已达框架上限（`AURORA_TEXT_FALLBACK_CHAIN_MAX`），追加口关死。
+    };
+
+    /// @brief 回退链区段的当前状态（区段未画时 `items` 为空）。
+    [[nodiscard]] auto chain_view() const -> ChainView;
+
+    /// @brief 第 index 行的上移 / 下移 / 移除按钮（用例据此按真实命中链点它）；越界或未画时为空。
+    [[nodiscard]] auto chain_up_button(std::size_t index) const -> aurora::Widget *;
+    [[nodiscard]] auto chain_down_button(std::size_t index) const -> aurora::Widget *;
+    [[nodiscard]] auto chain_remove_button(std::size_t index) const -> aurora::Widget *;
+
+    /// @brief 候选池第 index 枚按钮（池宽固定，未用的那几枚是隐藏态）；越界或未画时为空。
+    [[nodiscard]] auto chain_candidate(std::size_t index) const -> aurora::Widget *;
+
+    /// @brief 候选过滤输入框的控件。
+    [[nodiscard]] auto chain_filter_input() const -> aurora::Widget *;
+
+    /// @brief 重排列表本体的控件（用例据此问键盘抓取态——`Escape` 的那条交接腿就落在它身上）。
+    [[nodiscard]] auto chain_list() const -> aurora::Widget *;
+
 private:
     /// @brief 按当前页取行表（表内次序即排版次序，只收本页、只收装载成功的键）。
     [[nodiscard]] auto collect_rows() const -> std::vector<const SettingsControl *>;
@@ -254,6 +337,43 @@ private:
 
     /// @brief 建 16 格色板区段：表头 + 每行八格 + 常驻的编辑器行（一格 HEX 输入 + 「恢复主题默认」）。
     [[nodiscard]] auto build_swatch_section(std::size_t ordinal) -> aurora::Node;
+
+    /// @brief 建回退链区段：表头 + 重排列表（每行三枚按钮 + 手柄带）+ 过滤输入框 + 固定候选池 + 提示行。
+    ///
+    /// 列表条目由本件传给框架的条目构造器产出，故本函数只在区段第一次建时跑；此后的数据变化都走
+    /// `rebuild_chain_rows()`（同一批指针重建 + 换高度 + 换提示）。
+    [[nodiscard]] auto build_chain_section(std::size_t ordinal) -> aurora::Node;
+
+    /// @brief 把派生态列表按 `families` 重建并按新条目数改区段高度，随后刷新按钮与提示。
+    /// @param next 新的链内容（写进 `chain_items_` 之前先算好高度）。
+    auto rebuild_chain_rows(std::vector<std::string> next) -> void;
+
+    /// @brief 只刷按钮档与提示行（次序没变时走这一条，避免为改两枚按钮的可用性重建整棵条目树）。
+    auto refresh_chain_views() -> void;
+
+    /// @brief 清掉回退链区段的一切派生态（关面板与重建浮层两处，条目指针留着就会读到上一版的孤儿）。
+    auto clear_chain_state() -> void;
+
+    /// @brief 把当前列表内容提交进表单（一次结构性改动＝一次落盘 + 一次广播，走 `after_commit` 的既有腿）。
+    auto commit_chain() -> void;
+
+    /// @brief 把第 index 项沿方向挪一格（越界即不动，与按钮的禁用态是同一判据的两道）。
+    auto move_chain_item(std::size_t index, int delta) -> void;
+
+    /// @brief 移除第 index 项。
+    auto remove_chain_item(std::size_t index) -> void;
+
+    /// @brief 追加一个族名（已达上限或已在链内时不动——候选池在那两档本就不显示它）。
+    auto append_chain_family(const std::string &family) -> void;
+
+    /// @brief 按过滤文本重算候选池并刷新提示行（只改常驻按钮的标签与显隐，不重建条目）。
+    auto refresh_chain_candidates() -> void;
+
+    /// @brief 表单里当前那条链（该行没装载或形态不合时回空表）。
+    [[nodiscard]] auto chain_items_from_form() const -> std::vector<std::string>;
+
+    /// @brief 画链条目手柄带的那一条：三行等长的短横点阵（框架的手柄带只留命中区、不画 grip）。
+    auto paint_chain_handle(aurora::Painter &painter, const aurora::Rect &box) const -> void;
 
     /// @brief 画一张主题卡：底色、四格样例、分隔线、描边与选中勾（闭包在绘制时读 `form_`）。
     auto paint_theme_card(aurora::Painter &painter, const aurora::Rect &box, std::size_t index) const -> void;
@@ -304,8 +424,8 @@ private:
     /// @brief 专用控件行的只读值摘要（本棒不编辑它们，只把当前值如实显示出来）。
     [[nodiscard]] auto value_summary(const SettingsControl &control) const -> std::string;
 
-    /// @brief 一行是否可交互：`Absent` 一律灰置，专用控件形态里只有仍未落地的三类（字体族下拉 / 回退链
-    ///        重排表 / 快捷键只读表）在本件是占位。
+    /// @brief 一行是否可交互：`Absent` 一律灰置，专用控件形态里只有仍未落地的两类（字体族下拉 /
+    ///        快捷键只读表）在本件是占位。
     [[nodiscard]] static auto is_editable(const SettingsControl &control) -> bool;
 
     aurora::OverlayHost &host_;       ///< 浮层宿主（装配层的场景根，非拥有）。
@@ -318,6 +438,9 @@ private:
     /// `std::nullopt`（框架 G29 回货后的口径：那种序号恒被 `remove_overlay` 当基础内容拒收），
     /// 故这里以「无浮层」为缺省，而不是拿 0 当哨兵。
     std::optional<std::size_t> overlay_index_{};
+    /// 浮层卡片的那只 `LayoutBuilder`（非派生态：建浮层即登记，随下一次重建换新）。本件留着它只为
+    /// 一处——候选池翻转 `show` 后要补布局脏，而断链之下从叶子往上标到不了渲染根，见 `refresh_chain_candidates()`。
+    std::shared_ptr<aurora::LayoutBuilder> card_builder_{};
     int escape_binding_ = 0;           ///< `Escape` 绑定的 id；0 = 未登记。
     std::vector<const SettingsControl *> rows_{};  ///< 当前页行表（与 `status_texts_` 同序）。
     std::vector<std::shared_ptr<aurora::Text>> status_texts_{};  ///< 各行状态列控件，按序号。
@@ -329,6 +452,20 @@ private:
     std::vector<std::shared_ptr<aurora::Canvas>> swatch_canvases_{}; ///< 16 格画布，按格序。
     std::shared_ptr<aurora::TextInput> swatch_editor_{};             ///< 常驻的 HEX 输入框。
     std::shared_ptr<aurora::Button> swatch_reset_button_{};          ///< 「恢复主题默认」，无基线时禁用。
+
+    std::vector<FontFamilyEntry> family_catalog_{};  ///< 每次建浮层时经 `Hooks::families` 现取（S16 的同源目录）。
+    /// 列表的**数据源**（框架的 `ReorderableList` 直接改写它）；与表单之间以本件为中介，见 `commit_chain()`。
+    std::shared_ptr<aurora::State<std::vector<std::string>>> chain_items_{};
+    std::shared_ptr<aurora::ReorderableList<std::string>> chain_list_{};  ///< 重排列表本体；`Escape` 的抓取腿问它。
+    std::shared_ptr<aurora::Column> chain_list_holder_{};  ///< 包裹列表的那一栏，区段高度挂在它上面。
+    std::shared_ptr<aurora::TextInput> chain_filter_{};    ///< 候选过滤框（不进表单，见文件头「添加族」段）。
+    std::shared_ptr<aurora::Text> chain_hint_{};           ///< 空链 / 上限 / 截断 / 无匹配四档提示。
+    std::vector<std::shared_ptr<aurora::Button>> chain_up_buttons_{};     ///< 逐行三枚按钮，按条目序。
+    std::vector<std::shared_ptr<aurora::Button>> chain_down_buttons_{};
+    std::vector<std::shared_ptr<aurora::Button>> chain_remove_buttons_{};
+    std::vector<std::shared_ptr<aurora::Button>> chain_candidates_{};     ///< 固定池宽的候选按钮。
+    std::vector<std::string> candidate_names_{};  ///< 当前池内各档的族名（与上一条同序；空档为空串）。
+    std::string chain_filter_text_{};             ///< 过滤框的当前内容（本件持有，表单里没有这一项）。
 };
 
 }  // namespace borealis::ui

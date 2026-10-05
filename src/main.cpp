@@ -182,6 +182,11 @@ auto main() -> int {
         }
         return out;
     };
+    // 回退链候选族目录交的是装配阶段那一份目录本身（裁决 7.52 的 S16），既不再第二次枚举，也不按
+    // 等宽性过滤：回退链的存在理由是「主族缺字时找另一个面」，另一个面不必等宽。
+    hooks.families = [&catalog]() -> std::vector<borealis::ui::FontFamilyEntry> {
+        return catalog;
+    };
     borealis::ui::SettingsPanel panel{*host, app.shortcuts(), std::move(hooks)};
 
     // 打开入口按 `SPEC.FEAT.PREF.02` 走命令层：命令是快捷键、菜单与命令面板的共同真源（架构 §11.2），
