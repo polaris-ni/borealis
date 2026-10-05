@@ -322,10 +322,7 @@ auto SettingsPanel::close() -> void {
         shortcuts_.remove(escape_binding_);
         escape_binding_ = 0;
     }
-    if (overlay_index_.has_value()) {
-        host_.remove_overlay(*overlay_index_);
-        overlay_index_.reset();
-    }
+    // 时序同 `rebuild_overlay()`：本仓自持的派生控件句柄先放，旧卡片子树析构才不逐子告警。
     status_texts_.clear();
     rows_.clear();
     theme_canvases_.clear();
@@ -334,6 +331,11 @@ auto SettingsPanel::close() -> void {
     swatch_editor_.reset();
     swatch_reset_button_.reset();
     clear_chain_state();
+
+    if (overlay_index_.has_value()) {
+        host_.remove_overlay(*overlay_index_);
+        overlay_index_.reset();
+    }
     preview_.reset();  // 横条随浮层一起消失：控件树已脱离宿主，留一份「看着还挂在树上」的视口是最难查的陈旧态
 }
 
@@ -519,10 +521,8 @@ auto SettingsPanel::collect_rows() const -> std::vector<const SettingsControl *>
 }
 
 auto SettingsPanel::rebuild_overlay() -> void {
-    if (overlay_index_.has_value()) {
-        host_.remove_overlay(*overlay_index_);
-        overlay_index_.reset();
-    }
+    // 先放掉本仓自持的派生控件句柄，再摘旧浮层：否则旧卡片子树析构时这些控件仍被面板持有，
+    // G34 回货后的那条「活在容器之外被摘走」告警就会逐子刷屏（残量实测归因于此时序）。
     rows_ = collect_rows();
     status_texts_.assign(rows_.size(), nullptr);
     // 候选表每次建浮层现取（与字体族目录同一条分工，裁决 7.46③），派生态的控件指针一律先清：
@@ -535,6 +535,11 @@ auto SettingsPanel::rebuild_overlay() -> void {
     swatch_editor_.reset();
     swatch_reset_button_.reset();
     clear_chain_state();
+
+    if (overlay_index_.has_value()) {
+        host_.remove_overlay(*overlay_index_);
+        overlay_index_.reset();
+    }
 
     // 遮罩层：`Canvas` 的自动尺寸会夹到 100×100，故必须 fill_max_size 才铺满整窗（裁决 7.56⑤）。
     auto scrim = std::make_shared<aurora::Canvas>([](aurora::Painter &painter, const aurora::Rect &bounds) -> void {
