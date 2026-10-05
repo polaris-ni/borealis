@@ -187,6 +187,14 @@ auto main() -> int {
     hooks.families = [&catalog]() -> std::vector<borealis::ui::FontFamilyEntry> {
         return catalog;
     };
+    // 预览盒的外观包与主视口**同源**（判据文 F-c）：同一个 `make_appearance()`，读同一份已落盘的配置。
+    // 面板自己再拼一份外观就是第二条搬运路径，「面板改了某项而预览拿不到该项」那种分叉正由此消除。
+    hooks.preview_appearance = [&store, &catalog]() -> borealis::ui::TerminalView::Appearance {
+        return make_appearance(store.settings(), catalog);
+    };
+    // 夹具在预览视口的 `on_layout` 里随 `resize` 重投，那一批脏要下一帧才排；不唤醒就会停在
+    // 「横条画了但内容还是上一版」。与下面 `set_on_frame` 里的 `pump_preview()` 配对存在。
+    hooks.preview_wake = [&surface]() -> void { surface.request_wake(); };
     borealis::ui::SettingsPanel panel{*host, app.shortcuts(), std::move(hooks)};
 
     // 打开入口按 `SPEC.FEAT.PREF.02` 走命令层：命令是快捷键、菜单与命令面板的共同真源（架构 §11.2），
@@ -201,9 +209,10 @@ auto main() -> int {
     app.commands().add(std::move(open_settings));
     app.commands().bind_shortcuts(app.shortcuts());
 
-    app.set_on_frame([&view, &outbox, &session]() -> void {
+    app.set_on_frame([&view, &outbox, &session, &panel]() -> void {
         view->on_frame();  // 先取脏行提交、再在临界区并入本地副本（顺序不可颠倒，见 session.h）
         static_cast<void>(outbox.drain(session));
+        panel.pump_preview();  // 预览盒是第二个会话，脏行同样按帧排（面板关着即空操作）
     });
     app.run();
 

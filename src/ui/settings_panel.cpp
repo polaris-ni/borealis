@@ -43,6 +43,7 @@
 
 #include "borealis/ui/color_text.h"
 #include "settings_i18n.h"
+#include "settings_preview.h"
 
 namespace borealis::ui {
 namespace {
@@ -64,6 +65,12 @@ constexpr float kStatusWidthDp = 176.0F;  ///< 状态列宽：最长角标是「
 constexpr float kCardMaxWidthDp = 1040.0F;
 constexpr float kCardMaxHeightDp = 680.0F;
 constexpr float kCardMarginDp = 16.0F;  ///< 卡片与窗口边的最小留白。
+
+/// @brief 预览横条的高度（判据文 F-e，人已拍板的落位：卡片底部一条横条，而不是稿面原先的「右侧」）。
+///
+/// 做成常量而非按内容算高：横条与卡片总高解耦——卡片尺寸由外层 `LayoutBuilder` 显式钳定，多这一条
+/// 子节点只从行区那一段里扣，行区因而已是 `expand()` 的滚动容器，扣完仍可滚。
+constexpr float kPreviewHeightDp = 140.0F;
 
 // ---- 外观页三个区段的排版量（判据文 §4 A1-a / A2-a / A5-a，尺寸按 `UI_SETTINGS.draft.svg` 量得）----
 constexpr float kThemeCardHeightDp = 64.0F;
@@ -285,6 +292,9 @@ auto SettingsPanel::open() -> void {
         form_ = SettingsForm{hooks_.load()};
     }
     open_ = true;
+    // 预览盒要**先**建好：`build_card()` 按本件是否已持有预览来决定卡片列的第三条子节点（F-e），
+    // 而浮层重建在那之后才跑。反过来就会画出一张没有横条的卡片，且没有任何地方报错。
+    refresh_preview();
     rebuild_overlay();
     if (escape_binding_ == 0) {
         // 关闭键挂 Global：面板内的控件都可获焦，挂 Focus 反而在焦点落在遮罩层时失灵（S2①）。
@@ -324,6 +334,7 @@ auto SettingsPanel::close() -> void {
     swatch_editor_.reset();
     swatch_reset_button_.reset();
     clear_chain_state();
+    preview_.reset();  // 横条随浮层一起消失：控件树已脱离宿主，留一份「看着还挂在树上」的视口是最难查的陈旧态
 }
 
 auto SettingsPanel::select_page(SettingsPage page) -> void {
@@ -540,7 +551,7 @@ auto SettingsPanel::rebuild_overlay() -> void {
 
 auto SettingsPanel::build_card() -> aurora::Node {
     auto builder = std::make_shared<aurora::LayoutBuilder>(
-        [this](const aurora::BuildContext &, const aurora::Constraints &c) -> aurora::Node {
+        [this](const aurora::BuildContext &ctx, const aurora::Constraints &c) -> aurora::Node {
             const float width = std::clamp(c.max.width - 2.0F * kCardMarginDp, 480.0F, kCardMaxWidthDp);
             const float height = std::clamp(c.max.height - 2.0F * kCardMarginDp, 320.0F, kCardMaxHeightDp);
 
@@ -619,9 +630,21 @@ auto SettingsPanel::build_card() -> aurora::Node {
             header->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
                 .left = 16.0F, .top = 12.0F, .right = 16.0F, .bottom = 12.0F}));
 
+            std::vector<aurora::Node> card_children;
+            card_children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(header))});
+            card_children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(body))});
+            if (preview_ != nullptr) {
+                // 横条是卡片的**第三条**子节点，故它从 `body`（`expand()`）那一段里扣 140 dp，卡片总高不变
+                // （判据文 F-e：高度做成常量、不改卡片尺寸）。
+                auto bar = build_preview_bar();
+                // 浮层子树不经 `Window::present_root` 那一次遍历挂载（`OverlayHost::add_overlay` 只 push +
+                // 标脏布局），故本视口的 `on_mount` 要在这里补——不补则闪烁档与主题订阅永不注册
+                // （裁决 7.49④ 同一条物理事实；`Widget::mount` 幂等，重建闭包再跑一次也无害）。
+                preview_->ensure_mounted(ctx);
+                card_children.push_back(std::move(bar));
+            }
             auto card = std::make_shared<aurora::Column>(aurora::ColumnProps{
-                .children = {aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(header))},
-                             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(body))}},
+                .children = std::move(card_children),
                 .gap = 0.0F,
             });
             card->modifier.set(aurora::Modifier{}.size(width, height).background(kCardBg, 8.0F).border(
@@ -1207,6 +1230,7 @@ auto SettingsPanel::after_commit(std::string_view key, const SettingsControl &co
     if (apply_scope(control) == ApplyScope::PersistAndApplyNow && hooks_.broadcast) {
         hooks_.broadcast(form_);
     }
+    refresh_preview();  // 预览取的是存储侧刚写出的那一份，故排在落盘之后（落盘失败已在上面 return）
 }
 
 auto SettingsPanel::set_status(std::size_t ordinal, const aurora::LocalizedString &text) -> void {
@@ -1319,6 +1343,9 @@ auto SettingsPanel::apply_theme(const std::string &name) -> void {
     }
     sync_swatch_editor();
     refresh_palette_views();
+    if (persisted) {
+        refresh_preview();  // 切主题是六键一次落盘，预览同批跟上新色板（判据 A1 的预览腿）
+    }
 }
 
 auto SettingsPanel::select_swatch(std::size_t slot) -> void {
@@ -1373,6 +1400,45 @@ auto SettingsPanel::refresh_palette_views() -> void {
                 break;
             }
         }
+    }
+}
+
+auto SettingsPanel::refresh_preview() -> void {
+    if (!hooks_.preview_appearance) {
+        return;  // 未装接缝即不画横条：预览是可选腿，面板既有行为一字不变
+    }
+    if (preview_ == nullptr) {
+        preview_ = std::make_unique<SettingsPreview>(hooks_.preview_appearance());
+    } else {
+        preview_->apply(hooks_.preview_appearance());
+    }
+    // 外观改动会改行列数，而视口在 `on_layout` 里才把新尺寸发给自己的会话、夹具随那次 `resize` 重投；
+    // 那一批脏**要下一帧才排**，不唤醒就停在「横条画了但内容还是上一版」。
+    if (hooks_.preview_wake) {
+        hooks_.preview_wake();
+    }
+}
+
+auto SettingsPanel::build_preview_bar() -> aurora::Node {
+    if (preview_ == nullptr) {
+        return aurora::Node{};
+    }
+    // 扁条高度只能经**控件级尺寸意图**下达（`au::px`），挂在修饰链上的 `.height(140)` 会被静默吃掉：
+    // `ui::TerminalView` 构造时自宣 `width/height = fill()`（撑满父级是它自身的意图，见其构造末两句），
+    // 而框架 `Widget::layout` 在跑完整条修饰链之后还要按该意图覆写本控件尺寸（「显式盒严格等于设定值」
+    // 那一段），于是高轴的 Expand 意图把链上钉好的 140 改回「父级剩余高」。实测读数：意图缺省时横条
+    // 占满 header 以下整段（506 dp）并把行区压成 0 高；补上本句即回到 140 dp。
+    preview_->view().height(aurora::px(kPreviewHeightDp));
+    return preview_->node();
+}
+
+auto SettingsPanel::preview_view() const noexcept -> TerminalView * {
+    return preview_ == nullptr ? nullptr : &preview_->view();
+}
+
+auto SettingsPanel::pump_preview() -> void {
+    if (preview_ != nullptr) {
+        preview_->pump();
     }
 }
 

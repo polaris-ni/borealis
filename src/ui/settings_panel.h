@@ -4,9 +4,18 @@
 // 设置面板的界面腿本体（src/ui/settings_panel.h）
 // ------------------------------------------------------------
 // `codespec/UI_SETTINGS.draft.md` 屏 3 的落地（裁决 7.52 把 S1~S16 全部自拍为建议项）：
-// 交付**四页骨架 + 六类通用行控件 + 主题卡区段 + 16 格色板区段 + 回退链区段 + 表单落盘与广播接线**，
-// 其余按判据文 §8 的分工留给后续棒——外观页余下一个专用控件（字体族下拉，其形态待人拍板）、右侧实时
-// 预览盒、连接页与状态栏开关组、快捷键只读表、以及损坏配置的启动对话框。
+// 交付**四页骨架 + 六类通用行控件 + 主题卡区段 + 16 格色板区段 + 回退链区段 + 实时预览盒 + 表单落盘与广播接线**，
+// 其余按判据文 §8 的分工留给后续棒——外观页余下一个专用控件（字体族下拉，其形态待人拍板）、
+// 连接页与状态栏开关组、快捷键只读表、以及损坏配置的启动对话框。
+//
+// 预览盒（S7 / 判据 F-a~F-e，裁决 7.66）落在**卡片底部一条 140 dp 的横条**（人已拍板的落位，不是稿面
+// 原先那个「右侧」形态），本体是 `SettingsPreview`（`settings_preview.h`：独立内存会话 + 真实视口控件）。
+// 面板因此开两条新接缝，两条都是**不装即不画**：
+// ① `preview_appearance` 交的是**装配层那一份**外观包，而不是面板自己拼的——启动初始构造、运行期即时
+//    广播与预览盒三处必须同源（裁决 7.53「构造与广播共用一对搬运函数」的延伸），面板不认识 `config`，
+//    自拼一份就是第二条搬运路径，「面板改了某项而预览拿不到该项」正是那一对函数要消除的形态。
+// ② `preview_wake` 是排帧请求：夹具在视口的 `on_layout` 里随 `resize` 重投，那一批脏**要下一帧才排**，
+//    不唤醒就停在「横条画了但内容还是上一版」。宿主侧的泵（`pump_preview()`）与这条请求配对存在。
 //
 // 三条决定形态的框架实测（裁决 7.56，其前两条曾登记为缺口 G26 / G27 并已于同日回货闭合，见裁决 7.57①）：
 // ① 浮层必须是**确实写子节点 bounds 的容器**：登记时 `Dialog` 与 `Scroll` 都不写 bounds，挂在
@@ -123,8 +132,11 @@
 #include "borealis/ui/font_choice.h"
 #include "borealis/ui/settings_catalog.h"
 #include "borealis/ui/settings_form.h"
+#include "terminal_view.h"  // `Hooks` 的两条预览接缝吃 `TerminalView::Appearance`（同 `workspace_view.h` 的先例）
 
 namespace borealis::ui {
+
+class SettingsPreview;  ///< 卡片底部那条横条的本体（`settings_preview.h`），本件只持其所有权。
 
 /// @brief 面板 chrome 的色值唯一来源，同时是装配层给场景根那层 `ThemeScope` 的主题。
 ///
@@ -168,6 +180,12 @@ public:
         /// （裁决 7.46③，目录只在装配阶段枚举一次，`list_font_families()` 首次调用是同步 IO）。
         /// 候选**不**按等宽性过滤——回退链的存在理由正是「主族缺字时找另一个面」，另一个面不必等宽。
         std::function<std::vector<FontFamilyEntry>()> families;
+        /// @brief 取预览盒的外观包（S7 / F-c：与主视口**同一份**，由装配层的 `make_appearance()` 交出）。
+        ///
+        /// 不装即不画那条横条：预览是可选接缝，面板的既有用例都不必为它建会话。
+        std::function<TerminalView::Appearance()> preview_appearance;
+        /// @brief 请求宿主排下一帧（夹具在视口 `on_layout` 里随 `resize` 重投，那批脏要下一帧才排）。
+        std::function<void()> preview_wake;
     };
 
     /// @brief 面板当前页上的一行（用例据此核对「面板画的键」与反向核对表一致，判据文 §8 判据①）。
@@ -313,6 +331,15 @@ public:
     /// @brief 重排列表本体的控件（用例据此问键盘抓取态——`Escape` 的那条交接腿就落在它身上）。
     [[nodiscard]] auto chain_list() const -> aurora::Widget *;
 
+    /// @brief 预览盒的视口控件；未装 `Hooks::preview_appearance`、或面板此刻关着时为空（S7 的观测点）。
+    ///
+    /// 用例要靠它把「外观改动是否落进了预览那条腿」与「改动只进了表单副本」分开断言：预览的行列数、
+    /// 以及它自己那一帧的绘制产物都只有从视口本体才读得到（§8 的两条判据各取一处）。
+    [[nodiscard]] auto preview_view() const noexcept -> TerminalView *;
+
+    /// @brief 排预览那一帧：取夹具重投后攒下的脏行并提交（宿主在 `Application::set_on_frame` 里逐帧调）。
+    auto pump_preview() -> void;
+
 private:
     /// @brief 按当前页取行表（表内次序即排版次序，只收本页、只收装载成功的键）。
     [[nodiscard]] auto collect_rows() const -> std::vector<const SettingsControl *>;
@@ -405,6 +432,16 @@ private:
     /// @brief 刷新两个区段的一切派生态：卡片与色板重绘、卡名亮度、恢复按钮可用性、主题行「自定义」角标。
     auto refresh_palette_views() -> void;
 
+    /// @brief 让预览盒跟上装配层当前那份外观（S7 / F-c）；未装钩子即不建、也不画那条横条。
+    ///
+    /// 两条腿合在本函数里：横条进卡片要在 `rebuild_overlay()` **之前**（`build_card()` 按本件是否已持有
+    /// 预览决定第三条子节点），而既有预览只换外观、不重建视口（裁决 7.53 的 S4①，重建会把选区与回看
+    /// 一起作废，这里同理会把刚投上去的夹具画面抹掉）。换完外观后请求宿主排下一帧（`preview_wake`）。
+    auto refresh_preview() -> void;
+
+    /// @brief 建预览盒那一档子节点：固定 140 dp 高、把 `SettingsPreview` 的节点交进卡片列（F-e）。
+    [[nodiscard]] auto build_preview_bar() -> aurora::Node;
+
     /// @brief 把编辑器文本框的内容换成选中格的当前值（只在选中格换了或整份色板换了时调，
     ///        提交之后不调——否则会抹掉用户正在敲的半截文本，S14 的那半条）。
     auto sync_swatch_editor() -> void;
@@ -466,6 +503,11 @@ private:
     std::vector<std::shared_ptr<aurora::Button>> chain_candidates_{};     ///< 固定池宽的候选按钮。
     std::vector<std::string> candidate_names_{};  ///< 当前池内各档的族名（与上一条同序；空档为空串）。
     std::string chain_filter_text_{};             ///< 过滤框的当前内容（本件持有，表单里没有这一项）。
+
+    /// 预览盒的本体（S7）。每次 `open()` 现建、`close()` 即销毁：浮层撤掉之后它的控件树已脱离宿主，
+    /// 复用一份脱离树的视口要重挂、而框架只在根变化时遍历挂载（裁决 7.49④），留着一份「看起来还挂在树上」
+    /// 的控件正是最难查的那类陈旧态；重建一次的代价只是重投一次夹具。
+    std::unique_ptr<SettingsPreview> preview_{};
 };
 
 }  // namespace borealis::ui
