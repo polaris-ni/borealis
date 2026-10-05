@@ -66,6 +66,7 @@
 ///           故宿主**必须**带一个基础子节点——生产路径上那是终端视口，本用例给一个 `Text`。
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -102,6 +103,7 @@
 // 私有头（裁决 D1①），故按相对路径取用而不给整个测试目标开 `src/` 含目录。
 #include "../../src/ui/settings_i18n.h"
 #include "../../src/ui/settings_panel.h"
+#include "../../src/ui/settings_preview.h"
 
 namespace borealis::test_cases::itest_settings_panel {
 
@@ -231,6 +233,28 @@ auto check_chain_sequence(std::string_view what, const std::vector<std::string> 
     check_key_sequence(what, got, want);
 }
 
+/// @brief 用例侧独立折一份外观包（与 `src/main.cpp` 的 `make_appearance()` 同一算式，但刻意不共享代码）。
+///
+/// 判据 F-c 说的是「预览与主视口取同一份外观」，而它真正可判的那一半是**两处各自折算仍逐位相同**：用例
+/// 直接调装配层那份函数就只会证到「同一个函数被调了两次」。字体族在这里取配置原值（与既有像素用例同一
+/// 族名，环境无关），不像装配层那样过 `choose_font_family`——那条腿已由 `utest_font_choice` 与真机走查
+/// 各自守，本件要的只是「同一份 `Settings` 折出同一份 `Appearance`」。
+[[nodiscard]] auto test_appearance(const Settings &settings) -> borealis::ui::TerminalView::Appearance {
+    borealis::ui::TerminalView::Appearance appearance;
+    appearance.palette = settings.appearance.palette;
+    appearance.ref_font = au::Font{.family = settings.appearance.font_family,
+                                   .size_pt = static_cast<float>(settings.appearance.font_size_pt),
+                                   .weight = 400};
+    appearance.typography = borealis::ui::Typography{
+        .line_height = settings.appearance.font_line_height,
+        .letter_spacing_dp = settings.appearance.font_letter_spacing_dp,
+    };
+    appearance.padding_dp = settings.appearance.viewport_padding_dp;
+    appearance.blink_period = std::chrono::milliseconds{settings.appearance.cursor_blink_period_ms};
+    appearance.font_fallback_chain = settings.appearance.font_fallback_chain;
+    return appearance;
+}
+
 /// @brief 存储侧与绘制侧的接缝替身：只数「被调了几次」并留下最后一次搬到的配置。
 ///
 /// 落盘走真实的 `config::apply_form()`，于是一条判据同时过「表单 → 成员」的搬运腿；基线随成功落盘
@@ -266,6 +290,10 @@ public:
         FontFamilyEntry{.family = "JetBrains Mono", .monospace = true},
         FontFamilyEntry{.family = "Noto Sans Mono", .monospace = true},
     };
+    /// 预览的两条接缝装不装（S7 的「不装即不画」）：必须在 `hooks()` 之前设，因为装的是**闭包本身**
+    /// 而不是一个在调用时才读的 bool——判据要证的是「接缝缺席时面板一个会话都不建」。
+    bool with_preview = false;
+    std::size_t preview_wake_calls = 0;  ///< `preview_wake` 被叫过几次（夹具重投的尾沿脏靠它）。
 
     /// @brief 交出一副挂到本替身上的 `Hooks`。
     ///
@@ -273,7 +301,7 @@ public:
     /// `fail_persist` 与 `theme_choices`——装载腿每次 `open()` 走一次、候选腿每次重建浮层走一次，
     /// 分叉现场因此能在同一个面板实例上逐次注入。
     [[nodiscard]] auto hooks() -> SettingsPanel::Hooks {
-        return SettingsPanel::Hooks{
+        SettingsPanel::Hooks out = SettingsPanel::Hooks{
             .load =
                 [this]() -> std::vector<FormEntry> {
                     ++load_calls;
@@ -306,7 +334,18 @@ public:
                 [this]() -> std::vector<FontFamilyEntry> {
                     return family_catalog;
                 },
+            .preview_appearance = nullptr,
+            .preview_wake = nullptr,
         };
+        if (with_preview) {
+            out.preview_appearance = [this]() -> borealis::ui::TerminalView::Appearance {
+                return test_appearance(base);
+            };
+            out.preview_wake = [this]() -> void {
+                ++preview_wake_calls;
+            };
+        }
+        return out;
     }
 
     /// @brief 清掉三个计数（判据只测「这一步之后新增了什么」）。
@@ -1001,6 +1040,47 @@ AURORA_TEST_CASE(a_chain_structural_change_persists_once_and_broadcasts_once) {
     check_chain_sequence("the emptied chain", probe.persisted[1].appearance.font_fallback_chain, {});
 }
 
+/// @brief 预览的两条接缝是**可选腿**：不装就一张横条都没有，装了才建会话，关闭即销毁。
+///
+/// S7 的代价（面板持有一份不经 `main` 装配的连接替身）只应在装配层真想要预览时才付，故本例判三件事：
+/// 接缝缺席 ⇒ 面板既有行为一字不变；接缝在场 ⇒ 每次 `open()` 现建一份、`close()` 立即释放（浮层撤掉之后
+/// 那棵控件树已脱离宿主，留一份「看起来还挂在树上」的视口是最难查的陈旧态）；以及 `preview_wake` 至少被
+/// 叫过一次——夹具随 `Session::resize` 重投发生在视口的 `on_layout` 里，那批脏**要下一帧才排**，少了这一
+/// 次唤醒，横条画得出来而内容停在上一版。
+AURORA_TEST_CASE(the_preview_bar_exists_only_when_the_assembly_wires_its_seams) {
+    borealis::ui::install_settings_strings();
+    au::Node root;
+    std::shared_ptr<au::Widget> base;
+    std::shared_ptr<au::OverlayHost> host = make_host(base, root);
+    au::ShortcutRegistry shortcuts;
+
+    StoreProbe bare;
+    {
+        SettingsPanel panel{*host, shortcuts, bare.hooks()};
+        panel.open();
+        AURORA_TEST_CHECK_TRUE(panel.preview_view() == nullptr);
+        AURORA_TEST_CHECK_EQ(bare.preview_wake_calls, 0U);
+        panel.close();
+    }
+
+    StoreProbe wired;
+    wired.with_preview = true;
+    {
+        SettingsPanel panel{*host, shortcuts, wired.hooks()};
+        panel.open();
+        AURORA_TEST_REQUIRE(panel.preview_view() != nullptr);
+        AURORA_TEST_CHECK_GT(wired.preview_wake_calls, 0U);
+        panel.close();
+        AURORA_TEST_CHECK_TRUE(panel.preview_view() == nullptr);
+        panel.open();
+        // 「同一副面板重开之后拿到的是新实例」一句**不判指针身份**：`close()` 刚释放的堆块会被下一次
+        // `make_unique` 原样复用，实测地址逐位相同，故身份既不能证真也不能证伪（裁决 7.66 的判据边界）。
+        // 「close 即销毁」由上一句 `== nullptr` 独立守住，「重开又建」由本句 `!= nullptr` 守住。
+        AURORA_TEST_REQUIRE(panel.preview_view() != nullptr);
+        panel.close();
+    }
+}
+
 #ifdef AURORA_BACKEND_HEADLESS
 
 namespace {
@@ -1066,6 +1146,32 @@ public:
     /// @brief 排一帧：真实布局 + 真实绘制（无头帧缓冲）。
     auto render() -> void {
         (void)window_.present_root(root_);
+    }
+
+    /// @brief 布局 → 排预览的脏 → 再绘制：预览横条的内容**要两帧**才成形（S7 的 `preview_wake` 腿）。
+    ///
+    /// 夹具是在视口的 `on_layout` 里随 `Session::resize` 重投的，那一批脏行排进 `DamageQueue` 之后由
+    /// `pump()`（= `TerminalView::on_frame`）提交并标脏绘制，故单靠 `render()` 只能画出「一条空的
+    /// 140 dp 横条」。装配层在 `Application::set_on_frame` 里逐帧调 `pump_preview()` 就是为了这一拍，
+    /// 用例侧不泵就等于测另一条路径。
+    /// @param panel 面板（预览本体归它持有）。
+    /// @param extra 额外要泵的对照视口（§8 判据① 的第二台预览，面板不认识它）；可空。
+    auto pump_and_render(SettingsPanel &panel, borealis::ui::SettingsPreview *extra = nullptr) -> void {
+        render();
+        panel.pump_preview();
+        if (extra != nullptr) {
+            extra->pump();
+        }
+        render();
+    }
+
+    /// @brief 把一棵控件树作为浮层加进场景根（§8 判据① 的对照视口走这条，而不是挂进卡片里）。
+    ///
+    /// 后加的浮层画在先加者之上，故对照视口压在卡片之上；它与卡片底部那条横条的矩形不相交，因此
+    /// 横条上的取点与派发仍归面板自己的预览。
+    /// @param node 该控件树的句柄（宿主持其所有权，本件只交节点）。
+    auto add_overlay(au::Node node) -> void {
+        (void)host_->add_overlay(std::move(node));
     }
 
     /// @brief 命中测试：这一点上的最深控件（根在原点，故窗口逻辑 dp 即根局部坐标）。
@@ -1156,7 +1262,10 @@ public:
                     continue;
                 }
                 const au::Rect box = reachable_box(widget, x, y);
-                if (box.bottom() + room_below_dp > static_cast<float>(kWindowHeight) - kCardEdgeDp) {
+                // 门槛比的是**最后一个命中点**而不是 `box.bottom()`：后者按可达框的「含端点计数」约定（尺寸
+                // ＝ 末点 − 首点 + 1）恰好越过真正的末点 1 dp，于是与卡片下沿齐平的那一条横条会被整体跳过
+                // ——而预览横条按 F-e 正是要齐平（早先的实测读数：可达框末点 584、`bottom()` 585、门槛 584）。
+                if (box.origin.y + box.size.height - 1.0F + room_below_dp > static_cast<float>(kWindowHeight) - kCardEdgeDp) {
                     continue;
                 }
                 return HitSpot{.widget = widget, .x = x, .y = y, .box = box};
@@ -1191,6 +1300,16 @@ public:
         const float y = spot.box.origin.y + static_cast<float>(spot.box.size.height * fy);
         AURORA_TEST_REQUIRE_MSG(hit(x, y) == spot.widget, "the sampled pixel is not claimed by the control under test");
         return pixel(x, y);
+    }
+
+    /// @brief 按**窗口坐标**取一个像素，同样先钉住归属（`probe` 的分数形态按格算不方便的场合用它）。
+    ///
+    /// 预览格心的取点由该视口自己的 `GridGeometry` 折算而来（见 `cell_center`），是浮点坐标而不是框内
+    /// 分数，故这里要一个按点取色并自证归属的入口。归属不成立即转红：横条与卡片之外只隔着遮罩，取错
+    /// 一点就会读到遮罩底色，而「两处采样逐位相等」那种判据最怕的就是两边都读到同一个错的东西。
+    [[nodiscard]] auto probe_point(au::Widget *widget, float x_dp, float y_dp) -> RgbaColor {
+        AURORA_TEST_REQUIRE_MSG(hit(x_dp, y_dp) == widget, "the sampled pixel is not claimed by the control under test");
+        return pixel(x_dp, y_dp);
     }
 
     /// @brief 发一个真实指针事件（按下即抬起由调用方各发一次）。
@@ -1362,6 +1481,71 @@ enum class ChainButton {
         }
     }
     return spot;
+}
+
+/// 预览夹具里那三格 16 色基本色**底色**档的落点（`src/ui/settings_preview.cpp` 的 `build_fixture()` 第 4
+/// 行：`└──────┘` 之后依次是 `ESC[41m`（`basic[1]`）、`42m`（`basic[2]`）、`44m`（`basic[4]`））。
+/// 判据① 要的是「同一格色逐位变化」，而底色格是实心填充、格内无字形，像素可逐位指认，故选它而不是
+/// 前景色档（前景是 AA 灰度文本，只能断「有墨/无墨」）。行号与列号在此写成常量并与夹具同源注释锁死。
+constexpr std::size_t kFixtureSwatchRow = 3U;
+constexpr std::size_t kFixtureSwatchColumn = 8U;
+constexpr std::size_t kFixtureSwatchSlot = 1U;  ///< `basic[1]`：夹具里第一格底色所用的色板槽位。
+
+/// 横条高度（判据文 F-e，人已拍板的落位）。**刻意取字面量而不是 `settings_panel.cpp` 的
+/// `kPreviewHeightDp`**：那是实现自己的输出，拿它当预期就只剩「常量与常量相等」；本件判的是
+/// 「卡片底部那一条 140 dp」这条界面上的量，故在这里独立写一遍。
+constexpr float kPreviewBarHeightDp = 140.0F;
+
+/// 对照视口的矩形（§8 判据① 的第二台预览）：宽 400 高 200 dp 是刻意与横条**不同**的两个数——
+/// 两台视口的行列数因此必然不同，而「同一格色」仍须逐位相等，这才判得到「同源」而不是「同尺寸」。
+constexpr float kControlWidthDp = 400.0F;
+constexpr float kControlHeightDp = 200.0F;
+
+/// @brief 按视口自己的网格几何把 (行, 列) 折回**窗口坐标**下的格心。
+///
+/// 取点的基准是派发量出来的可达框（不是 `paint_bounds()`，行区是 `Scroll` 之后那套 bounds 属内容坐标，
+/// 见 `reachable_box` 的注），而 G31 回货之后链上报的 origin 与绘制原点逐位相符，故可达框即该视口的
+/// 绘制矩形。内边距按 `ui::GridGeometry` 的既有字段**只入原点、不入步长**（裁决 7.25②）。无头 `scale`
+/// 恒 1.0，故 dp 直接当帧缓冲下标用。
+/// @param spot 该视口的命中点与可达框。
+/// @param view 该视口本体（取其当前那份几何）。
+/// @param row 网格行号（0 基，即视口内的屏幕行）。
+/// @param column 网格列号（0 基）。
+/// @return 格心（窗口坐标）。
+[[nodiscard]] auto cell_center(const HitSpot &spot, const borealis::ui::TerminalView &view, std::size_t row,
+                               std::size_t column) -> au::Point {
+    const borealis::ui::GridGeometry &geometry = view.grid_geometry();
+    return au::Point{
+        .x = spot.box.origin.x + static_cast<float>(geometry.padding + (static_cast<double>(column) + 0.5) * geometry.cell_width),
+        .y = spot.box.origin.y + static_cast<float>(geometry.padding + (static_cast<double>(row) + 0.5) * geometry.cell_height),
+    };
+}
+
+/// @brief 判「按这块矩形只装得下整数格」：行列数恰是**装得下的最大整数**，再多一格就溢出。
+///
+/// 判据文 §8 判据② 那句「不出现半格」的可执行形态，且它是 F-d（预览行列数由自身矩形派生）的正面证人：
+/// 行数若是按别的矩形（卡片高、窗口高）算出来的，这两条不等式就会在横条上破。容差 2 dp 只用于吸收
+/// `reachable_box` 的 1 dp 步进量化；一格高约 19 dp @14 pt，差一整档远在容差之外，故鉴别力不被放宽。
+/// @param box 该视口的可达框（窗口坐标）。
+/// @param geometry 该视口当前的网格几何。
+/// @param tag 失败信息里的轴名。
+/// @return 两条不等式都成立。
+[[nodiscard]] auto fits_whole_cells(const au::Rect &box, const borealis::ui::GridGeometry &geometry,
+                                    std::string_view tag) -> bool {
+    const double room_width = box.size.width - 2.0 * geometry.padding;
+    const double room_height = box.size.height - 2.0 * geometry.padding;
+    const double rows = static_cast<double>(geometry.rows);
+    const double columns = static_cast<double>(geometry.columns);
+    const bool ok = rows * geometry.cell_height <= room_height + 2.0 &&
+        (rows + 1.0) * geometry.cell_height > room_height - 2.0 && columns * geometry.cell_width <= room_width + 2.0 &&
+        (columns + 1.0) * geometry.cell_width > room_width - 2.0;
+    if (!ok) {
+        AURORA_TEST_TRACE(std::string{tag} + ": " + std::to_string(box.size.width) + "x" +
+                          std::to_string(box.size.height) + " / " + std::to_string(geometry.columns) + "x" +
+                          std::to_string(geometry.rows) + " / " + std::to_string(geometry.cell_width) + "x" +
+                          std::to_string(geometry.cell_height) + " / pad " + std::to_string(geometry.padding));
+    }
+    return ok;
 }
 
 }  // namespace
@@ -2414,6 +2598,216 @@ AURORA_TEST_CASE(the_row_area_reports_a_viewport_over_content_ratio_to_the_a11y_
     AURORA_TEST_CHECK_NEAR(au::compute_vertical_view_size(*scrolled), view_size, 0.5);
 }
 
+/// @brief 预览是一条 140 dp 的横条，挂在卡片底部、将行区的视口正好压短 140 dp（F-e）。
+///
+/// 「卡片总高不变」这条只能问**坐标空间之外**的量：卡片本身由外层 `LayoutBuilder` 钳定，横条是它的
+/// 第三个子节点，所以真正会变的是行区那一段的高度。G33 那条回货给行区的无障碍滚动读数补了 `viewport`
+/// 与 `content` 两个量，且其 `viewport` 就是行区控件自身的盒高（同源断言已在那一例里钉过），故本例拿
+/// 它当量具而**不比任何 bounds**：装预览前后 `content` 一字未动（行表没变）、`viewport` 少 140。
+/// 另两条判的是界面事实：横条的可达框高约 140 dp（按常量高，不按内容算），以及它在行区之下。
+///
+/// 取锚点走**终端页**：外观页在 #114 之后被主题卡与 16 格色板两段把通用行整体下推，offset 0 的可见带里没有
+/// 步进器（与 `a_row_control_still_commits_after_the_row_area_has_been_scrolled` 同一条既有在册现象）。
+AURORA_TEST_CASE(the_preview_bar_is_a_140_dp_strip_below_the_row_area_and_shortens_its_viewport) {
+    Harness h;
+
+    StoreProbe bare;  // 不装预览接缝：这是「扣了 140 之前」的那一侧读数
+    std::unique_ptr<SettingsPanel> panel_without = h.attach(bare);
+    h.open(*panel_without);
+    panel_without->select_page(SettingsPage::Terminal);
+    h.render();
+    const HitSpot no_bar = h.find_first("TerminalView");
+    AURORA_TEST_CHECK_TRUE(no_bar.widget == nullptr);  // 不装即不画（S7 的可选腿）
+    const HitSpot anchor_before = h.find_first("SpinBox");
+    AURORA_TEST_REQUIRE(anchor_before.widget != nullptr);
+    au::Scroll *area_before = h.row_scroll(anchor_before.x, anchor_before.y);
+    AURORA_TEST_REQUIRE(area_before != nullptr);
+    const auto before = area_before->accessibility_scroll();
+    AURORA_TEST_REQUIRE(before.has_value());
+    panel_without->close();
+    h.render();
+
+    StoreProbe wired;
+    wired.with_preview = true;
+    std::unique_ptr<SettingsPanel> panel_with = h.attach(wired);
+    h.open(*panel_with);
+    panel_with->select_page(SettingsPage::Terminal);
+    h.pump_and_render(*panel_with);
+    const HitSpot bar = h.find_first("TerminalView");
+    AURORA_TEST_REQUIRE(bar.widget != nullptr);
+    AURORA_TEST_CHECK_NEAR(bar.box.size.height, kPreviewBarHeightDp, 2.0);
+
+    const HitSpot anchor_after = h.find_first("SpinBox");
+    AURORA_TEST_REQUIRE(anchor_after.widget != nullptr);
+    au::Scroll *area_after = h.row_scroll(anchor_after.x, anchor_after.y);
+    AURORA_TEST_REQUIRE(area_after != nullptr);
+    const auto with = area_after->accessibility_scroll();
+    AURORA_TEST_REQUIRE(with.has_value());
+
+    AURORA_TEST_CHECK_NEAR(before->viewport - with->viewport, kPreviewBarHeightDp, 2.0);
+    AURORA_TEST_CHECK_NEAR(with->content, before->content, 2.0);  // 卡片总高不变 ⇒ 行表内容一字未动
+    // 「底部」判的是顺序：横条在行区之下（`Column` 按 children 次序落位，横条是第三个子节点）。
+    const au::Rect area_box = area_after->paint_bounds();
+    AURORA_TEST_TRACE(std::string{"area bottom "} + std::to_string(area_box.bottom()) + " / bar top " +
+                      std::to_string(bar.box.origin.y));
+    AURORA_TEST_CHECK_MSG(bar.box.origin.y >= area_box.bottom() - 2.0, "the preview strip must sit below the row area");
+}
+
+/// @brief 预览里的点击既不夺键盘也不提交任何东西（F-a 的「用户会话不被接管」在界面腿上的那一半）。
+///
+/// 判据文 F-a 说的是「独立会话 + 真实视口，而用户自己的会话不被接管」，其实现前提有三条（文件头③），
+/// 本例把三条折成一次真实点击的可观察后果：① 视口不可获焦 ⇒ 点它之后焦点序里仍没有它，且沿 Tab 序绕一圈
+/// 也落不到它身上（宿主开关的一票否决在键盘通道上同样成立）；② 预览的连接 `write()` 是空实现且
+/// `copy_on_select` 恒假 ⇒ 一次点击既不产选区复制也不向任何对端发字节；③ 落盘与广播计数为 0，即「看着
+/// 像控件」不等于「是一次提交」。第四条断「点横条不把面板关掉」：遮罩的关面板腿按命中归属判，而横条
+/// 在卡片之内，那一刻它必须自己claim 住这一点（裁决 7.49① 的 `is_handled`）。
+AURORA_TEST_CASE(clicking_the_preview_bar_neither_steals_the_keyboard_nor_commits_anything) {
+    Harness h;
+    StoreProbe probe;
+    probe.with_preview = true;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    h.pump_and_render(*panel);
+
+    borealis::ui::TerminalView *view = panel->preview_view();
+    AURORA_TEST_REQUIRE(view != nullptr);
+    AURORA_TEST_CHECK_FALSE(view->focusable());  // ① 的前提：一票否决的宿主开关（框架 §4.2）
+    const HitSpot bar = h.find_first("TerminalView", 0.0F, [view](au::Widget *widget) -> bool { return widget == view; });
+    AURORA_TEST_REQUIRE(bar.widget != nullptr);
+    const float center_x = bar.box.origin.x + bar.box.size.width * 0.5F;
+    const float center_y = bar.box.origin.y + bar.box.size.height * 0.5F;
+
+    probe.reset_counters();
+    h.click(center_x, center_y);
+    h.render();
+
+    AURORA_TEST_CHECK_TRUE(panel->is_open());  // ④ 横条在卡片之内：这一点归它，不归遮罩
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 1U);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+    AURORA_TEST_CHECK_NE(h.focus_manager().focused(), static_cast<au::Widget *>(view));
+    // ① 的另一半只能问**焦点序**：基类 `Widget::on_text_input` 的缺省就是 `is_handled = true`，故「发一段
+    // 文本看有没有人认领」这条判据在结构上恒真（点完横条后焦点按 `focus_target_of(chain)` 落在外层可获焦
+    // 祖先 `Column` 上，那一位会把任何文本吞掉），拿它当「预览不夺键盘」的证人是个假红。可判的等价形态是
+    // 「预览从不进 Tab 序」——候选集即框架私有的 `collect_focusable`，本件只能经公开入口 `move_focus` 绕一圈。
+    bool preview_in_tab_order = false;
+    for (int step = 0; step < 24; ++step) {
+        h.focus_manager().move_focus(au::FocusDirection::Forward);
+        preview_in_tab_order = preview_in_tab_order || h.focus_manager().has_focus(view);
+    }
+    AURORA_TEST_CHECK_FALSE(preview_in_tab_order);
+}
+
+/// @brief 同一份夹具喂两台视口：改一格色板 ⇒ 预览盒与对照视口的那一格色逐位一起变（§8 判据①）。
+///
+/// 这条判据的本体是「预览盒与主视口同一格色逐位变化」，而判它必须在**两台结构同源的视口**之间比：
+/// 第二台是本件按同一份 `preview_fixture()` 与同一份 `Appearance` 造的对照视口（挂在同一场景根的
+/// 浮层上，矩形刻意与横条不相交故互不夺派发）。两台尺寸不同 ⇒ 行列数不同 ⇒ 「同一格」只能按各自的
+/// 网格几何折回窗口坐标（`cell_center`），这排除了「拿同一串像素下标比两台画面」那种假绿。
+///
+/// 三句缺一都不算守住：⑴ 改之前两处逐位相等且**等于该槽位的色板值**——两处都读到同一个错东西（例如
+/// 都读到遮罩底）时，只比「相等」的那句照样是绿的；⑵ 改之后两处仍逐位相等；⑶ 改之后的读数等于新值
+/// 且与旧值不同（否则「色带根本没跟着 palette 走」被「两处一起不动」这个正确但无关的形态掩盖）。
+AURORA_TEST_CASE(the_preview_bar_and_a_second_viewport_of_the_same_fixture_shift_the_same_cell_together) {
+    Harness h;
+    StoreProbe probe;
+    probe.with_preview = true;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    h.pump_and_render(*panel);
+
+    // 对照视口：与横条同一份夹具、同一份外观，故 F-c 的「同源」在此落成同一份折算的两次独立调用。
+    auto control = std::make_unique<borealis::ui::SettingsPreview>(test_appearance(probe.base));
+    // 尺寸同样只能经**控件级意图**下达（与 `build_preview_bar()` 那条生产注释同源）：挂在修饰链上的
+    // `.width(400).height(200)` 会被 `ui::TerminalView` 自宣的 `fill()` 意图在测量之后覆写掉，实测对照
+    // 视口铺满整窗并把横条压在下面（`find_first` 因此一台预览也探不到）。
+    control->view().width(au::px(kControlWidthDp));
+    control->view().height(au::px(kControlHeightDp));
+    control->ensure_mounted(au::BuildContext{});  // 与面板那条补偿同源（G35：宿主不在运行期挂新浮层）
+    h.add_overlay(control->node());
+    h.pump_and_render(*panel, control.get());
+
+    borealis::ui::TerminalView *bar = panel->preview_view();
+    AURORA_TEST_REQUIRE(bar != nullptr);
+    const HitSpot bar_spot = h.find_first("TerminalView", 0.0F, [bar](au::Widget *widget) -> bool { return widget == bar; });
+    AURORA_TEST_REQUIRE(bar_spot.widget != nullptr);
+    const HitSpot control_spot =
+        h.find_first("TerminalView", 0.0F, [control = control.get()](au::Widget *widget) -> bool {
+            return widget == static_cast<au::Widget *>(&control->view());
+        });
+    AURORA_TEST_REQUIRE(control_spot.widget != nullptr);
+
+    // 前提：夹具那一格在两台视口里都还在屏上（横条按 F-e 只有 6~7 行，示范面本就收窄）。
+    const borealis::ui::GridGeometry &bar_grid = bar->grid_geometry();
+    const borealis::ui::GridGeometry &control_grid = control->view().grid_geometry();
+    AURORA_TEST_REQUIRE_MSG(bar_grid.rows > kFixtureSwatchRow && bar_grid.columns > kFixtureSwatchColumn,
+                            "the fixture's swatch cell is not inside the preview bar");
+    AURORA_TEST_REQUIRE_MSG(control_grid.rows > kFixtureSwatchRow && control_grid.columns > kFixtureSwatchColumn,
+                            "the fixture's swatch cell is not inside the control viewport");
+    AURORA_TEST_CHECK_NE(bar_grid.rows, control_grid.rows);  // 两台尺寸不同 ⇒ 比的是「同源」而不是「同像素」
+
+    const au::Point bar_cell = cell_center(bar_spot, *bar, kFixtureSwatchRow, kFixtureSwatchColumn);
+    const au::Point control_cell = cell_center(control_spot, control->view(), kFixtureSwatchRow, kFixtureSwatchColumn);
+    const RgbaColor baseline = test_appearance(probe.base).palette.basic[kFixtureSwatchSlot];
+    const RgbaColor before_bar = h.probe_point(bar, bar_cell.x, bar_cell.y);
+    const RgbaColor before_control = h.probe_point(&control->view(), control_cell.x, control_cell.y);
+    AURORA_TEST_CHECK(before_bar == before_control);
+    AURORA_TEST_CHECK(before_bar == baseline);
+
+    // 改的是色板 `basic[1]` 那一格：走面板的提交入口，横条那条腿由 `refresh_preview()` 换外观。
+    const RgbaColor edited{9U, 214U, 41U, 255U};
+    AURORA_TEST_REQUIRE_EQ(panel->commit_slot("appearance.palette.basic", kFixtureSwatchSlot, "#09D629"),
+                           CommitIssue::None);
+    control->apply(test_appearance(probe.base));  // 对照视口代表主视口：装配层那边收到的是同一次广播
+    h.pump_and_render(*panel, control.get());
+
+    const RgbaColor after_bar = h.probe_point(bar, bar_cell.x, bar_cell.y);
+    const RgbaColor after_control = h.probe_point(&control->view(), control_cell.x, control_cell.y);
+    AURORA_TEST_CHECK(after_bar == after_control);
+    AURORA_TEST_CHECK(after_bar == edited);
+    AURORA_TEST_CHECK_FALSE(after_bar == before_bar);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);   // 一格改动经的是整份表单那一次落盘（裁决 7.61③）
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 1U);
+}
+
+/// @brief 预览的行列数由它**自己的矩形**派生且只装整数格；字号 14→24 之后同一矩形里行列严格变少（F-d / §8 判据②）。
+///
+/// F-d 说的是「预览自己的行列数从自己的框算」，而它可判的形态是两半：① 该框里行列数是**装得下的最大
+/// 整数**（再多一格就溢出 ⇒ 不出现半格，即 §8 判据② 后半句），② 换一个字号就换一个格步长，于是同一个
+/// 140 dp 的框里行数必然变少。第②半也是「运行期换外观不重建视口」那条口径（裁决 7.53 S4①）的证人：
+/// 横条的控件实例在改动前后必须是**同一个指针**，否则「行列数跟着变」就成了「新建了一个视口」。
+AURORA_TEST_CASE(the_preview_grid_is_whole_cells_in_its_own_rect_and_follows_the_font_size) {
+    Harness h;
+    StoreProbe probe;
+    probe.with_preview = true;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    h.pump_and_render(*panel);
+
+    borealis::ui::TerminalView *bar = panel->preview_view();
+    AURORA_TEST_REQUIRE(bar != nullptr);
+    const HitSpot spot = h.find_first("TerminalView", 0.0F, [bar](au::Widget *widget) -> bool { return widget == bar; });
+    AURORA_TEST_REQUIRE(spot.widget != nullptr);
+    AURORA_TEST_CHECK_NEAR(spot.box.size.height, kPreviewBarHeightDp, 2.0);
+    AURORA_TEST_REQUIRE_MSG(fits_whole_cells(spot.box, bar->grid_geometry(), "before"), "half cells in the preview rect");
+    const borealis::ui::GridGeometry before = bar->grid_geometry();
+    AURORA_TEST_REQUIRE_GT(before.rows, 0U);
+    AURORA_TEST_REQUIRE_GT(before.columns, 0U);
+
+    AURORA_TEST_REQUIRE_EQ(panel->commit("appearance.font_size_pt", FormValue::real(24.0)), CommitIssue::None);
+    h.pump_and_render(*panel);
+
+    AURORA_TEST_CHECK_EQ(panel->preview_view(), bar);  // 同一实例：换档走的是运行期入口而不是重建
+    const HitSpot grown = h.find_first("TerminalView", 0.0F, [bar](au::Widget *widget) -> bool { return widget == bar; });
+    AURORA_TEST_REQUIRE(grown.widget != nullptr);
+    AURORA_TEST_REQUIRE_MSG(fits_whole_cells(grown.box, bar->grid_geometry(), "after"), "half cells after the font change");
+    const borealis::ui::GridGeometry &after = bar->grid_geometry();
+    AURORA_TEST_CHECK_GT(after.cell_height, before.cell_height);
+    AURORA_TEST_CHECK_GT(after.cell_width, before.cell_width);
+    AURORA_TEST_CHECK_LT(after.rows, before.rows);
+    AURORA_TEST_CHECK_LT(after.columns, before.columns);
+}
+
 #else
 
 AURORA_TEST_CASE(the_scrim_covers_the_whole_window_and_a_real_click_closes_the_panel) {
@@ -2481,6 +2875,22 @@ AURORA_TEST_CASE(escape_releases_a_keyboard_chain_grab_before_it_closes_the_pane
 }
 
 AURORA_TEST_CASE(the_row_area_reports_a_viewport_over_content_ratio_to_the_a11y_channel_G33) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_preview_bar_is_a_140_dp_strip_below_the_row_area_and_shortens_its_viewport) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(clicking_the_preview_bar_neither_steals_the_keyboard_nor_commits_anything) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_preview_bar_and_a_second_viewport_of_the_same_fixture_shift_the_same_cell_together) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_preview_grid_is_whole_cells_in_its_own_rect_and_follows_the_font_size) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
