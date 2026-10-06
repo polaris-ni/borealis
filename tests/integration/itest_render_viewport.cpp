@@ -8,7 +8,11 @@
 ///           回看态的「距底恒定」（裁决 D6①）、备屏不可滚、双宽与零宽的列位对齐，以及选区界面腿
 ///           （`SPEC.FEAT.INTERACT.02`）：拖拽扫过的格子整格变 selection 色而区间外逐位不变、
 ///           流式首行到行尾、失焦各半混合、Alt 列模式矩形、双击选词（断点上回空）、三击整行与
-///           向上拖的外沿、高亮跟着内容而非屏幕行走，以及复制腿的变换入参；另有排版选项的接线腿
+///           向上拖的外沿、高亮跟着内容而非屏幕行走，以及复制腿的变换入参；另有终端内搜索的绘制侧
+///           （`SPEC.FEAT.INTERACT.04`，视觉稿 `codespec/UI_SEARCH.draft.md` 的 C 面板）：命中区间
+///           整格换底而字形笔形不变、当前命中取 `basic[11]` 全色档而其余命中各半、同格相撞时
+///           **选中盖命中**而选区外的命中不受牵连、块形光标压在命中格上时三段式第三段取该格命中
+///           底色（不挖空）、失焦时命中两档一律不降级（与选区的各半降级相反）；另有排版选项的接线腿
 ///           （配置里的缺字回退链进到交进框架的那一份选项、且不随缩放丢失，固定格推进档位取
 ///           **未含字距**的原始格宽并随缩放重取）；最后是本控件的两条运行期更新入口
 ///           （裁决 7.52 的 S4①，`SPEC.FEAT.PREF.02` 的「修改即时生效」）：换外观包后色带与选区色
@@ -73,6 +77,8 @@ using borealis::ui::LogicalSize;
 using borealis::ui::PaletteSpec;
 using borealis::ui::Rect;
 using borealis::ui::RgbaColor;
+using borealis::ui::SearchDirection;
+using borealis::ui::SearchQuery;
 using borealis::ui::TerminalView;
 using borealis::ui::Typography;
 
@@ -325,6 +331,24 @@ class Harness {
 
     /// @brief 选区文本（复制腿的产物，不经系统剪贴板）。
     [[nodiscard]] auto selected_text() -> std::string { return view_->selected_text(); }
+
+    /// @brief 交进查询条件并排帧：字面量档每键置脏（裁决 7.78①），故这一句就让命中表进绘制侧。
+    auto set_search_query(const std::u32string &text) -> void {
+        view_->set_search_query(SearchQuery{.text = text});
+        render();
+    }
+
+    /// @brief 把游标推到下一个匹配并排帧（判据 D1-a 的界面腿形态；窗内不动画面，见 D1-b）。
+    auto advance_search() -> void {
+        view_->advance_search(SearchDirection::Forward);
+        render();
+    }
+
+    /// @brief 当前命中条数：像素差分的前置——表空时整帧不动，差分判据就空转了。
+    [[nodiscard]] auto search_match_count() const -> std::size_t {
+        const auto *matches = view_->search_matches();
+        return matches == nullptr ? 0U : matches->count();
+    }
 
     /// @brief 控件报告的当前字号：缩放算式（步长与钳位）的直接观测点。
     [[nodiscard]] auto font_size_pt() const -> float { return view_->font_size_pt(); }
@@ -1686,6 +1710,218 @@ AURORA_TEST_CASE(a_runtime_interaction_change_applies_to_the_next_read) {
     // 而存下的端点没被回头改写：换回缺省口径仍读出那一份原样文本。
     h.apply_interaction_options(TerminalView::InteractionOptions{});
     AURORA_TEST_CHECK_EQ(h.selected_text(), raw_text);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_search_hit_repaints_the_cell_background_and_leaves_the_glyph_alone) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto &background = h.palette().default_background;
+    const auto hit = borealis::ui::mix_half(h.palette().basic[11], background);  // 判据 A1-e 的各半档
+    AURORA_TEST_REQUIRE_MSG(hit != background, "the two colors must differ or the diff proves nothing");
+    h.feed("\x1b[?25l\x1b[3;1HABqz7k");
+    const auto before = h.pixels();
+    h.set_search_query(U"qz");
+    AURORA_TEST_REQUIRE_EQ(h.search_match_count(), 1U);
+    const auto after = h.pixels();
+
+    // 命中的两格整格换底（格腰留给字形，故取近顶与近底两处）。
+    for (const std::size_t column : {std::size_t{2U}, std::size_t{3U}}) {
+        AURORA_TEST_CHECK(h.cell_probe(after, 2U, column, 0.06) == hit);
+        AURORA_TEST_CHECK(h.cell_probe(after, 2U, column, 0.94) == hit);
+    }
+    // 区间外的格仍是主题底色；整帧差分只落在命中那一行（高亮不外溢到别行）。
+    for (const std::size_t column : {std::size_t{0U}, std::size_t{1U}, std::size_t{4U}, std::size_t{5U}}) {
+        AURORA_TEST_CHECK(h.cell_probe(after, 2U, column, 0.06) == background);
+    }
+    const auto changed = h.changed_rows(before, after);
+    AURORA_TEST_REQUIRE_MSG(changed.size() == 1U && changed[0] == 2U, "the hit tint leaked outside its row");
+
+    // 判据 C1-b「只换底色不换前景笔形」在这两帧里能判的是**墨迹的竖直跨度**：底色换了，抗锯齿的
+    // 混合色必然跟着变，故比色值比不出「字形没被动」；而「同一格的字落在同一批横行」只可能由笔形
+    // 或落点变化打破——那正是命中层若去改前景（加粗、染色、位移）时会现形的量。
+    const std::size_t cell_width = static_cast<std::size_t>(h.geometry().cell_width);
+    const auto ink_before = ink_rows(h.cell_band(before, 2U, 2U), cell_width, background);
+    const auto ink_after = ink_rows(h.cell_band(after, 2U, 2U), cell_width, hit);
+    AURORA_TEST_REQUIRE_MSG(ink_after.first < ink_after.second, "no glyph ink in the hit cell");
+    AURORA_TEST_CHECK(ink_before == ink_after);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(clearing_the_query_takes_the_highlight_back_off_the_screen) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto &background = h.palette().default_background;
+    const auto hit = borealis::ui::mix_half(h.palette().basic[11], background);
+    h.feed("\x1b[?25l\x1b[3;1HABqz7k");
+    const auto pristine = h.pixels();
+    h.set_search_query(U"qz");
+    AURORA_TEST_REQUIRE_EQ(h.search_match_count(), 1U);
+    const auto tinted = h.pixels();
+    // 反空转前提：这一帧确实带上了高亮，否则下面的「回到底色」判的是从来没画过。
+    AURORA_TEST_REQUIRE_MSG(h.cell_probe(tinted, 2U, 2U, 0.06) == hit, "the highlight never landed");
+    // 判据 A2-a 的画面腿：空串不发扫描、也不留任何高亮。撤表那一刻是一次画面变化，故结算处必须
+    // 自标脏——只把表清空而不标脏时，陈色要等下一个别的脏源才退。
+    h.set_search_query(U"");
+    AURORA_TEST_REQUIRE_EQ(h.search_match_count(), 0U);
+    const auto cleared = h.pixels();
+    AURORA_TEST_CHECK(h.cell_probe(cleared, 2U, 2U, 0.06) == background);
+    AURORA_TEST_CHECK(h.cell_probe(cleared, 2U, 2U, 0.94) == background);
+    AURORA_TEST_CHECK(h.changed_rows(pristine, cleared).empty());
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_current_hit_takes_the_full_tier_while_the_other_hits_stay_half) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto &background = h.palette().default_background;
+    const auto &full = h.palette().basic[11];
+    const auto hit = borealis::ui::mix_half(full, background);
+    AURORA_TEST_REQUIRE_MSG(full != hit && hit != background, "the three tiers must be distinguishable");
+    h.feed("\x1b[?25l\x1b[3;1Hqz--qz");
+    h.set_search_query(U"qz");
+    AURORA_TEST_REQUIRE_EQ(h.search_match_count(), 2U);
+
+    // 游标还没落到任何匹配上：两档命中都取各半档，画面里没有第三种色（判据 A1-e）。
+    auto px = h.pixels();
+    for (const std::size_t column : {std::size_t{0U}, std::size_t{1U}, std::size_t{4U}, std::size_t{5U}}) {
+        AURORA_TEST_CHECK(h.cell_probe(px, 2U, column, 0.06) == hit);
+    }
+
+    // 第一次 Enter 落到表头那一条：只有那两格升到全色档，其余命中留在各半档。
+    h.advance_search();
+    px = h.pixels();
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 0U, 0.06) == full);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 1U, 0.94) == full);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 4U, 0.06) == hit);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 5U, 0.06) == hit);
+
+    // 第二次 Enter：全色档跟着当前位走，上一格回落到各半档——「同一时刻只有一格是全色」。
+    h.advance_search();
+    px = h.pixels();
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 0U, 0.06) == hit);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 1U, 0.94) == hit);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 4U, 0.06) == full);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 5U, 0.06) == full);
+    // 两档都在同一行内换底，行外一格未动。
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 2U, 0.06) == background);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 3U, 0.06) == background);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_hit_inside_a_selection_takes_the_selection_color_while_one_outside_stays) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto &background = h.palette().default_background;
+    const auto hit = borealis::ui::mix_half(h.palette().basic[11], background);
+    const auto ink = borealis::ui::selection_color(h.palette());
+    AURORA_TEST_REQUIRE_MSG(ink != hit && ink != background, "the two layers must be tellable apart");
+    h.feed("\x1b[?25l\x1b[3;1HDE--DE");
+    h.set_search_query(U"DE");
+    AURORA_TEST_REQUIRE_EQ(h.search_match_count(), 2U);
+
+    // 拖扫列 1..4：把第一条命中（列 0..1）的后半格与第二条命中（列 4..5）的前半格都盖住。
+    h.pointer(au::MouseAction::Press, 2U, 1U);
+    h.pointer(au::MouseAction::Move, 2U, 4U);
+    h.pointer(au::MouseAction::Release, 2U, 4U);
+    h.render();
+    const auto px = h.pixels();
+
+    // 判据 C1-a：同格相撞时选中色胜出——落在选区里的那几格（含两格命中）一律读成选区色。
+    for (const std::size_t column : {std::size_t{1U}, std::size_t{2U}, std::size_t{3U}, std::size_t{4U}}) {
+        AURORA_TEST_CHECK(h.cell_probe(px, 2U, column, 0.06) == ink);
+    }
+    // 而选区外的两格命中**仍是命中色**：层序是按格折底的判定，不是「有选区就把整张命中表抹掉」。
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 0U, 0.06) == hit);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 5U, 0.06) == hit);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 6U, 0.06) == background);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_block_cursor_on_the_current_hit_leaves_the_hit_color_in_the_cell) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto &background = h.palette().default_background;
+    const auto &full = h.palette().basic[11];
+    const auto &cursor_ink = *h.palette().cursor_color;
+    h.set_focused(true);
+    // 整铺字形 U+2588 作素材：块形三段式的第三段会把该格字形按「该格最终的底色」重画一次，字形
+    // 铺满整格时那一格就能逐位读到重画色，而不是只读到光标块露出的一个角。
+    h.feed("\x1b[3;1H\xe2\x96\x88\x1b[3;1H");
+    h.set_search_query(U"\u2588");
+    AURORA_TEST_REQUIRE_EQ(h.search_match_count(), 1U);
+    h.advance_search();  // 当前命中＝列 0，正是光标所在格
+    const auto px = h.pixels();
+
+    // 判据 C2-b 的原文形态：块形光标压在命中格上时，该格仍读不成主题底色。
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 0U, 0.5) != background);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 0U, 0.9) != background);
+    // 更强的那一句（判据 C2-a 的第三段折色）：重画色取的是该格**命中档**的底色。
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 0U, 0.5) == full);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 0U, 0.06) == full);
+
+    // 反空转前提放在被检事实之后（裁决 7.65 的判据顺序）：同一夹具里把光标移到相邻的空格，那一格
+    // 读成光标色，于是上面那三句判的确实是「块形落在命中格上时的第三段」而不是「块根本没画」。
+    h.feed("\x1b[3;2H");
+    const auto moved = h.pixels();
+    AURORA_TEST_REQUIRE_MSG(h.cell_probe(moved, 2U, 1U, 0.9) == cursor_ink,
+                            "the block cursor never reached the neighbouring cell");
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(hits_keep_both_tiers_on_blur_while_the_selection_blends_half) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto &background = h.palette().default_background;
+    const auto &full = h.palette().basic[11];
+    const auto hit = borealis::ui::mix_half(h.palette().basic[11], background);
+    const auto ink = borealis::ui::selection_color(h.palette());
+    const auto blended_ink = borealis::ui::mix_half(ink, background);
+    AURORA_TEST_REQUIRE_MSG(blended_ink != ink && hit != blended_ink, "the blur must be a real color change");
+    h.feed("\x1b[?25l\x1b[3;1HDE--DE");
+    h.set_search_query(U"DE");
+    h.advance_search();  // 当前命中＝列 0..1（全色档），列 4..5 留在各半档
+    h.pointer(au::MouseAction::Press, 2U, 2U);
+    h.pointer(au::MouseAction::Move, 2U, 3U);
+    h.pointer(au::MouseAction::Release, 2U, 3U);
+    h.render();
+    const auto focused = h.pixels();
+    AURORA_TEST_REQUIRE(h.view_focused());
+
+    h.set_focused(false);
+    h.render();
+    const auto blurred = h.pixels();
+    // 整帧确实变了：否则「命中两档一动不动」会因为什么都没重画而空转。
+    AURORA_TEST_REQUIRE_GT(Harness::count_diff(focused, blurred), 0U);
+    // 选区按既有口径降级（裁决 7.38① D3①）。
+    AURORA_TEST_CHECK(h.cell_probe(blurred, 2U, 2U, 0.06) == blended_ink);
+    AURORA_TEST_CHECK(h.cell_probe(blurred, 2U, 3U, 0.06) == blended_ink);
+    // 判据 A1-f：命中的两档都不随失焦降级——浮层一打开视口必然失焦，若命中跟着降级，「正在搜的
+    // 这一次」反而成了画面最弱的一档。
+    for (const std::size_t column : {std::size_t{0U}, std::size_t{1U}}) {
+        AURORA_TEST_CHECK(h.cell_probe(blurred, 2U, column, 0.06) == full);
+    }
+    for (const std::size_t column : {std::size_t{4U}, std::size_t{5U}}) {
+        AURORA_TEST_CHECK(h.cell_probe(blurred, 2U, column, 0.06) == hit);
+    }
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif
