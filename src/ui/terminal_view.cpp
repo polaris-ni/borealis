@@ -33,6 +33,7 @@
 #include "borealis/term/keymap.h"
 #include "borealis/term/utf8.h"
 #include "borealis/ui/selection.h"
+#include "search_overlay.h"
 
 namespace borealis::ui {
 namespace {
@@ -242,6 +243,12 @@ auto TerminalView::apply_interaction_options(InteractionOptions options) -> void
 
 auto TerminalView::set_overlay_host(aurora::OverlayHost &host) -> void { host_ = &host; }
 
+auto TerminalView::set_search_dependencies(aurora::ShortcutRegistry &shortcuts, aurora::FocusManager &focus)
+    -> void {
+    shortcuts_ = &shortcuts;
+    focus_ = &focus;
+}
+
 auto TerminalView::context_menu() const noexcept -> const aurora::Popup * { return menu_.get(); }
 
 auto TerminalView::multiline_warning() const noexcept -> const aurora::Dialog * { return multiline_warning_.get(); }
@@ -292,6 +299,17 @@ auto TerminalView::close_search() -> void {
     mark_needs_paint();  // 判据 D7：可见区每行都可能带着高亮，关闭是一次全帧重画
 }
 
+auto TerminalView::open_search() -> void {
+    if (host_ == nullptr || shortcuts_ == nullptr || focus_ == nullptr) {
+        return;
+    }
+    // 懒建一次、之后常驻：重开时逐字读回查询文本要求条体与输入框不被销毁（判据 F1-c）。
+    if (search_overlay_ == nullptr) {
+        search_overlay_ = std::make_unique<SearchOverlay>(*this, *host_, *shortcuts_, *focus_);
+    }
+    search_overlay_->open();
+}
+
 auto TerminalView::on_frame() -> void {
     const std::vector<session::Damage> frame = session_->drain_damage();
     const std::size_t previous_back = mirror_.back_rows();
@@ -325,6 +343,13 @@ auto TerminalView::on_frame() -> void {
     if (!frame.empty() || previous_back != mirror_.back_rows() || !(cursor_ == painted_cursor_)) {
         painted_cursor_ = cursor_;
         mark_needs_paint();
+    }
+    // 浮层的两次同步排在帧尾：`sync_state` 读的是本帧刚结算完的查询、匹配表与非法标志（早一拍就会把
+    // 上一帧的计数画上计数槽），而 `sync_geometry` 现算本控件的窗口盒以重落锚点。两者都在没建浮层
+    // 时不发生任何事，故单次读 `window_bounds()` 的成本只随「打开过搜索」而来（判据文 §4 第 5 条）。
+    if (search_overlay_ != nullptr) {
+        search_overlay_->sync_geometry();
+        search_overlay_->sync_state();
     }
 }
 

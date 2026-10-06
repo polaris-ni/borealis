@@ -367,6 +367,18 @@ constexpr GroupNote kGroupNotes[] = {
 
 }  // namespace
 
+auto settings_chrome() -> SettingsChrome {
+    return SettingsChrome{
+        .window_bg = kWindowBg,
+        .card_bg = kCardBg,
+        .card_line = kCardLine,
+        .accent = kAccent,
+        .text = kText,
+        .text_dim = kTextDim,
+        .control_bg = kControlBg,
+    };
+}
+
 auto settings_chrome_theme() -> aurora::Theme {
     return aurora::Theme{
         .background = kWindowBg,

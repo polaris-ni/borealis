@@ -45,11 +45,15 @@
 
 namespace aurora {
 class Dialog;
+class FocusManager;
 class OverlayHost;
 class Popup;
+class ShortcutRegistry;
 }  // namespace aurora
 
 namespace borealis::ui {
+
+class SearchOverlay;  ///< 搜索浮层的本体（`search_overlay.h`），本控件懒建并常驻（判据 F1-c）。
 
 /// @brief 终端网格的自绘视口（`SPEC.FEAT.RENDER.01` / `03` / `04` 的绘制腿）。
 ///
@@ -140,6 +144,15 @@ class TerminalView final : public aurora::LeafWidget {
     /// 装配层的场景根因此是宿主而非本控件；不设这一步则右键只走直接动作两态，菜单态不发任何东西。
     /// @param host 浮层宿主，**非拥有**：它持有本控件的节点，析构次序须晚于本控件。
     auto set_overlay_host(aurora::OverlayHost &host) -> void;
+
+    /// @brief 搜索浮层的两条框架依赖：`Escape` 的登记表与焦点管理器（判据文 §4 第 5 条的视口侧）。
+    ///
+    /// 与 `set_overlay_host` 分开而不并入：宿主那一条是右键那一棒既有的接缝（本控件的父节点链），
+    /// 而本控件不替浮层持有快捷键层——「打开即登记 `Escape`、关闭即解绑」的两处动作都在浮层本体里，
+    /// 故它需要的是登记表本身而不是「能注册快捷键」的抽象。两者都在装配阶段交，建浮层那一刻读齐。
+    /// @param shortcuts 进程内快捷键登记表。
+    /// @param focus 焦点管理器（浮层在派发栈外打开时用它补压焦点作用域）。
+    auto set_search_dependencies(aurora::ShortcutRegistry &shortcuts, aurora::FocusManager &focus) -> void;
 
     /// @brief 替换剪贴板与确认的默认实现（用例注入替身；缺省不装即走生产路径）。
     /// @param presentation 三条接缝，字段留空即保持默认。
@@ -280,6 +293,21 @@ class TerminalView final : public aurora::LeafWidget {
     /// 文本留着是 F1-c 的前提（重开时逐字读回），而「不自动重扫」落成把已扫条件记回空——于是重开的
     /// 那一帧 `search_pending_submit()` 为真，浮层显示 B5 的「按 Enter 搜索」而不是上一份结果的计数。
     auto close_search() -> void;
+
+    /// @brief 打开搜索浮层：第一次在这里懒建，此后**常驻**（判据 F1-c）。
+    ///
+    /// 视口侧只管「持有」与「开关」两件事：条体的搭法、`Escape` 的登记与解绑、关闭时对模型的清场
+    /// 都在浮层本体里（判据文 §4 第 5 条）。开着时再调一次只重新落位，不重建条体（否则输入焦点与
+    /// 已打的文本一起丢）。
+    ///
+    /// 宿主与两条依赖任一没给即不建也不开——那是没接浮层的装配形态（集成用例里的替身宿主），
+    /// 而不是「建了但哑掉」的浮层：没有宿主就无处承载，没有快捷键表就关不掉自己。
+    auto open_search() -> void;
+
+    /// @brief 浮层本体的只读观测点；从未打开过即空指针（用例据此判「懒建」与「常驻」两档）。
+    [[nodiscard]] auto search_overlay() const noexcept -> const SearchOverlay * {
+        return search_overlay_.get();
+    }
 
   protected:
     /// @brief 撑满父级，并在此重取整格几何与下发行列尺寸（`SPEC.FEAT.XFER.01` 的 UI 取值腿）。
@@ -597,6 +625,15 @@ class TerminalView final : public aurora::LeafWidget {
     bool search_dirty_ = false;    ///< 本帧要扫（字面量档每键置脏、正则档只在提交时置脏）。
     bool search_invalid_ = false;  ///< 上次扫描因表达式非法而保留旧表（判据 B4）。
     std::size_t search_scans_ = 0; ///< 实际扫描次数；空文本的清表不计（判据 A2-a）。
+
+    /// @brief 浮层本体的三条外部依赖（均非拥有，装配阶段经 `set_overlay_host` 与
+    ///        `set_search_dependencies` 交）：建浮层那一刻一次读齐。
+    aurora::ShortcutRegistry *shortcuts_ = nullptr;
+    aurora::FocusManager *focus_ = nullptr;
+    /// @brief 懒建并常驻的搜索浮层（判据 F1-c）；析构时随本控件一起收，故其解绑与摘浮层在
+    ///        `~SearchOverlay` 里做完。声明在含 `host_` 的那一组之前，因为「持有」与「开关」是本控件
+    ///        的两件事，而菜单与警告对话框是右键那一棒的既有形态。
+    std::unique_ptr<SearchOverlay> search_overlay_{};
 
     Presentation presentation_{};         ///< 剪贴板与多行确认的三条接缝（空字段即生产实现）。
     GridSizeSink grid_size_sink_;         ///< 空即直发 `Session::resize`（未挂工作区层的形态）。

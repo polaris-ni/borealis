@@ -191,6 +191,25 @@ namespace borealis::ui {
 
 class SettingsPreview;  ///< 卡片底部那条横条的本体（`settings_preview.h`），本件只持其所有权。
 
+/// @brief 本仓缺省 chrome 的那几档色值（面板卡片与搜索浮层条体共用一份表）。
+///
+/// 判据文 `codespec/UI_SEARCH.draft.md` 的 A1-h 把浮层条体钉在「与设置面板同一条 S5 口径」上——
+/// 条内文本、输入框底、chip 选中档一律从那张缺省 chrome 表取，于是这张表必须是**一个可取的量**
+/// 而不是 `settings_panel.cpp` 的文件内常量；否则浮层要么 include 那个 cpp 够不着的头、要么在自己
+/// 文件里再列一遍同样的七个十六进制数（第二真值源，裁决 7.46② 避开的那一型）。
+struct SettingsChrome {
+    aurora::Color window_bg{};   ///< 场景根底色（同时是 `accent` 档上的前景色，即 ThemeScope 的 on_primary）。
+    aurora::Color card_bg{};     ///< 卡片底 / 浮层条体底。
+    aurora::Color card_line{};   ///< 卡片描边 / 控件描边。
+    aurora::Color accent{};      ///< 选中档（chip 的开档底、聚焦描边、主按钮）。
+    aurora::Color text{};        ///< 正文。
+    aurora::Color text_dim{};    ///< 副标题、占位符、关档前景。
+    aurora::Color control_bg{};  ///< 输入类控件底与次级按钮底（chip 的关档底）。
+};
+
+/// @brief 面板与浮层的 chrome 色值唯一来源（上面那张结构的现值）。
+[[nodiscard]] auto settings_chrome() -> SettingsChrome;
+
 /// @brief 面板 chrome 的色值唯一来源，同时是装配层给场景根那层 `ThemeScope` 的主题。
 ///
 /// 刻意**不随终端主题联动**（裁决 7.52 的 S5① / N6：终端配色与界面配色是两件事，切主题时整窗
