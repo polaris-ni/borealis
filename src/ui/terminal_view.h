@@ -32,6 +32,7 @@
 #include "borealis/session/screen_mirror.h"
 #include "borealis/session/session.h"
 #include "borealis/term/keymap.h"
+#include "borealis/term/mouse.h"
 #include "borealis/term/paste.h"
 #include "borealis/term/terminal.h"
 #include "borealis/ui/cell_layout.h"
@@ -252,7 +253,9 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 成为滚轮目标但不借用框架的内容平移绘制（见类注释）。
     [[nodiscard]] auto wants_scroll() const -> bool override;
 
-    /// @brief 本地回看：驱动 `scroll_viewport_` 并把未吸收的余量上冒给更浅的可滚动祖先。
+    /// @brief 滚轮四档分流：Ctrl 缩放 → 鼠标上报 → 备屏 alternate scroll → 本地回看
+    ///        （`SPEC.FEAT.TERM.06`，裁决 7.77③）；本地回看驱动 `scroll_viewport_` 并把未吸收的
+    ///        余量上冒给更浅的可滚动祖先。
     auto on_scroll(aurora::ScrollEvent &e) -> void override;
 
     /// @brief 按键 → VT 字节 → 会话（`SPEC.FEAT.INTERACT.01` 的转发腿）。
@@ -261,8 +264,9 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 文本输入通道：框架给出的真实字符（含布局与大小写）按会话编码写入。
     auto on_text_input(aurora::TextInputEvent &e) -> void override;
 
-    /// @brief 指针入口：按下/拖动/抬起 → `ui::cell_at_point` → 选区端点推进
-    ///        （`SPEC.FEAT.INTERACT.02`，裁决 7.38① / 7.40）；右键按三态处置
+    /// @brief 指针入口：上报模式开着且未被 Shift 覆盖时先把这一笔交给上报通道
+    ///        （`SPEC.FEAT.TERM.06`，裁决 7.77①②）；否则按下/拖动/抬起 → `ui::cell_at_point` →
+    ///        选区端点推进（`SPEC.FEAT.INTERACT.02`，裁决 7.38① / 7.40），右键按三态处置
     ///        （`SPEC.FEAT.INTERACT.03`，裁决 7.41）。
     ///
     /// 不委派基类实现：那条路径只服务 Clickable / Gesture / ContextMenu 修饰链，本控件一样没有。
@@ -327,6 +331,60 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 取模式快照（短临界区内只取值）：按键编码要按 DECCKM 定方向键走 SS3 还是 CSI，按
     ///        DECKPAM 定小键盘发数值族还是让位文本通道。
     [[nodiscard]] auto modes_snapshot() -> term::TermModes;
+
+    /// @brief 这一笔指针事件归上报还是归本地交互（裁决 7.77①②③）——分流判据的全部实质。
+    ///
+    /// 规则按序短路：右键与中键**永不**进上报（本地三态与中键粘贴的语义不可让渡）；已经在途的按下
+    /// 决定**整笔手势**的归属（按住左键再松开 Shift 不该把这笔拖拽切成两半）；层级关着或按着 Shift
+    /// 一律让位本地（Shift 覆盖是上报开着时本地选区唯一的入口）；新的按下在此之后即归上报；没有
+    /// 在途按下的移动只在 `?1003`（任意事件档）才归上报，而**抬起一律不归**——那可能是 Shift 覆盖
+    /// 期间的本地按下松了手，补一条孤儿松开会让远端以为某个键还按着。
+    /// 本判据不能用 `encode_mouse` 的空值：它同时表达「层级不够」与「该事件在本档不报」，拿它分流
+    /// 会把后者误读成前者（`?1000` 档的一次 Move 因此会掉回本地去推选区）。
+    /// @param e 框架的指针事件（取按键、动作与修饰态）。
+    /// @param level 此刻生效的上报层级（由 `term::mouse_tracking` 从模式快照取）。
+    [[nodiscard]] auto takes_pointer_by_report(const aurora::MouseEvent &e, term::MouseTracking level) const
+        -> bool;
+
+    /// @brief 指针事件的上报腿：按阶段编码并写会话，同时维护在途按下与上一次运动落点。
+    ///
+    /// 运动上报**按格子去重**（裁决 7.77④）：高分屏与高频采样下框架一帧能给出多次 Move，逐次上报
+    /// 会让远端程序（`vim` 的视觉滚动、`htop` 的菜单跟踪）收到一串同格事件。按下与松开不去重。
+    /// 按住的键由本层自己的在途态定而不问事件携带的 `button`：四后端都把 Move 盖成左键，照它编码
+    /// 就把「无键悬停」报成了拖动。认领与「本档真的发了字节」无关：`?1000` 档不报 Move，但也不能
+    /// 让它去推选区。
+    /// @param e 框架的指针事件（就地置 `is_handled`）。
+    /// @param modes 此刻的模式快照（编码档位与 SGR 形态由它定）。
+    auto report_pointer(aurora::MouseEvent &e, const term::TermModes &modes) -> void;
+
+    /// @brief 滚轮的上报腿：每一档发一条按钮 64 / 65 事件（按下形态，两档协议都无「松开」）。
+    /// @param e 框架的滚轮事件（取落点与修饰态）。
+    /// @param modes 此刻的模式快照。
+    /// @param button `WheelUp`（`delta_y` 为正）或 `WheelDown`。
+    /// @param notches 档位（已按事件增量取整且至少一档）。
+    /// @return 有没有可报的落点；false 时调用方继续问下一档，而不是把这一档吞掉。
+    auto report_wheel(const aurora::ScrollEvent &e, const term::TermModes &modes, term::MouseButton button,
+                      int notches) -> bool;
+
+    /// @brief 备屏的 alternate scroll 腿（`?1007`，`SPEC.FEAT.TERM.06` 的 less/more 翻页）：
+    ///        每一档发一条方向键，形态由 `term::encode_key` 按 `DECCKM` 定 SS3 或 CSI。
+    /// @param modes 此刻的模式快照。
+    /// @param up 上滚为真（翻回更早的内容 = 方向键上）。
+    /// @param notches 档位。
+    /// @return 编码层有没有给出字节。
+    auto page_alternate_screen(const term::TermModes &modes, bool up, int notches) -> bool;
+
+    /// @brief 把窗口逻辑 dp 落点折成**可见区**行列（上报协议的坐标系，不是选区用的存储行序）。
+    ///
+    /// 滚轮事件只有 `position`（窗口坐标）而没有 `local_position`——派发器不平移它，故这里经
+    /// `Widget::window_bounds()` 现算自身窗口盒再交既有的换算件。该入口是框架自陈的**低频事后查询**
+    /// （上溯布局父链），只在滚轮那一刻走，不进绘制路径。
+    /// @param window_point 窗口逻辑 dp 点。
+    /// @return 可见区格子；字体未就绪、窗口最小化或尚未布局过时回空。
+    [[nodiscard]] auto report_cell(aurora::Point window_point) const -> std::optional<GridCellPos>;
+
+    /// @brief 把要发的字节交进会话：空值即本层不发（编码层已判过层级与事件形态）。
+    auto send_report(const std::optional<std::string> &bytes) -> void;
 
     /// @brief 每帧重投影（裁决 D6①「距底恒定」）：返回本次生效的距底行数。
     [[nodiscard]] auto reproject(std::size_t total_lines, std::size_t rows) -> std::size_t;
@@ -442,6 +500,12 @@ class TerminalView final : public aurora::LeafWidget {
     GridCellPos pressed_cell_{};          ///< 按下那一格（同为存储行序），拖拽的两端之一。
     DragMode drag_mode_ = DragMode::Cell;
     bool dragging_ = false;
+    /// @brief 上报在途的按下是哪一个键（框架四后端都把 Move 盖成 `MouseButton::Left`，故悬停与拖动
+    ///        只能由本层自己的在途态区分，不能问事件携带的按键；SGR 档的松开还要靠它带回按键编号）。
+    std::optional<term::MouseButton> reported_press_{};
+    /// @brief 上一次运动上报落在哪一格（**可见区**行号，与上报协议同一坐标系，不是选区用的存储行序）。
+    ///        只用于按格去重（裁决 7.77④），按下与松开都把它清掉。
+    std::optional<GridCellPos> reported_motion_{};
     bool copy_pending_ = false;  ///< 抬起已发生、复制留到下一帧的 `on_frame` 落地。
     std::int64_t dropped_baseline_ = 0;  ///< 上次折算选区时的顶边位移读数（裁决 7.39⑤）。
 

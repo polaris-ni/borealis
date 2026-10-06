@@ -56,6 +56,16 @@ constexpr float kMenuMinWidthDp = 168.0F;
 /// @brief 菜单条目的内边距：横向留得比 `Button` 缺省窄一档，让整列宽度由条目宽度而非文字决定。
 constexpr aurora::EdgeInsets kMenuPadding{.left = 10.0F, .top = 5.0F, .right = 10.0F, .bottom = 5.0F};
 
+/// @brief 把滚轮增量折成「档」：一 notch 即一档（Win32 与 X11 给 ±1，高分屏与 GLFW 可给小数）。
+///        非零增量至少算一档——发零条上报等于吞掉这一事件而不告诉任何人。
+[[nodiscard]] auto wheel_notches(float delta_rows) -> int {
+    const long rounded = std::lround(delta_rows);
+    if (rounded != 0L) {
+        return static_cast<int>(rounded);
+    }
+    return delta_rows > 0.0F ? 1 : (delta_rows < 0.0F ? -1 : 0);
+}
+
 /// @brief 互转点之一：`ui::RgbaColor` → 框架颜色（逐字段搬，alpha 参与混合）。
 [[nodiscard]] auto to_color(const RgbaColor &color) noexcept -> aurora::Color {
     return aurora::Color{color.red, color.green, color.blue, color.alpha};
@@ -354,7 +364,28 @@ auto TerminalView::on_scroll(aurora::ScrollEvent &e) -> void {
             return;
         }
     }
-    // TODO(SPEC.FEAT.TERM.06): 上报模式与备屏 alternate scroll 优先于本地回看
+    // 上报与备屏翻页都优先于本地回看（`SPEC.FEAT.TERM.06`，裁决 7.77③）：开着上报档的 `vim` 里
+    // 滚轮归 vim，而 Shift 把它让回本地——那一条是本地历史唯一的可达入口（裁决 7.77①），因为
+    // 远端程序不会「把滚轮退还给终端」，让位只能发生在事件入口。
+    const term::TermModes modes = modes_snapshot();
+    const int notches = wheel_notches(e.delta_y);
+    const bool shift_held = (e.modifiers & aurora::ModifierKey::Shift) != 0U;
+    if (notches != 0 && !shift_held && term::mouse_tracking(modes) != term::MouseTracking::Off) {
+        if (report_wheel(e, modes, notches > 0 ? term::MouseButton::WheelUp : term::MouseButton::WheelDown,
+                         notches > 0 ? notches : -notches)) {
+            e.remaining_y = 0.0F;  // 上报吃掉这一档，不再冒泡给回看与祖先
+            e.is_handled = true;
+            return;
+        }
+    }
+    // 备屏里的滚轮转方向键（`?1007`，缺省开着）：`less`/`more` 一类程序不开上报档，翻页靠方向键，
+    // 而它们只在备屏里跑——没有这一条腿，滚轮在备屏里就是一条都不发（本地回看在备屏无历史可回）。
+    if (notches != 0 && modes.alternate_screen && modes.alternate_scroll &&
+        page_alternate_screen(modes, notches > 0, notches > 0 ? notches : -notches)) {
+        e.remaining_y = 0.0F;
+        e.is_handled = true;
+        return;
+    }
     const float before = scroll_viewport_.offset_y;
     scroll_viewport_.offset_y = aurora::ScrollViewport::clamp_offset(
         before, e.delta_y, kRowStep, scroll_viewport_.content_h, scroll_viewport_.viewport_h);
@@ -412,6 +443,13 @@ auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
     // 触发第二个动作（`OverlayHost::handle_outside_click` 只由调用方在事件入口驱动，框架不代劳）。
     if (e.action == aurora::MouseAction::Press && host_ != nullptr && host_->handle_outside_click(e.position)) {
         e.is_handled = true;
+        return;
+    }
+    // 上报档优先于本地选区（`SPEC.FEAT.TERM.06`，裁决 7.77①②）：分流判据在选区之前，故一次
+    // 让位是整笔手势让位而不是半笔——见 `takes_pointer_by_report` 的那三条短路。
+    const term::TermModes modes = modes_snapshot();
+    if (takes_pointer_by_report(e, term::mouse_tracking(modes))) {
+        report_pointer(e, modes);
         return;
     }
     if (e.button != aurora::MouseButton::Left) {
@@ -542,6 +580,127 @@ auto TerminalView::request_grid_size() -> void {
 auto TerminalView::scrollback_rows_from_bottom() const -> std::size_t {
     return static_cast<std::size_t>(
         std::lround(std::max(0.0F, scroll_viewport_.max_offset() - scroll_viewport_.offset_y)));
+}
+
+auto TerminalView::send_report(const std::optional<std::string> &bytes) -> void {
+    if (!bytes) {
+        return;  // 编码层判过「本层不发」：层级不够，或该事件在当前层级下不报
+    }
+    session_->send_bytes(std::as_bytes(std::span<const char>{bytes->data(), bytes->size()}));
+}
+
+auto TerminalView::report_cell(aurora::Point window_point) const -> std::optional<GridCellPos> {
+    if (mirror_.rows() == 0U || geometry_.columns == 0U) {
+        return std::nullopt;  // 字体未就绪或窗口最小化：没有格子可报
+    }
+    // 滚轮事件只带窗口坐标（派发器不平移 `position`，与指针事件的 `local_position` 不同源），
+    // 故这里现算自身窗口盒再把点折回局部，然后交给选区那条路径同一个换算件。
+    const auto box = window_bounds();
+    if (!box) {
+        return std::nullopt;  // 从未成功布局过：没有可信的窗口盒可减
+    }
+    return cell_at_point(geometry_, window_point.x - box->origin.x, window_point.y - box->origin.y);
+}
+
+auto TerminalView::takes_pointer_by_report(const aurora::MouseEvent &e, term::MouseTracking level) const
+    -> bool {
+    if (e.button != aurora::MouseButton::Left) {
+        return false;  // 右键归本地三态、中键不在首版交付面（裁决 7.77②）：编码层因此没有按钮 2 那一档
+    }
+    if (reported_press_.has_value()) {
+        return true;  // 整笔手势跟着那一次按下的归属，中途改道会把一次拖拽切成两半
+    }
+    if (level == term::MouseTracking::Off || (e.modifiers & aurora::ModifierKey::Shift) != 0U) {
+        return false;  // Shift 是「这一次让位本地」的覆盖键（裁决 7.77①）：上报开着时它是本地选区唯一的入口
+    }
+    if (e.action == aurora::MouseAction::Press) {
+        return true;
+    }
+    // 没有在途按下的移动只在 `?1003` 这一档归上报（悬停事件）；抬起在任何档都不归——那可能是 Shift
+    // 覆盖期间的本地按下松了手，补一条孤儿松开会让远端以为某个键还按着。
+    return e.action == aurora::MouseAction::Move && level == term::MouseTracking::AnyEvents;
+}
+
+auto TerminalView::report_pointer(aurora::MouseEvent &e, const term::TermModes &modes) -> void {
+    const auto hit = cell_at_point(geometry_, e.local_position.x, e.local_position.y);
+    if (!hit) {
+        return;  // 没有格子可报：与本地那条路径同一早退，事件继续冒泡给祖先
+    }
+    e.is_handled = true;  // 认领与「本档真的发了字节」无关：`?1000` 档不报 Move，但也不能让它去推选区
+    const bool control = (e.modifiers & aurora::ModifierKey::Control) != 0U;
+    const bool alt = (e.modifiers & (aurora::ModifierKey::Alt | aurora::ModifierKey::Meta)) != 0U;
+    const auto at = [column = hit->column, row = hit->row, control,
+                     alt](term::MousePhase phase, term::MouseButton button) -> term::MouseEvent {
+        // 上报协议吃的是**可见区**行列（`cell_at_point` 给的绘制行号），不是选区用的存储行序：
+        // 远端不知道本地滚到了哪一屏，它的坐标系就是当前这一屏。
+        return term::MouseEvent{
+            .phase = phase, .button = button, .column = column, .row = row, .control = control, .alt = alt};
+    };
+    switch (e.action) {
+        case aurora::MouseAction::Press: {
+            reported_press_ = term::MouseButton::Left;
+            reported_motion_ = *hit;
+            send_report(term::encode_mouse(at(term::MousePhase::Press, term::MouseButton::Left), modes));
+            break;
+        }
+        case aurora::MouseAction::Move: {
+            // 按住的键由本层自己的在途态定，不问事件携带的 `button`：四后端都把 Move 盖成左键，
+            // 照它编码就把「无键悬停」报成了拖动（少了 `?1003` 与 `?1002` 的区别）。
+            const auto button = reported_press_.value_or(term::MouseButton::None);
+            if (reported_motion_ == *hit) {
+                break;  // 同一格不重报（裁决 7.77④）
+            }
+            reported_motion_ = *hit;
+            send_report(term::encode_mouse(at(term::MousePhase::Drag, button), modes));
+            break;
+        }
+        case aurora::MouseAction::Release: {
+            // 分流判据只在有在途按下时才把抬起交进来，故这里的按键编号恒在：一条孤儿松开（按下
+            // 归本地、松开却归上报）会让远端以为某个键还按着，`vim` 因此停在 visual 选择态。
+            const auto button = *reported_press_;
+            reported_press_ = std::nullopt;
+            reported_motion_ = std::nullopt;
+            send_report(term::encode_mouse(at(term::MousePhase::Release, button), modes));
+            break;
+        }
+    }
+}
+
+auto TerminalView::report_wheel(const aurora::ScrollEvent &e, const term::TermModes &modes,
+                                term::MouseButton button, int notches) -> bool {
+    const auto cell = report_cell(e.position);
+    if (!cell) {
+        return false;  // 没有落点：让位下一档（备屏翻页或本地回看），而不是把这一档吞掉
+    }
+    const term::MouseEvent event{
+        .phase = term::MousePhase::Press,
+        .button = button,
+        .column = cell->column,
+        .row = cell->row,
+        .control = (e.modifiers & aurora::ModifierKey::Control) != 0U,
+        .alt = (e.modifiers & (aurora::ModifierKey::Alt | aurora::ModifierKey::Meta)) != 0U,
+    };
+    // 一 notch 一条：滚轮在两档协议里都是「按下即松开」的瞬时事件（没有滚轮的松开形态，也不带
+    // 增量参数），故重复发档位那么多次而不是把增量塞进某处。
+    for (int i = 0; i < notches; ++i) {
+        send_report(term::encode_mouse(event, modes));
+    }
+    return true;
+}
+
+auto TerminalView::page_alternate_screen(const term::TermModes &modes, bool up, int notches) -> bool {
+    // 形态与真实方向键同源（`DECCKM` 决定 CSI 还是 SS3），故复用按键那条编码入口而不是另写一串字节。
+    // 修饰态不参与：xterm 的 alternate scroll 发的是「有人按了方向键」，且 Ctrl 档在本入口之前已被
+    // 字号缩放吃掉，只有到界让位时才带着 Ctrl 落到这里，按 plain 发即可。
+    const term::KeyPress press{.sym = up ? term::KeySym::ArrowUp : term::KeySym::ArrowDown};
+    const auto bytes = term::encode_key(press, modes);
+    if (!bytes) {
+        return false;
+    }
+    for (int i = 0; i < notches; ++i) {
+        send_report(bytes);
+    }
+    return true;
 }
 
 auto TerminalView::reproject(std::size_t total_lines, std::size_t rows) -> std::size_t {
