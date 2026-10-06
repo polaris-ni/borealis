@@ -186,6 +186,17 @@ struct RowBands {
     RgbaColor selected_background{};      ///< 选中格的底色。
 };
 
+/// @brief 这一列在两层层叠之后该用的底色；两处都不落笔时回空值（主题底原样留着）。
+///
+/// 命令式的绘制侧（光标三段式的第三段）要按**该格最终的底色**重画字形，而那一格可能同时属
+/// 一段命中与被选区盖住的那几格（视觉稿 C2-a）。把「选中盖命中 + 游标档 vs 各半档」这四条比较
+/// 留在本件一处，绘制侧就只是「问一个色」——若两处各写一份，层序改动只会红在一屏像素里。
+/// 区间按**列**判包含，行号不参与：调用方交来的已经是这一行的切片。
+/// @param bands 本行的两组区间与三档底色。
+/// @param column 列号。
+/// @return 该列的命中或选中底色；两处都不落笔时为空。
+[[nodiscard]] auto background_at(const RowBands &bands, std::size_t column) -> std::optional<RgbaColor>;
+
 /// @brief 把一行切成按样式全等合并的 run 表（既供色带矩形，也供文本片段）。
 ///
 /// 什么都不用画的区间不出现在结果里：文本全空白、无下划线与删除线、且底色等于主题默认底色。
@@ -195,30 +206,19 @@ struct RowBands {
 /// @return 列号升序的 run 表。
 [[nodiscard]] auto layout_row(const grid::Row &row, const PaletteSpec &spec) -> std::vector<StyleRun>;
 
-/// @brief 同上，但把 @p selection 这一列区间的底色换成 @p selected_background（裁决 7.38① D1①）。
+/// @brief 同上，但按 @p bands 的两层区间换底（裁决 7.38① D1① + `SPEC.FEAT.INTERACT.04` 的 C1 / C3）。
 ///
 /// 区间形态直接取 `row_spans` 的条目（只用它的两个列字段，行号是调用方用来配对这一行的），
 /// 于是**绘制与复制共用同一张区间表**（D5①）：选中段的右界截到网格列数、行尾空白格也上底色。
-/// 底色替换发生在 `resolve` 之后，故前景只在开了最小对比度时才按新底色重合成（`min_contrast`
-/// 关着时选中段的前景与未选段逐位相同）。失焦态不在本件：调用方按 D3① 传 `mix_half` 的结果，
-/// 本件只认「这个区间用这个底色」。
-/// @param row 网格中的一行。
-/// @param spec 调色板配置。
-/// @param selection 本行的选中列区间（闭开区间；两端相等即本行无选中格）。
-/// @param selected_background 选中格的底色。
-/// @return 列号升序的 run 表；选中段因底色不同而自成一跑（run 切分本就按样式全等，裁决 7.23②）。
-[[nodiscard]] auto layout_row(const grid::Row &row, const PaletteSpec &spec, const RowSpan &selection,
-                              const RgbaColor &selected_background) -> std::vector<StyleRun>;
-
-/// @brief 同上，但同时给出**本行的命中区间**与选中区间（`SPEC.FEAT.INTERACT.04` 的 C1 / C3）。
-///
-/// 与四参形态的唯一差别是多了一层命中：底色按「主题底 → 命中 → 选中」折成这一格的最终底色，
-/// 再一次性换底并按需重合成前景，故相撞处（一段命中被选区盖住）与不相撞处走的是同一条算式。
-/// 无命中时（`bands.hits` 为空）**逐字段等于**四参形态，故选区那条既有判据不受本形态影响。
+/// 底色替换发生在 `resolve` 之后，故前景只在开了最小对比度时才按**胜出那档**底色重合成
+/// （`min_contrast` 关着时高亮段的前景与未高亮段逐位相同）。失焦态不在本件：调用方按 D3① 传
+/// `mix_half` 的结果，本件只认「这个区间用这个底色」。
+/// 无命中时（`bands.hits` 为空）**逐字段等于**两参形态；两档命中与选中各因底色不同而自成一跑
+/// （run 切分本就按样式全等，裁决 7.23②）。
 /// @param row 网格中的一行。
 /// @param spec 调色板配置。
 /// @param bands 本行的两组区间与三档底色（见其上的层序与降级口径）。
-/// @return 列号升序的 run 表；两档命中与选中各因底色不同而自成一跑。
+/// @return 列号升序的 run 表。
 [[nodiscard]] auto layout_row(const grid::Row &row, const PaletteSpec &spec, const RowBands &bands)
     -> std::vector<StyleRun>;
 

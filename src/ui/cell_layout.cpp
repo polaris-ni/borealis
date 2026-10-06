@@ -8,6 +8,7 @@
 
 #include "borealis/ui/cell_layout.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -102,24 +103,11 @@ std::vector<StyleRun> layout_banded(const grid::Row &row, const PaletteSpec &spe
         has_glyph = false;
     };
 
-    // 命中切片按列升序且互不重叠（`ui::search()` 的产物即此），故逐列推进一个游标即可，
-    // 不必每格重扫整段——一行可达几十个命中，而本循环每帧每可见行都要走。
-    std::size_t hit_index = 0U;
     for (std::size_t column = 0; column < row.columns(); ++column) {
         const auto &cell = row.cell(column);
         auto paint = resolve(cell, spec);
-        while (hit_index < bands.hits.size() && bands.hits[hit_index].last_column <= column) {
-            ++hit_index;
-        }
-        const bool on_hit = hit_index < bands.hits.size() && column >= bands.hits[hit_index].first_column;
-        const bool on_selection = bands.selection.has_value() && column >= bands.selection->first_column &&
-                                  column < bands.selection->last_column;
-        if (on_hit || on_selection) {
-            // 层序「主题底 → 命中 → 选中」（视觉稿 C1-a）：选中段盖住命中的那一档强度。
-            paint.background = on_selection
-                                   ? bands.selected_background
-                                   : (bands.hits[hit_index] == bands.current_hit ? bands.current_hit_background
-                                                                                 : bands.hit_background);
+        if (const auto ink = background_at(bands, column); ink.has_value()) {
+            paint.background = *ink;
             if (spec.min_contrast_enabled) {
                 paint.foreground = enforce_contrast(paint.foreground, paint.background, spec.min_contrast);
             }
@@ -252,13 +240,26 @@ auto decoration_rects(const GridGeometry &geometry, std::size_t row, const Style
     return rects;
 }
 
-auto layout_row(const grid::Row &row, const PaletteSpec &spec) -> std::vector<StyleRun> {
-    return layout_banded(row, spec, RowBands{});
+auto background_at(const RowBands &bands, std::size_t column) -> std::optional<RgbaColor> {
+    // 层序「主题底 → 命中 → 选中」（视觉稿 C1-a）：相撞的那几格只由这一次比较决定胜出者，
+    // 于是前景的重合成也只按赢的那档底色跑一次。
+    if (bands.selection.has_value() && column >= bands.selection->first_column &&
+        column < bands.selection->last_column) {
+        return bands.selected_background;
+    }
+    // 命中切片按列升序且互不重叠（`ui::search()` 的产物即此），一次二分即包含这一列的那一段。
+    const auto first = bands.hits.begin();
+    const auto last = bands.hits.end();
+    const auto hit = std::upper_bound(first, last, column,
+                                      [](std::size_t col, const RowSpan &span) { return col < span.last_column; });
+    if (hit == last || column < hit->first_column) {
+        return std::nullopt;
+    }
+    return *hit == bands.current_hit ? bands.current_hit_background : bands.hit_background;
 }
 
-auto layout_row(const grid::Row &row, const PaletteSpec &spec, const RowSpan &selection,
-                const RgbaColor &selected_background) -> std::vector<StyleRun> {
-    return layout_banded(row, spec, RowBands{.selection = selection, .selected_background = selected_background});
+auto layout_row(const grid::Row &row, const PaletteSpec &spec) -> std::vector<StyleRun> {
+    return layout_banded(row, spec, RowBands{});
 }
 
 auto layout_row(const grid::Row &row, const PaletteSpec &spec, const RowBands &bands) -> std::vector<StyleRun> {

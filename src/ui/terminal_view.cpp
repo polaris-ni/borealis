@@ -268,6 +268,30 @@ auto TerminalView::set_search_query(SearchQuery query) -> void {
 
 auto TerminalView::submit_search_query() -> void { search_dirty_ = true; }
 
+auto TerminalView::advance_search(SearchDirection direction) -> void {
+    // 没有表就没有「下一个」：空输入与零匹配两档由浮层按 B0 / B2 显示，本入口不另发一次滚动。
+    if (!search_matches_.has_value()) {
+        return;
+    }
+    const auto landed = search_matches_->advance(direction);
+    if (!landed.has_value()) {
+        return;
+    }
+    scroll_row_into_view(landed->row);
+    mark_needs_paint();
+}
+
+auto TerminalView::close_search() -> void {
+    search_matches_.reset();
+    search_invalid_ = false;
+    search_dirty_ = false;
+    // 已扫条件记回空而不是记回当前文本：F1-c 拍的是「重开保留文本但不自动重扫」，而「此刻画面上的
+    // 高亮不属于输入框里那串」必须有一句话可说——于是重开那一帧 `search_pending_submit()` 为真，
+    // 浮层显示 B5 而不是上一份结果的计数。查询文本本身留着（判据 F1-c 的前半句）。
+    search_scanned_ = SearchQuery{};
+    mark_needs_paint();  // 判据 D7：可见区每行都可能带着高亮，关闭是一次全帧重画
+}
+
 auto TerminalView::on_frame() -> void {
     const std::vector<session::Damage> frame = session_->drain_damage();
     const std::size_t previous_back = mirror_.back_rows();
@@ -747,11 +771,10 @@ auto TerminalView::on_blink_tick() -> void {
 
 auto TerminalView::paint_row(aurora::Painter &p, const aurora::Rect &bounds, std::size_t screen_row) -> void {
     const auto &row = mirror_.line(screen_row);
-    const auto selected = band_at(mirror_.window_top() + screen_row);
-    // 有选中格的那一行走四参形态：底色替换发生在 `resolve` 之后，选中段因此自成一跑，而色带、
-    // 文本与装饰都跟着这张 run 表走（裁决 7.38① D1①，视觉稿 A1-c 的「字形不被染色」）。
-    const auto runs =
-        selected ? layout_row(row, spec_, *selected, selection_ink()) : layout_row(row, spec_);
+    // 三层区间一次交出、一次换底：底色替换发生在 `resolve` 之后，故高亮段与选中段各因底色不同而
+    // 自成一跑，色带、文本与装饰都跟着这张 run 表走（裁决 7.38① D1①，视觉稿 A1-c 的「字形不被染色」）。
+    // 无区间时带形态逐字段等于两参形态，于是这里只有一条绘制路径而不是「有选区走 A、有命中走 B」。
+    const auto runs = layout_row(row, spec_, bands_for_screen_row(screen_row));
     std::vector<aurora::render::TextRun> batch;
     batch.reserve(runs.size());
     std::vector<aurora::render::TextRun> italic_batch;
@@ -833,11 +856,11 @@ auto TerminalView::paint_cursor(aurora::Painter &p, const aurora::Rect &bounds, 
     // 三段式的第三段：块已盖住 ③ 的字形，改按该格合成后的**底色**作前景重画一次。不取「块在下、
     // 字在上」的次序，因为主题光标色可能与前景同色——那样叠上去字符会消失。
     auto paint = resolve(cell, spec_);
-    if (const auto selected = band_at(mirror_.window_top() + screen_row);
-        selected && cursor_.column >= selected->first_column && cursor_.column < selected->last_column) {
-        // 视觉稿 C2-a：光标层压在选区层之上，块形照旧，但第三段取的是「该格合成底色」——此刻它
-        // 就是选区色。漏这一步会让被选中的光标格用未选中底色重画字形，与同行其余选中格不一致。
-        paint.background = selection_ink();
+    // 视觉稿 C2-a：光标层在两层区间之上，而第三段取的是**该格最终的底色**——它可能同时属一段命中
+    // 与被选区盖住的那几格。折色只在 `ui::background_at` 一处算（与 ② 色带层同一条算式），故 C1-a 的
+    // 层序不会在这一格被重述成第二份；漏掉这一句就会让当前命中格用未命中底色重画字形（C2-b）。
+    if (const auto ink = background_at(bands_for_screen_row(screen_row), cursor_.column); ink.has_value()) {
+        paint.background = *ink;
     }
     const std::string text = cell_text(row, cursor_.column);
     if (!paint.hidden && !text.empty()) {
@@ -951,6 +974,54 @@ auto TerminalView::selection_ink() const noexcept -> RgbaColor {
     return is_focused() ? ink : mix_half(ink, spec_.default_background);  // 裁决 7.38① D3①
 }
 
+auto TerminalView::hit_slice(std::size_t storage_row) const noexcept -> std::span<const RowSpan> {
+    if (!search_matches_.has_value()) {
+        return {};
+    }
+    const auto spans = search_matches_->spans();
+    // 表按 (行, 列) 升序，故同一行的条目连着排：两次二分即得本行那一段。上限档一屏可达 10,000 条
+    // ≈ 240 KB，逐行整份拷进绘制入参就把一次扫描的成本摊到了每帧每行（判据文 §4 第 1 条）。
+    const auto begin = spans.begin();
+    const auto first = std::lower_bound(begin, spans.end(), storage_row,
+                                        [](const RowSpan &span, std::size_t row) { return span.row < row; });
+    const auto last = std::upper_bound(first, spans.end(), storage_row,
+                                       [](std::size_t row, const RowSpan &span) { return row < span.row; });
+    return spans.subspan(static_cast<std::size_t>(first - begin), static_cast<std::size_t>(last - first));
+}
+
+auto TerminalView::bands_for_screen_row(std::size_t screen_row) const -> RowBands {
+    const std::size_t storage_row = mirror_.window_top() + screen_row;
+    return RowBands{
+        .hits = hit_slice(storage_row),
+        .current_hit = search_matches_.has_value() ? search_matches_->current() : std::nullopt,
+        .selection = band_at(storage_row),
+        // 两档命中色都不看焦点（判据 A1-f）：浮层一打开键盘焦点就归输入框，视口必然处于失焦态，
+        // 若命中也跟着降级，「正在搜的这一次」反而成了画面最弱的一档。
+        .hit_background = mix_half(spec_.basic[11], spec_.default_background),
+        .current_hit_background = spec_.basic[11],
+        .selected_background = selection_ink(),
+    };
+}
+
+auto TerminalView::scroll_row_into_view(std::size_t storage_row) -> void {
+    const std::size_t rows = mirror_.rows();
+    if (rows == 0U) {
+        return;
+    }
+    const std::size_t top = mirror_.window_top();
+    if (storage_row >= top && storage_row - top < rows) {
+        return;  // 判据 D1-b：已在可见窗内就完全不动画面，居中只在窗外那一档发生
+    }
+    // 居中算式只有一个输入（判据 D2-b）。内核的 `offset_y` 与 `window_top()` 是同一个量：距底 ＝
+    // `max_offset − offset_y`，而 `window_top` ＝ 总行数 − rows − 距底，两式相减即 `offset_y` ＝
+    // `window_top`。故「把窗口顶边写成目标行 − ⌊rows/2⌋」就是直接写 `offset_y`，不必先换算距底；
+    // 写的是内核那份状态而不是临时偏移，`reproject` 因此在下一帧把「距底」按新值保持下去（D2-a）。
+    const std::size_t half = rows / 2U;
+    const float target = static_cast<float>(storage_row >= half ? storage_row - half : 0U);
+    scroll_viewport_.offset_y = aurora::ScrollViewport::clamp_offset(
+        target, 0.0F, kRowStep, scroll_viewport_.content_h, scroll_viewport_.viewport_h);
+}
+
 auto TerminalView::compensate_selection_drift() -> void {
     const std::int64_t dropped = mirror_.dropped_lines();
     const std::int64_t rows_up = dropped - dropped_baseline_;
@@ -969,6 +1040,7 @@ auto TerminalView::run_search_scan(grid::Storage &grid) -> void {
         search_matches_.reset();
         search_invalid_ = false;
         search_scanned_ = search_query_;
+        mark_needs_paint();  // 撤掉上一轮的高亮同样是画面变化
         return;
     }
     ++search_scans_;
@@ -985,6 +1057,9 @@ auto TerminalView::run_search_scan(grid::Storage &grid) -> void {
     // 新表的行号以「扫描这一刻的存储顶边」为基准，故基准在这里对齐；`compensate_search_drift` 同帧
     // 读到同一个读数，于是刚扫完的表位移增量为零、不会被折算两次。
     search_dropped_baseline_ = mirror_.dropped_lines();
+    // 换表就是换画面：不等别的脏源替它标脏。漏掉这一句的后果是「打了字却什么都没变」——只有
+    // 光标移动、选区或滚动才恰好顺带标脏，而纯输入那一帧是干净的（像素证人见 A1-a）。
+    mark_needs_paint();
 }
 
 auto TerminalView::compensate_search_drift() -> void {

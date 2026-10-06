@@ -19,6 +19,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -266,6 +267,20 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 迄今真正扫过几次：节流判据的观测点（「一轮只扫一次」以本计数为据，不看像素）。
     [[nodiscard]] auto search_scan_count() const noexcept -> std::size_t { return search_scans_; }
 
+    /// @brief 把游标推到下一个（或上一个）匹配，并让那一格落在画面正中（判据 D1-a / D2-a）。
+    ///
+    /// 首尾相连是 `SearchMatches::advance` 的既有口径，本入口只负责「跳完之后看得见」：目标行已在
+    /// 可见窗内时画面完全不动（D1-b），否则按 `目标行 − ⌊rows/2⌋` 改回看位置并钳在 `[0, max_offset]`
+    /// 内——改的是内核的 `offset_y` 本身，故这是一次用户可见的滚动而不是一帧的临时偏移（D2-a）。
+    /// @param direction 前进或后退。
+    auto advance_search(SearchDirection direction) -> void;
+
+    /// @brief 关闭浮层：清匹配表与全部高亮，但**保留查询文本与回看位置**（判据 D7 / D2-c）。
+    ///
+    /// 文本留着是 F1-c 的前提（重开时逐字读回），而「不自动重扫」落成把已扫条件记回空——于是重开的
+    /// 那一帧 `search_pending_submit()` 为真，浮层显示 B5 的「按 Enter 搜索」而不是上一份结果的计数。
+    auto close_search() -> void;
+
   protected:
     /// @brief 撑满父级，并在此重取整格几何与下发行列尺寸（`SPEC.FEAT.XFER.01` 的 UI 取值腿）。
     [[nodiscard]] auto on_layout(const aurora::Constraints &c, const aurora::BuildContext &ctx)
@@ -469,6 +484,22 @@ class TerminalView final : public aurora::LeafWidget {
 
     /// @brief 选区底色：持焦取 selection 槽，失焦按同色向默认底色各半混合（裁决 7.38① D3①）。
     [[nodiscard]] auto selection_ink() const noexcept -> RgbaColor;
+
+    /// @brief 本行的两层区间与三档底色，一次交出（绘制序列的 ② 色带层与光标第三段共用）。
+    ///
+    /// 命中切片只取本行那一段而不是整张表：上限档的匹配表是 10,000 条 ≈ 240 KB，逐帧整份搬进
+    /// 每一行的入参就是把一次搜索的成本摊到每帧每行（判据文 §4 第 1 条）。三档底色里只有选区那档
+    /// 随焦点降级，命中两档**不降级**（判据 A1-f：浮层一打开视口必然失焦，若跟着降级，正在搜的
+    /// 这一次反倒成了画面最弱的一档）。
+    /// @param screen_row 可见窗内的行号（0 = 顶行）。
+    /// @return 交进 `ui::layout_row` 的三层入参；无命中且无选区时各字段即「什么都不画」。
+    [[nodiscard]] auto bands_for_screen_row(std::size_t screen_row) const -> RowBands;
+
+    /// @brief 存储行对应的命中列区间切片；本行没有命中即空。表按 (行, 列) 升序，故两次二分。
+    [[nodiscard]] auto hit_slice(std::size_t storage_row) const noexcept -> std::span<const RowSpan>;
+
+    /// @brief 把存储行滚进可见窗并尽量居中；已在窗内则一个像素都不动（判据 D1-b）。
+    auto scroll_row_into_view(std::size_t storage_row) -> void;
 
     /// @brief 把顶边位移的增量折算进选区（裁决 7.38⑤ / 7.39①⑤：整段被推出顶端即作废）。
     auto compensate_selection_drift() -> void;
