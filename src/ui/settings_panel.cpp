@@ -44,6 +44,7 @@
 #include "aurora/widget/text_input.h"
 
 #include "borealis/ui/color_text.h"
+#include "borealis/ui/workspace_keys.h"
 #include "settings_i18n.h"
 #include "settings_preview.h"
 
@@ -95,6 +96,12 @@ constexpr float kFontPopupWidthDp = 260.0F;    ///< 候选浮层宽（含浮层�
 constexpr float kFontItemHeightDp = 30.0F;     ///< 浮层一档候选的行高。
 constexpr std::size_t kFontPopupVisibleRows = 8;  ///< 一次显几档，超出靠浮层内部 `Scroll`（A4-d）。
 
+// ---- 快捷键只读表（D 页）的排版量：四列里三列定宽、动作名列吃掉余量 ----
+constexpr float kShortcutRowHeightDp = 24.0F;   ///< 数据行与列名行同高（一张表里两种行高没有理由）。
+constexpr float kShortcutCategoryWidthDp = 128.0F;
+constexpr float kShortcutBindingWidthDp = 152.0F;
+constexpr float kShortcutNoteWidthDp = 200.0F;  ///< 标注列容得下「与「××」重复 · 与分屏键位冲突」那条最长组合。
+
 /// @brief 回退链的容量上限：框架侧截断的那个数字，本件取同一个真值源而不是另写一个 8。
 ///
 /// 截断发生在框架的 `TextLayoutOpts::with_fallback_chain()`（`render/font_engine.h`）且对用户不可见，
@@ -113,6 +120,8 @@ constexpr std::string_view kPaletteKey{"appearance.palette.basic"};
 constexpr std::string_view kChainKey{"appearance.font_fallback_chain"};
 /// @brief 字体族区段归属的行键（区段是「一行 catalog 键 + 下方一行留痕」，与上面三个区段同一条口径）。
 constexpr std::string_view kFontFamilyKey{"appearance.font_family"};
+/// @brief 快捷键只读表归属的行键（该页只有这一行，表体按**命令**逐行画而不是按 catalog 键）。
+constexpr std::string_view kShortcutsKey{"shortcuts.overrides"};
 
 /// @brief `ui::RgbaColor` → 框架颜色（逐字段搬，alpha 参与）。
 ///
@@ -198,6 +207,46 @@ constexpr std::string_view kFontFamilyKey{"appearance.font_family"};
 /// 绘制侧不走这里：`chain_hint_` 的 `content` 收的是 `LocalizedString`，框架在绘制时自己查表。
 [[nodiscard]] auto resolve_hint(const aurora::LocalizedString &hint) -> std::string {
     return hint.resolve(&aurora::default_string_table(), settings_locale());
+}
+
+/// @brief 快捷键只读表某一行的标注列文案（多档以 `" · "` 并列，与行尾角标的拼接同一口径）。
+///
+/// 比对**不在此处**：`ui::build_shortcut_rows()` 已经把「哪几行同键位」算成 `conflicts_with` 与
+/// `conflicts_with_workspace` 两个字段交回来，本函数只把结果翻成文字——这是判据 D2-a 那句「标注来自
+/// 实际比对」在本件的兑现形态（面板拿不到键位语义值，想自己比也比不了）。
+/// 孤儿行给「延后」而不是「无冲突」：它们只有覆盖表里那串文本，从未参与比对，报「无冲突」就是谎报。
+/// 引用另一行时取其**动作名**而不是命令 id——id 不在这张表的任何一列里，用户比不着。
+[[nodiscard]] auto shortcut_note_text(const ShortcutTableRow &row, const std::vector<ShortcutTableRow> &all)
+    -> std::string {
+    if (!row.registered) {
+        return settings_label("settings.badge.deferred");
+    }
+    std::vector<std::string> parts;
+    if (!row.conflicts_with.empty()) {
+        std::string names;
+        for (const std::string &command : row.conflicts_with) {
+            if (!names.empty()) {
+                names += "、";
+            }
+            const auto found = std::find_if(all.begin(), all.end(),
+                                            [&command](const ShortcutTableRow &other) -> bool {
+                                                return other.command == command;
+                                            });
+            names += (found == all.end() ? command : found->title);
+        }
+        parts.push_back(settings_label("settings.shortcut.conflict_with", {aurora::LocalizedString{names}}));
+    }
+    if (row.conflicts_with_workspace) {
+        parts.push_back(settings_label("settings.shortcut.conflict_workspace"));
+    }
+    std::string out;
+    for (const std::string &part : parts) {
+        if (!out.empty()) {
+            out += " · ";
+        }
+        out += part;
+    }
+    return out;
 }
 
 /// @brief 回退链列表区段的高度：按条目数全部展开（上限是链容量，故最多 `kChainCapacity` 行）。
@@ -298,7 +347,7 @@ struct GroupNote {
     std::string_view note_key;
 };
 
-/// @brief 三组「入口先于消费方落地」的组顶说明（判据文 A9-a / C2-a）。
+/// @brief 四组「入口先于消费方落地」的组顶说明（判据文 A9-a / C2-a / D3-a）。
 ///
 /// 措辞各说清「哪个消费方还没开工」，而不是把这一组重新灰置：人已拍板有键无消费方的行一律可用而只落盘
 /// （裁决 7.68③ 的口径，行尾另挂「延后」角标）。
@@ -306,6 +355,7 @@ constexpr GroupNote kGroupNotes[] = {
     {"appearance.status_bar.show_connection", "settings.note.status_bar"},
     {"connection.ssh.port", "settings.note.ssh"},
     {"connection.serial.baud", "settings.note.serial"},
+    {"shortcuts.overrides", "settings.note.shortcuts"},
 };
 
 [[nodiscard]] auto make_group_note(const std::string &text) -> aurora::Node {
@@ -390,6 +440,7 @@ auto SettingsPanel::close() -> void {
     // 候选浮层比面板浮层**后**加进宿主（序号更大），而 `remove_overlay` 是按当前子节点表 erase 的：
     // 先摘面板会让浮层序号整体前移一格、此后那个号就指到别的节点上。故按序号降序摘，浮层在前。
     clear_family_state();
+    shortcuts_rows_.clear();
 
     if (overlay_index_.has_value()) {
         host_.remove_overlay(*overlay_index_);
@@ -625,6 +676,7 @@ auto SettingsPanel::rebuild_overlay() -> void {
     // 候选浮层比面板浮层**后**加进宿主（序号更大），而 `remove_overlay` 是按当前子节点表 erase 的：
     // 先摘面板会让浮层序号整体前移一格、此后那个号就指到别的节点上。故按序号降序摘，浮层在前。
     clear_family_state();
+    shortcuts_rows_.clear();
 
     if (overlay_index_.has_value()) {
         host_.remove_overlay(*overlay_index_);
@@ -770,7 +822,7 @@ auto SettingsPanel::build_row(std::size_t ordinal) -> aurora::Node {
         return aurora::Node{};
     }
     const SettingsControl &control = *rows_[ordinal];
-    // 四个专用区段各占多行高度，故在行的分派处就拐出去：它们仍是一行 catalog 键（角标、状态列与提交
+    // 五个专用区段各占多行高度，故在行的分派处就拐出去：它们仍是一行 catalog 键（角标、状态列与提交
     // 都落在那一行上），只是内容不是一条 56 dp 的行盒。
     if (control.kind == ControlKind::ThemePicker) {
         return build_theme_section(ordinal);
@@ -783,6 +835,9 @@ auto SettingsPanel::build_row(std::size_t ordinal) -> aurora::Node {
     }
     if (control.kind == ControlKind::FamilyList) {
         return build_chain_section(ordinal);
+    }
+    if (control.kind == ControlKind::ReadOnlyTable) {
+        return build_shortcuts_section(ordinal);
     }
     const bool editable = is_editable(control);
 
@@ -1238,6 +1293,89 @@ auto SettingsPanel::paint_chain_handle(aurora::Painter &painter, const aurora::R
     }
 }
 
+auto SettingsPanel::build_shortcuts_section(std::size_t ordinal) -> aurora::Node {
+    // 行投影在本函数开头清一次：卡片是 `LayoutBuilder`，本闭包在每次布局都会重跑（裁决 7.61 在主题卡
+    // 那一区撞过的同一条），不清就会让观测面报出界面上并不存在的行。
+    shortcuts_rows_.clear();
+
+    const SettingsControl &control = *rows_[ordinal];
+    // 表头那一行的状态列取 `editable=false`：该行的角标是「延后」（覆盖表无消费方），而这一页没有任何
+    // 提交入口，故状态列不会被 `after_commit` 改写。
+    auto [label, status] = build_header(ordinal, control, false);
+    auto header = std::make_shared<aurora::Row>(aurora::RowProps{
+        .children = {std::move(label), std::move(status)},
+        .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
+        .gap = 12.0F,
+    });
+    header->modifier.set(aurora::Modifier{}.fill_max_width());
+
+    std::vector<ShortcutCommandEntry> entries =
+        hooks_.commands ? hooks_.commands() : std::vector<ShortcutCommandEntry>{};
+    std::vector<ShortcutOverride> overrides;
+    if (const FormValue *value = form_.value(std::string{kShortcutsKey}); value != nullptr) {
+        if (const auto table = value->as_overrides(); table.has_value()) {
+            overrides = *table;
+        }
+    }
+    std::vector<term::KeyPress> reserved;
+    for (const WorkspaceKeyBinding &binding : workspace_key_bindings()) {
+        reserved.push_back(binding.press);
+    }
+    // 三个入参一次交齐：行源、覆盖表与保留位由 `ui::build_shortcut_rows()` 在同一次调用里比对，
+    // 面板这一侧只负责把结果逐行落笔（判据 D2-a 的「标注来自实际比对」就落在这个分工上）。
+    const std::vector<ShortcutTableRow> table = build_shortcut_rows(std::move(entries), overrides, reserved);
+
+    const auto make_cell = [](std::string text, aurora::Color color, float width_dp) -> aurora::Node {
+        auto cell = make_text(text, color);
+        cell.widget().modifier.set(width_dp > 0.0F
+                                       ? aurora::Modifier{}.width(width_dp)
+                                       : aurora::Modifier{}.expand());
+        return cell;
+    };
+    // 列名行与数据行同尺寸、只差一档亮度（`kTextDim` 正是角标那一档），故排版量只有一份。
+    const auto make_line = [&make_cell](bool heading, std::string title, std::string category,
+                                        std::string binding, std::string note) -> aurora::Node {
+        const aurora::Color value = heading ? kTextDim : kText;
+        auto line = std::make_shared<aurora::Row>(aurora::RowProps{
+            .children = {make_cell(std::move(title), value, 0.0F),
+                         make_cell(std::move(category), value, kShortcutCategoryWidthDp),
+                         make_cell(std::move(binding), value, kShortcutBindingWidthDp),
+                         make_cell(std::move(note), kTextDim, kShortcutNoteWidthDp)},
+            .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
+            .gap = 12.0F,
+        });
+        line->modifier.set(aurora::Modifier{}.fill_max_width().height(kShortcutRowHeightDp));
+        return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(line))};
+    };
+
+    std::vector<aurora::Node> children;
+    children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(header))});
+    children.push_back(make_line(true, settings_label("settings.shortcut.column.title"),
+                                 settings_label("settings.shortcut.column.category"),
+                                 settings_label("settings.shortcut.column.binding"),
+                                 settings_label("settings.shortcut.column.note")));
+
+    const std::string unbound = settings_label("settings.shortcut.unbound");
+    for (const ShortcutTableRow &row : table) {
+        const std::string binding = row.binding_text.empty() ? unbound : row.binding_text;
+        const std::string note = shortcut_note_text(row, table);
+        children.push_back(make_line(false, row.title, row.category, binding, note));
+        shortcuts_rows_.push_back(ShortcutRowView{
+            .title = row.title,
+            .category = row.category,
+            .binding_text = binding,
+            .note = note,
+            .deferred = !row.registered,
+        });
+    }
+
+    auto section = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(children),
+                                                                       .gap = kSectionGapDp});
+    section->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+        .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
+    return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(section))};
+}
+
 auto SettingsPanel::build_control(const SettingsControl &control, bool editable) -> aurora::Node {
     const std::string key = control.key;
     const FormValue *value = form_.value(key);
@@ -1353,9 +1491,8 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
             case ControlKind::SwatchGrid:
             case ControlKind::FontDropdown:
             case ControlKind::FamilyList:
-                break;  // 四个区段不是「一行的控件腿」，在 `build_row` 的分派处就已建完，走不到这里。
             case ControlKind::ReadOnlyTable:
-                break;  // 专用控件形态不可交互（is_editable 已先判掉），落下面的占位分支。
+                break;  // 五个区段不是「一行的控件腿」，在 `build_row` 的分派处就已建完，走不到这里。
         }
     }
     // 占位行：如实显示当前值，不给一个「点了没反应」的控件（S9 / D3-a 的同一口径）。
@@ -1930,7 +2067,7 @@ auto SettingsPanel::value_summary(const SettingsControl &control) const -> std::
         return out;
     }
     if (const auto overrides = value->as_overrides(); overrides.has_value()) {
-        return std::to_string(overrides->size());
+        return {};  // 只读表的表体已经逐行画出，再在行末给一个「几条」就是把同一份内容显示第二遍
     }
     return form_value_as_text(value);
 }
@@ -1950,7 +2087,7 @@ auto SettingsPanel::is_editable(const SettingsControl &control) -> bool {
         case ControlKind::FamilyList:
             return true;  // 四个区段在 `build_row` 就分派出去，本函数只为行表与观察面给出可交互判据
         case ControlKind::ReadOnlyTable:
-            return false;  // 专用控件随后续棒落地（本棒先如实显示当前值而不是给个死控件）
+            return false;  // 快捷键表首版只读（S9 / D3-a）：表体已经画出，但没有一个提交入口
     }
     return false;
 }

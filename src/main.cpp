@@ -17,8 +17,10 @@
 #include "borealis/config/themes.h"
 #include "borealis/session/clipboard_outbox.h"
 #include "borealis/session/session.h"
+#include "borealis/term/keymap.h"
 #include "borealis/term/width.h"
 #include "borealis/ui/font_choice.h"
+#include "borealis/ui/shortcuts_table.h"
 #include "borealis/ui/settings_form.h"
 #include "ui/settings_i18n.h"
 #include "ui/settings_panel.h"
@@ -92,6 +94,22 @@ constexpr borealis::session::Size kNominalViewport{80U, 24U};
     // TODO(SPEC.FEAT.CONN.05): 粘贴的 `line_ending` 取连接的行尾设置，本地终端就是缺省 LF；
     // 串口那一腿到货后由连接的行尾配置搬进来（块间隔同为缺省值，需求未开配置键）。
     return interaction;
+}
+
+/// @brief 互转点：框架 `KeyCombo` → 本仓键位语义值（`term::KeyPress`）。
+///
+/// 与 `ui::TerminalView` 那条「`KeyEvent` → `KeyPress`」的互转点是两个**来源**而不是两条算式：命令表
+/// 上的绑定是注册值、不带运行期锁定态，而冲突比对只吃四个可按位（裁决 7.51①），与框架
+/// `KeyCombo::matches` 在 G25 回货后「两侧各取可按住位子集再逐位相等」的口径逐位一致。锁定位照搬不屏蔽。
+[[nodiscard]] auto key_press_of(const au::KeyCombo &combo) -> borealis::term::KeyPress {
+    return borealis::term::KeyPress{
+        .sym = static_cast<borealis::term::KeySym>(combo.key),
+        .shift = (combo.modifiers & au::ModifierKey::Shift) != 0U,
+        .control = (combo.modifiers & au::ModifierKey::Control) != 0U,
+        .alt = (combo.modifiers & au::ModifierKey::Alt) != 0U,
+        .meta = (combo.modifiers & au::ModifierKey::Meta) != 0U,
+        .num_lock = (combo.modifiers & au::ModifierKey::NumLock) != 0U,
+    };
 }
 
 }  // namespace
@@ -195,6 +213,26 @@ auto main() -> int {
     // 夹具在预览视口的 `on_layout` 里随 `resize` 重投，那一批脏要下一帧才排；不唤醒就会停在
     // 「横条画了但内容还是上一版」。与下面 `set_on_frame` 里的 `pump_preview()` 配对存在。
     hooks.preview_wake = [&surface]() -> void { surface.request_wake(); };
+    // 快捷键只读表的行源（裁决 7.72②）：注册表逐条折成本域形态，覆盖表只贡献孤儿行那一半归纯逻辑件判。
+    // 显示串与比对值**必须从同一个 `KeyCombo` 同行取出**——分两次取就是让「标注来自实际比对」那条判据
+    // （D2-a）失去根据，因为界面上看到的串与比掉的键位不再是一个来源。
+    // 取的是**打开面板时**的注册表快照，故 `settings.open` 之类在本行之后登记的命令也在表内。
+    hooks.commands = [&app]() -> std::vector<borealis::ui::ShortcutCommandEntry> {
+        std::vector<borealis::ui::ShortcutCommandEntry> out;
+        for (const au::Command &command : app.commands().all()) {
+            borealis::ui::ShortcutCommandEntry entry{
+                .command = command.id,
+                .title = command.title,
+                .category = command.category,
+            };
+            if (command.default_binding.has_value()) {
+                entry.binding_text = command.default_binding->to_string();
+                entry.binding = key_press_of(*command.default_binding);
+            }
+            out.push_back(std::move(entry));
+        }
+        return out;
+    };
     borealis::ui::SettingsPanel panel{*host, app.shortcuts(), std::move(hooks)};
 
     // 打开入口按 `SPEC.FEAT.PREF.02` 走命令层：命令是快捷键、菜单与命令面板的共同真源（架构 §11.2），

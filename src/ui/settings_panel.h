@@ -128,6 +128,18 @@
 //    还要读该链），本仓实测**未见其崩**——注入那条之后只有一例的浮层计数转红，故此条根据是框架自陈而非
 //    本仓抓到的现场；另一条本仓自己的理由是摘了下次还得重新 `add_overlay` 并改序号。
 //
+// 快捷键页（D 页，判据文 D1-a / D2-a / D3-a，裁决 7.72）是**第五个区段**而不是第六类控件形态：反向核对
+// 表里该页只有 `shortcuts.overrides` 一行、其控件形态是 `ReadOnlyTable`，而表体要按**命令**逐行画，故
+// 与主题卡 / 色板 / 字体族 / 回退链同样在 `build_row` 的分派处拐出去建。三条口径：
+// ① 本件**不做任何比对**：行序、每行的四列文字与冲突标注全部来自 `ui::build_shortcut_rows()`（纯逻辑
+//    件，吃 `term::KeyPress`），面板只把算好的行落笔。于是「标注来自实际比对而不是界面自己比字符串」
+//    这句 D2-a 有唯一证人——面板拿不到键位语义值，想自己比也比不了。
+// ② 表体**自绘**而不借框架 `data_widgets.h` 的 `DataTable`：那三件表控件的 `on_paint` 形参一律不读
+//    ctx，故 `Theme` 到不了、色值硬编码浅色（裁决 7.68①），深色面板上用它是第二个 chrome 色值源。
+// ③ 该页**没有可交互控件**，故 `visible_rows()` 那一行给 `editable=false` 而 `summary` 留空：前者是
+//    诚实（首版只读，无提交入口），后者是「内容已画进区段，摘要即第二份显示形态」（与其余四个区段
+//    「可交互行的摘要一律留空」那条通则同族，只是本行的所以是「只读」而非「可交互」）。
+//
 // 面板不认识 `config`，也不认识 `TerminalView`：装载 / 落盘 / 广播三条接缝由 `Hooks` 交装配层兑现
 // （`config/settings.h` 已 include `ui/palette.h`，反向 include 即 `config ⇄ ui` 模块环，与
 // `settings_catalog.h` 同一条理由）。于是「即时生效」到底改哪些对象，是装配层的一次快照搬运，
@@ -166,6 +178,7 @@
 #include "borealis/ui/font_choice.h"
 #include "borealis/ui/settings_catalog.h"
 #include "borealis/ui/settings_form.h"
+#include "borealis/ui/shortcuts_table.h"
 #include "terminal_view.h"  // `Hooks` 的两条预览接缝吃 `TerminalView::Appearance`（同 `workspace_view.h` 的先例）
 
 namespace borealis::ui {
@@ -220,6 +233,13 @@ public:
         std::function<TerminalView::Appearance()> preview_appearance;
         /// @brief 请求宿主排下一帧（夹具在视口 `on_layout` 里随 `resize` 重投，那批脏要下一帧才排）。
         std::function<void()> preview_wake;
+        /// @brief 取快捷键只读表的行源（装配层从框架 `CommandRegistry::all()` 折成
+        ///        `ui::ShortcutCommandEntry`，裁决 7.72②；不装即该页只有表头）。
+        ///
+        /// 交的是本域形态而不是框架 `Command`：`KeyCombo` → `term::KeyPress` 的互转点因此只有装配层
+        /// 一处（面板拿不到键位语义值就无法自己比第二次，而 D2-a 那句「标注来自实际比对」的唯一证人
+        /// 就是面板只读得到纯逻辑件算好的那一列）。
+        std::function<std::vector<ShortcutCommandEntry>()> commands;
     };
 
     /// @brief 面板当前页上的一行（用例据此核对「面板画的键」与反向核对表一致，判据文 §8 判据①）。
@@ -230,9 +250,9 @@ public:
     struct VisibleRow {
         std::string key;       ///< 落盘点号路径。
         ControlKind kind{};    ///< 控件形态。
-        bool editable{};       ///< 该行的控件是否可交互（`Absent` 行**可**交互而只落盘；false 只剩未落地的只读表）。
+        bool editable{};       ///< 该行的控件是否可交互（`Absent` 行**可**交互而只落盘；false＝首版只读的快捷键表）。
         std::string badge{};   ///< 角标文案（「延后」/「下次会话生效」/两者并列，主题行另挂「自定义」），无角标为空。
-        std::string summary{}; ///< 未落地形态的只读值摘要；可交互行为空（值就在它自己的控件里）。
+        std::string summary{}; ///< 未落地形态的只读值摘要；区段化的行一律留空（内容就在它自己的区段里）。
     };
 
     SettingsPanel(aurora::OverlayHost &host, aurora::ShortcutRegistry &shortcuts, Hooks hooks);
@@ -404,6 +424,24 @@ public:
     /// @brief 候选浮层本体的控件（未建时为空）。
     [[nodiscard]] auto font_popup() const -> aurora::Widget *;
 
+    /// @brief 快捷键只读表的一行（判据文 D1-a 的三列 + D2-a 的那一列标注，全是已解析的显示串）。
+    ///
+    /// 与 `theme_cards()` / `family_view()` 同一条理由交出来而不让用例读浮层树：D1-a 判「三列逐字来自
+    /// 注册表」、D2-a 判「标注来自实际比对」，读树里的 `Text` 就得把排版坐标也算进判据；而本区段没有
+    /// 一个单元格是可点节点（首版只读，D3-a），`reachable_box` 一类的真实派发量法对它无效。
+    struct ShortcutRowView {
+        std::string title{};         ///< 动作名列。
+        std::string category{};      ///< 分组列。
+        std::string binding_text{};  ///< 「当前组合键」列；未绑定显示已解析的「未绑定」文案。
+        std::string note{};          ///< 标注列：冲突（可多条）或「延后」；无标注为空。
+        bool deferred{};             ///< 孤儿行＝覆盖表里的命令 id 在注册表查无，其标注恒为「延后」而非「无冲突」。
+    };
+
+    /// @brief 快捷键只读表当前画出的行，次序＝排版次序（该区段未画时为空表）。
+    [[nodiscard]] auto shortcuts_rows() const -> std::vector<ShortcutRowView> {
+        return shortcuts_rows_;
+    }
+
     /// @brief 预览盒的视口控件；未装 `Hooks::preview_appearance`、或面板此刻关着时为空（S7 的观测点）。
     ///
     /// 用例要靠它把「外观改动是否落进了预览那条腿」与「改动只进了表单副本」分开断言：预览的行列数、
@@ -491,7 +529,6 @@ private:
 
     /// @brief 把当前列表内容提交进表单（一次结构性改动＝一次落盘 + 一次广播，走 `after_commit` 的既有腿）。
     auto commit_chain() -> void;
-
     /// @brief 把第 index 项沿方向挪一格（越界即不动，与按钮的禁用态是同一判据的两道）。
     auto move_chain_item(std::size_t index, int delta) -> void;
 
@@ -509,6 +546,14 @@ private:
 
     /// @brief 画链条目手柄带的那一条：三行等长的短横点阵（框架的手柄带只留命中区、不画 grip）。
     auto paint_chain_handle(aurora::Painter &painter, const aurora::Rect &box) const -> void;
+
+    /// @brief 建快捷键只读表区段：表头 + 逐命令一行四列（动作名 / 分组 / 当前组合键 / 标注）。
+    ///
+    /// 自绘而不借框架 `data_widgets.h` 的那三件表控件：它们的 `on_paint` 形参一律不读 ctx，故 `Theme`
+    /// 到不了、色值硬编码浅色（裁决 7.68①），沿用主题卡 / 16 格色板 / 回退链三处的自绘先例。
+    /// 行内容与标注都取 `ui::build_shortcut_rows()` 一次算好的那张表（本件不自己比第二次键位），
+    /// 故本函数只在区段第一次建时跑完就把行投影进 `shortcuts_rows_`。
+    [[nodiscard]] auto build_shortcuts_section(std::size_t ordinal) -> aurora::Node;
 
     /// @brief 画一张主题卡：底色、四格样例、分隔线、描边与选中勾（闭包在绘制时读 `form_`）。
     auto paint_theme_card(aurora::Painter &painter, const aurora::Rect &box, std::size_t index) const -> void;
@@ -618,6 +663,10 @@ private:
     std::vector<std::shared_ptr<aurora::Button>> chain_candidates_{};     ///< 固定池宽的候选按钮。
     std::vector<std::string> candidate_names_{};  ///< 当前池内各档的族名（与上一条同序；空档为空串）。
     std::string chain_filter_text_{};             ///< 过滤框的当前内容（本件持有，表单里没有这一项）。
+
+    /// 快捷键只读表当前画出的行投影（区段建好即写，重建浮层与关面板两处清空）。留着上一版的行等于让
+    /// 观测面报出界面上并不存在的行——那与本件其余三处「清派生态」的口径同族。
+    std::vector<ShortcutRowView> shortcuts_rows_{};
 
     /// 预览盒的本体（S7）。每次 `open()` 现建、`close()` 即销毁：浮层撤掉之后它的控件树已脱离宿主，
     /// 复用一份脱离树的控件正是最难查的那类陈旧态，重建一次的代价只是重投一次夹具。（登记时这里另写了

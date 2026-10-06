@@ -40,6 +40,7 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"settings.note.status_bar", "入口先于消费方落地：关闭状态栏件尚未开工，本组改动只落盘"},
     {"settings.note.ssh", "入口先于消费方落地：SSH 连接族尚未开工，本组改动只落盘"},
     {"settings.note.serial", "入口先于消费方落地：串口连接族尚未开工，本组改动只落盘"},
+    {"settings.note.shortcuts", "入口先于消费方落地：键位重绑尚未开工，覆盖表里的组合键不会生效"},
 
     // ---- 回退链区段（A5-a：顺序可改、逐行可删、末尾追加）----
     // 上限的数字**不写进模板**：它的真值源是框架头里的 `AURORA_TEXT_FALLBACK_CHAIN_MAX`，故经 `{0}`
@@ -57,6 +58,17 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     // 一句话覆盖「目录里没有」与「目录里有但度量非等宽」两档（两者对用户是同一件事），两个位置参数是
     // **取值**而非词条 key，故交字面档。
     {"settings.font.fallback", "配置的 {0} 不可用：实际使用 {1}"},
+
+    // ---- 快捷键只读表（D1-a 的列名 / D2-a 的标注两档 / 未绑定那一格）----
+    // 表体四列的列名是本件自己的排版量而非 catalog 键，故 key 前缀走 `settings.shortcut.`；
+    // 「重复」那一条的位置参数是**另一行的动作名**（取值），与 `settings.font.fallback` 同档。
+    {"settings.shortcut.column.title", "动作"},
+    {"settings.shortcut.column.category", "分组"},
+    {"settings.shortcut.column.binding", "当前组合键"},
+    {"settings.shortcut.column.note", "标注"},
+    {"settings.shortcut.unbound", "未绑定"},
+    {"settings.shortcut.conflict_with", "与「{0}」重复"},
+    {"settings.shortcut.conflict_workspace", "与分屏键位冲突"},
 
     // ---- 外观域 ----
     {"appearance.theme", "主题"},
