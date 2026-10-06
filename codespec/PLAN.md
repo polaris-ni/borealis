@@ -62,7 +62,7 @@
 | `SPEC.FEAT.INTERACT.01` | 键盘映射 | P0 | M1 |
 | `SPEC.FEAT.INTERACT.02` | 文本选择 | P1 | M1（流式拖拽/矩形块基本面，`SPEC.FEAT.INTERACT.03` 选区复制的前置）+ M2（双击/三击等其余） |
 | `SPEC.FEAT.INTERACT.03` | 复制粘贴 | P0 | M1 |
-| `SPEC.FEAT.INTERACT.04` | 终端内搜索 | P1 | M2（**前三半已落**（2026-10-07，裁决 7.78 + **7.79**）：匹配表纯逻辑件 + 首次搜索时间门禁 B-8 + 视口侧的扫描接缝与两档节流；浮层界面腿未落，其画面判据 `codespec/UI_SEARCH.draft.{md,svg,png}` 已自拍 D1~D8） |
+| `SPEC.FEAT.INTERACT.04` | 终端内搜索 | P1 | M2（**前四半已落**（2026-10-07，裁决 7.78 + 7.79 + **7.80**）：匹配表纯逻辑件 + 首次搜索时间门禁 B-8 + 视口侧的扫描接缝与两档节流 + 命中高亮的绘制侧层叠与跳转落位（含程序化滚动写入口）；**浮层本体未落**，其画面判据 `codespec/UI_SEARCH.draft.{md,svg,png}` 已自拍 D1~D8） |
 | `SPEC.FEAT.INTERACT.05` | URL 检测 | P2 | M4 |
 | `SPEC.FEAT.INTERACT.06` | 输入法（IME） | P0 | M1 |
 | `SPEC.FEAT.XFER.01` | PTY 尺寸同步 | P0 | M1 |

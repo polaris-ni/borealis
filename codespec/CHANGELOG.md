@@ -4,6 +4,22 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.80（2026-10-07）**`SPEC.FEAT.INTERACT.04` 的第四半：命中高亮的绘制侧层叠、跳转落位与程序化滚动写入口（浮层本体未落）**（`include/borealis/ui/cell_layout.h` + `src/ui/cell_layout.cpp`、`src/ui/terminal_view.{h,cpp}`、`tests/unit/utest_cell_layout.cpp`、`tests/integration/itest_render_viewport.cpp`、`tests/integration/itest_search_viewport.cpp` 新增，判据入册为裁决 **7.80**）
+
+**动机**：v0.79 交出的是一张「没人读」的匹配表——扫描接缝每帧产出区间，而绘制侧既没有把区间折进色带的入参形态，也没有把命中行滚进可见窗的写入口。本条覆盖两棒（绘制侧前置 `7965f3b` + 六例单元证人 `7354ad8`、视口侧层叠与跳转 `811423b` + 七例行为证人与六例像素证人 `29937a0`），因为「三层底色折叠在哪一处」与「谁当 C1-a 相撞判据的证人」是同一批口径。浮层本体（`src/ui/search_overlay.{h,cpp}`）与 `search.open` / `Ctrl+F` / `Escape` 的登记仍属 #161，本条刻意不含。
+
+**四条决定形态的口径**：⑴ **相撞那格谁赢只有一处算式**：`ui::RowBands`（本行命中列区间切片 + 游标那一段 + 选中区间 + 三档最终底色）与 `ui::background_at(bands, column)` 是「主题底 → 命中 → 选中」的唯一折叠点，色带层与块形光标三段式的第三段**共用它**；两份算式就会分叉。折叠必须发生在切 run **之前**——若各换一次底，`min_contrast` 的前景重合成就是按**输掉的那档**底色算的，高亮强度会随「这一格恰在命中段边缘」而抖，run 边界也随之再切一刀。既有的四参 `layout_row(row, spec, RowSpan, RgbaColor)` 入口**收进** `RowBands` 一条腿而不并列保留（无命中时逐字段等价）。⑵ **三档底色一律由调用方给最终值**，失焦降级与 `ui::mix_half` 不进 `cell_layout`——这是判据 A1-f 那条不对称（**命中不随失焦降级而选区随**，与裁决 7.38① D3① 相反）唯一的可表达形态。⑶ **命中切片是视图而不是快照**：上限档一屏可达 10,000 段（≈240 KB），逐行拷进帧就是每帧多一次整表分配；表按 (行, 列) 有序，故按 `.row` 二分切本行那一段。⑷ **`scroll_row_into_view` 写的是滚动内核的状态而不是临时偏移**：窗内那一档完全不动画面（D1-b），窗外才按 `目标行 − ⌊rows/2⌋` 写 `offset_y` 并钳在 `[0, max_offset]`（D2-a/b）。两条承重事实是 `offset_y` 与 `mirror_.window_top()` **同一个量**（距底＝`max_offset − offset_y`，`window_top`＝总行数 − rows − 距底，两式相减即之），以及写状态才让 `reproject` 在下一帧把新距底保持下去——那才是「回看位置随之真改变」。
+
+**一处真缺陷与一处判据空洞**：① `run_search_scan` 的两个换表出口原先都不标绘制脏，于是高亮只在别的脏源（光标移动、选区、滚动）恰好顺带标脏时才上屏，**纯输入那一帧是干净的**，症状即用户看到的「打了字却什么都没变」；同批 `close_search()` 一并清 `search_dirty_`（打字与排帧之间关掉浮层时，那张已排上的扫描必须在下一帧被撤掉，否则画面亮出一份用户已经关掉的结果）。② 去掉「空串出口」那一处标脏时在册 37 + 7 例**全绿**——没有一例在撤表之后再看像素。按裁决 7.43⑦ 的口径这是**判据空洞**而不是等价注入，处置是补 `clearing_the_query_takes_the_highlight_back_off_the_screen`（先 REQUIRE 高亮确实落上，再删空查询、断该格回到底色且与无查询帧差集为空），**重跑同一变异**后恰该例转红。
+
+**两条判据写法入册**：C1-b（只换底色不换前景笔形）以**竖直有墨跨度相等**为证人而不是比像素（AA 灰度在两侧不同底色上不可逐位比）；C2-a/b 要在块形光标下**放一个整格字形**（U+2588）才把两条判据读成恰好可判，且那条反空转前提的 REQUIRE 按裁决 7.65 的顺序教训排在被检事实**之后**。
+
+**验收**：`utest_cell_layout` 41 → **49 例**、`itest_render_viewport` 32 → **38 例**（新增六例像素证人）、新套件 `tests/integration/itest_search_viewport.cpp` **七例**（跳转落位与关闭残留的行为证人）；**非 e2e 通道 `ctest -E etest_` 43 → 44 项全绿**（40.85 s）。七条变异注入各有指名红行：`background_at` 去选中优先 → 10 例红（含 C1-a）／去游标档 → 3 例红／光标第三段不折命中 → 1 例红／`scroll_row_into_view` 去「可见即返回」→ 本套件 D1-b 那一例加绘制侧三例红／`close_search` 去清脏 → 1 例红而绘制套件 37 例绿／`run_search_scan` 去换表标脏 → 2 例红（A1-a 与 A1-e 的像素证人）／去空串出口标脏 → 见上条②。每次重链前先删 `build/**/*.ilk`，并**在每次构建前 grep 全树确认只剩一个变异标记**——本轮此前吃过一次「上一条变异未还原就跑下一条」的假读数，纪律因此补这一句。未复跑吞吐门禁并给理由：新增的是色带层内的一次二分与光标那一段的一次查表，绘制与布局算式零改动，基准四场景不含浮层交互。
+
+**未落**（任务 #161）：`src/ui/search_overlay.{h,cpp}` 浮层本体与 11 条 `search.*` 词条、`search.open` + `Ctrl+F` 的装配层登记、`Escape` 的登记与解绑、E 面板三档宽度的降级形态——故本条**不宣称搜索「可用」**。**框架面真缺口 0**（三层底色、区间切片、滚动内核写入口全在本仓；浮层锚点按裁决 7.73 取公共入口 `Widget::window_bounds()`，「点外部即关」按裁决 7.41③ / 7.70③ 由本仓在 Press 分支自驱，开关 chip 用 `Button` 选中态底色自绘而**不用**框架 `Switch`——后者禁用档色值硬编码浅色，裁决 7.68②），附录 A.2 维持开放缺口 0。
+
+**落点**：`include/borealis/ui/cell_layout.h`、`src/ui/cell_layout.cpp`、`src/ui/terminal_view.{h,cpp}`、`tests/unit/utest_cell_layout.cpp`、`tests/integration/itest_render_viewport.cpp`、`tests/integration/itest_search_viewport.cpp`（新）；文档回写＝`codespec/SPECIFICATIONS.md` 的 §7 裁决 7.80 与 7.79⑥ 末句就地更正及其 §4.3 该需求句的进度指针、`codespec/UI_SEARCH.draft.md` §0 与 §4 第 1 / 2 / 3 / 4 条（那四处「只收一段 `RowSpan`」「现无程序化写入口」随本棒过期）、`codespec/PLAN.md` 的 `SPEC.FEAT.INTERACT.04` 行与 §8 的 M2 段、`AGENTS.md` §2 与 §6。
+
 ## v0.79（2026-10-07）**`SPEC.FEAT.INTERACT.04` 的第三半：视口侧扫描接缝与两档节流的接线（浮层界面腿未落）**（`src/ui/terminal_view.{h,cpp}`、`tests/integration/itest_search_scan.cpp` 新增，判据入册为裁决 **7.79**）
 
 **动机**：v0.78 交出的匹配表是「给一份权威网格与一个查询、回一批存储行序的区间」，而它离界面还差三条接线：7.78⑥ 拍板的**主线程临界区内一次扫**、7.78③ 拍板的**顶边位移折算**，以及 7.78① 那条实测代价（宽匹配式一次 1623.5 ms）要求的**正则档只在 `Enter` 提交时扫**。本条覆盖两棒（接缝 `cc0c96d`、九例集成证人与变异自证 `bb99d64`），因为「节流接成状态还是分支」与「谁当节流的证人」是同一批口径，拆开写就把接线形态与判据成色割成两处。浮层本体（`src/ui/search_overlay.{h,cpp}`）与高亮绘制仍属 #161，本棒刻意不含。
