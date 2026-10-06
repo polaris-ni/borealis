@@ -66,6 +66,13 @@
 ///              一枚挂载计数控件走面板 `open()` 所用的同一条公共入口，判「追加时 0 → 排一帧 1 → 再排仍 1
 ///              且不退订 → 孙辈同挂 → 第二次追加不动第一棵」五句。本套件其余用例在无头通道里都测不到挂载
 ///              本身（`on_mount` 只影响闪烁档与主题订阅，两者都不进那些用例的判据，裁决 7.66 已登记这条边界）。
+///           ⑫ **快捷键页是只读表而行源是注册表**（`SPEC.FEAT.PREF.02` 的 D 页，判据文 D1-a / D2-a / D3-a，
+///              裁决 7.72②③）：注册行照框架注册序在前、覆盖表**只**贡献「注册表查无此 id」的孤儿行（一条
+///              命中已注册 id 的覆盖条目既不产行也不改写那一行），三列文字逐字取注册表交出的那三份；标注列
+///              比的是**键位语义值**而不是显示文本（同文本不同键位不标注、异文本同键位必标注且引用对方的动作名
+///              而不是命令 id；修饰位只取 Shift / Ctrl / Alt / Meta 四位，故只差 NumLock 的两条判为同一键位），
+///              并与本仓十二条分屏保留位比一次（撞档即标注，两档并列）。孤儿行只有文本，故呈现为「延后」而
+///              不是「无冲突」；表体没有任何可提交入口，真点一格既不落盘也不广播。
 ///
 ///           一条测试现场的必要构造：`OverlayHost` 的浮层序号是从「基础内容之后」起算的
 ///           （`add_overlay` 返回 `children_.size() - 1`，回货后宿主无基础内容时返回 `std::nullopt`），
@@ -101,11 +108,14 @@
 #include "borealis/config/form_transfer.h"
 #include "borealis/config/settings.h"
 #include "borealis/config/themes.h"
+#include "borealis/term/keymap.h"
 #include "borealis/ui/color_text.h"
 #include "borealis/ui/palette.h"
 #include "borealis/ui/right_click.h"
 #include "borealis/ui/settings_catalog.h"
 #include "borealis/ui/settings_form.h"
+#include "borealis/ui/shortcuts_table.h"
+#include "borealis/ui/workspace_keys.h"
 #include "framework/aurora_test.h"
 // 私有头（裁决 D1①），故按相对路径取用而不给整个测试目标开 `src/` 含目录。
 #include "../../src/ui/settings_i18n.h"
@@ -117,6 +127,8 @@ namespace borealis::test_cases::itest_settings_panel {
 namespace {
 
 using borealis::config::Settings;
+using borealis::term::KeyPress;
+using borealis::term::KeySym;
 using borealis::ui::ApplyScope;
 using borealis::ui::CommitIssue;
 using borealis::ui::ConsumerStatus;
@@ -129,6 +141,7 @@ using borealis::ui::RgbaColor;
 using borealis::ui::SettingsControl;
 using borealis::ui::SettingsPage;
 using borealis::ui::SettingsPanel;
+using borealis::ui::ShortcutCommandEntry;
 
 constexpr int kWindowWidth = 900;
 constexpr int kWindowHeight = 600;
@@ -302,6 +315,13 @@ public:
     bool with_preview = false;
     std::size_t preview_wake_calls = 0;  ///< `preview_wake` 被叫过几次（夹具重投的尾沿脏靠它）。
 
+    /// @brief 交回面板的快捷键命令表（装配层那份 `CommandRegistry::all()` 的替身；缺省空表＝该页只有表头）。
+    ///
+    /// 用例在这里造注册表现场，而三列文字全是**用例自造**的串，故 D1-a 那句「逐字来自注册表」判的是
+    /// 「面板有没有自己另起一套文案 / 重排一次」，而不是「注册表里到底有什么」。覆盖表那一半走
+    /// `base.shortcuts.overrides`（真实装载腿），于是「孤儿行只由覆盖表贡献」这条判据测的是接线而不是替身。
+    std::vector<ShortcutCommandEntry> command_table;
+
     /// @brief 交出一副挂到本替身上的 `Hooks`。
     ///
     /// 各闭包都按 `this` 取值而不是按建立时的快照，故 `hooks()` 交出之后仍可改 `load_script`、
@@ -343,6 +363,10 @@ public:
                 },
             .preview_appearance = nullptr,
             .preview_wake = nullptr,
+            .commands =
+                [this]() -> std::vector<ShortcutCommandEntry> {
+                    return command_table;
+                },
         };
         if (with_preview) {
             out.preview_appearance = [this]() -> borealis::ui::TerminalView::Appearance {
@@ -601,7 +625,10 @@ AURORA_TEST_CASE(dedicated_control_rows_show_a_readonly_summary) {
     const auto shortcut_rows = panel.visible_rows();
     AURORA_TEST_REQUIRE_EQ(shortcut_rows.size(), 1U);
     AURORA_TEST_CHECK_FALSE(shortcut_rows[0].editable);
-    AURORA_TEST_CHECK_EQ(shortcut_rows[0].summary, std::string{"0"});  // 覆盖表条数（缺省空表）
+    // 表体已经逐行画出（三列显示串 + 那一列标注），行末再给一个「几条」就是把同一份内容显示第二遍；
+    // 且那个数会与画出来的行数不一致——覆盖表里只有「注册表查无此 id」的条目产行，已注册命令的覆盖
+    // 条目既不产行也不改写那一行（裁决 7.72②）。
+    AURORA_TEST_CHECK_TRUE(shortcut_rows[0].summary.empty());
 }
 
 AURORA_TEST_CASE(a_wired_immediate_change_persists_once_and_broadcasts_once) {
@@ -1620,6 +1647,90 @@ constexpr float kControlHeightDp = 200.0F;
                           std::to_string(geometry.cell_height) + " / pad " + std::to_string(geometry.padding));
     }
     return ok;
+}
+
+/// 快捷键表一行的高与列间距（`settings_panel.cpp` 的 `kShortcutRowHeightDp` / `kSectionGapDp`）。
+/// **刻意取独立字面量而不是实现常量**：那条「表体进了树」的判据拿行区的无障碍 `content` 增量当量具，
+/// 预期若由实现自己的常量推来就只剩「常量与常量相等」（与 `kFontItemTestDp` 同一条理由）。
+constexpr float kShortcutLineTestDp = 24.0F;
+constexpr float kShortcutLineGapTestDp = 6.0F;
+
+/// @brief 造一个键位语义值：六个字段一律按位置显式给，不留缺省。
+///
+/// 留缺省就没法造出「只差 `num_lock` 一位」的那一对行，而 D2-a 的锁定位判据正是要这一对才成立。
+/// @param sym 逻辑键位。
+/// @param shift Shift 位。
+/// @param control Ctrl 位。
+/// @param alt Alt 位。
+/// @param meta Meta 位。
+/// @param num_lock NumLock 锁定态位。
+/// @return 该按键。
+[[nodiscard]] auto press_of(KeySym sym, bool shift, bool control, bool alt, bool meta, bool num_lock)
+    -> KeyPress {
+    return KeyPress{.sym = sym,
+                    .shift = shift,
+                    .control = control,
+                    .alt = alt,
+                    .meta = meta,
+                    .num_lock = num_lock};
+}
+
+/// @brief 造一条注册表命令：显示文本与键位语义值**分开给**。
+///
+/// 生产路径上两者同源（装配层从同一个 `KeyCombo` 的同一行取出，`src/main.cpp` 那条折算腿），而本件
+/// 要判的恰是「两者不一致时仍然按键位比」（判据文 D2-a），于是这里必须能造出不一致的现场。
+/// 动作名与分组是用例自造的串：D1-a 判的是「面板有没有自己另起一套文案或重排一次」，不是注册表里
+/// 真有什么；命令 id 一律含点号，故后面那句「标注里出现的是动作名而不是 id」不会被子串巧合蒙过。
+/// @param id 命令 id。
+/// @param title 动作名。
+/// @param category 分组。
+/// @param text 「当前组合键」列的显示文本。
+/// @param press 与 @p text 同行交出的比对值。
+/// @return 一条已绑定的命令。
+[[nodiscard]] auto make_command(std::string id, std::string title, std::string category, std::string text,
+                                KeyPress press) -> ShortcutCommandEntry {
+    return ShortcutCommandEntry{.command = std::move(id),
+                                 .title = std::move(title),
+                                 .category = std::move(category),
+                                 .binding_text = std::move(text),
+                                 .binding = press};
+}
+
+/// @brief 造一条注册表里未绑定的命令（`binding` 为空＝比对不吃它）。
+/// @param id 命令 id。
+/// @param title 动作名。
+/// @param category 分组。
+/// @return 一条无绑定的命令。
+[[nodiscard]] auto make_command_unbound(std::string id, std::string title, std::string category)
+    -> ShortcutCommandEntry {
+    return ShortcutCommandEntry{
+        .command = std::move(id), .title = std::move(title), .category = std::move(category)};
+}
+
+/// @brief 按**动作名**取表里的一行（投影刻意不含命令 id，故只能按界面看得到的那一列定位）。
+/// @param rows 面板画出的表行。
+/// @param title 动作名。
+/// @return 命中行；无则空。
+[[nodiscard]] auto find_shortcut(const std::vector<SettingsPanel::ShortcutRowView> &rows, std::string_view title)
+    -> const SettingsPanel::ShortcutRowView * {
+    const auto found = std::find_if(rows.begin(), rows.end(),
+                                    [title](const SettingsPanel::ShortcutRowView &row) -> bool {
+                                        return row.title == title;
+                                    });
+    return found == rows.end() ? nullptr : &*found;
+}
+
+/// @brief 把表行的动作名按排版次序折成一个串，交 `check_key_sequence` 逐位比（行序就是判据本身）。
+/// @param rows 面板画出的表行。
+/// @return 动作名序列。
+[[nodiscard]] auto shortcut_titles(const std::vector<SettingsPanel::ShortcutRowView> &rows)
+    -> std::vector<std::string> {
+    std::vector<std::string> titles;
+    titles.reserve(rows.size());
+    for (const SettingsPanel::ShortcutRowView &row : rows) {
+        titles.push_back(row.title);
+    }
+    return titles;
 }
 
 }  // namespace
@@ -3349,6 +3460,250 @@ AURORA_TEST_CASE(the_deferred_status_bar_toggles_are_real_controls_and_only_pers
     AURORA_TEST_CHECK_EQ(connection_notes[1], borealis::ui::settings_label("settings.note.serial"));
 }
 
+/// @brief 快捷键页的行源是注册表：注册行照注册序在前，覆盖表**只**贡献「注册表查无此 id」的孤儿行。
+///
+/// 判据文 D1-a 与裁决 7.72② 的可执行形态，四条各守一个错法：
+/// ⑴ 行序＝注册序 + 孤儿按覆盖表自身次序（`std::map` 的键序）排在注册行之后——若面板自排一次，界面
+///    上看到的次序就与 `SPEC.FEAT.PREF.04` 那张按功能分组的默认键位表无关了；
+/// ⑵ 一条命中**已注册 id** 的覆盖条目既不产生第二行、也不改写那一行的「当前组合键」——把它画成一行
+///    就是谎报生效（那张表当下无消费方），并进那一行又需要「谁覆盖谁」的第二份状态；
+/// ⑶ 孤儿行只有覆盖表里那串文本，故它的分组列是**空**而不是用例或实现补的一个占位名，标注恒为「延后」
+///    而不是「无冲突」（从未参与比对，报「无冲突」同样是谎报）；
+/// ⑷ 两条未绑定的注册行**互不成冲突**（比对的闸是「有可比对的键位语义值」，空绑定不进那一圈），
+///    且「当前组合键」列显示的是词条表里那句「未绑定」而不是空串。
+///
+/// 三列文字全是用例自造的串：D1-a 判的是「面板有没有自己另起一套文案或重排一次」，而不是注册表里真
+/// 有什么。命令 id 一律含点号，故后面「标注里出现的是动作名而不是 id」那句不会被子串巧合蒙过。
+AURORA_TEST_CASE(the_shortcut_table_lists_registry_rows_first_and_appends_only_orphans) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    probe.command_table = {
+        make_command("cmd.split.right", "Split right", "Workspace", "Ctrl+Shift+D",
+                     press_of(KeySym::D, true, true, false, false, false)),
+        make_command("cmd.copy.line", "Copy line", "Edit", "Ctrl+Insert",
+                     press_of(KeySym::Insert, false, true, false, false, false)),
+        make_command_unbound("cmd.paste.primary", "Paste primary", "Edit"),
+        make_command_unbound("cmd.zoom.grid", "Zoom grid", "View"),
+    };
+    probe.base.shortcuts.overrides = {
+        {"cmd.split.right", "Ctrl+Alt+K"},      // 命中已注册 id：既不产行也不改写那一行
+        {"aaa.orphan.last", "Ctrl+Shift+Y"},    // 孤儿（map 键序在前）
+        {"zzz.orphan.first", "Ctrl+Shift+Z"},   // 孤儿（map 键序在后）
+    };
+
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    panel->select_page(SettingsPage::Shortcuts);
+    h.render();
+
+    const std::vector<SettingsPanel::ShortcutRowView> rows = panel->shortcuts_rows();
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 6U);  // 表头与列名行不算数据行，孤儿恰两条
+    const std::vector<std::string> want{"Split right", "Copy line", "Paste primary", "Zoom grid",
+                                        "aaa.orphan.last", "zzz.orphan.first"};
+    for (std::size_t i = 0; i < want.size(); ++i) {
+        AURORA_TEST_TRACE(rows[i].title);
+        AURORA_TEST_CHECK_EQ(rows[i].title, want[i]);
+    }
+
+    // ⑵ 已注册命令的那条覆盖条目不留下任何痕迹：行里只有一条 "Split right"，其组合键仍是注册值。
+    const SettingsPanel::ShortcutRowView *split = find_shortcut(rows, "Split right");
+    AURORA_TEST_REQUIRE(split != nullptr);
+    AURORA_TEST_CHECK_EQ(std::ranges::count(rows, "Split right", &SettingsPanel::ShortcutRowView::title), 1);
+    AURORA_TEST_CHECK_EQ(split->binding_text, std::string{"Ctrl+Shift+D"});
+
+    // ⑶ 孤儿行：分组列空、标注是「延后」而不是「无冲突」、且显示的就是覆盖表里那串文本。
+    const SettingsPanel::ShortcutRowView *orphan = find_shortcut(rows, "aaa.orphan.last");
+    AURORA_TEST_REQUIRE(orphan != nullptr);
+    AURORA_TEST_CHECK_TRUE(orphan->category.empty());
+    AURORA_TEST_CHECK_TRUE(orphan->deferred);
+    AURORA_TEST_CHECK_EQ(orphan->note, borealis::ui::settings_label("settings.badge.deferred"));
+    AURORA_TEST_CHECK_EQ(orphan->binding_text, std::string{"Ctrl+Shift+Y"});
+    const SettingsPanel::ShortcutRowView *second_orphan = find_shortcut(rows, "zzz.orphan.first");
+    AURORA_TEST_REQUIRE(second_orphan != nullptr);
+    AURORA_TEST_CHECK_TRUE(second_orphan->deferred);
+
+    // ⑷ 未绑定两行：显示词条给的「未绑定」，且两条互不标注（空绑定不进比对那一圈）。
+    const std::string unbound = borealis::ui::settings_label("settings.shortcut.unbound");
+    const SettingsPanel::ShortcutRowView *paste = find_shortcut(rows, "Paste primary");
+    const SettingsPanel::ShortcutRowView *zoom = find_shortcut(rows, "Zoom grid");
+    AURORA_TEST_REQUIRE(paste != nullptr);
+    AURORA_TEST_REQUIRE(zoom != nullptr);
+    AURORA_TEST_CHECK_EQ(paste->binding_text, unbound);
+    AURORA_TEST_CHECK_EQ(zoom->binding_text, unbound);
+    AURORA_TEST_CHECK_TRUE(paste->note.empty());
+    AURORA_TEST_CHECK_TRUE(zoom->note.empty());
+    // `Ctrl+Insert` 不在本仓十二条分屏保留位里，故那一行的标注也是空的（否则「工作区冲突」就成了恒真）。
+    const SettingsPanel::ShortcutRowView *copy_line = find_shortcut(rows, "Copy line");
+    AURORA_TEST_REQUIRE(copy_line != nullptr);
+    AURORA_TEST_CHECK_TRUE(copy_line->note.empty());
+
+    // 组顶说明恰一条，措辞逐字取词条：它点名的是「哪个消费方还没开工」。
+    const std::vector<std::string> notes = panel->visible_notes();
+    AURORA_TEST_REQUIRE_EQ(notes.size(), 1U);
+    AURORA_TEST_CHECK_EQ(notes.front(), borealis::ui::settings_label("settings.note.shortcuts"));
+
+    // 换页再回来：区段的行投影须在每次重建前清一次，否则第二次进这一页就报出界面上并不存在的行
+    // （裁决 7.61 在主题卡那一区撞过的同一条 —— 卡片是 `LayoutBuilder`，闭包每次布局都会重跑）。
+    panel->select_page(SettingsPage::Terminal);
+    h.render();
+    panel->select_page(SettingsPage::Shortcuts);
+    h.render();
+    const std::vector<SettingsPanel::ShortcutRowView> again = panel->shortcuts_rows();
+    AURORA_TEST_REQUIRE_EQ(again.size(), 6U);
+    for (std::size_t i = 0; i < want.size(); ++i) {
+        AURORA_TEST_TRACE(again[i].title);
+        AURORA_TEST_CHECK_EQ(again[i].title, want[i]);
+    }
+}
+
+/// @brief 标注列的那一列文字来自**键位语义值的实际比对**，而不是显示文本的字符串比较（判据 D2-a）。
+///
+/// 三对行各守一条：
+/// ⑴ 显示文本**相同**而键位语义值不同（`meta` 位差一档）⇒ 两条都不标注。若在界面上比字符串，这一对
+///    就会被标成冲突，而本仓公共面并没有 `KeyCombo::to_string()` 的反向解析——比字符串还得自造键名
+///    反查表，那就是第二个真值源。
+/// ⑵ 显示文本**不同**而键位语义值相同 ⇒ 两条都标注，且引用的是对方的**动作名**而不是命令 id（id 不在这
+///    张表的任何一列里，用户比不着）。
+/// ⑶ 只差 `num_lock` 锁定态位的两条 ⇒ 判为同一键位而互标冲突，且二者都撞本仓保留的 `Ctrl+Shift+D`，
+///    故那一格两档并列（修饰位只取 Shift / Ctrl / Alt / Meta 四位，与 `workspace_command` 及框架
+///    `KeyCombo::matches` 逐位一致，裁决 7.51①）。
+AURORA_TEST_CASE(the_conflict_notes_come_from_key_presses_rather_than_binding_text) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    probe.command_table = {
+        make_command("x.same.a", "Same text A", "Edit", "Ctrl+Shift+Q", press_of(KeySym::Q, true, true, false, false, false)),
+        make_command("x.same.b", "Same text B", "Edit", "Ctrl+Shift+Q", press_of(KeySym::Q, true, true, false, true, false)),
+        make_command("x.twin.a", "Twin A", "Edit", "Ctrl+Shift+M", press_of(KeySym::M, true, true, false, false, false)),
+        make_command("x.twin.b", "Twin B", "Edit", "Ctrl+Shift+N", press_of(KeySym::M, true, true, false, false, false)),
+        make_command("x.reserved", "Reserved", "View", "Ctrl+Shift+W", press_of(KeySym::W, true, true, false, false, false)),
+        make_command("x.lock.a", "Lock off", "View", "Ctrl+Shift+D", press_of(KeySym::D, true, true, false, false, false)),
+        make_command("x.lock.b", "Lock on", "View", "KP Ctrl+Shift+D", press_of(KeySym::D, true, true, false, false, true)),
+    };
+
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    panel->select_page(SettingsPage::Shortcuts);
+    h.render();
+    const std::vector<SettingsPanel::ShortcutRowView> rows = panel->shortcuts_rows();
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 7U);
+
+    // ⑴ 文本相同而键位不同 ⇒ 两条都不标注。
+    const SettingsPanel::ShortcutRowView *same_a = find_shortcut(rows, "Same text A");
+    const SettingsPanel::ShortcutRowView *same_b = find_shortcut(rows, "Same text B");
+    AURORA_TEST_REQUIRE(same_a != nullptr);
+    AURORA_TEST_REQUIRE(same_b != nullptr);
+    AURORA_TEST_CHECK_TRUE(same_a->note.empty());
+    AURORA_TEST_CHECK_TRUE(same_b->note.empty());
+
+    // ⑵ 文本不同而键位相同 ⇒ 互标冲突，且引用的是动作名。
+    const std::string twin_b_note =
+        borealis::ui::settings_label("settings.shortcut.conflict_with", {aurora::LocalizedString{"Twin B"}});
+    const std::string twin_a_note =
+        borealis::ui::settings_label("settings.shortcut.conflict_with", {aurora::LocalizedString{"Twin A"}});
+    const SettingsPanel::ShortcutRowView *twin_a = find_shortcut(rows, "Twin A");
+    const SettingsPanel::ShortcutRowView *twin_b = find_shortcut(rows, "Twin B");
+    AURORA_TEST_REQUIRE(twin_a != nullptr);
+    AURORA_TEST_REQUIRE(twin_b != nullptr);
+    AURORA_TEST_CHECK_EQ(twin_a->note, twin_b_note);
+    AURORA_TEST_CHECK_EQ(twin_b->note, twin_a_note);
+    // 命令 id 不进界面：本表任何一列都没有它，而标注引用的正是动作名那一列。
+    AURORA_TEST_CHECK_TRUE(twin_a->note.find("x.twin.b") == std::string::npos);
+    AURORA_TEST_CHECK_TRUE(twin_b->note.find("x.twin.a") == std::string::npos);
+
+    // ⑶ 只撞分屏保留位的那一条：标注只有工作区那一档。
+    const std::string workspace_note = borealis::ui::settings_label("settings.shortcut.conflict_workspace");
+    const SettingsPanel::ShortcutRowView *reserved = find_shortcut(rows, "Reserved");
+    AURORA_TEST_REQUIRE(reserved != nullptr);
+    AURORA_TEST_CHECK_EQ(reserved->note, workspace_note);
+
+    // ⑷ 只差锁定态位的两条：互判同一键位，且各自都撞保留位 ⇒ 两档并列（表内冲突在前）。
+    //     每一行的标注引用的是**对方**的动作名，故这里的预期与行名刻意交错。
+    const std::string lock_off_note =
+        borealis::ui::settings_label("settings.shortcut.conflict_with", {aurora::LocalizedString{"Lock off"}});
+    const std::string lock_on_note =
+        borealis::ui::settings_label("settings.shortcut.conflict_with", {aurora::LocalizedString{"Lock on"}});
+    const SettingsPanel::ShortcutRowView *lock_off = find_shortcut(rows, "Lock off");
+    const SettingsPanel::ShortcutRowView *lock_on = find_shortcut(rows, "Lock on");
+    AURORA_TEST_REQUIRE(lock_off != nullptr);
+    AURORA_TEST_REQUIRE(lock_on != nullptr);
+    AURORA_TEST_CHECK_TRUE(lock_off->note.rfind(lock_on_note) == 0U);
+    AURORA_TEST_CHECK_TRUE(lock_off->note.find(workspace_note) != std::string::npos);
+    AURORA_TEST_CHECK_GT(lock_off->note.size(), lock_on_note.size() + workspace_note.size());  // 中间确有分隔
+    AURORA_TEST_CHECK_TRUE(lock_on->note.rfind(lock_off_note) == 0U);
+    AURORA_TEST_CHECK_TRUE(lock_on->note.find(workspace_note) != std::string::npos);
+}
+
+/// @brief 表体的每一行**真的进了滚动树**（而不是只记进观测面），而真点它一格也不提交（D3-a 的只读）。
+///
+/// ① 是「为判据开观测点」那条代价的解毒剂：`ShortcutRowView` 与画出来的行同在一次闭包里填，故只比
+///    观测面抓不到「记了却没画」。量具取行区那条无障碍滚动读数的 `content`（G33 回货补的两个量之一），
+///    其增量按**用例侧独立写的**行高与列间距算——那是 `Scroll` 的 `content_h_`，本件不复制框架算式，
+///    只判「新增 n 行 ⇒ 自然高多 n×(24+6) dp」，且 `viewport` 一字未动（卡片尺寸不变）。
+/// ② 只读那一半按真实派发点一格：既不落盘也不广播、表单不脏、面板仍开。落点必须**确实在表体那一行上**
+///    （按链现问最深节点是 `Text` 才走这一击），否则测的是「点了空白处」而不是「点了一格表体」。
+AURORA_TEST_CASE(the_shortcut_rows_grow_the_row_area_content_and_a_click_on_the_table_commits_nothing) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+
+    StoreProbe bare;  // 命令表空 ⇒ 那一页只有表头与列名行，这是「加行之前」的读数
+    std::unique_ptr<SettingsPanel> without = h.attach(bare);
+    h.open(*without);
+    without->select_page(SettingsPage::Shortcuts);
+    h.render();
+    au::Scroll *area_before = h.row_scroll(450.0F, 300.0F);
+    AURORA_TEST_REQUIRE_MSG(area_before != nullptr, "the row area is not on the dispatch chain here");
+    const auto before = area_before->accessibility_scroll();
+    AURORA_TEST_REQUIRE(before.has_value());
+    AURORA_TEST_REQUIRE_EQ(without->shortcuts_rows().size(), 0U);
+    without->close();
+    h.render();
+
+    StoreProbe wired;
+    wired.command_table = {
+        make_command("cmd.a", "Row one", "Workspace", "Ctrl+Shift+U", press_of(KeySym::U, true, true, false, false, false)),
+        make_command("cmd.b", "Row two", "Edit", "Ctrl+Shift+V", press_of(KeySym::V, true, true, false, false, false)),
+        make_command("cmd.c", "Row three", "View", "Ctrl+Shift+B", press_of(KeySym::B, true, true, false, false, false)),
+    };
+    std::unique_ptr<SettingsPanel> panel = h.attach(wired);
+    h.open(*panel);
+    panel->select_page(SettingsPage::Shortcuts);
+    h.render();
+    AURORA_TEST_REQUIRE_EQ(panel->shortcuts_rows().size(), 3U);
+
+    au::Scroll *area = h.row_scroll(450.0F, 300.0F);
+    AURORA_TEST_REQUIRE(area != nullptr);
+    const auto with = area->accessibility_scroll();
+    AURORA_TEST_REQUIRE(with.has_value());
+    AURORA_TEST_CHECK_NEAR(with->content - before->content,
+                           3.0F * (kShortcutLineTestDp + kShortcutLineGapTestDp),
+                           1.0);
+    AURORA_TEST_CHECK_NEAR(with->viewport, before->viewport, 1.0);  // 卡片尺寸不变，只是内容变长
+
+    // 表体那一行的落点：沿真实派发链找一个「最深节点是 Text 且行区在其祖先里」的点（列宽 128 dp 的分组
+    // 列那一段最宽，故取 x=360；行区从卡片头部之下开始，故扫 90..560）。找不到就是判据失效，直接转红。
+    float cell_x = 0.0F;
+    float cell_y = 0.0F;
+    for (float y = 90.0F; y < 560.0F && cell_y == 0.0F; y += 2.0F) {
+        au::Widget *widget = h.hit(360.0F, y);
+        if (widget == nullptr || widget->type_name() != std::string_view{"Text"} ||
+            h.row_scroll(360.0F, y) == nullptr) {
+            continue;
+        }
+        cell_x = 360.0F;
+        cell_y = y;
+    }
+    AURORA_TEST_REQUIRE_MSG(cell_y != 0.0F, "no table cell of the shortcut section is dispatch-reachable");
+
+    h.click(cell_x, cell_y);
+    h.render();
+    AURORA_TEST_CHECK_EQ(wired.persist_calls, 0U);
+    AURORA_TEST_CHECK_EQ(wired.broadcast_calls, 0U);
+    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
+    AURORA_TEST_CHECK_TRUE(panel->is_open());
+}
+
 #else
 
 AURORA_TEST_CASE(the_scrim_covers_the_whole_window_and_a_real_click_closes_the_panel) {
@@ -3456,6 +3811,18 @@ AURORA_TEST_CASE(a_runtime_appended_overlay_subtree_is_mounted_at_the_next_layou
 }
 
 AURORA_TEST_CASE(the_deferred_status_bar_toggles_are_real_controls_and_only_persist) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_shortcut_table_lists_registry_rows_first_and_appends_only_orphans) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_conflict_notes_come_from_key_presses_rather_than_binding_text) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_shortcut_rows_grow_the_row_area_content_and_a_click_on_the_table_commits_nothing) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
