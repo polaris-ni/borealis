@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-  Render-throughput time gate for SPEC.NF.PERF.02: drives borealis_bench and judges it
-  against tools/check/perf_baseline.json.
+  Time gate for SPEC.NF.PERF.02 (render throughput) and SPEC.FEAT.INTERACT.04 (first search):
+  drives borealis_bench and judges it against tools/check/perf_baseline.json.
 
 .DESCRIPTION
   Runs the bench -Repeat times (independent processes), takes the MEDIAN of each metric,
@@ -26,6 +26,11 @@
     JSON and the baseline records the grid it was captured at, and a mismatch is a hard FAIL.
     Frame cost is per cell, so a grid change (a font that resolves differently, a window that
     sizes differently) silently rescales every reading.
+  - SPEC.FEAT.INTERACT.04's first-search scan rides on this bench and this script. Its fixture
+    (stored rows x columns x match count) is a third marker of the same kind: the scan is linear in
+    the rows, the per-row walk is linear in the columns, and a match table that reaches
+    ui::kMaxSearchMatches stops the scan early -- which would read as a speed-up while simply
+    measuring less work. The bench keeps its needle rare enough to never hit that cap.
   - Idle frames are already excluded by the bench, and the benchmark measures the cost of
     the presentation layer itself (dirty-row filtering, run splitting, colour resolution,
     cursor three-pass), not how fast the far end can produce bytes.
@@ -177,6 +182,30 @@ foreach ($s in $samples) {
     }
 }
 Write-Host "Grid: $wantGridText (matches baseline)"
+
+# The search fixture belongs to the same contract, and for a sharper reason than the grid: the
+# scan cost is linear in the number of stored rows, the per-row walk is linear in the columns,
+# and the match count decides whether the scan can stop early at ui::kMaxSearchMatches (10,000).
+# A fixture that stops early is a different measurement, not a bigger one -- that is why the
+# bench pins its match count below the cap and reports all three numbers.
+$wantFixture = $cfg.capture.search_fixture
+if ($null -eq $wantFixture) {
+    Write-Host "FAIL  baseline has no capture.search_fixture -- re-capture it (ruling 7.78)"
+    exit 1
+}
+$wantFixtureText = $wantFixture -join 'x'
+foreach ($s in $samples) {
+    if ($null -eq $s.search_fixture) {
+        Write-Host "FAIL  a bench sample has no search_fixture -- rebuild borealis_bench from the current source"
+        exit 1
+    }
+    $gotFixtureText = $s.search_fixture -join 'x'
+    if ($gotFixtureText -ne $wantFixtureText) {
+        Write-Host "FAIL  bench search_fixture $gotFixtureText != baseline $wantFixtureText -- rows, columns or early-stop differ, compare like with like"
+        exit 1
+    }
+}
+Write-Host "Search fixture: $wantFixtureText (lines x columns x matches, matches baseline)"
 
 # ---- judge ------------------------------------------------------------------------------
 $failures = 0

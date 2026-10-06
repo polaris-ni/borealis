@@ -1,13 +1,14 @@
 {
   "scenario": "borealis_render_throughput",
   "source": "Local time-class gate -- machine load, compiler and background processes move these numbers; NOT in CTest (AGENTS.md 4.4 rule 21: bench, not assertion). Run tools/check/check_perf_gates.ps1 to judge a build against this file.",
-  "note": "The absolute lines come from SPEC.NF.PERF.02 (cat 10 MB >= 45 fps; full redraw <= 100 ms) and the relative line (max_regression_percent) is that requirement's own 'regression > 10% is FAIL'. Metric keys are exactly those the bench writes under \"metrics\" in its --json= output. direction names the better side. A gate with relative=false is judged only by its absolute line. capture.build_config and capture.grid both belong to the measurement contract: the gate FAILs on a sample whose optimization level or whose rows x columns differ from the capture, because a Debug build inflates the write chain by 20-30x and a different grid simply counts a different number of cells -- either way the reading no longer describes the same product.",
+  "note": "The absolute lines come from SPEC.NF.PERF.02 (cat 10 MB >= 45 fps; full redraw <= 100 ms) and SPEC.FEAT.INTERACT.04 (first search over a 100,000-row scrollback <= 200 ms P95); the relative line (max_regression_percent) is those requirements' own 'regression > 10% is FAIL'. Metric keys are exactly those the bench writes under \"metrics\" in its --json= output. direction names the better side. A gate with relative=false is judged only by its absolute line. capture.build_config, capture.grid and capture.search_fixture all belong to the measurement contract: the gate FAILs on a sample whose optimization level, whose rows x columns, or whose search fixture differs from the capture, because a Debug build inflates the write chain by 20-30x, a different grid simply counts a different number of cells, and a fixture with a different row count, column count or match count scans a different amount of work (a table that reaches the 10,000-match cap stops early and reads as a speed-up) -- either way the reading no longer describes the same product.",
   "capture": {
     "date": "2026-10-03",
     "runs": 3,
     "aggregation": "median across runs -- the same rule the gate applies, so a reference and a reading are comparable",
     "window_dp": [960, 640],
     "grid": [28, 86],
+    "search_fixture": [100028, 86, 1000],
     "backend": "headless_software_painter",
     "preset": "msvc-bench",
     "cmake_build_type": "RelWithDebInfo",
@@ -39,6 +40,16 @@
       "metric": "ingest_mb_per_s",
       "observed": [37.615, 38.133, 36.713],
       "reason": "Attribution rung: the same corpus through Session (lock, dirty-row scan, damage queue) while the main thread drains the queue without painting; the gap to chain_mb_per_s is the session-side cost. Only present with --write-side."
+    },
+    {
+      "metric": "search_first_ms_mean",
+      "observed": [31.792, 31.310, 30.636],
+      "reason": "The other statistic of the same 9 scans, and SPEC.FEAT.INTERACT.04 names only P95. Gating it too would lock a second line on one signal (scroll_fps and cat_wall_ms are excluded on the same rule). A systematic scan slowdown moves the whole distribution, so B-8 still sees it."
+    },
+    {
+      "metric": "search_runs",
+      "observed": [9, 9, 9],
+      "reason": "Sample size of the scan distribution, a diagnostic rather than a cost (same category as cat_frames). It is also what makes B-8's p95 coarse: summarize() picks index min(n-1, n*95/100), so with 9 samples the p95 IS the slowest scan of the process; the median across 3 processes is what stabilizes it."
     }
   ],
   "gates": [
@@ -100,6 +111,15 @@
       "reference": 30.565,
       "relative": true,
       "note": "Ingestion throughput. The first capture left it out on the belief that a write-side defect pinned it (gating a defect would freeze it in as the contract); that belief was a Debug-build artifact -- the optimized rate is 20.6 MB/s, and after G19 landed in the framework the post-capture rate is 28.9 MB/s. Raw single runs are NOT stable (a five-run probe spanned 19.2-21.3, 10.3%), which is exactly why the gate judges the median of three. The 28x86 re-capture reads 29.907 / 30.695 / 30.565, a 2.6% peak-to-peak span with 2.2% on the adverse side (a higher-is-better metric can only fail downward), so the 10% relative line has headroom. This number is not named by SPEC.NF.PERF.02: it catches write-side regressions that frame-time gates cannot see, since a slower producer simply yields fewer frames."
+    },
+    {
+      "id": "B-8",
+      "metric": "search_first_ms_p95",
+      "direction": "lower",
+      "reference": 33.499,
+      "relative": true,
+      "absolute_max": 200.0,
+      "note": "SPEC.FEAT.INTERACT.04: first search over a 100,000-row scrollback must answer in <= 200 ms (P95). The ruling (7.78 part 5) pins that sentence to the literal arm only -- the regex arm folds every row into UTF-16 for the engine and can read two orders of magnitude slower on a wide pattern, so that arm is guarded by the UI-side throttle 'rescan on Enter, never per keystroke' instead of by a time line here. Fixture per capture.search_fixture: 100,028 stored lines x 86 columns carrying 1,000 embedded matches, rare enough that the 10,000-match cap never triggers an early stop (a truncated scan measures less work and would read as a speed-up). Each process runs 9 cold scans with no warmup, because 'first' is itself the measured quantity; summarize() picks index min(n-1, n*95/100), so with 9 samples the p95 IS that process's slowest scan and the median across 3 processes is what stabilizes it. Capture readings (p95 per invocation): 33.499 / 34.237 / 32.533 (5.2% span, adverse side 2.2%), about 6x under the absolute line -- the scan is memory-bound on the grid walk, so the relative window is the tight one and it is affordable here. Pooling 9 cold scans was checked against a truly cold first scan rather than assumed: --search-runs=1 three times gave 32.093 / 33.197 / 31.351, within 2% of the 9-run mean and 4% below its p95, so the pooled p95 neither hides first-touch cost nor manufactures a ceiling. Same preset, window and default config as B-1..B-7; captured 2026-10-07 from the current bench binary, which emits the render metrics and this one from a single process, and the render gates re-pass against it."
     }
   ]
 }
