@@ -45,8 +45,6 @@ namespace fs = std::filesystem;
 
 using au::json::Value;
 
-/// @brief 本仓支持的最高 schema 版本（裁决 7.26③）；高于它的文件按损坏降级处理。
-constexpr std::int64_t kSchemaVersion = 1;
 /// @brief 顶层版本键。
 constexpr std::string_view kVersionKey = "schema_version";
 /// @brief 四个域键名（裁决 7.26① 的四分类）。
@@ -686,11 +684,12 @@ struct Store::Impl {
             return;
         }
         const auto version = prefs->get<std::int64_t>(std::string(kVersionKey), 0);
-        if (version > kSchemaVersion) {
+        if (version > kSupportedSchemaVersion) {
+            report.stored_schema_version = version;
             recover(file,
                     LoadOutcome::RecoveredVersion,
                     "config schema version " + std::to_string(version) + " is newer than supported " +
-                        std::to_string(kSchemaVersion));
+                        std::to_string(kSupportedSchemaVersion));
             return;
         }
         report.outcome = LoadOutcome::Loaded;
@@ -704,7 +703,7 @@ struct Store::Impl {
             return std::string("refused to write the config file: the damaged original was not backed up");
         }
         auto &prefs = *this->prefs;
-        prefs.set(std::string(kVersionKey), kSchemaVersion);
+        prefs.set(std::string(kVersionKey), kSupportedSchemaVersion);
         prefs.set("appearance", appearance_to_json(next.appearance));
         prefs.set("terminal", terminal_to_json(next.terminal));
         prefs.set("connection", connection_to_json(next.connection));
@@ -728,6 +727,7 @@ struct Store::Impl {
         report.corrupt_backup = make_corrupt_backup(file);
         if (!report.corrupt_backup) {
             writes_allowed = false;
+            report.writes_refused = true;
             report.message += " (backup failed, the file is kept as is and writes are refused)";
         }
     }

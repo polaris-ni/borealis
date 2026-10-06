@@ -140,13 +140,16 @@ namespace {
                           EffectLevel::Immediate));
     catalog.push_back(real_step("appearance.viewport_padding_dp", SettingsPage::Appearance, 0.0, 64.0,
                                 ConsumerStatus::Wired, EffectLevel::Immediate));
+    // 光标形态与闪烁档的消费方在状态机的构造期注入（`term::TerminalDefaults`，裁决 7.76②）：值已由
+    // `src/main.cpp` 的 `make_terminal_defaults()` 交进每一条会话，故按「已接线」呈现；生效档位仍是
+    // 「下次会话」——构造期取用，运行期改动不重放既有会话。
     catalog.push_back(dropdown("appearance.cursor_shape",
                                SettingsPage::Appearance,
                                {"block", "underline", "bar"},
-                               ConsumerStatus::SeamPending,
+                               ConsumerStatus::Wired,
                                EffectLevel::NextSession));
     catalog.push_back(toggle(
-        "appearance.cursor_blinking", SettingsPage::Appearance, ConsumerStatus::SeamPending, EffectLevel::NextSession));
+        "appearance.cursor_blinking", SettingsPage::Appearance, ConsumerStatus::Wired, EffectLevel::NextSession));
     catalog.push_back(with_unit(integer_step("appearance.cursor_blink_period_ms", SettingsPage::Appearance, 50.0,
                                              5000.0, ConsumerStatus::Wired, EffectLevel::Immediate),
                                 "ms"));
@@ -181,7 +184,7 @@ namespace {
     catalog.push_back(dropdown("terminal.ambiguous_width",
                                SettingsPage::Terminal,
                                {"narrow", "wide"},
-                               ConsumerStatus::SeamPending,
+                               ConsumerStatus::Wired,
                                EffectLevel::NextSession));
     catalog.push_back(dropdown("terminal.long_line",
                                SettingsPage::Terminal,

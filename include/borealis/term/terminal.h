@@ -65,6 +65,18 @@ struct TermModes {
     bool cursor_blinking = true;   ///< DECSCUSR 的闪烁档；失焦降级归渲染侧，不在此表达。
 };
 
+/// @brief 会话的初始档：三条「只在建会话时喂给状态机」的配置项（判据文 §7 的构造期注入）。
+///
+/// 做成一份聚合而不是三个形参，是因为它的取值域与生效档位是同一句话——运行期改动**不重放既有
+/// 会话**（Ambiguous 改档不会回头重排已上屏的格宽，光标形态归远端 `DECSCUSR` 说了算）。于是
+/// 「下一次会话」与「这一份档」是同一件事，拆成三条独立入参会让漏传一条成为静默行为。
+/// `ESC c`（RIS）恢复到的是**本档**而不是库的硬编码缺省：那三条的定义就是本会话的初始态。
+struct TerminalDefaults {
+    CursorShape cursor_shape = CursorShape::Block;  ///< 配置键 `appearance.cursor_shape`。
+    bool cursor_blinking = true;                    ///< 配置键 `appearance.cursor_blinking`。
+    AmbiguousWidth ambiguous_width = AmbiguousWidth::Narrow;  ///< 配置键 `terminal.ambiguous_width`。
+};
+
 /// @brief DECSTBM 滚动区域（视口内行号，闭区间）。
 struct ScrollRegion {
     std::size_t top = 0;
@@ -93,8 +105,9 @@ class Terminal final : public vt::SequenceSink {
     /// @param rows 视口行数。
     /// @param scrollback_limit 主屏 scrollback 容量；备屏恒为 0（架构 §4.4）。
     /// @param width_policy 宽度判定接缝，生命周期由调用方保证（架构 §6.3）。
+    /// @param defaults 会话初始档；缺省即库自己的缺省档，故既有构造点一字不改。
     Terminal(std::size_t columns, std::size_t rows, std::size_t scrollback_limit,
-             const WidthPolicy &width_policy);
+             const WidthPolicy &width_policy, TerminalDefaults defaults = {});
 
     /// @brief 喂入一段已解码的码点流：内部解析并立即执行其语义。
     /// @param text 码点流（可跨调用任意分片）。
@@ -128,6 +141,10 @@ class Terminal final : public vt::SequenceSink {
     auto clear_full_screen_dirty() noexcept -> void { full_screen_dirty_ = false; }
 
     /// @brief 设定 Ambiguous 类宽度口径（profile 级覆盖，裁决 7.15）。
+    ///
+    /// 改的是**当前**口径，不写回 `TerminalDefaults`（与远端 `DECSCUSR` 改当前形态而不动初始档
+    /// 同一对称），也不回头重排已上屏的格宽——这正是 `terminal.ambiguous_width` 在面板上挂
+    /// 「下次会话生效」而非「即时」的根据（判据文 §7）。
     /// @param ambiguous 新口径。
     auto set_ambiguous_width(AmbiguousWidth ambiguous) noexcept -> void { ambiguous_ = ambiguous; }
 
@@ -164,6 +181,9 @@ class Terminal final : public vt::SequenceSink {
     auto resize(std::size_t columns, std::size_t rows) -> void;
 
     /// @brief 把状态机恢复到上电态（`ESC c` RIS、会话重设、编码切换）。
+    ///
+    /// 「上电态」在这里等于**本会话的初始档**（构造时交进来的 `TerminalDefaults`），而不是库的
+    /// 硬编码缺省：那三条的定义就是「本会话开始时的样子」，一次 `reset` 不该静默抹掉用户配置。
     auto reset_to_default() -> void;
 
   private:
@@ -241,6 +261,7 @@ class Terminal final : public vt::SequenceSink {
     Cursor saved_main_{};
     Cursor saved_alt_{};
     TermModes modes_{};
+    TerminalDefaults defaults_{};  ///< 本会话的初始档；RIS 回到的是它。
     std::size_t region_top_ = 0;
     std::size_t region_bottom_ = 0;
     AmbiguousWidth ambiguous_ = AmbiguousWidth::Narrow;

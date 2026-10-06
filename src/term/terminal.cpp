@@ -85,11 +85,15 @@ auto append_decimal(std::u32string &out, std::size_t value) -> void {
 }  // namespace
 
 Terminal::Terminal(std::size_t columns, std::size_t rows, std::size_t scrollback_limit,
-                   const WidthPolicy &width_policy)
+                   const WidthPolicy &width_policy, TerminalDefaults defaults)
     : main_{columns, rows, scrollback_limit},
       alt_{columns, rows, 0},
       width_policy_{width_policy},
+      defaults_{defaults},
       region_bottom_{rows - 1} {
+    modes_.cursor_shape = defaults.cursor_shape;
+    modes_.cursor_blinking = defaults.cursor_blinking;
+    ambiguous_ = defaults.ambiguous_width;
     tab_stops_.assign(columns, false);
     set_tab_stops_default();
 }
@@ -1025,13 +1029,16 @@ auto Terminal::reset_to_default() -> void {
     alt_.clear();
     pen_ = grid::Cell{};
     modes_ = {};
+    // RIS 回到的是本会话的初始档而不是库的硬缺省：一次 `reset` 不该静默抹掉用户配置（裁决 7.76）。
+    modes_.cursor_shape = defaults_.cursor_shape;
+    modes_.cursor_blinking = defaults_.cursor_blinking;
     designated_.fill(Charset::Ascii);
     cursor_ = {};
     saved_main_ = {};
     saved_alt_ = {};
     region_top_ = 0;
     region_bottom_ = main_.visible_rows() - 1;
-    ambiguous_ = AmbiguousWidth::Narrow;
+    ambiguous_ = defaults_.ambiguous_width;
     osc_state_ = {};
     hyperlinks_.clear();
     next_hyperlink_id_ = 1;  // 网格已清空，标识可以从头分配

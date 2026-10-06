@@ -100,9 +100,9 @@ auto preview_fixture() -> std::string_view {
     return kFixture;
 }
 
-SettingsPreview::SettingsPreview(TerminalView::Appearance appearance)
+SettingsPreview::SettingsPreview(TerminalView::Appearance appearance, term::TerminalDefaults defaults)
     : session_{std::make_unique<session::Session>(std::make_unique<PreviewConnection>(), kNominalSize, 0U,
-                                                  width_policy_)},
+                                                  width_policy_, defaults)},
       view_{std::make_shared<TerminalView>(*session_, std::move(appearance), TerminalView::InteractionOptions{})} {
     // 交互项一律取缺省（`copy_on_select` 为假、候选集为空），且不给浮层宿主：见文件头③。
     view_->set_focusable(false);
@@ -115,6 +115,14 @@ SettingsPreview::~SettingsPreview() {
 
 auto SettingsPreview::node() -> aurora::Node {
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(view_)};
+}
+
+auto SettingsPreview::modes() -> term::TermModes {
+    term::TermModes snapshot{};
+    session_->read([&snapshot](grid::Storage &, const term::Cursor &, const term::TermModes &modes) {
+        snapshot = modes;
+    });
+    return snapshot;
 }
 
 auto SettingsPreview::apply(TerminalView::Appearance appearance) -> void {

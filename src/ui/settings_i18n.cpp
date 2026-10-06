@@ -70,6 +70,19 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"settings.shortcut.conflict_with", "与「{0}」重复"},
     {"settings.shortcut.conflict_workspace", "与分屏键位冲突"},
 
+    // ---- 启动降级提示（`SPEC.FEAT.PREF.07`，判据文 §7 的 S13①）----
+    // 标题按 `LoadOutcome` 两态各一条（同一句话覆盖不了「读不出」与「读得懂但不归本程序管」两件事），
+    // 版本号与备份路径都是**取值**故走位置参数，与 `settings.font.fallback` 同档。
+    // `LoadReport::message` 不在此表：它是 ASCII 英文诊断，上中文界面即违 AGENTS.md §4.3 第 14 条。
+    {"settings.startup.corrupt.title", "配置文件已损坏"},
+    {"settings.startup.version.title", "配置文件版本高于本程序"},
+    {"settings.startup.corrupt.body", "无法读取这个配置文件，本程序已回落到默认设置启动。"},
+    {"settings.startup.version.body", "这个配置文件由更新的版本写出（版本 {0}，本程序支持 {1}），已回落到默认设置启动。"},
+    {"settings.startup.backup", "损坏的文件已备份为：{0}"},
+    {"settings.startup.writes_refused", "未能备份损坏的文件：本会话不会写入配置文件，原文件保持原样"},
+    {"settings.startup.rejected", "以下设置项的值超出可用范围，已回落到默认值："},
+    {"settings.startup.ack", "知道了"},
+
     // ---- 外观域 ----
     {"appearance.theme", "主题"},
     {"appearance.palette.basic", "16 色重映射"},

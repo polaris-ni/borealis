@@ -19,8 +19,10 @@
 //    须再排一帧（面板 `Hooks::preview_wake` 就是为此而开的那一条接缝）。
 // ③ 不给预览派焦点、不装浮层宿主、`copy_on_select` 恒假：少一条都会让一根只用来看的横条摸到用户的
 //    东西——焦点被抢则面板的输入框失灵，右键有宿主则真弹菜单，选中即复制则泵帧时写系统剪贴板
-//    （§4.5 第 25 条禁止在帧路径上做 IO）。于是预览里的光标恒是**失焦**的空心形态：那是本件的口径
-//    而非缺陷，判据 F-b 要的「光标形态」在这里示范的是降级档。
+//    （§4.5 第 25 条禁止在帧路径上做 IO）。预览里的光标因此恒走失焦那条降级，但降级成什么
+//    形态按档位分：块形降级成空心描边，而 `Bar` / `Underline` 两档在绘制侧**先于**失焦判定就落笔
+//    （`terminal_view.cpp` 的 `paint_cursor`）。故初始档必须与主视口注入同一份，否则同一屏里画出两种
+//    光标（裁决 7.76③）；判据 F-b 在这里示范的仍是降级档，只是「空心」那一句只对块形成立。
 //
 // 夹具只有 5 行且高度做成常量（F-e：扁条按 14 pt 约 6~7 行，示范面因此收窄）；本件不按内容算高，
 // 也不改卡片总高——卡片尺寸由外层 `LayoutBuilder` 显式钳定，多一条子节点只会从行区的高度里扣。
@@ -34,6 +36,7 @@
 
 #include "aurora/widget/widget.h"
 
+#include "borealis/term/terminal.h"
 #include "borealis/term/width.h"
 #include "terminal_view.h"
 
@@ -57,7 +60,11 @@ class SettingsPreview {
   public:
     /// @brief 按外观包装好会话与视口，并立即起会话（夹具在 `Connection::start` 里投出）。
     /// @param appearance 外观包；与主视口共用同一个载体，取值域由配置侧把守（裁决 7.46②）。
-    explicit SettingsPreview(TerminalView::Appearance appearance);
+    /// @param defaults 会话初始档（光标形态 / 闪烁档 / Ambiguous 口径），与主视口那台会话**同一份**：
+    ///                 三处取值点里预览最容易被漏掉，而它恰恰是判据 F-c「同源」的反面证人——
+    ///                 `Bar` 与 `Underline` 两档在绘制侧先于失焦降级落笔（`terminal_view.cpp` 的
+    ///                 `paint_cursor`），不注入就会在同一屏里画出两种光标。
+    SettingsPreview(TerminalView::Appearance appearance, term::TerminalDefaults defaults);
 
     SettingsPreview(const SettingsPreview &other) = delete;
     auto operator=(const SettingsPreview &other) -> SettingsPreview & = delete;
@@ -73,6 +80,13 @@ class SettingsPreview {
     [[nodiscard]] auto view() noexcept -> TerminalView & {
         return *view_;
     }
+
+    /// @brief 预览会话此刻的终端模式（在短临界区内取自状态机，不是本件另存的一份初始档）。
+    ///
+    /// 判据 F-c 断的是「预览与主视口同源」，而三条初始档只落在这台自己的会话里，从视口那边读不到；
+    /// 本入口因此是那条判据的唯一观测通道（与裁决 7.61 为 A1/A2 开的那几只读观测点同口径）。
+    /// 不是 `const`：`Session::read` 要消费行脏标记，故会话侧的读入口一律是可变操作。
+    [[nodiscard]] auto modes() -> term::TermModes;
 
     /// @brief 换外观包：走主视口同一条运行期入口（裁决 7.53 的 S4），不重建视口也不重投夹具。
     /// @param appearance 新的外观包。

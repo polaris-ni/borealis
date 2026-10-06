@@ -47,8 +47,11 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     ///             （`SPEC.FEAT.XFER.01` 的会话启动腿）。
     /// @param scrollback_limit 主屏 scrollback 容量（`SPEC.FEAT.TERM.04`）。
     /// @param width_policy 宽度判定接缝，生命周期须不短于本会话（架构 §6.3）。
+    /// @param defaults 状态机的初始档（`appearance.cursor_shape` / `cursor_blinking` 与
+    ///                 `terminal.ambiguous_width` 三条）。缺省即库的缺省档，故既有构造点不改一字；
+    ///                 取用时机是**建会话这一刻**，运行期改配置不重放既有会话（判据文 §0 边界②）。
     Session(std::unique_ptr<Connection> connection, Size size, std::size_t scrollback_limit,
-            const term::WidthPolicy &width_policy);
+            const term::WidthPolicy &width_policy, term::TerminalDefaults defaults = {});
 
     Session(const Session &) = delete;
     auto operator=(const Session &) -> Session & = delete;

@@ -1706,11 +1706,12 @@ auto SettingsPanel::refresh_palette_views() -> void {
 }
 
 auto SettingsPanel::refresh_preview() -> void {
-    if (!hooks_.preview_appearance) {
-        return;  // 未装接缝即不画横条：预览是可选腿，面板既有行为一字不变
+    if (!hooks_.preview_appearance || !hooks_.preview_defaults) {
+        return;  // 外观与初始档任缺一条即不画横条：见 `settings_panel.h` 文件头预览段③（裁决 7.76③）
     }
     if (preview_ == nullptr) {
-        preview_ = std::make_unique<SettingsPreview>(hooks_.preview_appearance());
+        preview_ = std::make_unique<SettingsPreview>(hooks_.preview_appearance(),
+                                                     hooks_.preview_defaults());
     } else {
         preview_->apply(hooks_.preview_appearance());
     }
@@ -1736,6 +1737,13 @@ auto SettingsPanel::build_preview_bar() -> aurora::Node {
 
 auto SettingsPanel::preview_view() const noexcept -> TerminalView * {
     return preview_ == nullptr ? nullptr : &preview_->view();
+}
+
+auto SettingsPanel::preview_modes() -> std::optional<term::TermModes> {
+    if (preview_ == nullptr) {
+        return std::nullopt;
+    }
+    return preview_->modes();
 }
 
 auto SettingsPanel::pump_preview() -> void {

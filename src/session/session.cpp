@@ -28,9 +28,9 @@ class BufferSink final : public term::CodePointSink {
 }  // namespace
 
 Session::Session(std::unique_ptr<Connection> connection, Size size, std::size_t scrollback_limit,
-                 const term::WidthPolicy &width_policy)
+                 const term::WidthPolicy &width_policy, term::TerminalDefaults defaults)
     : connection_{std::move(connection)},
-      terminal_{size.columns, size.rows, scrollback_limit, width_policy} {
+      terminal_{size.columns, size.rows, scrollback_limit, width_policy, defaults} {
     terminal_.set_response_sink(this);
 }
 

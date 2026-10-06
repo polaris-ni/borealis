@@ -34,6 +34,13 @@ namespace borealis::config {
 /// @brief 配置文件名：落在 Aurora `Preferences::default_config_dir()` 下（裁决 7.26③）。
 inline constexpr const char *kConfigFileName = "borealis.json";
 
+/// @brief 本仓支持的最高 schema 版本（裁决 7.26③）：高于它的文件按损坏降级。
+///
+/// 上公共头是因为「本程序支持哪一档」这条事实要出现在界面上（降级对话框的文案要报出两个版本号），
+/// 而实现文件里的私有常量不可达；写在 `LoadReport` 旁边而不是让 UI 自己抄一份，是为了不让
+/// 「支持的版本」出现第二个真值源。
+inline constexpr std::int64_t kSupportedSchemaVersion = 1;
+
 /// @brief 装载结论（`SPEC.FEAT.PREF.07` 的降级分支之一）。
 enum class LoadOutcome : std::uint8_t {
     FirstRun,         ///< 没有配置文件：取 `Settings{}` 全量默认值，且不写盘。
@@ -44,13 +51,16 @@ enum class LoadOutcome : std::uint8_t {
 
 /// @brief 一次装载的可观察结论，交 UI 侧作显著提示。
 ///
-/// TODO(SPEC.FEAT.PREF.07): 「绝不静默清空」要求的对话框尚未落地（设置面板随
-/// `SPEC.FEAT.PREF.02` 前置后接入），届时按 `outcome` 分支取 `message` 与 `corrupt_backup`
-/// 组织文案，并按 `rejected_keys` 列表提示被回落的键。
+/// 消费方是启动路径上的降级对话框（`src/ui/startup_notice.cpp`，裁决 7.76⑤）：`outcome` 决定弹不弹与
+/// 取哪一条中文词条，`corrupt_backup` / `stored_schema_version` / `rejected_keys` 是它的结构化内容，
+/// 而 `message` **只进日志**——它是 ASCII 英文诊断（AGENTS.md §4.3 第 14 条的诊断文案不属中文例外），
+/// 显示在中文界面上即违那条规则（判据文 S13①）。
 struct LoadReport {
     LoadOutcome outcome{LoadOutcome::FirstRun};
     std::filesystem::path file;  ///< 配置文件路径。
     std::optional<std::filesystem::path> corrupt_backup;  ///< 损坏文件的备份路径；未发生降级时为空。
+    std::optional<std::int64_t> stored_schema_version;  ///< 文件自报的 schema 版本；只在版本过高那一路有值。
+    bool writes_refused{false};  ///< 备份未成功：本会话拒绝再写这个文件，唯一现场原样保留。
     std::string message;  ///< 降级的补充说明；正常装载为空。
     std::vector<std::string> rejected_keys;  ///< 回落默认的键（点号路径）。
     std::vector<std::string> unknown_keys;   ///< schema 之外的键：只记录，不影响装载。

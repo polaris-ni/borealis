@@ -24,6 +24,7 @@
 #include "borealis/ui/settings_form.h"
 #include "ui/settings_i18n.h"
 #include "ui/settings_panel.h"
+#include "ui/startup_notice.h"
 #include "ui/terminal_view.h"
 
 namespace {
@@ -96,6 +97,20 @@ constexpr borealis::session::Size kNominalViewport{80U, 24U};
     return interaction;
 }
 
+/// @brief 从配置装出会话的初始档（光标形态 / 闪烁档 / Ambiguous 口径）。
+///
+/// 三条都是**建会话那一刻**取用（判据文 §0 边界②），运行期入口碰不到它们，故本函数只在构造点出现；
+/// 但主会话与预览会话必须同源，否则同一屏里画出两种光标（`Bar` / `Underline` 两档在绘制侧先于失焦
+/// 降级落笔），所以它与 `make_appearance()` 一样是「一处折算、两处复用」的搬运件（裁决 7.76②）。
+[[nodiscard]] auto make_terminal_defaults(const borealis::config::Settings &settings)
+    -> borealis::term::TerminalDefaults {
+    return borealis::term::TerminalDefaults{
+        .cursor_shape = settings.appearance.cursor_shape,
+        .cursor_blinking = settings.appearance.cursor_blinking,
+        .ambiguous_width = settings.terminal.ambiguous_width,
+    };
+}
+
 /// @brief 互转点：框架 `KeyCombo` → 本仓键位语义值（`term::KeyPress`）。
 ///
 /// 与 `ui::TerminalView` 那条「`KeyEvent` → `KeyPress`」的互转点是两个**来源**而不是两条算式：命令表
@@ -139,7 +154,8 @@ auto main() -> int {
 
     borealis::term::UnicodeWidthPolicy width_policy;
     borealis::session::Session session{borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
-                                       kNominalViewport, settings.terminal.scrollback_limit, width_policy};
+                                       kNominalViewport, settings.terminal.scrollback_limit, width_policy,
+                                       make_terminal_defaults(settings)};
     // 后台读线程产出提交后叫醒主循环排帧（架构 §3.2）：`request_wake` 是线程安全的跨线程唤醒。
     session.set_frame_wake([&surface]() -> void { surface.request_wake(); });
     session.start();
@@ -158,8 +174,6 @@ auto main() -> int {
 
     auto view = std::make_shared<borealis::ui::TerminalView>(
         session, make_appearance(settings, catalog), make_interaction(settings));
-    // TODO(SPEC.FEAT.PREF.02): 配置里的光标缺省形态与闪烁档、Ambiguous 口径尚无会话侧接缝可注入，
-    // 三者当前分别取状态机的 `Block` / `blinking=true` 缺省值与判定入参的 `Narrow`。
     // 右键菜单与多行粘贴确认都是浮层，故场景根是浮层宿主而非视口本身（裁决 7.41③）：宿主的子节点
     // [0] 是撑满窗口的视口，[1..] 是视口与设置面板按需追加的 Popup / Dialog / 面板浮层。
     auto host = std::make_shared<au::OverlayHost>(au::Node{std::static_pointer_cast<au::Widget>(view)});
@@ -210,6 +224,12 @@ auto main() -> int {
     hooks.preview_appearance = [&store, &catalog]() -> borealis::ui::TerminalView::Appearance {
         return make_appearance(store.settings(), catalog);
     };
+    // 三条构造期注入与主会话**同一对折算**（判据文 §7 的三条，裁决 7.76②）：预览那条会话建好就不再
+    // 重建，拿不到外观包那条运行期入口，故这条接缝独立于 `preview_appearance`；面板任缺其一即不画横条，
+    // 「装了外观而漏了初始档」在结构上不成立。
+    hooks.preview_defaults = [&store]() -> borealis::term::TerminalDefaults {
+        return make_terminal_defaults(store.settings());
+    };
     // 夹具在预览视口的 `on_layout` 里随 `resize` 重投，那一批脏要下一帧才排；不唤醒就会停在
     // 「横条画了但内容还是上一版」。与下面 `set_on_frame` 里的 `pump_preview()` 配对存在。
     hooks.preview_wake = [&surface]() -> void { surface.request_wake(); };
@@ -246,6 +266,14 @@ auto main() -> int {
     open_settings.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(open_settings));
     app.commands().bind_shortcuts(app.shortcuts());
+
+    // 启动降级提示（`SPEC.FEAT.PREF.07`，裁决 7.76⑤）：`LoadOutcome` 四态里只有两条降级态会弹，弹一次即止。
+    // `message` 是 ASCII 英文诊断，只进日志不上中文界面（判据文 S13①），故以「本次真的弹了」为条件——
+    // 「哪两态弹」的判定只在 `StartupNotice` 里存一份，装配层不另做一遍 `outcome` 分支。
+    borealis::ui::StartupNotice notice{*host, app.focus()};
+    if (notice.show_if_needed(store.report())) {
+        AURORA_LOG_WARN("main", "config load degraded: ", store.report().message);
+    }
 
     app.set_on_frame([&view, &outbox, &session, &panel]() -> void {
         view->on_frame();  // 先取脏行提交、再在临界区并入本地副本（顺序不可颠倒，见 session.h）
