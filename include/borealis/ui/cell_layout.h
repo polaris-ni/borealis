@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -159,6 +160,32 @@ struct StyleRun {
 [[nodiscard]] auto decoration_rects(const GridGeometry &geometry, std::size_t row, const StyleRun &run)
     -> std::vector<Rect>;
 
+/// @brief 一行上「只换底色不换笔形」的两层区间：搜索命中与选区（裁决 7.38① D1① +
+///        `SPEC.FEAT.INTERACT.04` 视觉稿的 C1-a）。
+///
+/// 三档底色与两组区间并列放在同一张聚合体里，是为了让**层序在一处施加**：命中与选中相撞的那几格
+/// 只能由同一次换底决定胜出者（选中盖命中），若在两个区间各换一次底，前景的最小对比度重合成就按
+/// 输掉的那档底色算——高亮强度会随「这一格恰好在选区边缘」而抖，而 run 的切分随之再切一刀。
+/// 故实现是「先折出这一格最终的底色，再一次换底 + 一次重合成」。
+///
+/// 三档底色都由调用方给到**最终值**：失焦降级、`mix_half`、主题取色一律不在本件（D3① 同一条口径），
+/// 本件只认「这个区间用这个底色」。命中的两档尤其如此——浮层的失焦态与视口的失焦态不是一回事
+/// （视觉稿 A1-f：命中**不**随失焦降级，而选区随），把降级规则写进本件就表达不出那条不对称。
+struct RowBands {
+    /// @brief 本行的命中列区间，**按列升序且互不重叠**（`SearchMatches::spans()` 按行切出的切片）。
+    ///
+    /// 是视图不是快照：上限档一屏可达 `kMaxSearchMatches` 段，逐行拷一份就是每帧多一次整表分配
+    /// （`SearchMatches::spans()` 出视图的同一条理由）。
+    std::span<const RowSpan> hits{};
+    /// @brief 游标（当前命中）那一段；**按整值相等**与本行的某一段配对，故它属别的行时自然全不命中。
+    std::optional<RowSpan> current_hit{};
+    /// @brief 本行的选中列区间（闭开区间；两端相等即本行无选中格）。
+    std::optional<RowSpan> selection{};
+    RgbaColor hit_background{};           ///< 其余命中的底色。
+    RgbaColor current_hit_background{};   ///< 当前命中的底色（视觉稿 A1-e 的全色档）。
+    RgbaColor selected_background{};      ///< 选中格的底色。
+};
+
 /// @brief 把一行切成按样式全等合并的 run 表（既供色带矩形，也供文本片段）。
 ///
 /// 什么都不用画的区间不出现在结果里：文本全空白、无下划线与删除线、且底色等于主题默认底色。
@@ -182,5 +209,17 @@ struct StyleRun {
 /// @return 列号升序的 run 表；选中段因底色不同而自成一跑（run 切分本就按样式全等，裁决 7.23②）。
 [[nodiscard]] auto layout_row(const grid::Row &row, const PaletteSpec &spec, const RowSpan &selection,
                               const RgbaColor &selected_background) -> std::vector<StyleRun>;
+
+/// @brief 同上，但同时给出**本行的命中区间**与选中区间（`SPEC.FEAT.INTERACT.04` 的 C1 / C3）。
+///
+/// 与四参形态的唯一差别是多了一层命中：底色按「主题底 → 命中 → 选中」折成这一格的最终底色，
+/// 再一次性换底并按需重合成前景，故相撞处（一段命中被选区盖住）与不相撞处走的是同一条算式。
+/// 无命中时（`bands.hits` 为空）**逐字段等于**四参形态，故选区那条既有判据不受本形态影响。
+/// @param row 网格中的一行。
+/// @param spec 调色板配置。
+/// @param bands 本行的两组区间与三档底色（见其上的层序与降级口径）。
+/// @return 列号升序的 run 表；两档命中与选中各因底色不同而自成一跑。
+[[nodiscard]] auto layout_row(const grid::Row &row, const PaletteSpec &spec, const RowBands &bands)
+    -> std::vector<StyleRun>;
 
 }  // namespace borealis::ui

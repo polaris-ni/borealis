@@ -73,14 +73,15 @@ constexpr std::array<int, 4> kCurlyOffsets{0, 1, 0, -1};
     return raw > last ? count - 1U : static_cast<std::size_t>(raw);
 }
 
-/// @brief run 切分的唯一实现；@p selection 有值时该列区间的底色换成 @p selected_background。
+/// @brief run 切分的唯一实现：先按层序折出每格最终底色，再按样式全等合并。
 ///
-/// 底色替换发生在 `resolve` **之后**：一格属不属于选区是区间级事实而非该格的事实（裁决 7.32②），
-/// 而色值合成链（亮色档 → 暗淡 → 反色 → 最小对比度）只认该格自己。于是选中段的前景只在开了
-/// 最小对比度时才按新底色重合成，未选中段逐位等于无选区形态。
-std::vector<StyleRun> layout_selected(const grid::Row &row, const PaletteSpec &spec,
-                                      const std::optional<RowSpan> &selection,
-                                      const RgbaColor &selected_background) {
+/// 底色替换发生在 `resolve` **之后**：一格属不属于某个区间是区间级事实而非该格的事实（裁决 7.32②），
+/// 而色值合成链（亮色档 → 暗淡 → 反色 → 最小对比度）只认该格自己。于是命中段与选中段的前景都只在
+/// 开了最小对比度时才按**胜出那档**底色重合成，两处都不动的格逐位等于无区间形态。
+///
+/// 命中的游标按整值（含行号）与切片配对，故选中的区间只取两个列字段——两者一个要「这一段就是它」、
+/// 一个要「这一行到哪一列」，判据不同是因为入参来源不同（游标来自整表、选区来自本行）。
+std::vector<StyleRun> layout_banded(const grid::Row &row, const PaletteSpec &spec, const RowBands &bands) {
     std::vector<StyleRun> runs;
     StyleRun current{};
     bool building = false;
@@ -101,11 +102,24 @@ std::vector<StyleRun> layout_selected(const grid::Row &row, const PaletteSpec &s
         has_glyph = false;
     };
 
+    // 命中切片按列升序且互不重叠（`ui::search()` 的产物即此），故逐列推进一个游标即可，
+    // 不必每格重扫整段——一行可达几十个命中，而本循环每帧每可见行都要走。
+    std::size_t hit_index = 0U;
     for (std::size_t column = 0; column < row.columns(); ++column) {
         const auto &cell = row.cell(column);
         auto paint = resolve(cell, spec);
-        if (selection.has_value() && column >= selection->first_column && column < selection->last_column) {
-            paint.background = selected_background;
+        while (hit_index < bands.hits.size() && bands.hits[hit_index].last_column <= column) {
+            ++hit_index;
+        }
+        const bool on_hit = hit_index < bands.hits.size() && column >= bands.hits[hit_index].first_column;
+        const bool on_selection = bands.selection.has_value() && column >= bands.selection->first_column &&
+                                  column < bands.selection->last_column;
+        if (on_hit || on_selection) {
+            // 层序「主题底 → 命中 → 选中」（视觉稿 C1-a）：选中段盖住命中的那一档强度。
+            paint.background = on_selection
+                                   ? bands.selected_background
+                                   : (bands.hits[hit_index] == bands.current_hit ? bands.current_hit_background
+                                                                                 : bands.hit_background);
             if (spec.min_contrast_enabled) {
                 paint.foreground = enforce_contrast(paint.foreground, paint.background, spec.min_contrast);
             }
@@ -239,12 +253,16 @@ auto decoration_rects(const GridGeometry &geometry, std::size_t row, const Style
 }
 
 auto layout_row(const grid::Row &row, const PaletteSpec &spec) -> std::vector<StyleRun> {
-    return layout_selected(row, spec, std::nullopt, RgbaColor{});
+    return layout_banded(row, spec, RowBands{});
 }
 
 auto layout_row(const grid::Row &row, const PaletteSpec &spec, const RowSpan &selection,
                 const RgbaColor &selected_background) -> std::vector<StyleRun> {
-    return layout_selected(row, spec, selection, selected_background);
+    return layout_banded(row, spec, RowBands{.selection = selection, .selected_background = selected_background});
+}
+
+auto layout_row(const grid::Row &row, const PaletteSpec &spec, const RowBands &bands) -> std::vector<StyleRun> {
+    return layout_banded(row, spec, bands);
 }
 
 }  // namespace borealis::ui
