@@ -4,6 +4,22 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.71（2026-10-06）**接 G35 回货：三处「调用方自备 `BuildContext`」的运行期挂载补偿据此撤除，并补一条挂载计数控件作面板腿的唯一证人**（判据入册为裁决 **7.71**）
+
+**动机**：G35 是 #115 预览盒棒读源实测登记的框架运行期挂载语义缺口（裁决 7.66⑥ 派发，任务书随裁决在会话内产出），人已明示「G35 已完成，G36 进行中」。本棒是**接货复验**而不是新功能：Aurora 当日活动分支 `9202ec46` 到货后，本仓此前为绕开该缺口而写的三处补偿**按 §5 第 2 条「不长期持有框架分叉」必须撤除**——框架回货的口径写在公共头上（`add_overlay` 的文档注释直接声明「运行期追加的子树由框架在下一次布局入口以父侧 ctx 补挂，调用方无须自备 `BuildContext`」），本仓再自备一份 ctx 去 `mount` 就是把框架的生命周期动作搬进应用侧。
+
+**回货形态**（四读公共头与其 `src/aurora/widget/widget.cpp` 实现体而得，不是只读声明面）：`BuildContext` 增 `std::uint64_t host_id`（0 ＝ 未声明宿主）；`Widget::mount` 的幂等判据由「是否已挂载」这一个布尔换成**宿主身份**（同宿主跳过、换宿主先 `unmount()` 再挂），并新增只在挂载成功时写入的 `mount_ctx_`；新增 `Widget::unmount()` 与 `virtual on_unmount(ctx)`，与 `on_mount` 逐处对称，而**容器移除子项时不代调**是一条负向契约；新增 `note_pending_mount()` ＋ `virtual flush_pending_mounts(ctx)`，消费点在 `Widget::layout` 入口且位于 `show` 判定与布局缓存判定**之前**（补挂是生命周期动作，不该被「当前不可见」或「本帧无需重排」跳过）。登记待补挂的追加口共六处（`Container::add` / `adopt_children` / `set_children`、`OverlayHost::add_overlay`、`TabBar::add_tab`，另 `SingleChild` / `LayoutBuilder` 同批改列），文档回写落在该仓 `codespec/specification/04-widget.md` §2.3.1 并新增其自有用例。
+
+**撤除点三处、零新增生产代码**：裁决 7.49④ 那一条（`WorkspaceView` 的 `on_mount` 覆写 + `mounted_` / `mount_ctx_` 两个成员 + `split_pane` 里补挂那三行）、裁决 7.66⑥ 那一条（`SettingsPreview::ensure_mounted()` 的声明与定义 + 面板 `build_preview_bar()` 的调用点）、以及 `itest_settings_panel` 里对照视口在**用例侧**的那一次调用。
+
+**本棒唯一需要新写的是那条证人，而它必须写的理由是两条腿的成色不对称**：工作区腿**早有**行为证人（`itest_workspace_layout.a_new_pane_mounts_and_blinks`——一个闪烁周期后光标格像素相位翻动，「没挂载就没有周期任务，这条判据恒红」），撤除补偿后它仍绿即证明框架的 flush 真接住了 `Container::add`；面板／浮层腿在无头通道**结构上抓不到挂载**（7.66⑦ 的 M6 已在册：`on_mount` 只影响闪烁档与主题订阅，两者都不进本套件任何用例的判据），于是「43 例全绿」在该腿上**不是**证人。补的形态是一枚最小 `au::Widget` 子类（只覆写 `on_mount` / `on_unmount` 计数）经 `Harness::add_overlay` 走面板 `open()` 所用的**同一条**公共入口，五句断言各守一件事：追加而未排布局 ⇒ 0（**反空转前提**，缺这一句则「`add_overlay` 当场就挂上」那种实现照样让后四句全绿）、排一帧 ⇒ 恰 1、再排一帧 ⇒ 仍 1 **且退订 0**（宿主身份幂等）、嵌套孙辈 ⇒ 同 1（补挂是递归的）、运行期第二次追加另一棵 ⇒ 前者仍 1 而后者 1（补挂不是整树重来）。
+
+**一条在册边界的改口而不撤销**：M6 那句「去掉补偿是等价注入、39 例全绿」随回货改口为「在无头通道仍判不到闪烁与主题，但**挂载动作本身现在可判**」；故 7.66⑦ 登记的欠账照旧在册——预览横条那一只视口的闪烁档与主题跟随仍无直接证人，归真机走查。**一条刻意留空的取舍**：面板的复用件（`font_popup_`、回退链候选按钮池、行控件句柄）在同宿主下由 `mount` 的宿主身份判据跳过重挂、旧订阅因此仍然有效，故本仓**不**为它们写 `unmount()`（无头通道 `BuildContext{}` 的 `host_id` 为 0，走同一条 same_host 分支）；按「不添加不可能发生路径上的防御代码」的口径这一处留空而不是留一条兜底退订。
+
+**验收**：`itest_settings_panel` 43 → **44 例全绿**（其中 26 例须 `AURORA_BACKEND_HEADLESS`，另 26 条 `#else` SKIP 桩）、`itest_workspace_layout` **17 例全绿**、非 e2e 通道 `ctest -E etest_` **37 项全绿**（`100% tests passed out of 37`，42.06 s）；每次重链前 `find build -name '*.ilk' -delete`。**两条证人都经变异实测**（在 Aurora 树临时去掉 `Container::add` 与 `OverlayHost::add_overlay` 两处 `note_pending_mount()`）：面板腿新例转红（读数 `leaf->mounts` **0 vs 1**，`nested` 与 `second` 同）且**同套件其余 43 例全绿**，工作区腿同一次变异下 `a_new_pane_mounts_and_blinks` **单独**转红（其余 16 例绿）——即两条证人各自承重、互不冗余。变异已全量还原，该树 `git status --porcelain` 为空、HEAD 仍 `9202ec46`，本仓不提交 Aurora 任何改动。**未复跑吞吐门禁**并给理由：本棒只撤除三处补偿、新增一例测试，绘制与布局算式零改动，基准三场景不含面板。**G35 出账后 `SPECIFICATIONS.md` 附录 A.2 的开放缺口只剩 G36**（框架侧进行中，回货即撤本仓 `AnchorButton` 与 `row_area_` 折算那处过渡形态）。真机走查照旧未做（会话锁屏下 `SendInput` 静默失效，裁决 7.31①），故本条不宣称面板「可用」。
+
+**落点**：`src/ui/workspace_view.{h,cpp}`、`src/ui/settings_preview.{h,cpp}`、`src/ui/settings_panel.{h,cpp}`、`tests/integration/itest_settings_panel.cpp`（文件头⑪ 段 + 新例 + SKIP 桩）；文档回写＝`codespec/SPECIFICATIONS.md` §7 的 7.71 与附录 A.2 的 G35 行、`codespec/PLAN.md` 的 `SPEC.FEAT.PREF.02` 行与 §6 缺口表、`codespec/UI_SETTINGS.draft.md` §8 那两处补偿口径（7.49④ / 7.66⑥）的就地更正、`AGENTS.md` §6。
+
 ## v0.70（2026-10-06）**#114 余件 A4（字体族选择器）本体落地：行内常驻按钮 + `au::Popup` 候选浮层；同批以实测否证 7.69③ 那句「与 `paint_bounds()` 同值」并登记 G36**（判据入册为裁决 **7.70**）
 
 **动机**：A4 是 #114 的最后一件，形态与候选池次序已由人在同日拍板（裁决 7.69①②），本棒就是把那句话落成代码：`src/ui/settings_panel.{h,cpp}` 的字体族区段 + `tests/integration/itest_settings_panel.cpp` 的四例 + 一条新词条。
