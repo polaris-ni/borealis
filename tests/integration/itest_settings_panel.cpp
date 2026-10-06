@@ -6,8 +6,9 @@
 ///           落盘与广播」，因此值得单独证的正是那三条接缝能不能对上一张表（裁决 7.52 / 7.56）：
 ///           ① **面板画的键 ＝ 反向核对表 ∩ 装载成功的键**，且次序照表：装载缺一键、给一个表外的键、
 ///              或给一个形态族不符的值，面板都**少画一个控件**而不是画一个存不回去的控件；
-///           ② **两个正交列折成界面上的两枚角标**：`Absent` 灰置且挂「延后」，`NextSession` 挂
-///              「下次会话生效」，`terminal.encoding` 那行两枚并列（判据文 B3-a）；
+///           ② **两个正交列折成界面上的两枚角标**：`Absent` 挂「延后」而**控件照样可用**（裁决 7.68③：
+///              有键无消费方的行一律可改、只落盘，组顶另有一条说明点名「哪个消费方还没开工」），
+///              `NextSession` 挂「下次会话生效」，`terminal.encoding` 那行两枚并列（判据文 B3-a）；
 ///           ③ **提交 → 落盘 → 广播的三条腿各在其位**：只有「已接线 ∧ 即时」广播；落盘失败时脏标记
 ///              留着且不广播（面板不谎报已存）；改了又改回来既不落盘也不广播；
 ///           ④ **S14 的提交时机**：文本框逐字符改（`set_value`）一个字节也不提交，失焦那一刻才交；
@@ -543,16 +544,16 @@ AURORA_TEST_CASE(deferred_and_next_session_rows_carry_their_badges) {
             AURORA_TEST_REQUIRE(control != nullptr);
             AURORA_TEST_CHECK_EQ(row.badge, expected_badge(*control));
             // 外观页的四个专用区段（主题卡 / 16 格色板 / 字体族选择器 / 回退链）都已落成可交互区段，
-            // 故这里只剩「快捷键只读表」一类专用形态仍是占位。
-            AURORA_TEST_CHECK_EQ(row.editable, control->consumer != ConsumerStatus::Absent &&
-                                                   control->kind != ControlKind::ReadOnlyTable);
+            // 故这里只剩「快捷键只读表」一类专用形态仍是占位。`Absent` 行**不**因此灰置（裁决 7.68③）。
+            AURORA_TEST_CHECK_EQ(row.editable, control->kind != ControlKind::ReadOnlyTable);
         }
     }
 
     panel.select_page(SettingsPage::Appearance);
     const auto rows = panel.visible_rows();
     AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.sidebar_collapsed")->badge, std::string{kBadgeDeferred});
-    AURORA_TEST_CHECK_FALSE(find_row(rows, "appearance.sidebar_collapsed")->editable);
+    // 「有键而无消费方」在界面上的全部表达就是这两处文字，控件本身可用（裁决 7.68③ / 判据文 S15① 就地更正）。
+    AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.sidebar_collapsed")->editable);
     AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.cursor_shape")->editable);  // 接缝未开 ≠ 灰置
     AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.cursor_shape")->badge,
                          std::string{kBadgeDeferred} + " · " + std::string{kBadgeNextSession});
@@ -3254,6 +3255,84 @@ AURORA_TEST_CASE(a_runtime_appended_overlay_subtree_is_mounted_at_the_next_layou
     AURORA_TEST_CHECK_EQ(leaf->unmounts, 0);
 }
 
+/// @brief 延后档位是**真控件而只落盘**：状态栏那十枚开关按真实派发点得动，而界面上的延后表达是两处文字。
+///
+/// 裁决 7.68③ 拍的是「有键而无消费方的行一律可改、照常过校验、照常落盘，只是不广播」，于是判据文里
+/// 那句「灰置」就地作废（S15① / B3-a / C2-a）。灰置形态下本例会立刻红——禁用态的 `Switch` 虽仍在命中链里
+/// （7.62④ 同族：框架只按 `wants_click()` 分档），但点了不翻值也不落盘，故「计数不变」就是那条误读的证人。
+/// 既有的 `a_persist_only_change_writes_but_does_not_broadcast` 走的是编程入口，测的是表单与生效档位；
+/// 本例补的是它测不到的那一半：**这一行在真实浮层树上抓得住、按得下**。
+///
+/// 取控件不按 key 而按「滚到底之后带内第一个开着态开关」：外观页末尾连续十行都是状态栏，而它们缺省全为真
+/// （`StatusBarSettings` 十枚 `= true`），故「滚到内容下沿 + 挑开着的那枚」就把候选收窄到本组。同页另有
+/// 三枚开关（`bold_is_bright` / `min_contrast_enabled` / `sidebar_collapsed`）都在其上若干行， offset 钳位后
+/// 已出带。这一「挑的是哪一组」不靠推断，由下面的落盘差分逐字钉住。
+///
+/// 一条判据边界如实登记：`visible_notes()` 比的是**说明文字与该页的对应**，而「这段文字真的进了树」本例
+/// 结构上抓不到（`Text` 无可点语义，`reachable_box` 一类的真实派发量法对它无效，裁决 7.61 那条「为判据开
+/// 观测点」的同一代价）。这里不伪造像素断言，依据是 `build_card()` 里登记与入树是**同一条 push 路径**上的
+/// 相邻两句，不存在「只记不画」的第二处写法。
+AURORA_TEST_CASE(the_deferred_status_bar_toggles_are_real_controls_and_only_persist) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    h.render();
+
+    // 组顶说明（判据文 A9-a）：外观页恰一条，措辞逐字取词条而不是用例另写一份。
+    const std::vector<std::string> appearance_notes = panel->visible_notes();
+    AURORA_TEST_REQUIRE_EQ(appearance_notes.size(), 1U);
+    AURORA_TEST_CHECK_EQ(appearance_notes.front(), borealis::ui::settings_label("settings.note.status_bar"));
+
+    // 滚到内容下沿（框架 `Scroll` 把偏移钳在 `content − viewport`，故档位发够就多出一档也无妨）。
+    for (int notch = 0; notch < 300; ++notch) {
+        h.scroll(450.0F, 300.0F, -1.0F);  // 负方向是往下滚（`ScrollViewport` 的符号约定）
+    }
+    h.render();
+
+    const HitSpot spot = h.find_first("Switch", 0.0F, [](au::Widget *widget) -> bool {
+        auto *sw = dynamic_cast<au::Switch *>(widget);
+        return sw != nullptr && sw->value();
+    });
+    AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr,
+                            "no enabled toggle is dispatch-reachable at the bottom of the appearance page");
+    auto *toggle = dynamic_cast<au::Switch *>(spot.widget);
+    AURORA_TEST_REQUIRE(toggle != nullptr);
+
+    // 落点由量出来的窗口坐标框推，且先把「这一点归该控件」做成点击的前提（7.60② 的同一判据顺序）。
+    const float toggle_x = spot.box.origin.x + spot.box.size.width * 0.5F;
+    const float toggle_y = spot.box.origin.y + spot.box.size.height * 0.5F;
+    AURORA_TEST_REQUIRE_MSG(h.hit(toggle_x, toggle_y) == spot.widget,
+                            "the measured box center is not dispatch-reachable after scrolling to the bottom");
+
+    const Settings before = probe.base;
+    h.click(toggle_x, toggle_y);
+    h.render();
+
+    // ⑴ 真点即真提交：值翻了、恰落盘一次、脏标记随之推进。
+    AURORA_TEST_CHECK_FALSE(toggle->value());
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
+    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
+
+    // ⑵ 点的确实是状态栏那一组（而`sidebar_collapsed` 那行同样 `Absent`、同样在外观页，故必须差分到位）。
+    AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 1U);
+    AURORA_TEST_CHECK_FALSE(probe.persisted.back().appearance.status_bar == before.appearance.status_bar);
+    AURORA_TEST_CHECK_TRUE(probe.persisted.back().appearance.sidebar_collapsed ==
+                           before.appearance.sidebar_collapsed);
+
+    // ⑶ 无消费方 ⇒ 没有可广播的对象：落盘一次而广播零次（裁决 7.68③ 的「只落盘」）。
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+
+    // ⑷ 连接页的两组各有自己的说明，且次序＝该页次序（SSH 段在前、串口段在后）而非「按页推出」。
+    panel->select_page(SettingsPage::Connection);
+    h.render();
+    const std::vector<std::string> connection_notes = panel->visible_notes();
+    AURORA_TEST_REQUIRE_EQ(connection_notes.size(), 2U);
+    AURORA_TEST_CHECK_EQ(connection_notes[0], borealis::ui::settings_label("settings.note.ssh"));
+    AURORA_TEST_CHECK_EQ(connection_notes[1], borealis::ui::settings_label("settings.note.serial"));
+}
+
 #else
 
 AURORA_TEST_CASE(the_scrim_covers_the_whole_window_and_a_real_click_closes_the_panel) {
@@ -3357,6 +3436,10 @@ AURORA_TEST_CASE(the_preview_grid_is_whole_cells_in_its_own_rect_and_follows_the
 }
 
 AURORA_TEST_CASE(a_runtime_appended_overlay_subtree_is_mounted_at_the_next_layout_G35) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_deferred_status_bar_toggles_are_real_controls_and_only_persist) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
