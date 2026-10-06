@@ -254,6 +254,20 @@ auto TerminalView::set_grid_size_sink(GridSizeSink sink) -> void { grid_size_sin
 
 auto TerminalView::set_key_pre_filter(KeyPreFilter filter) -> void { key_pre_filter_ = std::move(filter); }
 
+auto TerminalView::set_search_query(SearchQuery query) -> void {
+    if (query == search_query_) {
+        return;
+    }
+    search_query_ = std::move(query);
+    // 字面量档每键置脏、每帧至多扫一次（结算在 `on_frame`）；正则档只在 `submit_search_query()` 置脏。
+    // 空文本是唯一的例外：两档都要在这一帧把高亮清掉，而清表本身不算一次扫描。
+    if (!search_query_.regex || search_query_.text.empty()) {
+        search_dirty_ = true;
+    }
+}
+
+auto TerminalView::submit_search_query() -> void { search_dirty_ = true; }
+
 auto TerminalView::on_frame() -> void {
     const std::vector<session::Damage> frame = session_->drain_damage();
     const std::size_t previous_back = mirror_.back_rows();
@@ -268,10 +282,18 @@ auto TerminalView::on_frame() -> void {
                 .blinking = modes.cursor_blinking,
             };
             mirror_.apply(grid, frame, reproject(total_lines_, grid.visible_rows()));
+            // 扫描的调用点在锁内、且在副本并入之后：`ui::search` 吃的是权威网格，出锁就没有第二个一致
+            // 快照可用；位移基准的读数又由副本带出，故两者必须在这一次临界区里前后相接（裁决 7.78⑥）。
+            // 「前后相接」在重扫与新输出同帧时是承重的：取早一格就会把同一次位移既算进扫描结果、
+            // 又算进折算增量（其证人是 `itest_search_scan` 的第九例）。
+            if (search_dirty_) {
+                run_search_scan(grid);
+            }
         });
     // 选区的端点是存储行序，而存储顶边会随输出溢出、随 resize 与 `clear()` 位移：折算必须发生在
     // 副本并入之后（读数由副本带出），否则高亮与复制文本会跟着旧的行号指着别的内容（裁决 7.38⑤）。
     compensate_selection_drift();
+    compensate_search_drift();
     flush_copy_request();
     flush_paste_request();
     // 回看换源与光标移动都不在提交里：前者由距底行数变化指认（`on_scroll` 在帧序里先于本函数，
@@ -937,6 +959,42 @@ auto TerminalView::compensate_selection_drift() -> void {
         selection_ = translate_selection_rows(*selection_, rows_up);
     }
     refresh_selection_bands();  // 列数也可能随 resize 变，首行右界取的是列数
+}
+
+auto TerminalView::run_search_scan(grid::Storage &grid) -> void {
+    search_dirty_ = false;
+    // 空串即「还没打字」：不发扫描、不产高亮，也**不进扫描计数**（判据 A2-a）——否则「一轮只扫一次」
+    // 那条以计数为据的判据就测成了「有没有人按过键」。
+    if (search_query_.text.empty()) {
+        search_matches_.reset();
+        search_invalid_ = false;
+        search_scanned_ = search_query_;
+        return;
+    }
+    ++search_scans_;
+    auto matches = search(grid, search_query_);
+    // 无论成败都记下「这份条件已经被试过」，于是非法档显示的是「表达式非法」而不是「按 Enter 应用」：
+    // 用户已经按过 Enter 了，再提示他按一次就是说谎（判据 B4 与 B5 必须分成两句的物理根据）。
+    search_scanned_ = search_query_;
+    if (!matches.has_value()) {
+        search_invalid_ = true;  // 编译失败：旧表与游标原样留着，「表达式错」与「搜不到」不同档
+        return;
+    }
+    search_invalid_ = false;
+    search_matches_ = std::move(matches);
+    // 新表的行号以「扫描这一刻的存储顶边」为基准，故基准在这里对齐；`compensate_search_drift` 同帧
+    // 读到同一个读数，于是刚扫完的表位移增量为零、不会被折算两次。
+    search_dropped_baseline_ = mirror_.dropped_lines();
+}
+
+auto TerminalView::compensate_search_drift() -> void {
+    const std::int64_t dropped = mirror_.dropped_lines();
+    const std::int64_t rows_up = dropped - search_dropped_baseline_;
+    search_dropped_baseline_ = dropped;
+    // 新输出把内容顶走时**不重扫**：表按位移增量折算，与选区跟走同一条路径、同一份快照（裁决 7.78③）。
+    if (search_matches_.has_value() && rows_up != 0) {
+        search_matches_->translate_rows(rows_up);
+    }
 }
 
 auto TerminalView::flush_copy_request() -> void {

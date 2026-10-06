@@ -39,6 +39,7 @@
 #include "borealis/ui/grid_size_debounce.h"
 #include "borealis/ui/palette.h"
 #include "borealis/ui/right_click.h"
+#include "borealis/ui/search.h"
 #include "borealis/ui/selection.h"
 
 namespace aurora {
@@ -232,6 +233,38 @@ class TerminalView final : public aurora::LeafWidget {
     [[nodiscard]] auto layout_options() const noexcept -> const aurora::render::TextLayoutOpts & {
         return layout_opts_;
     }
+
+    /// @brief 交进当前查询条件（浮层输入框每键一次）；只在**字面量档**置脏。
+    ///
+    /// 正则档不随打字重扫（裁决 7.78① 的实测代价：宽匹配式一次 1623.5 ms，挂在每次按键之后就是
+    /// 冻结单线程 UI，违 AGENTS.md §4.5 第 25 条），要扫由调用方走 `submit_search_query()`。
+    /// 与上一次完全相同的条件不置脏，故连排若干帧不会重复扫同一份查询。
+    /// @param query 当前条件（文本 + 两枚开关）。
+    auto set_search_query(SearchQuery query) -> void;
+
+    /// @brief 提交当前条件并安排一次重扫：`Enter` 与两枚开关的翻转走这里（判据 D4）。
+    auto submit_search_query() -> void;
+
+    /// @brief 当前查询条件：浮层重开时把文本与两档逐字读回（判据 F1-c）。
+    [[nodiscard]] auto search_query() const noexcept -> const SearchQuery & { return search_query_; }
+
+    /// @brief 当前匹配表；从未成功扫过即空指针。绘制侧按可见行过滤而不拷表（上限档整表 240 KB）。
+    [[nodiscard]] auto search_matches() const noexcept -> const SearchMatches * {
+        return search_matches_.has_value() ? &*search_matches_ : nullptr;
+    }
+
+    /// @brief 上一次扫描是否因正则编译失败而作废（判据 B4「表达式非法」，此时旧表原样留着）。
+    [[nodiscard]] auto search_pattern_invalid() const noexcept -> bool { return search_invalid_; }
+
+    /// @brief 输入框里的文本是否还没扫（判据 B5：正则档打字后未提交）。
+    ///
+    /// 空文本不算「还没扫」——那一档显示的是占位「—」而不是「按 Enter 搜索」（判据 A2-a / B0）。
+    [[nodiscard]] auto search_pending_submit() const noexcept -> bool {
+        return !search_query_.text.empty() && !(search_query_ == search_scanned_);
+    }
+
+    /// @brief 迄今真正扫过几次：节流判据的观测点（「一轮只扫一次」以本计数为据，不看像素）。
+    [[nodiscard]] auto search_scan_count() const noexcept -> std::size_t { return search_scans_; }
 
   protected:
     /// @brief 撑满父级，并在此重取整格几何与下发行列尺寸（`SPEC.FEAT.XFER.01` 的 UI 取值腿）。
@@ -440,6 +473,17 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 把顶边位移的增量折算进选区（裁决 7.38⑤ / 7.39①⑤：整段被推出顶端即作废）。
     auto compensate_selection_drift() -> void;
 
+    /// @brief 在既有短临界区内结算一次搜索扫描（裁决 7.78⑥ 的执行侧）。
+    ///
+    /// 只在 `search_dirty_` 时被 `on_frame` 调用，且调用点就在 `Session::read` 的那一次锁内：
+    /// `ui::search` 吃的是权威网格，出锁就没有第二个一致快照可用（与 `selected_text` 的持锁先例
+    /// 同一条路径），故本入口不新开线程、不做网格快照，一轮输入只扫一次。
+    /// @param grid 锁内的权威网格。
+    auto run_search_scan(grid::Storage &grid) -> void;
+
+    /// @brief 把顶边位移的增量折算进匹配表（与选区共用 `mirror_` 带出的同一份读数，零新增锁）。
+    auto compensate_search_drift() -> void;
+
     /// @brief 落地攒下的 copy-on-select 请求：在帧边界做 IO，不在事件回调里做（AGENTS.md §4.5 第 25 条）。
     auto flush_copy_request() -> void;
 
@@ -508,6 +552,20 @@ class TerminalView final : public aurora::LeafWidget {
     std::optional<GridCellPos> reported_motion_{};
     bool copy_pending_ = false;  ///< 抬起已发生、复制留到下一帧的 `on_frame` 落地。
     std::int64_t dropped_baseline_ = 0;  ///< 上次折算选区时的顶边位移读数（裁决 7.39⑤）。
+
+    /// @brief 搜索的状态：条件、产出当前表的那份条件、表本身、表自己的顶边位移基准，另加脏 / 非法 /
+    ///        计数三个闸门。
+    ///
+    /// `search_scanned_` 与 `search_query_` 分开存，是为了让「输入框里的文本已经不是画面上的高亮」
+    /// 这一句物理事实可读（判据 B5）；两份条件各记一次位移基准（`dropped_baseline_` 给选区、本条给
+    /// 表），因为重扫时刻与选区建立时刻并不同一条时间线，共用一个基准会让刚扫完的表被折算两次。
+    SearchQuery search_query_{};
+    SearchQuery search_scanned_{};
+    std::optional<SearchMatches> search_matches_{};
+    std::int64_t search_dropped_baseline_ = 0;
+    bool search_dirty_ = false;    ///< 本帧要扫（字面量档每键置脏、正则档只在提交时置脏）。
+    bool search_invalid_ = false;  ///< 上次扫描因表达式非法而保留旧表（判据 B4）。
+    std::size_t search_scans_ = 0; ///< 实际扫描次数；空文本的清表不计（判据 A2-a）。
 
     Presentation presentation_{};         ///< 剪贴板与多行确认的三条接缝（空字段即生产实现）。
     GridSizeSink grid_size_sink_;         ///< 空即直发 `Session::resize`（未挂工作区层的形态）。
