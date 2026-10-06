@@ -110,12 +110,14 @@
 // ② 回落留痕画在字体行**下方另起一行**，而不是把按钮标签显示成那个不存在的族（A4-b）：生效族名由
 //    `ui::choose_font_family` 判，`Configured` 那档没有留痕可写。代价是这一行恒占两行高度，即使
 //    配置里的族名可用。
-// ③ 浮层的锚点只取**同一次 Press 事件的坐标对**（A4-e）：`position − local_position` 给的是该控件在
-//    **内容坐标系**里的盒原点（行区是 `Scroll`，其内容后代不处于屏幕坐标；实测差值恰等于该 `Scroll`
-//    当时的 `offset_y()`——修复前那一次是 834 对 451，差 383），故还须减掉行区当时的 `offset_y()` 才落回
-//    窗口坐标；配 `size().height` 得下沿。触发按钮因此是本件私有的记锚点子类，而折算量由 `row_area_` 现读。
-//    也不得拿 `paint_bounds()` 当锚点：那是**另一个**坐标系（录制进离屏缓冲时传入的盒原点是
-//    `-buffer_origin_y_`，同帧实测 748 对 826 差 78 dp，而那个量公共面取不到），并且会随重建/未绘制而陈旧。
+// ③ 浮层的锚点取框架 `Widget::window_bounds()`（A4-e）：它查询时沿布局父链现算、途经滚动宿主即按该
+//    宿主的偏移修正，故恒为**窗口逻辑 dp**，配 `size().height` 得下沿，而 `Popup::open_at` 收的正是这一
+//    坐标（浮层挂在场景根的宿主上、不在滚动缓冲里）。此前本件为此写过的过渡形态（私有的记锚点子类自记
+//    同一次 Press 的坐标对 ＋ 面板自持行区现读 `offset_y()` 折算）**已随 G36 回货按预诺撤除**：那条坐标对
+//    给的是**内容坐标系**里的盒原点（实测差值恰等于该 `Scroll` 当时的 `offset_y()`，修复前那一次是 834 对
+//    451，差 383），折算就是把框架私有算式复制进本仓。
+//    同样不得拿 `paint_bounds()` 当锚点：那是**第三个**坐标系（录制进离屏缓冲时传入的盒原点是
+//    `-buffer_origin_y_`，登记 G36 时同帧实测 748 对 826 差 78 dp，而那个量公共面取不到），并且会随重建/未绘制而陈旧。
 //    关掉它的四条腿：点候选、`Escape`（先于面板的关闭）、点遮罩（A4-c：遮罩那枚 `clickable` 在浮层开着
 //    时**只关浮层**，否则第一次外部点击把整块面板一起撤掉）、关面板。摘除浮层的次序按序号**降序**
 //    （先浮层后面板），因为 `remove_overlay` 的界是按当前子节点表算的，先摘靠前的那个会让后面的序号
@@ -446,7 +448,7 @@ private:
     [[nodiscard]] auto build_family_section(std::size_t ordinal) -> aurora::Node;
 
     /// @brief 弹候选浮层：把当前候选池建进浮层并按 anchor 落位（同一只 `Popup` 复用）。
-    /// @param anchor 触发按钮全局内容盒的**下沿**（只取同一次 Press 的坐标对，A4-e）。
+    /// @param anchor 触发按钮在**窗口坐标**里那份盒的下沿（经框架 `Widget::window_bounds()` 现取，A4-e）。
     auto open_family_popup(aurora::Point anchor) -> void;
 
     /// @brief 收候选浮层：只 `Popup::close()` 而不摘浮层（见文件头那条「派发栈内销毁正在派发的按钮」）。
@@ -588,8 +590,6 @@ private:
     std::vector<const SettingsControl *> rows_{};  ///< 当前页行表（与 `status_texts_` 同序）。
     std::vector<std::shared_ptr<aurora::Text>> status_texts_{};  ///< 各行状态列控件，按序号。
     std::vector<std::string> note_labels_{};  ///< 当前页画出的组顶说明文字（与行区里的说明节点同序同份）。
-    /// @brief 当前页行区那只 `Scroll`：浮层锚点要按它**当时**的 `offset_y()` 把内容坐标折回窗口坐标。
-    std::shared_ptr<aurora::Scroll> row_area_{};
 
     std::vector<ThemeChoice> theme_choices_{};  ///< 每次建浮层时经 `Hooks::themes` 现取（卡片次序即其次序）。
     std::size_t selected_swatch_ = 0;           ///< 色板编辑器当前指向的格，缺省 0 格（编辑器是常驻的）。
@@ -599,7 +599,7 @@ private:
     std::shared_ptr<aurora::TextInput> swatch_editor_{};             ///< 常驻的 HEX 输入框。
     std::shared_ptr<aurora::Button> swatch_reset_button_{};          ///< 「恢复主题默认」，无基线时禁用。
 
-    std::shared_ptr<aurora::Button> font_trigger_{};  ///< 字体行那枚常驻触发按钮（本件私有的记锚点子类）。
+    std::shared_ptr<aurora::Button> font_trigger_{};  ///< 字体行那枚常驻触发按钮（锚点经框架 `window_bounds()` 现取）。
     std::shared_ptr<aurora::Text> font_notice_{};     ///< 字体行**下方**那一行回落留痕（A4-b）。
     std::shared_ptr<aurora::Popup> font_popup_{};     ///< 候选浮层本体：跨开合复用一只，见文件头③末段。
     std::optional<std::size_t> font_popup_index_{};   ///< 它在宿主子节点里的序号（降序摘除用）。

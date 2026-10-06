@@ -2715,12 +2715,14 @@ AURORA_TEST_CASE(the_family_section_projects_the_effective_family_and_the_pinned
     panel->close();
 }
 
-/// @brief A4-e + A4-d + A4-b：真点触发按钮 ⇒ 浮层贴在**那一次 Press** 的按钮下沿、按池宽铺开，留痕行在其下。
+/// @brief A4-e + A4-d + A4-b：真点触发按钮 ⇒ 浮层贴在**被点的那一枚**按钮下沿、按池宽铺开，留痕行在其下。
 ///
-/// A4-e 那句「锚点只能取同一次 Press 的坐标对，不得由 `paint_bounds()` 折算」在本例才**可判**：触发按钮
-/// 是 `reveal_font_trigger` 滚出来的，行区偏移非零（本例先断这一条作反空转前提），而 `Scroll` 的内容子节点
-/// 那份 bounds 是**内容坐标**（文件头与裁决 7.60②），两种算法由此给出两个不同的数。基准一律取
-/// `HitSpot::box`（派发链在窗口坐标里量出来的可达框），不引入第二个坐标假设。
+/// A4-e 的锚点量法在 G36 回货后改成公共入口 `Widget::window_bounds()`（原先是本件私有子类自记那一次 Press
+/// 的坐标对、再减行区当时的 `offset_y()`，那种折算是把框架私有算式复制进本仓，已按预诺撤除）。本例因此
+/// 有两句可判的：① 该入口与派发链在窗口坐标里量出来的可达框相符，② 浮层贴的是那一个框的下沿。触发按钮是
+/// `reveal_font_trigger` 滚出来的，行区偏移非零（本例先断这一条作反空转前提），而 `Scroll` 的内容子节点那份
+/// bounds 是**内容坐标**（文件头与裁决 7.60②），故拿它当窗口坐标用的实现在这里必然对不上。基准一律取
+/// `HitSpot::box`，不引入第二个坐标假设。
 ///
 /// 尺寸两条用独立字面量（一档 30 dp × 目录六档、浮层宽 260 dp）而不是实现里的常量：`Popup` 自身不画底与
 /// 边，那份尺寸来自内容侧 `Scroll` 上锁死的 modifier，取实现的常量就只剩「常量与常量相等」。六档这一数
@@ -2740,6 +2742,20 @@ AURORA_TEST_CASE(clicking_the_font_trigger_anchors_a_popup_at_that_press_below_t
     au::Scroll *area = h.row_scroll(trigger.x, trigger.y);
     AURORA_TEST_REQUIRE(area != nullptr);
     AURORA_TEST_CHECK_GT(area->offset_y(), 0.0F);  // 反空转前提：这一行是滚出来的，偏移非零
+
+    // G36 的出账证人：浮层锚点如今只经公共入口 `Widget::window_bounds()` 现取，它必须与派发链在**窗口坐标**
+    // 里量出来的那块可达框相符（`reachable_box` 以 1 dp 步长采样，故容差取 1 dp）。本仓为此写过的过渡形态
+    // ——私有子类自记同一次 Press 的坐标对再减行区 `offset_y()`——已随回货撤除，撤除后这条相符关系就是
+    // 该入口在本仓生产路径上的判据，而不是对框架私有算式的复述（AGENTS.md §5 第 2 条）。
+    const std::optional<au::Rect> anchor = trigger.widget->window_bounds();
+    AURORA_TEST_REQUIRE_MSG(anchor.has_value(), "the scroll-nested trigger reports no window-space box");
+    AURORA_TEST_CHECK_NEAR(anchor->origin.x, trigger.box.origin.x, 1.0F);
+    AURORA_TEST_CHECK_NEAR(anchor->origin.y, trigger.box.origin.y, 1.0F);
+    AURORA_TEST_CHECK_NEAR(anchor->size.height, trigger.box.size.height, 1.0F);
+    // 同一控件的 `paint_bounds()` 在这一帧**不是**窗口坐标（行区是 `Scroll`，其内容后代拿的是离屏缓冲的盒，
+    // 登记 G36 时同帧实测两者差 78 dp，而那个缓冲原点公共面取不到），故它与窗口框必然不相当——这一句挡住
+    // 「锚点改回 paint_bounds」那类回退，也钉住本例判据吃的确实是新入口。
+    AURORA_TEST_REQUIRE(std::abs(anchor->origin.y - trigger.widget->paint_bounds().origin.y) > 1.0F);
 
     h.click(trigger.x, trigger.y);
     h.render();

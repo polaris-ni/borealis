@@ -58,7 +58,7 @@ constexpr aurora::Color kNavBg{0x1B, 0x1C, 0x24};          ///< 左导航列底�
 constexpr aurora::Color kCardLine{0x4D, 0x4F, 0x63};       ///< 卡片描边与行区分隔线。
 constexpr aurora::Color kAccent{0xBD, 0x93, 0xF9};         ///< 选中页与主按钮。
 constexpr aurora::Color kText{0xF8, 0xF8, 0xF2};           ///< 正文。
-constexpr aurora::Color kTextDim{0x62, 0x72, 0x80};        ///< 角标、副标题与灰置行。
+constexpr aurora::Color kTextDim{0x62, 0x72, 0x80};        ///< 角标、副标题、组顶说明，与不可编辑行（只读表）的行名。
 constexpr aurora::Color kControlBg{0x28, 0x2A, 0x36};      ///< 输入类控件底与次级按钮底。
 
 constexpr float kRowExtentDp = 56.0F;   ///< 行高（判据文 §1 不另立控件高度，故只在排版处出现一次）。
@@ -251,32 +251,6 @@ public:
         if (!focused && commit) {
             commit(value());
         }
-    }
-};
-
-/// @brief 字体族区段那枚常驻触发按钮：把弹层锚点的前提交回**同一次 Press 的坐标对**（A4-e）。
-///
-/// 框架只在 `MouseEvent::position`（全局，后端写）与 `local_position`（相对该控件，派发器在命中链冒泡时
-/// 写）两处给数。二者的差是该控件在**内容坐标系**里的盒原点，而行区是 `Scroll`：框架自陈其内容后代不处于
-/// 屏幕坐标（`widget.h` 的 `focus_bounds_` 注），实测那一次差值恰等于该 `Scroll` 当时的 `offset_y()`
-/// （修复前一帧 834 对 451，差 383）。**不得**改用 `paint_bounds()` 来省掉这一提交：它是**另一个**坐标系
-/// （录制进离屏缓冲时传入的盒原点是 `-buffer_origin_y_`，同帧实测 748 对 826，差 78 dp，而那个量公共面取
-/// 不到）。故本件只负责记下这一次 Press 量出的原始差值，折算回窗口坐标那一腿在 `build_family_section()`
-/// ——那里才拿得到行区句柄。
-/// 记录之后原样交回基类：禁用态吞点击那一腿因此不变。
-class AnchorButton final : public aurora::Button {
-public:
-    using aurora::Button::Button;
-
-    /// @brief 最近一次 Press 上量出的该控件盒原点（行区内即内容坐标）；从未按下则为空。
-    std::optional<aurora::Point> press_origin{};
-
-    auto on_pointer_event(aurora::MouseEvent &e) -> void override {
-        if (e.action == aurora::MouseAction::Press) {
-            press_origin = aurora::Point{.x = e.position.x - e.local_position.x,
-                                         .y = e.position.y - e.local_position.y};
-        }
-        aurora::Button::on_pointer_event(e);
     }
 };
 
@@ -734,7 +708,6 @@ auto SettingsPanel::build_card() -> aurora::Node {
                 .child = aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(rows_column))},
             });
             rows->modifier.set(aurora::Modifier{}.fill_max_width().expand());
-            row_area_ = rows;  // 浮层锚点要把内容坐标折回窗口坐标，折算量取自它（见 `build_family_section`）
 
             auto body = std::make_shared<aurora::Row>(aurora::RowProps{
                 .children = {aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(nav_column))},
@@ -1010,7 +983,7 @@ auto SettingsPanel::build_family_section(std::size_t ordinal) -> aurora::Node {
     const SettingsControl &control = *rows_[ordinal];
     auto [label, status] = build_header(ordinal, control, true);
 
-    auto button = std::make_shared<AnchorButton>(aurora::ButtonProps{
+    auto button = std::make_shared<aurora::Button>(aurora::ButtonProps{
         .color = kControlBg,
         .on_color = kText,
         .border_color = kCardLine,
@@ -1019,18 +992,16 @@ auto SettingsPanel::build_family_section(std::size_t ordinal) -> aurora::Node {
     });
     // 标签**不在这里**预设：唯一的写入点是 `refresh_family_views()`（末尾那一次），于是「按钮显示的族」
     // 与「实际生效的族」结构上不可能分叉——A4-b 禁止的正是把配置里那族直接显示出来。
-    // 锚点取该按钮自己记下的 Press 坐标对（A4-e），而不是 `paint_bounds()`（后者是离屏缓冲坐标，且会随重建
-    // /未绘制而陈旧）。
-    // 那一腿给的是内容坐标，故须减掉行区当时的 `offset_y()` 才落回窗口坐标——`Popup::open_at` 收的是
-    // 全局坐标，而它挂在场景根的宿主上、不在滚动缓冲里。
+    // 锚点取框架 `Widget::window_bounds()`（A4-e，G36 回货后）：它查询时沿布局父链现算、途经滚动宿主即
+    // 按该宿主的偏移修正，故恒为**窗口逻辑 dp**——而行区是 `Scroll`，其内容后代的 `paint_bounds()` 是
+    // 离屏缓冲坐标（登记 G36 时同帧实测 748 对 826 差 78 dp），拿它折算就要复制框架私有算式。
+    // `Popup::open_at` 收的正是全局坐标：浮层挂在场景根的宿主上、不在滚动缓冲里。
     button->set_on_click([this, anchor = button.get()]() -> void {
-        const std::optional<aurora::Point> origin = anchor->press_origin;
-        if (!origin.has_value()) {
-            return;  // 从未按下过就没有可信锚点：宁可不弹，也不猜一个位置（浮层会盖在按钮上）
+        const std::optional<aurora::Rect> box = anchor->window_bounds();
+        if (!box.has_value()) {
+            return;  // 查不到有效窗口盒（未测量 / `show` 为假）就没有可信锚点：宁可不弹，也不猜位置
         }
-        const float scrolled = row_area_ != nullptr ? row_area_->offset_y() : 0.0F;
-        open_family_popup(aurora::Point{.x = origin->x,
-                                        .y = origin->y - scrolled + anchor->size().height});
+        open_family_popup(aurora::Point{.x = box->origin.x, .y = box->origin.y + box->size.height});
     });
     font_trigger_ = button;
 
