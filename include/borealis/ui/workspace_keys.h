@@ -30,6 +30,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "borealis/term/keymap.h"
 #include "borealis/ui/pane_tree.h"
@@ -62,6 +63,23 @@ enum class WorkspaceCommand : std::uint8_t {
 /// @param press 按键与修饰态；`num_lock` 字段不参与判定（见文件头第一条口径）。
 /// @return 该键位对应的命令；无命中回空值。
 [[nodiscard]] auto workspace_command(const term::KeyPress &press) -> std::optional<WorkspaceCommand>;
+
+/// @brief 键位总表的一条：命令 + 触发它的那一次按键（修饰只填四个可按位）。
+///
+/// 与 `workspace_command` 吃的是同一张表，故本件的**唯一**存在理由是把「有哪些键位」这件事
+/// 变成可枚举的：快捷键只读表要拿这十二条当**保留位**参与冲突比对（判据文 D2-a / 人已拍板）。
+/// 那些键位不经框架 `ShortcutRegistry`（文件头），而同一个组合键在派发上是快捷键层先消费
+/// （裁决 7.51③ 理由 (a)），于是一条注册进命令表的组合键若与这里某条同形，实际生效的是快捷键层
+/// 而分屏命令按不到——界面上必须把这一格标成冲突，而不是让用户以为两个动作都能触发。
+/// 反过来，本件不自己再列一份修饰常量：`kBindings` 是那张表的唯一真值源，本函数只是把它折成
+/// 公共形态，新增键位时两侧同源，不可能分叉。
+struct WorkspaceKeyBinding {
+    WorkspaceCommand command{};  ///< 该键位触发的分屏命令。
+    term::KeyPress press{};      ///< 触发它的按键；`num_lock` 恒假（该位不参与判定，见文件头第一条口径）。
+};
+
+/// @brief 键位总表的全部条目（次序＝表内次序）。
+[[nodiscard]] auto workspace_key_bindings() -> std::vector<WorkspaceKeyBinding>;
 
 /// @brief 一次键盘步进的落点：推该层的第几条把手、推多远。
 struct DividerStep {

@@ -4,8 +4,10 @@
 ///           键位侧断四类命令各自命中、认领集**恰为**那十二个键位（多余的认领会把可打印键与
 ///           功能键从会话那里抢走）、修饰多一位即不命中、NumLock 位不参与判定；步进侧断「推哪条
 ///           把手、推多远」的全部三条算式：符号恒为「焦点 pane 变大」、步长 `max(5%, 24 dp)`、
-///           以及三类无把手可推的拒绝路径。
+///           以及三类无把手可推的拒绝路径。另断 `workspace_key_bindings()` 与派发函数同源（裁决
+///           7.72 的③：快捷键表要把这十二条当保留位比对，两处各写一张表就会分叉）。
 
+#include <cstddef>
 #include <optional>
 #include <vector>
 
@@ -24,6 +26,8 @@ using borealis::ui::DividerStep;
 using borealis::ui::PaneAxis;
 using borealis::ui::WorkspaceCommand;
 using borealis::ui::workspace_command;
+using borealis::ui::WorkspaceKeyBinding;
+using borealis::ui::workspace_key_bindings;
 
 /// @brief 一条键位的简写：修饰缺省即「没按」，`num_lock` 只在专设那一例里给值。
 [[nodiscard]] constexpr auto key(KeySym sym, bool shift = false, bool control = false, bool alt = false,
@@ -135,6 +139,30 @@ AURORA_TEST_CASE(num_lock_state_changes_no_verdict) {
         on.num_lock = true;
         AURORA_TEST_CHECK_EQ(workspace_command(on), workspace_command(off));
         AURORA_TEST_CHECK(workspace_command(on).has_value());
+    }
+}
+
+AURORA_TEST_CASE(listed_bindings_are_exactly_the_claimed_keys) {
+    // 快捷键表要把这十二条当**保留位**去比对（裁决 7.72 的③），故列表必须与认领集逐条同形：
+    // 少一条就是有一个保留位没被守住，多一条则是把会话的键也圈成了保留位。
+    const auto listed = workspace_key_bindings();
+    AURORA_TEST_REQUIRE_EQ(listed.size(), std::size(kClaimed));
+    for (std::size_t index = 0; index < listed.size(); ++index) {
+        AURORA_TEST_CHECK_EQ(listed[index].press.sym, kClaimed[index].sym);
+        AURORA_TEST_CHECK_EQ(listed[index].press.shift, kClaimed[index].shift);
+        AURORA_TEST_CHECK_EQ(listed[index].press.control, kClaimed[index].control);
+        AURORA_TEST_CHECK_EQ(listed[index].press.alt, kClaimed[index].alt);
+        AURORA_TEST_CHECK_EQ(listed[index].press.meta, kClaimed[index].meta);
+    }
+}
+
+AURORA_TEST_CASE(listed_bindings_agree_with_the_dispatching_function) {
+    // 同源判据：列表里每一条按其 press 再问一次 `workspace_command`，必须回到它自己那一格的命令。
+    // 若两处各写一张表（列表抄一份、派发用另一份），这条就会在两个方向上分叉。
+    for (const WorkspaceKeyBinding &binding : workspace_key_bindings()) {
+        AURORA_TEST_CHECK_EQ(workspace_command(binding.press).value(), binding.command);
+        // 锁定态位不参与判定，故列表里那一格恒假——面板据此比对时不会因 NumLock 而漏判。
+        AURORA_TEST_CHECK_FALSE(binding.press.num_lock);
     }
 }
 

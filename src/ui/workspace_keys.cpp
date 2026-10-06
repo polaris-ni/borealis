@@ -56,6 +56,20 @@ auto workspace_command(const term::KeyPress &press) -> std::optional<WorkspaceCo
     return std::nullopt;
 }
 
+auto workspace_key_bindings() -> std::vector<WorkspaceKeyBinding> {
+    std::vector<WorkspaceKeyBinding> out;
+    out.reserve(std::size(kBindings));
+    for (const Binding &binding : kBindings) {
+        out.push_back(WorkspaceKeyBinding{
+            .command = binding.command,
+            .press = term::KeyPress{
+                .sym = binding.sym, .shift = binding.shift, .control = binding.control, .alt = binding.alt,
+                .meta = binding.meta, .num_lock = false},
+        });
+    }
+    return out;
+}
+
 auto divider_step(WorkspaceCommand command, std::size_t focused_slot, std::size_t child_count,
                   PaneAxis axis, double extent_dp) -> std::optional<DividerStep> {
     // 符号即「焦点 pane 变大」的方向：正向把手在焦点格的下游（slot == focused_slot），负向在

@@ -36,6 +36,7 @@ add_library(borealis_core STATIC
         ui/settings_i18n.cpp
         ui/settings_panel.cpp
         ui/settings_preview.cpp
+        ui/shortcuts_table.cpp
         ui/tab_strip.cpp
         ui/terminal_view.cpp
         ui/workspace_keys.cpp
