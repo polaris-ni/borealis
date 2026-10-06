@@ -4,8 +4,15 @@
 // 设置面板的界面腿本体（src/ui/settings_panel.h）
 // ------------------------------------------------------------
 // `codespec/UI_SETTINGS.draft.md` 屏 3 的落地（裁决 7.52 把 S1~S16 全部自拍为建议项）：
-// 交付**四页骨架 + 六类通用行控件 + 主题卡区段 + 16 格色板区段 + 字体族选择器 + 回退链区段 + 实时预览盒 + 表单落盘与广播接线**，
-// 其余按判据文 §8 的分工留给后续棒——连接页与状态栏开关组、快捷键只读表、以及损坏配置的启动对话框。
+// 交付**四页骨架 + 六类通用行控件 + 主题卡区段 + 16 格色板区段 + 字体族选择器 + 回退链区段 + 实时预览盒 + 状态栏开关组与组顶说明 + 表单落盘与广播接线**，
+// 其余按判据文 §8 的分工留给后续棒——快捷键只读表、以及损坏配置的启动对话框。
+//
+// 延后档位在界面上的表达（人已拍板，裁决 7.68③；判据文 S15① / B3-a / C2-a 那句「灰置」据此就地更正）：
+// 反向核对表里 `ConsumerStatus::Absent` 的那批行（状态栏十枚、终端页三条、SSH 五项、串口六项）**一律可用**
+// ——改动照常过表单校验、照常落盘，只是不广播（`apply_scope()` 把「无消费方 ∧ 即时」折成 `PersistOnly`）。
+// 「这条改动当下不会生效」因此只由两处文字承担：行尾的「延后」角标，与落在该组第一行之前的组顶说明
+// （`visible_notes()`，措辞须点名是哪个消费方还没开工）。本件不用灰置表达延后，因为把可用控件画成
+// 不可用会让「四分类骨架全建」这句在交互面上不可验证。
 //
 // 预览盒（S7 / 判据 F-a~F-e，裁决 7.66）落在**卡片底部一条 140 dp 的横条**（人已拍板的落位，不是稿面
 // 原先那个「右侧」形态），本体是 `SettingsPreview`（`settings_preview.h`：独立内存会话 + 真实视口控件）。
@@ -221,7 +228,7 @@ public:
     struct VisibleRow {
         std::string key;       ///< 落盘点号路径。
         ControlKind kind{};    ///< 控件形态。
-        bool editable{};       ///< 该行的控件是否可交互（`Absent` 与仍未落地的专用形态都是 false）。
+        bool editable{};       ///< 该行的控件是否可交互（`Absent` 行**可**交互而只落盘；false 只剩未落地的只读表）。
         std::string badge{};   ///< 角标文案（「延后」/「下次会话生效」/两者并列，主题行另挂「自定义」），无角标为空。
         std::string summary{}; ///< 未落地形态的只读值摘要；可交互行为空（值就在它自己的控件里）。
     };
@@ -256,6 +263,14 @@ public:
 
     /// @brief 当前页的行表，次序即面板的排版次序（＝反向核对表内该页的次序）。
     [[nodiscard]] auto visible_rows() const -> std::vector<VisibleRow>;
+
+    /// @brief 当前页画出的组顶说明，次序＝行区次序（判据文 A9-a / C2-a；无说明的页回空表）。
+    ///
+    /// 交出来而不是只画在树上：`Absent` 那批行现在**可改可落盘**（裁决 7.68③），界面上表示延后的
+    /// 只剩两处文字——行尾角标与组顶说明，故「这一组的消费方还没开工」那条判据只能比文字。
+    [[nodiscard]] auto visible_notes() const -> std::vector<std::string> {
+        return note_labels_;
+    }
 
     /// @brief 面板自持的那份表单副本（用例读它核对「改了又改回来不脏」这类判据）。
     [[nodiscard]] auto form() const noexcept -> const SettingsForm & {
@@ -552,7 +567,11 @@ private:
     /// @brief 专用控件行的只读值摘要（本棒不编辑它们，只把当前值如实显示出来）。
     [[nodiscard]] auto value_summary(const SettingsControl &control) const -> std::string;
 
-    /// @brief 一行是否可交互：`Absent` 一律灰置，专用控件形态里只有仍未落地的快捷键只读表在本件是占位。
+    /// @brief 一行是否可交互：只有仍未落地的专用表形态在本件是占位。
+    ///
+    /// `Absent`（有键、全仓无消费方）**不**灰置：人已拍板一律可改、可落盘，延后由行尾「延后」角标与
+    /// 组顶说明表达（裁决 7.68③；判据文 S15① / B3-a / C2-a 那句「灰置」据此就地更正）。于是
+    /// 「面板把没接线的键画成可用的了」这条误读要有证人，可看的判据是角标与组顶说明而不是控件灰置态。
     [[nodiscard]] static auto is_editable(const SettingsControl &control) -> bool;
 
     aurora::OverlayHost &host_;       ///< 浮层宿主（装配层的场景根，非拥有）。
@@ -568,6 +587,7 @@ private:
     int escape_binding_ = 0;           ///< `Escape` 绑定的 id；0 = 未登记。
     std::vector<const SettingsControl *> rows_{};  ///< 当前页行表（与 `status_texts_` 同序）。
     std::vector<std::shared_ptr<aurora::Text>> status_texts_{};  ///< 各行状态列控件，按序号。
+    std::vector<std::string> note_labels_{};  ///< 当前页画出的组顶说明文字（与行区里的说明节点同序同份）。
     /// @brief 当前页行区那只 `Scroll`：浮层锚点要按它**当时**的 `offset_y()` 把内容坐标折回窗口坐标。
     std::shared_ptr<aurora::Scroll> row_area_{};
 

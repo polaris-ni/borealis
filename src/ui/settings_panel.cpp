@@ -318,6 +318,29 @@ public:
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(label))};
 }
 
+/// @brief 组顶说明：页内某一组的**首行**之前插的那一条文字（S15 的延后档在组级的那一半表达）。
+struct GroupNote {
+    std::string_view first_key;  ///< 该组在页内的首行落盘路径（＝行表里的次序，不另数一遍）。
+    std::string_view note_key;
+};
+
+/// @brief 三组「入口先于消费方落地」的组顶说明（判据文 A9-a / C2-a）。
+///
+/// 措辞各说清「哪个消费方还没开工」，而不是把这一组重新灰置：人已拍板有键无消费方的行一律可用而只落盘
+/// （裁决 7.68③ 的口径，行尾另挂「延后」角标）。
+constexpr GroupNote kGroupNotes[] = {
+    {"appearance.status_bar.show_connection", "settings.note.status_bar"},
+    {"connection.ssh.port", "settings.note.ssh"},
+    {"connection.serial.baud", "settings.note.serial"},
+};
+
+[[nodiscard]] auto make_group_note(const std::string &text) -> aurora::Node {
+    auto note = make_text(text, kTextDim);
+    note.widget().modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+        .left = 16.0F, .top = 4.0F, .right = 16.0F, .bottom = 4.0F}));
+    return note;
+}
+
 }  // namespace
 
 auto settings_chrome_theme() -> aurora::Theme {
@@ -382,6 +405,7 @@ auto SettingsPanel::close() -> void {
     }
     // 时序同 `rebuild_overlay()`：本仓自持的派生控件句柄先放，旧卡片子树析构才不逐子告警。
     status_texts_.clear();
+    note_labels_.clear();
     rows_.clear();
     theme_canvases_.clear();
     theme_labels_.clear();
@@ -691,7 +715,14 @@ auto SettingsPanel::build_card() -> aurora::Node {
             // ——后者正是 G27 回货给 `Scroll` 补上的那条腿，故本件对它的真实点击另配一例证人。
             std::vector<aurora::Node> row_nodes;
             row_nodes.reserve(rows_.size());
+            note_labels_.clear();
             for (std::size_t ordinal = 0; ordinal < rows_.size(); ++ordinal) {
+                for (const GroupNote &note : kGroupNotes) {
+                    if (rows_[ordinal]->key == note.first_key) {
+                        note_labels_.push_back(settings_label(note.note_key));
+                        row_nodes.push_back(make_group_note(note_labels_.back()));
+                    }
+                }
                 row_nodes.push_back(build_row(ordinal));
             }
             auto rows_column = std::make_shared<aurora::Column>(aurora::ColumnProps{
@@ -1934,9 +1965,6 @@ auto SettingsPanel::value_summary(const SettingsControl &control) const -> std::
 }
 
 auto SettingsPanel::is_editable(const SettingsControl &control) -> bool {
-    if (control.consumer == ConsumerStatus::Absent) {
-        return false;  // S15 第一档：有键、全仓无消费方 → 灰置 + 角标
-    }
     switch (control.kind) {
         case ControlKind::Toggle:
         case ControlKind::NumberStep:

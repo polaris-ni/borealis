@@ -35,6 +35,12 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"settings.badge.deferred", "延后"},
     {"settings.badge.next_session", "下次会话生效"},
 
+    // ---- 组顶说明（S15 的延后档在组级的那一半；措辞须点名「哪个消费方还没开工」）----
+    // 三条同一句式：行尾角标说的是这一行，组顶说明说的是这一组，两者不重复也不冲突（B3-a 的同一口径）。
+    {"settings.note.status_bar", "入口先于消费方落地：关闭状态栏件尚未开工，本组改动只落盘"},
+    {"settings.note.ssh", "入口先于消费方落地：SSH 连接族尚未开工，本组改动只落盘"},
+    {"settings.note.serial", "入口先于消费方落地：串口连接族尚未开工，本组改动只落盘"},
+
     // ---- 回退链区段（A5-a：顺序可改、逐行可删、末尾追加）----
     // 上限的数字**不写进模板**：它的真值源是框架头里的 `AURORA_TEXT_FALLBACK_CHAIN_MAX`，故经 `{0}`
     // 位置参数交出（裁决 7.62）。三枚按钮的字形是符号而非词，仍留本表（同一张上屏文案表）。
