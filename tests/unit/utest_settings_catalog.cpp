@@ -501,7 +501,9 @@ AURORA_TEST_CASE(units_are_declared_only_where_the_sketch_draws_them) {
 }
 
 AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
-    // 判据文 §7 只点名三条「接缝待开」，多一列即面板会灰置一个本棒要接线的键。
+    // 判据文 §7 只点名三条「接缝待开」。多点名一条即该键在面板里改了只落盘而不广播（`apply_scope()`
+    // 把「接缝待开 ∧ 即时」折成只落盘），运行时表现为「改了没反应」；少点名一条则反过来对
+    // 一条无运行期接缝的键广播，故这一列的错位在两侧都有代价。
     const std::vector<std::string> seam_pending{"appearance.cursor_blinking", "appearance.cursor_shape",
                                                 "terminal.ambiguous_width"};
     AURORA_TEST_CHECK_MSG(rows_with_consumer(ConsumerStatus::SeamPending) == seam_pending,

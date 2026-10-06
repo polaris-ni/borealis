@@ -153,7 +153,7 @@ namespace {
     catalog.push_back(toggle(
         "appearance.sidebar_collapsed", SettingsPage::Appearance, ConsumerStatus::Absent, EffectLevel::Immediate));
     // 标签名优先级的消费方在标签条那一棒（在途）：判定件 `ui::resolve_tab_name` 已取该值，
-    // 装配层接线随其落地，故本行按「已接线」呈现而不灰置。
+    // 装配层接线随其落地，故本行按「已接线」呈现，而不是挂「延后」角标。
     catalog.push_back(dropdown("appearance.tab_name_priority",
                                SettingsPage::Appearance,
                                {"manual_wins", "osc_wins"},
@@ -244,8 +244,8 @@ namespace {
                           {},
                           ConsumerStatus::Wired,
                           EffectLevel::NextSession));
-    // SSH 与串口两族整组按 S15 灰置（消费方随各自需求号落期），但区间仍照装载侧把守的数登记：
-    // 面板要显示当前值并让「改动只落盘」这句可验证，控件的步进范围不能到了落期再猜。
+    // SSH 与串口两族的消费方随各自需求号落期，故按 S15 挂「延后」角标而**不灰置**（裁决 7.68③：一律可改可落盘）；
+    // 区间仍照装载侧把守的数登记：面板要显示当前值并让「改动只落盘」这句可验证，控件的步进范围不能到了落期再猜。
     catalog.push_back(integer_step("connection.ssh.port",
                                    SettingsPage::Connection,
                                    1.0,
