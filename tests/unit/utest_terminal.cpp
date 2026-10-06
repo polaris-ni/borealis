@@ -341,6 +341,63 @@ AURORA_TEST_CASE(dec_private_modes_are_registered) {
     AURORA_TEST_CHECK_FALSE(term.modes().bracketed_paste);
 }
 
+AURORA_TEST_CASE(mouse_report_modes_are_registered) {
+    // `SPEC.FEAT.TERM.06` 的六条模式位。`?1007` 的缺省档是「开」（裁决 7.77⑤），故它与其他五条
+    // 的方向相反：先 `l` 再 `h` 两个方向各断一次，否则测到的是缺省值而非序列效果。
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B[?9;1000;1002;1003;1006h");
+    AURORA_TEST_CHECK_TRUE(term.modes().mouse_x10);
+    AURORA_TEST_CHECK_TRUE(term.modes().mouse_normal);
+    AURORA_TEST_CHECK_TRUE(term.modes().mouse_button_events);
+    AURORA_TEST_CHECK_TRUE(term.modes().mouse_any_events);
+    AURORA_TEST_CHECK_TRUE(term.modes().mouse_sgr);
+
+    term.feed(U"\x1B[?9l\x1B[?1000l\x1B[?1002l\x1B[?1003l\x1B[?1006l");
+    AURORA_TEST_CHECK_FALSE(term.modes().mouse_x10);
+    AURORA_TEST_CHECK_FALSE(term.modes().mouse_normal);
+    AURORA_TEST_CHECK_FALSE(term.modes().mouse_button_events);
+    AURORA_TEST_CHECK_FALSE(term.modes().mouse_any_events);
+    AURORA_TEST_CHECK_FALSE(term.modes().mouse_sgr);
+
+    AURORA_TEST_CHECK_TRUE(term.modes().alternate_scroll);
+    term.feed(U"\x1B[?1007l");
+    AURORA_TEST_CHECK_FALSE(term.modes().alternate_scroll);
+    term.feed(U"\x1B[?1007h");
+    AURORA_TEST_CHECK_TRUE(term.modes().alternate_scroll);
+}
+
+AURORA_TEST_CASE(x10_setup_clears_the_higher_mouse_levels) {
+    // 蕴含关系落在**写**的一侧：`?9h` 会把三个高档清掉，于是读侧取最高的层级恰是 X10。
+    // 不清的话，程序接着发一条 `?9 h` 想退到「只报按下」，实际仍是 `?1002` 在报拖动。
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B[?1002;1003h");
+    AURORA_TEST_CHECK_TRUE(term.modes().mouse_button_events);
+    term.feed(U"\x1B[?9h");
+    AURORA_TEST_CHECK_TRUE(term.modes().mouse_x10);
+    AURORA_TEST_CHECK_FALSE(term.modes().mouse_normal);
+    AURORA_TEST_CHECK_FALSE(term.modes().mouse_button_events);
+    AURORA_TEST_CHECK_FALSE(term.modes().mouse_any_events);
+    // `?9 l` 只关自己那一档，不去动从未开过的高档（清档只在置位那一侧发生）。
+    term.feed(U"\x1B[?9l");
+    AURORA_TEST_CHECK_FALSE(term.modes().mouse_x10);
+}
+
+AURORA_TEST_CASE(clearing_the_normal_level_ends_mouse_reporting) {
+    // 程序退出时普遍只补一条 `?1000 l`（vim 与 htop 皆然）。留着 1002/1003 就等于上报没关：
+    // 滚轮会继续发按钮 64/65，而本地回看再也接不回来——这条清档规则的全部根据就在这里。
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B[?1000;1002;1003h");
+    AURORA_TEST_CHECK_TRUE(term.modes().mouse_any_events);
+    term.feed(U"\x1B[?1000l");
+    AURORA_TEST_CHECK_FALSE(term.modes().mouse_normal);
+    AURORA_TEST_CHECK_FALSE(term.modes().mouse_button_events);
+    AURORA_TEST_CHECK_FALSE(term.modes().mouse_any_events);
+    // 反向不成立：单独关 `?1002` 不动 `?1000`，按下与松开仍要报（xterm 亦只降一层）。
+    term.feed(U"\x1B[?1000;1002h\x1B[?1002l");
+    AURORA_TEST_CHECK_TRUE(term.modes().mouse_normal);
+    AURORA_TEST_CHECK_FALSE(term.modes().mouse_button_events);
+}
+
 AURORA_TEST_CASE(insert_mode_shifts_before_print) {
     auto term = make_terminal(narrow_only);
     term.feed(U"abcd");
