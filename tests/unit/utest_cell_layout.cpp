@@ -13,12 +13,15 @@
 ///           （SPEC.FEAT.RENDER.01、SPEC.FEAT.TERM.08）、三档下划线与删除线的落笔矩形吸附物理像素
 ///           且波浪相位跨 run 连续（SPEC.FEAT.RENDER.03、裁决 7.28④）、
 ///           选中列区间把底色换成传入色并按 `min_contrast` 重合成前景、空区间与二参形态逐字段相同、
-///           行尾空白与双宽延续格都随所在区间上底色（SPEC.FEAT.INTERACT.02、裁决 7.38① D1①）。
+///           行尾空白与双宽延续格都随所在区间上底色（SPEC.FEAT.INTERACT.02、裁决 7.38① D1①）、
+///           本行的搜索命中区间两档强度、与选区相撞时选中胜出、游标按整值（含行号）配对、
+///           命中的换底同样只换底色并按新底重合成前景（SPEC.FEAT.INTERACT.04 视觉稿 C1 / C3）。
 
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -53,6 +56,7 @@ using borealis::ui::PaletteSpec;
 using borealis::ui::rect_for;
 using borealis::ui::Rect;
 using borealis::ui::RgbaColor;
+using borealis::ui::RowBands;
 using borealis::ui::RowSpan;
 using borealis::ui::StyleRun;
 using borealis::ui::Typography;
@@ -110,6 +114,17 @@ auto span(std::size_t first, std::size_t last) -> RowSpan {
 
 /// @brief 选区底色槽的取值（与主题的 `basic[8]` 拉开一档即可，本件不关心它从哪来）。
 constexpr RgbaColor kSelected{40U, 40U, 120U};
+
+/// @brief 其余命中的底色档（视觉稿 A1-e 的各半混合档；本件只认传入的最终值）。
+constexpr RgbaColor kHit{128U, 100U, 40U};
+
+/// @brief 当前命中的底色档（视觉稿 A1-e 的全色档）。
+constexpr RgbaColor kCurrentHit{255U, 200U, 80U};
+
+/// @brief 本行的一段命中区间。**行号参与游标配对**（整值相等），故切片与游标须出自同一张表。
+auto hit(std::size_t row, std::size_t first, std::size_t last) -> RowSpan {
+    return RowSpan{.row = row, .first_column = first, .last_column = last};
+}
 
 /// @brief 8 px × 16 px、基线 12 px 的格在 2× 缩放下即 4 dp × 8 dp、基线 6 dp，1 px = 0.5 dp。
 auto square_geometry() -> GridGeometry {
@@ -564,6 +579,181 @@ AURORA_TEST_CASE(wide_base_and_continuation_inside_a_selection_stay_one_run) {
     AURORA_TEST_CHECK_EQ(at(runs, 0).text, std::string{"\xE4\xB8\xAD"});
     AURORA_TEST_CHECK_EQ(at(runs, 1).paint.background, spec.default_background);
 }
+
+AURORA_TEST_CASE(hit_spans_recolor_their_own_columns_and_split_the_runs) {
+    const auto spec = themed();
+    Row row{8U};
+    put(row, 0U, U'a');
+    put(row, 1U, red_background(U'b'));  // SGR 底色在命中段被命中槽整体盖掉（与选区同一条 D1①）
+    put(row, 2U, U'c');
+    put(row, 3U, U'd');
+    put(row, 4U, U'e');
+    put(row, 5U, red_background(U'f'));
+    put(row, 6U, U'g');
+
+    const std::vector<RowSpan> hits{hit(7U, 1U, 3U), hit(7U, 5U, 6U)};
+    const RowBands bands{.hits = hits, .hit_background = kHit};  // 游标为空：三段命中都走各半档
+    const auto runs = layout_row(row, spec, bands);
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 5U);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).last_column, 1U);
+    AURORA_TEST_CHECK_EQ(at(runs, 1).first_column, 1U);
+    AURORA_TEST_CHECK_EQ(at(runs, 1).last_column, 3U);  // 命中段内两格同底色，仍并成一跑
+    AURORA_TEST_CHECK_EQ(at(runs, 2).first_column, 3U);
+    AURORA_TEST_CHECK_EQ(at(runs, 3).first_column, 5U);
+    AURORA_TEST_CHECK_EQ(at(runs, 3).last_column, 6U);
+    AURORA_TEST_CHECK_EQ(at(runs, 4).first_column, 6U);
+
+    AURORA_TEST_CHECK_EQ(at(runs, 1).paint.background, kHit);
+    AURORA_TEST_CHECK_EQ(at(runs, 3).paint.background, kHit);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).paint.background, spec.default_background);
+    AURORA_TEST_CHECK_EQ(at(runs, 2).paint.background, spec.default_background);
+    AURORA_TEST_CHECK_EQ(at(runs, 1).text, std::string{"bc"});  // 文本不受底色替换影响
+    AURORA_TEST_CHECK_EQ(at(runs, 3).text, std::string{"f"});
+}
+
+AURORA_TEST_CASE(the_current_hit_is_the_only_span_on_the_full_intensity_tier) {
+    // 视觉稿 A1-e：两档强度是同一色相的深浅，而「哪一格是当前位」由游标那一段单独取全色档。
+    const auto spec = themed();
+    Row row{8U};
+    put(row, 0U, U'a');
+    put(row, 1U, U'b');
+    put(row, 2U, U'c');
+    put(row, 3U, U'd');
+    put(row, 4U, U'e');
+    put(row, 5U, U'f');
+    put(row, 6U, U'g');
+
+    const std::vector<RowSpan> hits{hit(7U, 0U, 2U), hit(7U, 3U, 4U), hit(7U, 6U, 7U)};
+    const RowBands on_this_row{.hits = hits,
+                               .current_hit = hit(7U, 3U, 4U),
+                               .hit_background = kHit,
+                               .current_hit_background = kCurrentHit};
+    const auto runs = layout_row(row, spec, on_this_row);
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 5U);  // 末格是行尾空白且默认底色，不产段（既有的丢弃口径）
+    AURORA_TEST_CHECK_EQ(at(runs, 0).paint.background, kHit);
+    AURORA_TEST_CHECK_EQ(at(runs, 2).paint.background, kCurrentHit);  // 只有游标那一段升档
+    AURORA_TEST_CHECK_EQ(at(runs, 4).paint.background, kHit);
+
+    // 游标按整值（含行号）配对：同一列区间属另一行时，本行一段都不升档。
+    const RowBands other_row_cursor{.hits = hits,
+                                    .current_hit = hit(8U, 3U, 4U),
+                                    .hit_background = kHit,
+                                    .current_hit_background = kCurrentHit};
+    const auto dimmed = layout_row(row, spec, other_row_cursor);
+    AURORA_TEST_REQUIRE_EQ(dimmed.size(), 5U);
+    AURORA_TEST_CHECK_EQ(at(dimmed, 2).paint.background, kHit);
+}
+
+AURORA_TEST_CASE(selection_beats_the_hit_on_the_columns_they_share) {
+    // 视觉稿 C1-a 的层序「主题底 → 命中 → 选中」：选中一段命中文本时那几格仍是选区色。
+    const auto spec = themed();
+    Row row{8U};
+    put(row, 0U, U'a');
+    put(row, 1U, U'b');
+    put(row, 2U, U'c');
+    put(row, 3U, U'd');
+    put(row, 4U, U'e');
+    put(row, 5U, U'f');
+    put(row, 6U, U'g');
+
+    const std::vector<RowSpan> hits{hit(7U, 1U, 4U)};
+    const RowBands bands{
+        .hits = hits, .selection = span(2U, 5U), .hit_background = kHit, .selected_background = kSelected};
+    const auto runs = layout_row(row, spec, bands);
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 4U);
+    AURORA_TEST_CHECK_EQ(at(runs, 1).first_column, 1U);
+    AURORA_TEST_CHECK_EQ(at(runs, 1).last_column, 2U);  // 命中被选中截短到相撞之前那一格
+    AURORA_TEST_CHECK_EQ(at(runs, 1).paint.background, kHit);
+    AURORA_TEST_CHECK_EQ(at(runs, 2).first_column, 2U);
+    AURORA_TEST_CHECK_EQ(at(runs, 2).last_column, 5U);  // 相撞的三格 + 只被选中的那一格并成一跑
+    AURORA_TEST_CHECK_EQ(at(runs, 2).paint.background, kSelected);
+    AURORA_TEST_CHECK_EQ(at(runs, 3).paint.background, spec.default_background);
+}
+
+AURORA_TEST_CASE(min_contrast_recomposes_the_foreground_per_hit_tier) {
+    auto spec = themed();
+    const RgbaColor same_as_text{255U, 255U, 255U};  // 当前命中底 == 默认前景：不重合成就看不见
+    constexpr RgbaColor kHitDark{30U, 30U, 30U};     // 与默认底色差一档而对比度已达标：不该动前景
+    Row row{4U};
+    put(row, 0U, U'a');
+    put(row, 1U, U'b');
+    put(row, 2U, U'c');
+    put(row, 3U, U'd');
+
+    const std::vector<RowSpan> hits{hit(7U, 0U, 1U), hit(7U, 2U, 3U)};
+    const RowBands bands{.hits = hits,
+                         .current_hit = hit(7U, 0U, 1U),
+                         .hit_background = kHitDark,
+                         .current_hit_background = same_as_text};
+
+    spec.min_contrast_enabled = false;
+    const auto off = layout_row(row, spec, bands);
+    AURORA_TEST_REQUIRE_EQ(off.size(), 4U);
+    AURORA_TEST_CHECK_EQ(at(off, 0).paint.background, same_as_text);
+    AURORA_TEST_CHECK_EQ(at(off, 0).paint.foreground, spec.default_foreground);  // 开关关着时前景不动
+
+    spec.min_contrast_enabled = true;
+    spec.min_contrast = 4.5;
+    const auto on = layout_row(row, spec, bands);
+    AURORA_TEST_REQUIRE_EQ(on.size(), 4U);
+    AURORA_TEST_CHECK_NE(at(on, 0).paint.foreground, spec.default_foreground);  // 当前命中档按自己的底色重合成
+    AURORA_TEST_CHECK_GE(contrast_ratio(at(on, 0).paint.foreground, same_as_text), 4.5 - 1.0e-9);
+    AURORA_TEST_CHECK_EQ(at(on, 2).paint.foreground, spec.default_foreground);  // 另一档底色已达标，前景逐位不动
+    AURORA_TEST_CHECK_EQ(at(on, 1).paint.foreground, spec.default_foreground);  // 未命中格更不动
+}
+
+AURORA_TEST_CASE(a_hit_span_covers_the_wide_continuation_cell) {
+    // 视觉稿 C3-a 的整格对齐落在绘制侧的形态：双宽字符要么整字符亮，不出现半个字有色。
+    const auto spec = themed();
+    Row row{3U};
+
+    Cell base{};
+    base.code_point = U'\x4E2D';
+    base.width = 2U;
+    put(row, 0U, base);
+
+    Cell continuation{};
+    continuation.flags = static_cast<CellFlags>(kFlagWideContinuation);
+    continuation.width = 0U;
+    put(row, 1U, continuation);
+
+    put(row, 2U, U'x');
+
+    const std::vector<RowSpan> hits{hit(7U, 0U, 2U)};
+    const RowBands bands{.hits = hits, .hit_background = kHit};
+    const auto runs = layout_row(row, spec, bands);
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 2U);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).last_column, 2U);
+    AURORA_TEST_CHECK_EQ(at(runs, 0).paint.background, kHit);
+    AURORA_TEST_CHECK_EQ(at(runs, 1).paint.background, spec.default_background);
+}
+
+AURORA_TEST_CASE(bands_without_hits_are_the_two_and_four_argument_forms) {
+    // 命中层不存在时（没开浮层、或本行没有命中）必须逐字段退回既有形态，否则选区那条既有判据
+    // 就同时守两件事——而「无命中」正是选区界面腿落地时唯一的现场。
+    const auto spec = themed();
+    Row row{5U};
+    put(row, 0U, U'a');
+    put(row, 1U, red_background(U'b'));
+    put(row, 2U, U'c');
+    put(row, 3U, U'd');
+    put(row, 4U, U'e');
+
+    const auto compare = [&](const std::vector<StyleRun> &left, const std::vector<StyleRun> &right) -> void {
+        AURORA_TEST_REQUIRE_EQ(left.size(), right.size());
+        for (std::size_t index = 0; index < left.size(); ++index) {
+            AURORA_TEST_CHECK_EQ(at(left, index).first_column, at(right, index).first_column);
+            AURORA_TEST_CHECK_EQ(at(left, index).last_column, at(right, index).last_column);
+            AURORA_TEST_CHECK_EQ(at(left, index).text, at(right, index).text);
+            AURORA_TEST_CHECK_EQ(at(left, index).paint, at(right, index).paint);
+        }
+    };
+
+    compare(layout_row(row, spec), layout_row(row, spec, RowBands{}));
+    compare(layout_row(row, spec, span(1U, 4U), kSelected),
+            layout_row(row, spec, RowBands{.selection = span(1U, 4U), .selected_background = kSelected}));
+}
+
 
 AURORA_TEST_CASE(single_underline_is_one_physical_pixel_below_the_baseline) {
     const auto geometry = square_geometry();  // 基线 6 dp、1 px = 0.5 dp
