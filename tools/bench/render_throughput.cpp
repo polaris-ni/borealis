@@ -3,6 +3,8 @@
 // ------------------------------------------------------------
 // `SPEC.NF.PERF.02` 的验收手段，形态由裁决 7.23③ 定死：HeadlessSurface + 灌注回放，量三条
 // ——滚动一帧的成本、全屏重绘一帧的成本、`cat` 10 MB 期间的帧时分布。
+// 另有第四场景量 `SPEC.FEAT.INTERACT.04` 的首次搜索响应（100,000 行 scrollback 网格上的字面量
+// 档全量扫描，裁决 7.78⑤），它不进视口也不进会话，故与前三个数无共享路径。
 //
 // 度量主体是**上屏层自身的每帧成本**（脏行过滤、run 切分、色合成、光标三段式），不是对端的
 // 产出速度：无头后端没有 vsync，故帧率取「帧时倒数」而非事件循环的真实节拍。于是本程序给的
@@ -36,6 +38,7 @@
 #include "borealis/term/terminal.h"
 #include "borealis/term/utf8.h"
 #include "borealis/term/width.h"
+#include "borealis/ui/search.h"
 
 #include "aurora/aurora.h"
 #include "aurora/core/log.h"
@@ -58,6 +61,28 @@ constexpr int kDefaultScrollFrames = 400;
 constexpr int kDefaultRedrawRuns = 9;
 constexpr int kScrollWarmupFrames = 40;
 constexpr std::size_t kFeedChunkBytes = 64U * 1024U;
+
+/// @brief 搜索场景的扫描次数（首扫是判据问的量，但一次样本不足以给分布，故取 9 次）。
+///
+/// `summarize` 的 p95 取序为 `min(n-1, n*95/100)`，9 次时恰落在最大样本，故本场景的 p95 就是
+/// 最慢那一次；三次独立进程的中位再由门禁取。这是「首次搜索响应」分布的粗粒形态，值得写清：
+/// 9 个样本里没有比最大值更靠前的分位可取。
+constexpr int kDefaultSearchRuns = 9;
+
+/// @brief 搜索夹具里嵌一枚 needle 的行距：100,000 行即约 1,000 条匹配。
+constexpr std::size_t kSearchNeedleEveryRows = 100U;
+
+/// @brief 搜索 needle（字面量档的查询串，取码点空间即 `SearchQuery::text` 的空间）。
+///
+/// 含数字，故夹具正文（只有 a-z 的伪随机字母）结构上产不出它，匹配条数完全由嵌入处决定。
+/// 1,000 条刻意落在 `ui::kMaxSearchMatches` 以下：表一触顶扫描就提前停止，量到的就成了「扫到
+/// 第 10,000 条」的成本而非「扫完 100,000 行」的成本，而需求判据要的是后者。宽匹配式（正则档，
+/// 或命中上万的字面量）成本高两个数量级且会触顶，把它钉进门禁等于钉一个假的毫秒上限——正则档
+/// 由界面腿的「只在 Enter 提交时扫」节流守（裁决 7.78⑥），不在本场景表达。
+constexpr std::u32string_view kSearchNeedle = U"qz7k";
+
+/// @brief 灌夹具时多给的行数：确保 scrollback 顶到上限（`grid::kMaxScrollbackLimit`）而不是差几行。
+constexpr std::size_t kSearchSlackRows = 8U;
 
 /// @brief 默认窗口尺寸（`src/main.cpp` 的 `WindowOptions::size`）：需求原文的「默认窗口尺寸」。
 constexpr int kWindowWidth = 960;
@@ -467,18 +492,10 @@ class BufferCollector final : public term::CodePointSink {
     return result;
 }
 
-/// @brief 连会话也不要：量「解码 → 解析 → 状态机 → 网格」这条纯链的吞吐（单线程，无锁无队列）。
-///
-/// 与 `bench_ingest` 的差值就是会话侧的开销（互斥、脏行扫描、队列），两者同速则瓶颈在链内。
-/// 网格尺寸与 scrollback 容量取同一次运行的配置，素材也同一份，故两个数直接可比。
-[[nodiscard]] auto bench_chain(const std::string &corpus, std::size_t rows, std::size_t columns,
-                               std::size_t scrollback_limit) -> FeedResult {
-    FeedResult result;
-    term::Terminal terminal{columns, rows, scrollback_limit, g_width_policy};
+/// @brief 把一份字节流按「解码 → 状态机 → 网格」灌进一台终端（无会话、无线程、无队列）。
+auto drive_terminal(term::Terminal &terminal, std::string_view corpus) -> void {
     term::Utf8Decoder decoder;
     BufferCollector collector;
-
-    const auto wall = Clock::now();
     for (std::size_t off = 0U; off < corpus.size(); off += kFeedChunkBytes) {
         const std::size_t take = std::min(kFeedChunkBytes, corpus.size() - off);
         std::string_view slice{corpus.data() + off, take};
@@ -493,9 +510,90 @@ class BufferCollector final : public term::CodePointSink {
     }
     decoder.finish(collector);
     terminal.feed(collector.view());
+}
+
+/// @brief 连会话也不要：量「解码 → 解析 → 状态机 → 网格」这条纯链的吞吐（单线程，无锁无队列）。
+///
+/// 与 `bench_ingest` 的差值就是会话侧的开销（互斥、脏行扫描、队列），两者同速则瓶颈在链内。
+/// 网格尺寸与 scrollback 容量取同一次运行的配置，素材也同一份，故两个数直接可比。
+[[nodiscard]] auto bench_chain(const std::string &corpus, std::size_t rows, std::size_t columns,
+                               std::size_t scrollback_limit) -> FeedResult {
+    FeedResult result;
+    term::Terminal terminal{columns, rows, scrollback_limit, g_width_policy};
+
+    const auto wall = Clock::now();
+    drive_terminal(terminal, corpus);
     result.bytes = corpus.size();
     result.wall_ms = elapsed_ms(wall);
     result.mb_per_s = mb_per_s(result.bytes, result.wall_ms);
+    return result;
+}
+
+/// @brief 搜索场景的产出：首扫耗时分布，加上夹具的两个量（它们同属测量契约）。
+struct SearchResult {
+    FrameStats scan;        ///< 每轮一次全量扫描的耗时；`frames` 是轮数，`fps` 与 `wall_ms` 在本场景无意义。
+    std::size_t lines = 0;  ///< 扫描时网格的实际行数（scrollback 顶到上限 + 视口行数）。
+    std::size_t matches = 0;  ///< 该夹具的实际匹配条数——它决定扫描会不会提前停止。
+};
+
+/// @brief 造搜索夹具的字节流：@p lines 行，每行写满 `columns - 1` 格。
+///
+/// 正文只有 a-z 的伪随机字母（固定种子，故两次跑出的字节流逐位相同），needle 嵌在每第 100 行的
+/// 行尾。每行刻意留最后一格不写：行尾的连续空白正是 `content_right` 要折回来跳过的那段，把整行
+/// 填满就等于把「折回来」这一格成本抹掉，而真实输出的行尾空白长短不一、这段折返是每行都付的。
+[[nodiscard]] auto make_search_corpus(std::size_t lines, std::size_t columns) -> std::string {
+    const std::size_t width = columns > 1U ? columns - 1U : 1U;
+    std::string corpus;
+    corpus.reserve(lines * (width + 2U));
+    std::uint32_t state = 20261007U;
+    for (std::size_t index = 0U; index < lines; ++index) {
+        std::string row(width, 'a');
+        for (std::size_t column = 0U; column < width; ++column) {
+            state = state * 1103515245U + 12345U;
+            row[column] = static_cast<char>('a' + static_cast<std::size_t>((state >> 16U) % 26U));
+        }
+        if (index % kSearchNeedleEveryRows == 0U && width >= kSearchNeedle.size()) {
+            const std::size_t at = width - kSearchNeedle.size();
+            for (std::size_t i = 0U; i < kSearchNeedle.size(); ++i) {
+                row[at + i] = static_cast<char>(kSearchNeedle[i]);  // needle 是 ASCII，逐码点即一字节
+            }
+        }
+        corpus += row;
+        corpus += "\r\n";
+    }
+    return corpus;
+}
+
+/// @brief 搜索场景：把网格灌满到 scrollback 上限，然后量「第一次搜索要多久」。
+///
+/// 对应 `SPEC.FEAT.INTERACT.04` 的性能判据（100,000 行下首次搜索响应 ≤ 200 ms / P95），形态由
+/// 裁决 7.78⑤ 拍板。夹具的构建与灌注都排在计时窗之外——判据问的是「已经满到上限的网格上一次
+/// 搜索的成本」，造素材与灌素材都不是搜索的成本。首轮刻意**不热身**：「首次」本身就是被测量，
+/// 冷缓存（首次触碰整份网格的行数据、分支预测未建立）正是它的一部分。
+///
+/// 不走会话：被测主体是「权威网格上的全量扫描」，它是 `grid::Storage` 的一个函数，加一把互斥锁
+/// 只会把锁的开销混进读数。生产形态（主线程临界区内一次扫，裁决 7.78⑥）由界面腿的集成用例守。
+[[nodiscard]] auto bench_search(int runs, std::size_t rows, std::size_t columns) -> SearchResult {
+    SearchResult result;
+    const std::string corpus =
+        make_search_corpus(grid::kMaxScrollbackLimit + rows + kSearchSlackRows, columns);
+    term::Terminal terminal{columns, rows, grid::kMaxScrollbackLimit, g_width_policy};
+    drive_terminal(terminal, corpus);
+    const grid::Storage &storage = terminal.active_grid();
+    result.lines = storage.total_lines();
+
+    const ui::SearchQuery query{.text = std::u32string{kSearchNeedle},
+                                .case_sensitive = false,
+                                .regex = false};
+    std::vector<double> samples;
+    samples.reserve(static_cast<std::size_t>(runs));
+    for (int run = 0; run < runs; ++run) {
+        const auto start = Clock::now();
+        const auto matches = ui::search(storage, query);
+        samples.push_back(elapsed_ms(start));
+        result.matches = matches.has_value() ? matches->count() : 0U;  // 每轮同一份表，取最后一次即夹具的条数
+    }
+    result.scan = summarize(std::move(samples), 0.0);
     return result;
 }
 
@@ -503,6 +601,7 @@ struct Options {
     std::size_t feed_bytes = kDefaultFeedBytes;
     int scroll_frames = kDefaultScrollFrames;
     int redraw_runs = kDefaultRedrawRuns;
+    int search_runs = kDefaultSearchRuns;
     std::string json_path;
     bool want_help = false;
     bool write_side = false;
@@ -521,6 +620,8 @@ struct Options {
             opts->scroll_frames = std::stoi(std::string{v});
         } else if (const auto v = value_of("--runs="); !v.empty()) {
             opts->redraw_runs = std::stoi(std::string{v});
+        } else if (const auto v = value_of("--search-runs="); !v.empty()) {
+            opts->search_runs = std::stoi(std::string{v});
         } else if (const auto v = value_of("--json="); !v.empty()) {
             opts->json_path = std::string{v};
         } else if (arg == "--write-side") {
@@ -537,8 +638,8 @@ struct Options {
 }
 
 auto write_json(const std::string &path, const Rig &rig, const FrameStats &scroll, double full_redraw_ms,
-                const CatResult &cat, double cat_mb_per_s, const FeedResult *chain,
-                const FeedResult *ingest) -> void {
+                const CatResult &cat, double cat_mb_per_s, const SearchResult &search,
+                const FeedResult *chain, const FeedResult *ingest) -> void {
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) {
         AURORA_LOG_ERROR("bench", "cannot open json output path");
@@ -552,6 +653,10 @@ auto write_json(const std::string &path, const Rig &rig, const FrameStats &scrol
          << "  \"window_dp\": [" << kWindowWidth << ", " << kWindowHeight << "],\n"
          << "  \"grid\": [" << rig.rows() << ", " << rig.columns() << "],\n"
          << "  \"feed_bytes\": " << cat.bytes << ",\n"
+         // 搜索夹具的实际量，与 grid、build_config 同属测量契约：扫描成本随行数与列宽线性变，
+         // 而匹配条数决定扫描会不会提前停止，三个量任一变一个，读数就不再描述同一件事。
+         << "  \"search_fixture\": [" << search.lines << ", " << rig.columns() << ", " << search.matches
+         << "],\n"
          << "  \"metrics\": {\n"
          << "    \"scroll_frame_ms_mean\": " << fmt(6, scroll.mean_ms) << ",\n"
          << "    \"scroll_frame_ms_p95\": " << fmt(6, scroll.p95_ms) << ",\n"
@@ -562,7 +667,10 @@ auto write_json(const std::string &path, const Rig &rig, const FrameStats &scrol
          << "    \"cat_fps\": " << fmt(3, stats.fps) << ",\n"
          << "    \"cat_mb_per_s\": " << fmt(3, cat_mb_per_s) << ",\n"
          << "    \"cat_frames\": " << stats.frames << ",\n"
-         << "    \"cat_wall_ms\": " << fmt(3, stats.wall_ms);
+         << "    \"cat_wall_ms\": " << fmt(3, stats.wall_ms) << ",\n"
+         << "    \"search_first_ms_p95\": " << fmt(6, search.scan.p95_ms) << ",\n"
+         << "    \"search_first_ms_mean\": " << fmt(6, search.scan.mean_ms) << ",\n"
+         << "    \"search_runs\": " << search.scan.frames;
     if (chain != nullptr) {
         file << ",\n    \"chain_mb_per_s\": " << fmt(3, chain->mb_per_s);
     }
@@ -574,9 +682,10 @@ auto write_json(const std::string &path, const Rig &rig, const FrameStats &scrol
 
 auto print_help() -> void {
     AURORA_LOG_RAW("bench",
-                   "usage: borealis_bench [--bytes=N] [--frames=N] [--runs=N] [--write-side] "
-                   "[--json=PATH]\n"
+                   "usage: borealis_bench [--bytes=N] [--frames=N] [--runs=N] [--search-runs=N] "
+                   "[--write-side] [--json=PATH]\n"
                    "  render throughput benchmark for SPEC.NF.PERF.02 (headless software painter)\n"
+                   "  plus the first-search scan for SPEC.FEAT.INTERACT.04 (100,000-row scrollback grid)\n"
                    "  --write-side adds producer-only diagnostics (chain / ingest MB/s), ungated\n"
                    "  prints metrics only; pass/fail is tools/check/check_perf_gates.ps1\n");
 }
@@ -617,6 +726,10 @@ auto main(int argc, char **argv) -> int {
                    " MB | ", fmt(1, cat_mb_per_s), " MB/s | ", cat.stats.frames, " frames | ",
                    fmt(3, cat.stats.mean_ms), " ms mean | ", fmt(3, cat.stats.p95_ms), " ms p95 | ",
                    fmt(1, cat.stats.fps), " fps |\n");
+    const SearchResult search = bench_search(opts.search_runs, rig.rows(), rig.columns());
+    AURORA_LOG_RAW("bench", "| first search (", opts.search_runs, " cold scans, literal arm) | ",
+                   search.lines, " lines x ", rig.columns(), " cols | ", search.matches, " matches | ",
+                   fmt(3, search.scan.mean_ms), " ms mean | ", fmt(3, search.scan.p95_ms), " ms p95 |\n");
     FeedResult chain;
     FeedResult ingest;
     if (opts.write_side) {
@@ -634,7 +747,7 @@ auto main(int argc, char **argv) -> int {
                    "environment jitter, gate on relative baseline via tools/check/check_perf_gates.ps1)\n");
 
     if (!opts.json_path.empty()) {
-        write_json(opts.json_path, rig, scroll, full_redraw_ms, cat, cat_mb_per_s,
+        write_json(opts.json_path, rig, scroll, full_redraw_ms, cat, cat_mb_per_s, search,
                    opts.write_side ? &chain : nullptr, opts.write_side ? &ingest : nullptr);
         AURORA_LOG_RAW("bench", "json written: ", opts.json_path, "\n");
     }
