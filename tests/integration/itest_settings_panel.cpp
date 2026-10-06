@@ -73,6 +73,12 @@
 ///              而不是命令 id；修饰位只取 Shift / Ctrl / Alt / Meta 四位，故只差 NumLock 的两条判为同一键位），
 ///              并与本仓十二条分屏保留位比一次（撞档即标注，两档并列）。孤儿行只有文本，故呈现为「延后」而
 ///              不是「无冲突」；表体没有任何可提交入口，真点一格既不落盘也不广播。
+///           ⑬ **预览的取外观与取初始档两条接缝绑成一对**（裁决 7.76③）：任缺其一即整条横条不画，于是
+///              「装配层只装了一半」在结构上不成立——两份不同的初始档画在同一屏上就是两种光标，而
+///              `Bar` / `Underline` 两档在绘制侧**先于**失焦降级就落笔。证人取 `TermModes` 上那两条可见腿
+///              （形态与闪烁档）；Ambiguous 口径在会话公共面上没有可读入口（它的效果是列位，已由
+///              `utest_terminal` 的状态机侧用例逐值守），故本件对整份聚合只判「转发发生了」而不判第三值，
+///              这条边界如实登记而不在用例里伪造观测。
 ///
 ///           一条测试现场的必要构造：`OverlayHost` 的浮层序号是从「基础内容之后」起算的
 ///           （`add_overlay` 返回 `children_.size() - 1`，回货后宿主无基础内容时返回 `std::nullopt`），
@@ -127,6 +133,8 @@ namespace borealis::test_cases::itest_settings_panel {
 namespace {
 
 using borealis::config::Settings;
+using borealis::term::AmbiguousWidth;
+using borealis::term::CursorShape;
 using borealis::term::KeyPress;
 using borealis::term::KeySym;
 using borealis::ui::ApplyScope;
@@ -275,6 +283,18 @@ auto check_chain_sequence(std::string_view what, const std::vector<std::string> 
     return appearance;
 }
 
+/// @brief 用例侧独立折一份会话初始档（与 `src/main.cpp` 的 `make_terminal_defaults()` 同一算式）。
+///
+/// 三条都是构造期取用（判据文 §0 边界②），一旦用例直接取库缺省档，「预览拿到了配置值」这句就永远
+/// 无从判起——缺省档与配置缺省值同值，装错与漏装在读数上看不出差别。
+[[nodiscard]] auto test_defaults(const Settings &settings) -> borealis::term::TerminalDefaults {
+    return borealis::term::TerminalDefaults{
+        .cursor_shape = settings.appearance.cursor_shape,
+        .cursor_blinking = settings.appearance.cursor_blinking,
+        .ambiguous_width = settings.terminal.ambiguous_width,
+    };
+}
+
 /// @brief 存储侧与绘制侧的接缝替身：只数「被调了几次」并留下最后一次搬到的配置。
 ///
 /// 落盘走真实的 `config::apply_form()`，于是一条判据同时过「表单 → 成员」的搬运腿；基线随成功落盘
@@ -310,8 +330,9 @@ public:
         FontFamilyEntry{.family = "JetBrains Mono", .monospace = true},
         FontFamilyEntry{.family = "Noto Sans Mono", .monospace = true},
     };
-    /// 预览的两条接缝装不装（S7 的「不装即不画」）：必须在 `hooks()` 之前设，因为装的是**闭包本身**
-    /// 而不是一个在调用时才读的 bool——判据要证的是「接缝缺席时面板一个会话都不建」。
+    /// 预览的取外观与取初始档两条接缝装不装（S7 的「不装即不画」，裁决 7.76③ 把两条绑成一对）：必须在
+    /// `hooks()` 之前设，因为装的是**闭包本身**而不是一个在调用时才读的 bool——判据要证的是「接缝缺席时
+    /// 面板一个会话都不建」。
     bool with_preview = false;
     std::size_t preview_wake_calls = 0;  ///< `preview_wake` 被叫过几次（夹具重投的尾沿脏靠它）。
 
@@ -362,6 +383,7 @@ public:
                     return family_catalog;
                 },
             .preview_appearance = nullptr,
+            .preview_defaults = nullptr,
             .preview_wake = nullptr,
             .commands =
                 [this]() -> std::vector<ShortcutCommandEntry> {
@@ -371,6 +393,9 @@ public:
         if (with_preview) {
             out.preview_appearance = [this]() -> borealis::ui::TerminalView::Appearance {
                 return test_appearance(base);
+            };
+            out.preview_defaults = [this]() -> borealis::term::TerminalDefaults {
+                return test_defaults(base);
             };
             out.preview_wake = [this]() -> void {
                 ++preview_wake_calls;
@@ -578,9 +603,10 @@ AURORA_TEST_CASE(deferred_and_next_session_rows_carry_their_badges) {
     AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.sidebar_collapsed")->badge, std::string{kBadgeDeferred});
     // 「有键而无消费方」在界面上的全部表达就是这两处文字，控件本身可用（裁决 7.68③ / 判据文 S15① 就地更正）。
     AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.sidebar_collapsed")->editable);
-    AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.cursor_shape")->editable);  // 接缝未开 ≠ 灰置
-    AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.cursor_shape")->badge,
-                         std::string{kBadgeDeferred} + " · " + std::string{kBadgeNextSession});
+    // 「已接线 ∧ 下次会话」只挂后一枚角标：三条构造期注入的接缝已开（裁决 7.76②），面板据此不再说它延后，
+    // 但仍要说它「改了本条会话不生效」——两列是正交的两条事实。
+    AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.cursor_shape")->editable);
+    AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.cursor_shape")->badge, std::string{kBadgeNextSession});
     AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.font_size_pt")->badge, std::string{});
 
     panel.select_page(SettingsPage::Terminal);
@@ -1088,7 +1114,22 @@ AURORA_TEST_CASE(the_preview_bar_exists_only_when_the_assembly_wires_its_seams) 
         SettingsPanel panel{*host, shortcuts, bare.hooks()};
         panel.open();
         AURORA_TEST_CHECK_TRUE(panel.preview_view() == nullptr);
+        AURORA_TEST_CHECK_FALSE(panel.preview_modes().has_value());
         AURORA_TEST_CHECK_EQ(bare.preview_wake_calls, 0U);
+        panel.close();
+    }
+
+    // 「装了一半」是装配层的真实失误形态（两条接缝是分开写的两行赋值），故这里单独造一次现场：
+    // 只交外观不交初始档 ⇒ 横条**整条不画**，而不是画出一条与主视口取不同档的预览（裁决 7.76③）。
+    StoreProbe half;
+    half.with_preview = true;
+    {
+        auto hooks = half.hooks();
+        hooks.preview_defaults = nullptr;
+        SettingsPanel panel{*host, shortcuts, hooks};
+        panel.open();
+        AURORA_TEST_CHECK_TRUE(panel.preview_view() == nullptr);
+        AURORA_TEST_CHECK_FALSE(panel.preview_modes().has_value());
         panel.close();
     }
 
@@ -1108,6 +1149,44 @@ AURORA_TEST_CASE(the_preview_bar_exists_only_when_the_assembly_wires_its_seams) 
         AURORA_TEST_REQUIRE(panel.preview_view() != nullptr);
         panel.close();
     }
+}
+
+/// @brief 预览那条会话拿到的是**配置里的**初始档，而不是库的缺省档（裁决 7.76②③ 的接线腿）。
+///
+/// 这一例走的是完整的一条链：存储侧那份 `Settings` → `preview_defaults` 闭包（用例侧独立折一次，算法与
+/// 装配层同源而不共享代码）→ 面板 → `SettingsPreview` 构造 → `Session` → 状态机的现值，故「漏装接缝」「装
+/// 成库缺省档」「把某条键搬错」三种失误都要现形。前提是三条都取与库缺省档**互异**的值——取库缺省档时
+/// 「装了」与「没装」在读数上逐位相同（与 `test_defaults` 同一条理由）。
+/// 观测点取的是状态机现值而不是面板另存的一份档，故面板自己那一份投影错了也不影响这一判据。
+///
+/// 只判 `TermModes` 上那两条可见腿（光标形态与闪烁档）：Ambiguous 口径在会话公共面上没有读入口，它的
+/// 可判效果是列位，那一半由 `utest_terminal` 的播种用例逐值守，本件因此只证「整份聚合被转发」而不证第三
+/// 条的值——这条边界如实登记，不在用例里伪造观测通道。
+AURORA_TEST_CASE(the_preview_session_gets_the_configured_initial_defaults) {
+    borealis::ui::install_settings_strings();
+    au::Node root;
+    std::shared_ptr<au::Widget> base;
+    std::shared_ptr<au::OverlayHost> host = make_host(base, root);
+    au::ShortcutRegistry shortcuts;
+
+    StoreProbe probe;
+    probe.with_preview = true;
+    probe.base.appearance.cursor_shape = CursorShape::Bar;      // 库缺省 Block
+    probe.base.appearance.cursor_blinking = false;              // 库缺省 true
+    probe.base.terminal.ambiguous_width = AmbiguousWidth::Wide;  // 库缺省 Narrow
+    SettingsPanel panel{*host, shortcuts, probe.hooks()};
+    panel.open();
+    AURORA_TEST_REQUIRE(panel.preview_view() != nullptr);
+
+    const auto modes = panel.preview_modes();
+    AURORA_TEST_REQUIRE_MSG(modes.has_value(), "the preview session is missing");
+    AURORA_TEST_CHECK_EQ(modes->cursor_shape, CursorShape::Bar);
+    AURORA_TEST_CHECK_FALSE(modes->cursor_blinking);
+
+    // 销毁即回空：`close()` 之后若还读得到一份档，那就是面板留着的陈旧投影（与 7.67 那条「先放自持句柄
+    // 再摘那棵树」的时序同源——观测点必须与预览盒同生同灭）。
+    panel.close();
+    AURORA_TEST_CHECK_FALSE(panel.preview_modes().has_value());
 }
 
 #ifdef AURORA_BACKEND_HEADLESS
@@ -1813,8 +1892,9 @@ AURORA_TEST_CASE(a_text_row_commits_only_when_focus_leaves) {
 ///
 /// 目标选项固定取 0 号，故装载基线预置成 `Wide`（1 号）；探的那一点取在自身布局盒**之外**的那一段选项带里
 /// （回货前那一段永远进不了链，盒内的那一段本来就可达，拿它翻正向等于什么都没翻）。落盘而非广播是因为这一行
-/// `terminal.ambiguous_width` 是「接缝待开 ∧ 下次会话生效」——`apply_scope()` 把它折成只落盘（判据文 B3-a），
-/// 所以面板改了它也不该动运行中的视口。选项行高 26 dp 是框架缺省且本件未改（`set_item_height` 未被调用）。
+/// `terminal.ambiguous_width` 是「已接线 ∧ 下次会话生效」——构造期注入的接缝已开（裁决 7.76②），但 `apply_scope()`
+/// 仍把它折成只落盘（判据文 B3-a），所以面板改了它也不该动运行中的视口：这一例因此同时是那条折叠算式的证人。
+/// 选项行高 26 dp 是框架缺省且本件未改（`set_item_height` 未被调用）。
 /// 本例只闭合到「那一格仍属所在行」为止，再往外的残段见下一条用例。
 AURORA_TEST_CASE(clicking_an_open_dropdown_option_in_its_own_extra_hit_box_commits_G29) {
     borealis::ui::install_settings_strings();
@@ -3213,8 +3293,9 @@ AURORA_TEST_CASE(the_preview_bar_and_a_second_viewport_of_the_same_fixture_shift
     h.open(*panel);
     h.pump_and_render(*panel);
 
-    // 对照视口：与横条同一份夹具、同一份外观，故 F-c 的「同源」在此落成同一份折算的两次独立调用。
-    auto control = std::make_unique<borealis::ui::SettingsPreview>(test_appearance(probe.base));
+    // 对照视口：与横条同一份夹具、同一份外观与同一份初始档，故 F-c 的「同源」在此落成同一份折算的两次独立调用。
+    auto control = std::make_unique<borealis::ui::SettingsPreview>(test_appearance(probe.base),
+                                                                   test_defaults(probe.base));
     // 尺寸同样只能经**控件级意图**下达（与 `build_preview_bar()` 那条生产注释同源）：挂在修饰链上的
     // `.width(400).height(200)` 会被 `ui::TerminalView` 自宣的 `fill()` 意图在测量之后覆写掉，实测对照
     // 视口铺满整窗并把横条压在下面（`find_first` 因此一台预览也探不到）。

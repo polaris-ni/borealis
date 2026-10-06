@@ -3,7 +3,8 @@
 /// 测试说明: 终端状态机的语义解释——打印与自动换行、C0 执行与制表位、滚动区域与区域内/整屏
 ///           滚动（含 scrollback 相互作用）、IL/DL/ICH/DCH/ECH、ED/EL、SGR（16/256/真彩与
 ///           两种子参数写法、下划线四档的编码映射见裁决 7.28）、DEC 私有模式登记、字符集指派、主备屏、宽字符占位与
-///           Ambiguous 覆盖口径、DECSCUSR 光标形态档位、RIS 复位、尺寸变更与整屏脏标记
+///           Ambiguous 覆盖口径、DECSCUSR 光标形态档位、RIS 复位、会话初始档的播种与复位回注入档
+///           （SPEC.FEAT.PREF.02 的三条构造期注入，裁决 7.76②）、尺寸变更与整屏脏标记
 ///           （SPEC.FEAT.TERM.01 / .02 / .03 / .05 / .08，SPEC.FEAT.XFER.01 与
 ///           SPEC.FEAT.RENDER.04 的状态机前置）。
 
@@ -30,6 +31,7 @@ using borealis::term::AmbiguousWidth;
 using borealis::term::CursorShape;
 using borealis::term::SingleWidthPolicy;
 using borealis::term::Terminal;
+using borealis::term::TerminalDefaults;
 using borealis::term::WidthPolicy;
 
 /// @brief 桩宽度判定：只认本用例用到的两个码点。
@@ -53,9 +55,12 @@ class StubWidthPolicy final : public WidthPolicy {
 SingleWidthPolicy narrow_only;
 StubWidthPolicy stub_width;
 
-/// @brief 建一台 10 列 × 3 行、scrollback 5 行的终端。
-[[nodiscard]] auto make_terminal(const WidthPolicy &policy) -> Terminal {
-    return {10, 3, 5, policy};
+/// @brief 建一台 10 列 × 3 行、scrollback 5 行的终端，并按调用方给的初始档播种。
+///
+/// `defaults` 有缺省值：既有六十个构造点因此一字不改，而本会话初始档那两条用例要的正是「注入一份
+/// 与库缺省档互异的档」——取库缺省档时「装错」与「没装」在读数上无法区分。
+[[nodiscard]] auto make_terminal(const WidthPolicy &policy, TerminalDefaults defaults = {}) -> Terminal {
+    return {10, 3, 5, policy, defaults};
 }
 
 /// @brief 视口某行的可见文本（行尾空格剥掉，免得断言写成数列宽）。
@@ -519,6 +524,43 @@ AURORA_TEST_CASE(ris_restores_power_on_state) {
     AURORA_TEST_CHECK_TRUE(term.modes().cursor_blinking);
     term.feed(U"X");
     AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 0).flags), std::uint32_t{0});
+}
+
+AURORA_TEST_CASE(injected_session_defaults_seed_the_modes_and_the_ambiguous_width) {
+    // 判据文 §7 的三条构造期注入（裁决 7.76②）：光标形态与闪烁档进 `modes_`，Ambiguous 口径进宽度
+    // 判定的入参。三条都取与库缺省档**互异**的值，否则「没装接缝」与「装了同样的值」读数相同。
+    auto term = make_terminal(stub_width, TerminalDefaults{
+                                              .cursor_shape = CursorShape::Bar,
+                                              .cursor_blinking = false,
+                                              .ambiguous_width = AmbiguousWidth::Wide,
+                                          });
+    AURORA_TEST_CHECK_EQ(term.modes().cursor_shape, CursorShape::Bar);
+    AURORA_TEST_CHECK_FALSE(term.modes().cursor_blinking);
+    term.feed(U"\x00B1x");  // 「±」由桩按 Ambiguous 口径给宽，「中」那条腿与本档无关
+    AURORA_TEST_CHECK_TRUE(cell_at(term, 0, 1).is_wide_continuation());
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 2).code_point), std::uint32_t{U'x'});
+    AURORA_TEST_CHECK_EQ(term.cursor().column, std::size_t{3});
+}
+
+AURORA_TEST_CASE(ris_restores_the_injected_defaults_rather_than_the_library_ones) {
+    // 一次 `reset` 不该静默抹掉用户配置：注入档就是本会话的初始态（裁决 7.76② 的 Q1）。
+    // 中间那句远端改档是承重前提——若只断「RIS 之后仍是注入档」，实现里把 RIS 写成不动 `modes_`
+    // 也能全绿，那测的是「构造播种」而不是「复位到注入档」。
+    auto term = make_terminal(stub_width, TerminalDefaults{
+                                              .cursor_shape = CursorShape::Underline,
+                                              .cursor_blinking = false,
+                                              .ambiguous_width = AmbiguousWidth::Wide,
+                                          });
+    term.feed(U"\x1B[5 q");  // DECSCUSR：远端此刻对形态与闪烁档有话语权
+    term.set_ambiguous_width(AmbiguousWidth::Narrow);  // Ambiguous 同构：运行期改档也不该越过 reset
+    AURORA_TEST_CHECK_EQ(term.modes().cursor_shape, CursorShape::Bar);
+    AURORA_TEST_CHECK_TRUE(term.modes().cursor_blinking);
+
+    term.feed(U"\033c");
+    AURORA_TEST_CHECK_EQ(term.modes().cursor_shape, CursorShape::Underline);
+    AURORA_TEST_CHECK_FALSE(term.modes().cursor_blinking);
+    term.feed(U"\x00B1");
+    AURORA_TEST_CHECK_TRUE(cell_at(term, 0, 1).is_wide_continuation());
 }
 
 AURORA_TEST_CASE(full_screen_dirty_marks_row_identity_changes_only) {

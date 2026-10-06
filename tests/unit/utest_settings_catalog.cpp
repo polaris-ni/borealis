@@ -501,20 +501,23 @@ AURORA_TEST_CASE(units_are_declared_only_where_the_sketch_draws_them) {
 }
 
 AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
-    // 判据文 §7 只点名三条「接缝待开」。多点名一条即该键在面板里改了只落盘而不广播（`apply_scope()`
-    // 把「接缝待开 ∧ 即时」折成只落盘），运行时表现为「改了没反应」；少点名一条则反过来对
-    // 一条无运行期接缝的键广播，故这一列的错位在两侧都有代价。
-    const std::vector<std::string> seam_pending{"appearance.cursor_blinking", "appearance.cursor_shape",
-                                                "terminal.ambiguous_width"};
-    AURORA_TEST_CHECK_MSG(rows_with_consumer(ConsumerStatus::SeamPending) == seam_pending,
-                          "seam-pending set drifted");
+    // 判据文 §7 点名的三条「接缝待开」已随裁决 7.76② 的构造期注入接缝接线，故该档的**当前行集为空**。
+    // 断空而不是删掉这一列判据：档位保留着（`settings_catalog.h` 的 `SeamPending` 注给了理由），下一棒给
+    // 一条无运行期接缝的键挂错档就会在这里转红，而不是静默变成「改了没反应」。
+    AURORA_TEST_CHECK_MSG(rows_with_consumer(ConsumerStatus::SeamPending).empty(), "seam-pending set drifted");
 
-    // 判据文 §0 的物理边界②：已接线却「下次会话生效」的键恰是这三条，运行期改它们不重放既有会话。
-    const std::vector<std::string> next_session{"connection.local_shell", "connection.startup_directory",
+    // 判据文 §0 的物理边界②：已接线却「下次会话生效」的键恰是这六条——三条会话侧的构造期注入
+    // （裁决 7.76②）加三条本就取用于建会话那一刻的键。多一条即面板谎报即时，少一条即运行期入口被
+    // 判成不存在而白开一条接缝。
+    const std::vector<std::string> next_session{"appearance.cursor_blinking",
+                                                "appearance.cursor_shape",
+                                                "connection.local_shell",
+                                                "connection.startup_directory",
+                                                "terminal.ambiguous_width",
                                                 "terminal.scrollback_limit"};
     AURORA_TEST_CHECK_MSG(next_session_and_wired_keys() == next_session, "wired next-session set drifted");
 
-    // 无消费方的行不得被画成即时生效的样子（S15 的延后档），也不得出现「接缝待开但即时」这种矛盾档。
+    // 不得出现「接缝待开但即时」这种矛盾档（该档现在行集为空，故这一条守的是将来挂错档的行）。
     for (const auto &control : borealis::ui::settings_catalog()) {
         if (control.consumer == ConsumerStatus::SeamPending) {
             AURORA_TEST_CHECK_MSG(control.effect == EffectLevel::NextSession, control.key);
