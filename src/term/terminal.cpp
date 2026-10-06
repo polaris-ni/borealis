@@ -668,6 +668,39 @@ auto Terminal::set_dec_mode(std::span<const vt::Param> params, bool enable, bool
             case 25:
                 modes_.cursor_visible = enable;
                 break;
+            // ---- 鼠标上报四档 + SGR 形态 + alternate scroll（`SPEC.FEAT.TERM.06`）----
+            //
+            // 四档存成互相独立的布尔，读时取最高（`term::mouse_tracking`）；但蕴含关系在**写**的
+            // 一侧也要落一次，否则「关掉蕴含的那个低档」会留下一个只有高档的陈旧读数：程序退出时
+            // 常只发一条 `?1000 l`，不清 1002/1003 就等于上报没关，滚轮会继续发 64/65 而不再回本地
+            // 回看。两条规则照 xterm 的文档形态，不做超出它的自造清档。
+            case 9:
+                modes_.mouse_x10 = enable;
+                if (enable) {
+                    modes_.mouse_normal = false;
+                    modes_.mouse_button_events = false;
+                    modes_.mouse_any_events = false;
+                }
+                break;
+            case 1000:
+                modes_.mouse_normal = enable;
+                if (!enable) {
+                    modes_.mouse_button_events = false;
+                    modes_.mouse_any_events = false;
+                }
+                break;
+            case 1002:
+                modes_.mouse_button_events = enable;
+                break;
+            case 1003:
+                modes_.mouse_any_events = enable;
+                break;
+            case 1006:
+                modes_.mouse_sgr = enable;
+                break;
+            case 1007:
+                modes_.alternate_scroll = enable;
+                break;
             case 1004:
                 modes_.focus_reporting = enable;
                 break;
@@ -681,7 +714,8 @@ auto Terminal::set_dec_mode(std::span<const vt::Param> params, bool enable, bool
                 set_alternate_screen(mode, enable);
                 break;
             default:
-                break;  // 鼠标上报（?1000/?1002/?1003/?1006）随 SPEC.FEAT.TERM.06 落地
+                break;  // 未登记的私有模式一律只吞不响应：需求原文列出的模式集已全部落到上面那
+                        // 些 `case`，余下的（`?12` 光标闪烁档、`?1005`/`?1015` 坐标扩展等）无消费方
         }
     }
 }

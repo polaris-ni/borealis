@@ -14,6 +14,7 @@ add_library(borealis_core STATIC
         term/utf8.cpp
         term/charset.cpp
         term/keymap.cpp
+        term/mouse.cpp
         term/osc.cpp
         term/paste.cpp
         term/width.cpp

@@ -59,7 +59,18 @@ struct TermModes {
     bool alternate_screen = false; ///< `?47` / `?1047` / `?1049`。
     bool bracketed_paste = false;  ///< `?2004`。
     bool focus_reporting = false;  ///< `?1004`。
-    bool application_keypad = false; ///< `ESC =` / `ESC >`。
+    // ---- 鼠标上报四档（`SPEC.FEAT.TERM.06`，需求原文的「X10 / 普通 / 按钮事件 / SGR 扩展」）----
+    //
+    // 存成四个独立布尔而不是一个层级值：DECSET/DECRST 逐条独立到来，层级是**读时**由它们取最高
+    // 推得的（`term::mouse_tracking`）。把层级存进模式表就成了第二份真值源，`?1002 l` 之后谁来
+    // 降档就说不清。编码侧与视口各自现推，故两处永不分叉。
+    bool mouse_x10 = false;            ///< `?9` X10：只报按下。
+    bool mouse_normal = false;         ///< `?1000` 普通：按下与松开都报。
+    bool mouse_button_events = false;  ///< `?1002` 按钮事件：再加按住拖动。
+    bool mouse_any_events = false;     ///< `?1003` 任意事件：再加无键悬停移动。
+    bool mouse_sgr = false;            ///< `?1006` SGR 扩展：只换编码形态，不改报哪些事件。
+    bool alternate_scroll = true;      ///< `?1007`：备屏里滚轮转方向键（less/more 类程序翻页）。
+    bool application_keypad = false;   ///< `ESC =` / `ESC >`。
     bool utf8_received = false;    ///< `ESC % G` / `ESC % @`：接收侧字符集口径。
     CursorShape cursor_shape = CursorShape::Block; ///< `CSI Ps SP q` DECSCUSR 的形态档。
     bool cursor_blinking = true;   ///< DECSCUSR 的闪烁档；失焦降级归渲染侧，不在此表达。
