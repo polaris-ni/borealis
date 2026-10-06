@@ -18,12 +18,14 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "aurora/core/log.h"
+#include "aurora/event/event.h"
 #include "aurora/event/keycode.h"
 #include "aurora/i18n/string_table.h"
 #include "aurora/modifier/modifier.h"
@@ -87,6 +89,12 @@ constexpr float kChainFilterWidthDp = 180.0F;  ///< 过滤框宽。
 constexpr float kChainHandleBandDp = 48.0F;    ///< 列表自留的手柄带（框架 `AURORA_HANDLE_BAND` 的同值口径）。
 constexpr std::size_t kChainCandidateRows = 6; ///< 候选池一次列几档（常驻按钮数，多余的那几档隐藏）。
 
+// ---- 字体族区段（A4）的排版量：浮层那一列的宽度与行高都是本件自己的量，框架不给 ----
+constexpr float kFontButtonWidthDp = 240.0F;   ///< 触发按钮的最小宽（长族名不至于把行挤成一团）。
+constexpr float kFontPopupWidthDp = 260.0F;    ///< 候选浮层宽（含浮层描边与滚动一侧的余量）。
+constexpr float kFontItemHeightDp = 30.0F;     ///< 浮层一档候选的行高。
+constexpr std::size_t kFontPopupVisibleRows = 8;  ///< 一次显几档，超出靠浮层内部 `Scroll`（A4-d）。
+
 /// @brief 回退链的容量上限：框架侧截断的那个数字，本件取同一个真值源而不是另写一个 8。
 ///
 /// 截断发生在框架的 `TextLayoutOpts::with_fallback_chain()`（`render/font_engine.h`）且对用户不可见，
@@ -103,6 +111,8 @@ const std::size_t kPaletteSlotCount = PaletteSpec{}.basic.size();
 constexpr std::string_view kThemeKey{"appearance.theme"};
 constexpr std::string_view kPaletteKey{"appearance.palette.basic"};
 constexpr std::string_view kChainKey{"appearance.font_fallback_chain"};
+/// @brief 字体族区段归属的行键（区段是「一行 catalog 键 + 下方一行留痕」，与上面三个区段同一条口径）。
+constexpr std::string_view kFontFamilyKey{"appearance.font_family"};
 
 /// @brief `ui::RgbaColor` → 框架颜色（逐字段搬，alpha 参与）。
 ///
@@ -244,6 +254,46 @@ public:
     }
 };
 
+/// @brief 字体族区段那枚常驻触发按钮：把弹层锚点的前提交回**同一次 Press 的坐标对**（A4-e）。
+///
+/// 框架只在 `MouseEvent::position`（全局，后端写）与 `local_position`（相对该控件，派发器在命中链冒泡时
+/// 写）两处给数。二者的差是该控件在**内容坐标系**里的盒原点，而行区是 `Scroll`：框架自陈其内容后代不处于
+/// 屏幕坐标（`widget.h` 的 `focus_bounds_` 注），实测那一次差值恰等于该 `Scroll` 当时的 `offset_y()`
+/// （修复前一帧 834 对 451，差 383）。**不得**改用 `paint_bounds()` 来省掉这一提交：它是**另一个**坐标系
+/// （录制进离屏缓冲时传入的盒原点是 `-buffer_origin_y_`，同帧实测 748 对 826，差 78 dp，而那个量公共面取
+/// 不到）。故本件只负责记下这一次 Press 量出的原始差值，折算回窗口坐标那一腿在 `build_family_section()`
+/// ——那里才拿得到行区句柄。
+/// 记录之后原样交回基类：禁用态吞点击那一腿因此不变。
+class AnchorButton final : public aurora::Button {
+public:
+    using aurora::Button::Button;
+
+    /// @brief 最近一次 Press 上量出的该控件盒原点（行区内即内容坐标）；从未按下则为空。
+    std::optional<aurora::Point> press_origin{};
+
+    auto on_pointer_event(aurora::MouseEvent &e) -> void override {
+        if (e.action == aurora::MouseAction::Press) {
+            press_origin = aurora::Point{.x = e.position.x - e.local_position.x,
+                                         .y = e.position.y - e.local_position.y};
+        }
+        aurora::Button::on_pointer_event(e);
+    }
+};
+
+/// @brief 回落留痕的文案（`Configured` 档回空串，即字体行下方那一行不写东西，A4-b）。
+///
+/// 一句话同时覆盖「目录里有但非等宽」与「目录里没有」两档：两者对用户是同一件事（配的那族用不了、
+/// 实际用的是另一族），而分开两句就要在面板里 switch 出第二套措辞（`settings_i18n.h` 文件头②的口径）。
+/// 族名是**取值**而非词条 key，故两个位置参数都走字面档。
+[[nodiscard]] auto family_notice_text(const FontFamilyChoice &choice, std::string_view configured) -> std::string {
+    if (choice.verdict == FontFamilyVerdict::Configured) {
+        return {};
+    }
+    return settings_label("settings.font.fallback",
+                          {aurora::LocalizedString{std::string{configured}},
+                           aurora::LocalizedString{choice.family}});
+}
+
 /// @brief 页 → 导航按钮的词条 key（`settings.page.<域>`，与 `SettingsPage` 四档一一对应）。
 [[nodiscard]] auto page_title_key(SettingsPage page) -> std::string_view {
     switch (page) {
@@ -303,6 +353,14 @@ auto SettingsPanel::open() -> void {
         // 还悬在半空。放下抓取就原地不动——这是本件与框架之间的一次交接，不是缺口（同裁决 7.58 的判法）。
         escape_binding_ = shortcuts_.add(aurora::KeyCombo(aurora::ModifierKey::None, aurora::KeyCode::Escape),
                                          [this]() -> void {
+                                             // 三层交接，从最里一层问起：候选浮层 → 链的键盘抓取 → 面板。
+                                             // 全局快捷键在任何控件之前消费（裁决 7.51③ 理由 (a)），不先问
+                                             // 浮层的话，`Escape` 会把整块面板一起撤掉（判据文 A4-c 的同一条
+                                             // 物理事实，只是那一句写的是遮罩那一腿）。
+                                             if (font_popup_ != nullptr && font_popup_->is_open()) {
+                                                 close_family_popup();
+                                                 return;
+                                             }
                                              if (chain_list_ != nullptr && chain_list_->cancel_keyboard_grab()) {
                                                  return;
                                              }
@@ -331,6 +389,9 @@ auto SettingsPanel::close() -> void {
     swatch_editor_.reset();
     swatch_reset_button_.reset();
     clear_chain_state();
+    // 候选浮层比面板浮层**后**加进宿主（序号更大），而 `remove_overlay` 是按当前子节点表 erase 的：
+    // 先摘面板会让浮层序号整体前移一格、此后那个号就指到别的节点上。故按序号降序摘，浮层在前。
+    clear_family_state();
 
     if (overlay_index_.has_value()) {
         host_.remove_overlay(*overlay_index_);
@@ -510,6 +571,34 @@ auto SettingsPanel::chain_list() const -> aurora::Widget * {
     return chain_list_.get();
 }
 
+auto SettingsPanel::family_view() const -> FamilyView {
+    // `effective` 与 `notice` 都**从控件本体读**而不是现算：用例要判的是「画出来的那两串字」，
+    // 而本件漏掉一次刷新时现算值照样正确——那正是判据最该抓到的那一类陈旧。
+    FamilyView out;
+    out.configured = configured_family();
+    out.effective = font_trigger_ != nullptr ? font_trigger_->label.get().text : std::string{};
+    out.notice = font_notice_ != nullptr ? font_notice_->content.get().text : std::string{};
+    out.choices = family_choices();
+    out.popup_open = font_popup_ != nullptr && font_popup_->is_open();
+    return out;
+}
+
+auto SettingsPanel::font_button() const -> aurora::Widget * {
+    return font_trigger_.get();
+}
+
+auto SettingsPanel::font_candidate(std::size_t index) const -> aurora::Widget * {
+    return index < font_candidates_.size() ? font_candidates_[index].get() : nullptr;
+}
+
+auto SettingsPanel::font_notice_text() const -> aurora::Widget * {
+    return font_notice_.get();
+}
+
+auto SettingsPanel::font_popup() const -> aurora::Widget * {
+    return font_popup_.get();
+}
+
 auto SettingsPanel::collect_rows() const -> std::vector<const SettingsControl *> {
     std::vector<const SettingsControl *> out;
     for (const SettingsControl &control : settings_catalog()) {
@@ -535,6 +624,9 @@ auto SettingsPanel::rebuild_overlay() -> void {
     swatch_editor_.reset();
     swatch_reset_button_.reset();
     clear_chain_state();
+    // 候选浮层比面板浮层**后**加进宿主（序号更大），而 `remove_overlay` 是按当前子节点表 erase 的：
+    // 先摘面板会让浮层序号整体前移一格、此后那个号就指到别的节点上。故按序号降序摘，浮层在前。
+    clear_family_state();
 
     if (overlay_index_.has_value()) {
         host_.remove_overlay(*overlay_index_);
@@ -545,7 +637,16 @@ auto SettingsPanel::rebuild_overlay() -> void {
     auto scrim = std::make_shared<aurora::Canvas>([](aurora::Painter &painter, const aurora::Rect &bounds) -> void {
         painter.fill_rect(bounds, kScrim);
     });
-    scrim->modifier.set(aurora::Modifier{}.fill_max_size().clickable([this]() -> void { close(); }));
+    scrim->modifier.set(aurora::Modifier{}.fill_max_size().clickable([this]() -> void {
+        // A4-c：候选浮层开着时，第一次「浮层之外」的点击只关浮层。遮罩在浮层之下，本闭包跑起来时用户点的
+        // 正是浮层之外那一片，直接 `close()` 会把整块面板一起撤掉。框架那条自动关闭（`handle_outside_click`）
+        // 在 Aurora 全仓无调用点（裁决 7.41③ 的同一条实测），故这一腿归本件自驱。
+        if (font_popup_ != nullptr && font_popup_->is_open()) {
+            close_family_popup();
+            return;
+        }
+        close();
+    }));
 
     auto layer = std::make_shared<aurora::Stack>(
         std::vector<aurora::Node>{aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(scrim))},
@@ -602,6 +703,7 @@ auto SettingsPanel::build_card() -> aurora::Node {
                 .child = aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(rows_column))},
             });
             rows->modifier.set(aurora::Modifier{}.fill_max_width().expand());
+            row_area_ = rows;  // 浮层锚点要把内容坐标折回窗口坐标，折算量取自它（见 `build_family_section`）
 
             auto body = std::make_shared<aurora::Row>(aurora::RowProps{
                 .children = {aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(nav_column))},
@@ -666,13 +768,16 @@ auto SettingsPanel::build_row(std::size_t ordinal) -> aurora::Node {
         return aurora::Node{};
     }
     const SettingsControl &control = *rows_[ordinal];
-    // 三个专用区段各占多行高度，故在行的分派处就拐出去：它们仍是一行 catalog 键（角标、状态列与提交
+    // 四个专用区段各占多行高度，故在行的分派处就拐出去：它们仍是一行 catalog 键（角标、状态列与提交
     // 都落在那一行上），只是内容不是一条 56 dp 的行盒。
     if (control.kind == ControlKind::ThemePicker) {
         return build_theme_section(ordinal);
     }
     if (control.kind == ControlKind::SwatchGrid) {
         return build_swatch_section(ordinal);
+    }
+    if (control.kind == ControlKind::FontDropdown) {
+        return build_family_section(ordinal);
     }
     if (control.kind == ControlKind::FamilyList) {
         return build_chain_section(ordinal);
@@ -869,6 +974,60 @@ auto SettingsPanel::build_swatch_section(std::size_t ordinal) -> aurora::Node {
         aurora::ColumnProps{.children = std::move(children), .gap = kSectionGapDp});
     section->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
         .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
+    return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(section))};
+}
+
+auto SettingsPanel::build_family_section(std::size_t ordinal) -> aurora::Node {
+    const SettingsControl &control = *rows_[ordinal];
+    auto [label, status] = build_header(ordinal, control, true);
+
+    auto button = std::make_shared<AnchorButton>(aurora::ButtonProps{
+        .color = kControlBg,
+        .on_color = kText,
+        .border_color = kCardLine,
+        .border_width = 1.0F,
+        .min_width = kFontButtonWidthDp,
+    });
+    // 标签**不在这里**预设：唯一的写入点是 `refresh_family_views()`（末尾那一次），于是「按钮显示的族」
+    // 与「实际生效的族」结构上不可能分叉——A4-b 禁止的正是把配置里那族直接显示出来。
+    // 锚点取该按钮自己记下的 Press 坐标对（A4-e），而不是 `paint_bounds()`（后者是离屏缓冲坐标，且会随重建
+    // /未绘制而陈旧）。
+    // 那一腿给的是内容坐标，故须减掉行区当时的 `offset_y()` 才落回窗口坐标——`Popup::open_at` 收的是
+    // 全局坐标，而它挂在场景根的宿主上、不在滚动缓冲里。
+    button->set_on_click([this, anchor = button.get()]() -> void {
+        const std::optional<aurora::Point> origin = anchor->press_origin;
+        if (!origin.has_value()) {
+            return;  // 从未按下过就没有可信锚点：宁可不弹，也不猜一个位置（浮层会盖在按钮上）
+        }
+        const float scrolled = row_area_ != nullptr ? row_area_->offset_y() : 0.0F;
+        open_family_popup(aurora::Point{.x = origin->x,
+                                        .y = origin->y - scrolled + anchor->size().height});
+    });
+    font_trigger_ = button;
+
+    auto header_row = std::make_shared<aurora::Row>(aurora::RowProps{
+        .children = {std::move(label),
+                     std::move(status),
+                     aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(button))}},
+        .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
+        .gap = 12.0F,
+    });
+    header_row->modifier.set(aurora::Modifier{}.fill_max_width());
+
+    // 留痕行：A4-b 要的是字体行**下方**那一条独立留痕。`Configured` 档写空串而不撤掉这一行（文件头②的
+    // 代价：这一行恒占高度，换来「不用 `show` 翻转、因此不需要补布局脏」）。
+    auto notice = std::make_shared<aurora::Text>(aurora::TextProps{.content = std::string{}, .text_color = kTextDim});
+    notice->modifier.set(aurora::Modifier{}.fill_max_width());
+    font_notice_ = notice;
+
+    std::vector<aurora::Node> children;
+    children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(header_row))});
+    children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(notice)});  // 交副本：成员要留着刷新
+    auto section = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(children),
+                                                                        .gap = kSectionGapDp});
+    section->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+        .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
+    refresh_family_views();
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(section))};
 }
 
@@ -1192,9 +1351,9 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
             }
             case ControlKind::ThemePicker:
             case ControlKind::SwatchGrid:
-            case ControlKind::FamilyList:
-                break;  // 三个区段不是「一行的控件腿」，在 `build_row` 的分派处就已建完，走不到这里。
             case ControlKind::FontDropdown:
+            case ControlKind::FamilyList:
+                break;  // 四个区段不是「一行的控件腿」，在 `build_row` 的分派处就已建完，走不到这里。
             case ControlKind::ReadOnlyTable:
                 break;  // 专用控件形态不可交互（is_editable 已先判掉），落下面的占位分支。
         }
@@ -1218,9 +1377,10 @@ auto SettingsPanel::after_commit(std::string_view key, const SettingsControl &co
         return;
     }
     set_status(ordinal, badge_text(control));
-    // 两个区段的当前值都在 `form_` 里，故每次成功提交都要重跑那一腿派生态：画布重绘、卡名亮度、
-    // 恢复按钮可用性与主题行的「自定义」角标。
+    // 三个区段的当前值都在 `form_` 里，故每次成功提交都要重跑那些派生态腿：画布重绘、卡名亮度、
+    // 恢复按钮可用性与主题行的「自定义」角标，以及字体行的按钮标签与下方那一行回落留痕。
     refresh_palette_views();
+    refresh_family_views();
     if (!form_.is_dirty(key)) {
         return;  // 改了又改回来：既不落盘也不广播
     }
@@ -1613,6 +1773,137 @@ auto SettingsPanel::clear_chain_state() -> void {
     chain_filter_text_.clear();
 }
 
+auto SettingsPanel::open_family_popup(aurora::Point anchor) -> void {
+    const std::vector<std::string> choices = family_choices();
+    if (choices.empty()) {
+        return;  // 目录里没有等宽族（未枚举的降级形态）：弹一个空浮层只会让用户以为面板坏了
+    }
+
+    std::vector<aurora::Node> rows;
+    rows.reserve(choices.size());
+    font_candidates_.clear();
+    for (const std::string &family : choices) {
+        auto item = std::make_shared<aurora::Button>(aurora::ButtonProps{
+            .label = family,
+            .color = kControlBg,
+            .on_color = kText,
+            .corner_radius = 0.0F,  // 相邻条目要拼成一块整板（与视口右键菜单同口径）
+            .min_width = kFontPopupWidthDp,
+        });
+        item->set_on_click([this, family]() -> void { choose_family(family); });
+        item->modifier.set(aurora::Modifier{}.height(kFontItemHeightDp));
+        font_candidates_.push_back(item);
+        rows.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(item))});
+    }
+    auto list = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(rows), .gap = 0.0F});
+
+    // 浮层的内容必须自己锁视口尺寸：`Scroll` 的容器取**父约束**给出的尺寸，而 `Popup` 给内容的是
+    // 宽松约束（max 到窗口或 4096），不锁就会把整列候选一次铺满可用高度——A4-d 要的是一次八档、其余靠滚。
+    auto viewport = std::make_shared<aurora::Scroll>(aurora::ScrollProps{
+        .child = aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(list))},
+        .step = kFontItemHeightDp,
+    });
+    viewport->modifier.set(aurora::Modifier{}
+                               .width(kFontPopupWidthDp)
+                               .height(kFontItemHeightDp * std::min(choices.size(), kFontPopupVisibleRows))
+                               .background(kControlBg)
+                               .border(1.0F, kCardLine));
+
+    // 同一只 `Popup` 跨开合复用：每次打开都按**当前**表单重建候选（置顶那档随配置值走）。
+    if (font_popup_ == nullptr) {
+        font_popup_ = std::make_shared<aurora::Popup>();
+        font_popup_index_ = host_.add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(font_popup_)});
+    }
+    font_popup_->set_content(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(viewport))});
+    static_cast<void>(font_popup_->open_at(anchor));
+}
+
+auto SettingsPanel::close_family_popup() -> void {
+    if (font_popup_ != nullptr) {
+        font_popup_->close();
+    }
+}
+
+auto SettingsPanel::choose_family(const std::string &family) -> void {
+    // 只 `close()` 而不 `remove_overlay`：那会在派发栈内销毁正在派发的这只按钮（`OverlayHost` 的
+    // `children_.erase` 之后派发器还要读该子节点）。关掉即 `on_paint` 早返回、命中链回空表，
+    // 既不可见也不可达，而控件仍由本件持有故不悬垂（文件头③末段）。
+    close_family_popup();
+    commit(kFontFamilyKey, FormValue::text(family));
+}
+
+auto SettingsPanel::refresh_family_views() -> void {
+    const FontFamilyChoice choice = family_choice();
+    if (font_trigger_ != nullptr && font_trigger_->label.get().text != choice.family) {
+        // 标签是 `on_layout` 的测宽输入（框架经 `resolved_label()` 量宽），而 `set_label` 只赋值不标脏，
+        // 故两处脏都要补；只在值真变的那一次补，否则每次提交都会让整块行区重排。
+        font_trigger_->set_label(choice.family);
+        font_trigger_->mark_needs_layout();
+        font_trigger_->mark_needs_paint();
+    }
+    if (font_notice_ != nullptr) {
+        const std::string notice = family_notice_text(choice, configured_family());
+        if (font_notice_->content.get().text != notice) {
+            font_notice_->content = notice;
+            font_notice_->mark_needs_layout();
+            font_notice_->mark_needs_paint();
+        }
+    }
+}
+
+auto SettingsPanel::clear_family_state() -> void {
+    // 先放本件自持的句柄，再摘浮层：与 `rebuild_overlay()` 开头同一条口径——候选按钮若仍被面板持有却又
+    // 从容器摘走，就正是框架 G34 那条告警逐子刷屏的那一形。
+    font_trigger_.reset();
+    font_notice_.reset();
+    font_candidates_.clear();
+    if (font_popup_ != nullptr && font_popup_index_.has_value()) {
+        host_.remove_overlay(*font_popup_index_);
+    }
+    font_popup_.reset();
+    font_popup_index_.reset();
+}
+
+auto SettingsPanel::family_choices() const -> std::vector<std::string> {
+    std::vector<std::string> pool;
+    for (const FontFamilyEntry &entry : family_catalog_) {
+        if (entry.monospace) {
+            pool.push_back(entry.family);
+        }
+    }
+    // 逐字节字典序：`std::string` 的比较即逐字节比较，故这里刻意不自作大小写折叠（框架的族名匹配本就
+    // 逐字节、区分大小写，裁决 7.46③）——排序口径与匹配口径不一致会让用户找不到自己配的那一族。
+    std::sort(pool.begin(), pool.end());
+
+    std::vector<std::string> out;
+    out.reserve(pool.size());
+    const std::string configured = configured_family();
+    // 置顶两档：当前配置值与内置缺省族。**只在它确实在等宽池里时**置顶——把目录里没有（或度量非等宽）
+    // 的名摆到第一档，等于请用户再点一次那族用不了的名字，而 A4-b 要显示的正是生效的那族。
+    for (const std::string &pinned : {configured, std::string{kDefaultMonospaceFamily}}) {
+        const auto found = std::find(pool.begin(), pool.end(), pinned);
+        if (found == pool.end()) {
+            continue;
+        }
+        out.push_back(*found);
+        pool.erase(found);  // 同值合一：两档同族时第二次就找不到它了
+    }
+    out.insert(out.end(), pool.begin(), pool.end());
+    return out;
+}
+
+auto SettingsPanel::configured_family() const -> std::string {
+    const FormValue *value = form_.value(kFontFamilyKey);
+    if (const auto text = value != nullptr ? value->as_text() : std::nullopt; text.has_value()) {
+        return *text;
+    }
+    return {};
+}
+
+auto SettingsPanel::family_choice() const -> FontFamilyChoice {
+    return choose_font_family(configured_family(), family_catalog_);
+}
+
 auto SettingsPanel::value_summary(const SettingsControl &control) const -> std::string {
     const FormValue *value = form_.value(control.key);
     if (value == nullptr) {
@@ -1658,9 +1949,9 @@ auto SettingsPanel::is_editable(const SettingsControl &control) -> bool {
             return true;
         case ControlKind::ThemePicker:
         case ControlKind::SwatchGrid:
-        case ControlKind::FamilyList:
-            return true;  // 三个区段在 `build_row` 就分派出去，本函数只为行表与观察面给出可交互判据
         case ControlKind::FontDropdown:
+        case ControlKind::FamilyList:
+            return true;  // 四个区段在 `build_row` 就分派出去，本函数只为行表与观察面给出可交互判据
         case ControlKind::ReadOnlyTable:
             return false;  // 专用控件随后续棒落地（本棒先如实显示当前值而不是给个死控件）
     }

@@ -4,9 +4,8 @@
 // 设置面板的界面腿本体（src/ui/settings_panel.h）
 // ------------------------------------------------------------
 // `codespec/UI_SETTINGS.draft.md` 屏 3 的落地（裁决 7.52 把 S1~S16 全部自拍为建议项）：
-// 交付**四页骨架 + 六类通用行控件 + 主题卡区段 + 16 格色板区段 + 回退链区段 + 实时预览盒 + 表单落盘与广播接线**，
-// 其余按判据文 §8 的分工留给后续棒——外观页余下一个专用控件（字体族下拉，其形态待人拍板）、
-// 连接页与状态栏开关组、快捷键只读表、以及损坏配置的启动对话框。
+// 交付**四页骨架 + 六类通用行控件 + 主题卡区段 + 16 格色板区段 + 字体族选择器 + 回退链区段 + 实时预览盒 + 表单落盘与广播接线**，
+// 其余按判据文 §8 的分工留给后续棒——连接页与状态栏开关组、快捷键只读表、以及损坏配置的启动对话框。
 //
 // 预览盒（S7 / 判据 F-a~F-e，裁决 7.66）落在**卡片底部一条 140 dp 的横条**（人已拍板的落位，不是稿面
 // 原先那个「右侧」形态），本体是 `SettingsPreview`（`settings_preview.h`：独立内存会话 + 真实视口控件）。
@@ -92,8 +91,33 @@
 // 派发链；框架的链上限截断发生在绘制侧而对用户不可见（`TextLayoutOpts::with_fallback_chain` 截到
 // `AURORA_TEXT_FALLBACK_CHAIN_MAX`）。故换成**过滤输入框 + 固定候选行池**：常驻 N 枚按钮，按键时只改
 // `set_label` 与 `show`（`Reactive<bool> show` 为假时尺寸是零盒且不进命中链，零盒仍占布局故不属上面那条
-// 形态约束），代价是候选区一次最多列 N 项、且不再是下拉。A4（字体族下拉）的形态照旧待人拍板，而登记的
-// 理由随 G31 闭合只剩上面那一条形态约束。
+// 形态约束），代价是候选区一次最多列 N 项、且不再是下拉。
+//
+// 字体族选择器（A4，人已拍板：行内按钮 + 浮层，裁决 7.69）走的是**另一条**形态：行内一枚常驻按钮
+// （标签＝实际生效的族名），点击后在场景根的浮层宿主上弹一列候选。这样落恰恰**避开**上面那条形态约束
+// ——候选列是 `au::Popup` 挂在 `OverlayHost` 上的一层独立浮层（占布局、由宿主派发），不是画在列表行内
+// 而不占布局的覆盖绘制，故不需要 `extra_hit_box` 申报，也不受行盒高度与祖先闸的约束。三条口径：
+// ① 候选池＝目录里 `.monospace` 为真的全量族名、族名逐字节字典序，「当前配置值」与
+//    `kDefaultMonospaceFamily` 固定置顶两档（同值合一）；超出可视高度靠浮层内部 `Scroll`。不分页、
+//    不加过滤框（A4-d）。目录仍只经 `Hooks::families` 取一次（A4-a / S16），本件不第二次枚举。
+// ② 回落留痕画在字体行**下方另起一行**，而不是把按钮标签显示成那个不存在的族（A4-b）：生效族名由
+//    `ui::choose_font_family` 判，`Configured` 那档没有留痕可写。代价是这一行恒占两行高度，即使
+//    配置里的族名可用。
+// ③ 浮层的锚点只取**同一次 Press 事件的坐标对**（A4-e）：`position − local_position` 给的是该控件在
+//    **内容坐标系**里的盒原点（行区是 `Scroll`，其内容后代不处于屏幕坐标；实测差值恰等于该 `Scroll`
+//    当时的 `offset_y()`——修复前那一次是 834 对 451，差 383），故还须减掉行区当时的 `offset_y()` 才落回
+//    窗口坐标；配 `size().height` 得下沿。触发按钮因此是本件私有的记锚点子类，而折算量由 `row_area_` 现读。
+//    也不得拿 `paint_bounds()` 当锚点：那是**另一个**坐标系（录制进离屏缓冲时传入的盒原点是
+//    `-buffer_origin_y_`，同帧实测 748 对 826 差 78 dp，而那个量公共面取不到），并且会随重建/未绘制而陈旧。
+//    关掉它的四条腿：点候选、`Escape`（先于面板的关闭）、点遮罩（A4-c：遮罩那枚 `clickable` 在浮层开着
+//    时**只关浮层**，否则第一次外部点击把整块面板一起撤掉）、关面板。摘除浮层的次序按序号**降序**
+//    （先浮层后面板），因为 `remove_overlay` 的界是按当前子节点表算的，先摘靠前的那个会让后面的序号
+//    整体前移一格。
+//    候选的点击回调里**不**调 `remove_overlay`，只 `close()` 而复用同一只 `Popup`：关掉即 `on_paint` 早返回、
+//    `on_hit_test_chain` 回空表，既不可见也不可达，而控件仍由本件持有故不悬垂。就地摘除的形态按框架自陈
+//    有「在派发栈内销毁正在派发的子节点」之忧（`OverlayHost::remove_overlay` 走 `children_.erase`，其后派发器
+//    还要读该链），本仓实测**未见其崩**——注入那条之后只有一例的浮层计数转红，故此条根据是框架自陈而非
+//    本仓抓到的现场；另一条本仓自己的理由是摘了下次还得重新 `add_overlay` 并改序号。
 //
 // 面板不认识 `config`，也不认识 `TerminalView`：装载 / 落盘 / 广播三条接缝由 `Hooks` 交装配层兑现
 // （`config/settings.h` 已 include `ui/palette.h`，反向 include 即 `config ⇄ ui` 模块环，与
@@ -126,6 +150,7 @@
 #include "aurora/widget/layout_builder.h"
 #include "aurora/widget/popup.h"
 #include "aurora/widget/reorderable_list.h"
+#include "aurora/widget/scroll.h"
 #include "aurora/widget/text.h"
 #include "aurora/widget/text_input.h"
 
@@ -331,6 +356,37 @@ public:
     /// @brief 重排列表本体的控件（用例据此问键盘抓取态——`Escape` 的那条交接腿就落在它身上）。
     [[nodiscard]] auto chain_list() const -> aurora::Widget *;
 
+    /// @brief 字体族选择器的一档状态（A4 的四条判据各取一处）。
+    ///
+    /// 与 `theme_cards()` / `chain_view()` 同一条理由：`configured` 与 `effective` 分两列交出来，用例
+    /// 才能判 A4-b 那句「显示成生效的那族 + 另给回落留痕」而不是「显示成配置里那族」；`choices` 是
+    /// 真正摆进浮层的那几档（等宽筛、字典序、置顶之后的次序），故「候选池」与「置顶」两条能按序逐字比。
+    struct FamilyView {
+        std::string configured{};               ///< 表单里那个族名（逐字，可能是目录里没有的名）。
+        std::string effective{};                ///< 实际生效的族名，就是触发按钮的标签。
+        std::string notice{};                   ///< 回落留痕文案；无回落时为空串。
+        std::vector<std::string> choices{};     ///< 浮层里那一列候选（浮层没开也给出，次序即池内次序）。
+        bool popup_open{};                      ///< 候选浮层是否开着。
+    };
+
+    /// @brief 字体族选择器的当前状态（区段未画时各列为空）。
+    [[nodiscard]] auto family_view() const -> FamilyView;
+
+    /// @brief 字体行那枚常驻触发按钮的控件（用例据此按真实命中链点它）。
+    [[nodiscard]] auto font_button() const -> aurora::Widget *;
+
+    /// @brief 浮层第 index 档候选按钮的控件；越界或浮层未建时为空。
+    [[nodiscard]] auto font_candidate(std::size_t index) const -> aurora::Widget *;
+
+    /// @brief 回落留痕那一行的 `Text` 控件（未画时为空）。
+    ///
+    /// 只服务一条几何判据：它不是可点节点，故 `reachable_box` 一类的真实派发量法对它无效，比较的只有
+    /// 「与字体行同一坐标空间里的上下关系」。
+    [[nodiscard]] auto font_notice_text() const -> aurora::Widget *;
+
+    /// @brief 候选浮层本体的控件（未建时为空）。
+    [[nodiscard]] auto font_popup() const -> aurora::Widget *;
+
     /// @brief 预览盒的视口控件；未装 `Hooks::preview_appearance`、或面板此刻关着时为空（S7 的观测点）。
     ///
     /// 用例要靠它把「外观改动是否落进了预览那条腿」与「改动只进了表单副本」分开断言：预览的行列数、
@@ -354,7 +410,7 @@ private:
     /// @param ordinal 该行在当前页的序号（状态列的索引锚）。
     [[nodiscard]] auto build_row(std::size_t ordinal) -> aurora::Node;
 
-    /// @brief 建某行的控件腿：六类通用形态给真控件，五类专用形态给只读的值摘要（占位）。
+    /// @brief 建某行的控件腿：六类通用形态给真控件，四个专用区段在 `build_row` 就已建完，只读表给值摘要。
     [[nodiscard]] auto build_control(const SettingsControl &control, bool editable) -> aurora::Node;
 
     /// @brief 建一行的表头（标签 + 状态列）；通用行与两个区段共用，故状态列的登记点只有一处。
@@ -367,6 +423,38 @@ private:
 
     /// @brief 建 16 格色板区段：表头 + 每行八格 + 常驻的编辑器行（一格 HEX 输入 + 「恢复主题默认」）。
     [[nodiscard]] auto build_swatch_section(std::size_t ordinal) -> aurora::Node;
+
+    /// @brief 建字体族区段：表头行（标签 + 状态列 + 常驻触发按钮）+ 下方那一行回落留痕（A4-b）。
+    ///
+    /// 在 `build_row` 的分派处拐出去建，而不是在 `build_control` 里给一只 `Dropdown`：见文件头
+    /// 「字体族选择器」那段的三条口径（其中一条正是「行内不得用覆盖绘制不占布局的控件」）。
+    [[nodiscard]] auto build_family_section(std::size_t ordinal) -> aurora::Node;
+
+    /// @brief 弹候选浮层：把当前候选池建进浮层并按 anchor 落位（同一只 `Popup` 复用）。
+    /// @param anchor 触发按钮全局内容盒的**下沿**（只取同一次 Press 的坐标对，A4-e）。
+    auto open_family_popup(aurora::Point anchor) -> void;
+
+    /// @brief 收候选浮层：只 `Popup::close()` 而不摘浮层（见文件头那条「派发栈内销毁正在派发的按钮」）。
+    auto close_family_popup() -> void;
+
+    /// @brief 点中一档候选：收浮层并把该族名提交进表单（落盘与广播走 `after_commit` 的既有腿）。
+    /// @param family 该档的族名（逐字节，即候选池里那一串）。
+    auto choose_family(const std::string &family) -> void;
+
+    /// @brief 刷新触发按钮标签与留痕行（区段建好、以及该键提交通过之后各一次）。
+    auto refresh_family_views() -> void;
+
+    /// @brief 清掉字体族区段的一切控件句柄与浮层序号（关面板与重建浮层两处，留着就是孤儿句柄）。
+    auto clear_family_state() -> void;
+
+    /// @brief 候选池：目录里 `.monospace` 为真的族名按逐字节字典序，再把两档置顶（同值合一，A4-d）。
+    [[nodiscard]] auto family_choices() const -> std::vector<std::string>;
+
+    /// @brief 表单里那个族名（该行没装载或不是文本时回空串）。
+    [[nodiscard]] auto configured_family() const -> std::string;
+
+    /// @brief 现算回落判定（目录取 `family_catalog_`，本件不第二次枚举，A4-a / S16）。
+    [[nodiscard]] auto family_choice() const -> FontFamilyChoice;
 
     /// @brief 建回退链区段：表头 + 重排列表（每行三枚按钮 + 手柄带）+ 过滤输入框 + 固定候选池 + 提示行。
     ///
@@ -464,8 +552,7 @@ private:
     /// @brief 专用控件行的只读值摘要（本棒不编辑它们，只把当前值如实显示出来）。
     [[nodiscard]] auto value_summary(const SettingsControl &control) const -> std::string;
 
-    /// @brief 一行是否可交互：`Absent` 一律灰置，专用控件形态里只有仍未落地的两类（字体族下拉 /
-    ///        快捷键只读表）在本件是占位。
+    /// @brief 一行是否可交互：`Absent` 一律灰置，专用控件形态里只有仍未落地的快捷键只读表在本件是占位。
     [[nodiscard]] static auto is_editable(const SettingsControl &control) -> bool;
 
     aurora::OverlayHost &host_;       ///< 浮层宿主（装配层的场景根，非拥有）。
@@ -481,6 +568,8 @@ private:
     int escape_binding_ = 0;           ///< `Escape` 绑定的 id；0 = 未登记。
     std::vector<const SettingsControl *> rows_{};  ///< 当前页行表（与 `status_texts_` 同序）。
     std::vector<std::shared_ptr<aurora::Text>> status_texts_{};  ///< 各行状态列控件，按序号。
+    /// @brief 当前页行区那只 `Scroll`：浮层锚点要按它**当时**的 `offset_y()` 把内容坐标折回窗口坐标。
+    std::shared_ptr<aurora::Scroll> row_area_{};
 
     std::vector<ThemeChoice> theme_choices_{};  ///< 每次建浮层时经 `Hooks::themes` 现取（卡片次序即其次序）。
     std::size_t selected_swatch_ = 0;           ///< 色板编辑器当前指向的格，缺省 0 格（编辑器是常驻的）。
@@ -489,6 +578,12 @@ private:
     std::vector<std::shared_ptr<aurora::Canvas>> swatch_canvases_{}; ///< 16 格画布，按格序。
     std::shared_ptr<aurora::TextInput> swatch_editor_{};             ///< 常驻的 HEX 输入框。
     std::shared_ptr<aurora::Button> swatch_reset_button_{};          ///< 「恢复主题默认」，无基线时禁用。
+
+    std::shared_ptr<aurora::Button> font_trigger_{};  ///< 字体行那枚常驻触发按钮（本件私有的记锚点子类）。
+    std::shared_ptr<aurora::Text> font_notice_{};     ///< 字体行**下方**那一行回落留痕（A4-b）。
+    std::shared_ptr<aurora::Popup> font_popup_{};     ///< 候选浮层本体：跨开合复用一只，见文件头③末段。
+    std::optional<std::size_t> font_popup_index_{};   ///< 它在宿主子节点里的序号（降序摘除用）。
+    std::vector<std::shared_ptr<aurora::Button>> font_candidates_{};  ///< 当前浮层里的候选按钮，按池内序。
 
     std::vector<FontFamilyEntry> family_catalog_{};  ///< 每次建浮层时经 `Hooks::families` 现取（S16 的同源目录）。
     /// 列表的**数据源**（框架的 `ReorderableList` 直接改写它）；与表单之间以本件为中介，见 `commit_chain()`。

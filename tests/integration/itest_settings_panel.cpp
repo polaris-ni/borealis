@@ -86,6 +86,7 @@
 #include "aurora/render/font_engine.h"
 #include "aurora/widget/button.h"
 #include "aurora/widget/dropdown.h"
+#include "aurora/widget/popup.h"
 #include "aurora/widget/reorderable_list.h"
 #include "aurora/widget/scroll.h"
 #include "aurora/widget/switch.h"
@@ -536,10 +537,9 @@ AURORA_TEST_CASE(deferred_and_next_session_rows_carry_their_badges) {
             const SettingsControl *control = borealis::ui::find_settings_control(row.key);
             AURORA_TEST_REQUIRE(control != nullptr);
             AURORA_TEST_CHECK_EQ(row.badge, expected_badge(*control));
-            // 主题卡与 16 格色板在 #114 第一棒落成可交互区段，回退链在第二棒落成重排区段，
-            // 故这里只剩「字体族下拉（形态待裁决）」与「快捷键只读表」两类专用形态仍是占位。
+            // 外观页的四个专用区段（主题卡 / 16 格色板 / 字体族选择器 / 回退链）都已落成可交互区段，
+            // 故这里只剩「快捷键只读表」一类专用形态仍是占位。
             AURORA_TEST_CHECK_EQ(row.editable, control->consumer != ConsumerStatus::Absent &&
-                                                   control->kind != ControlKind::FontDropdown &&
                                                    control->kind != ControlKind::ReadOnlyTable);
         }
     }
@@ -574,16 +574,12 @@ AURORA_TEST_CASE(dedicated_control_rows_show_a_readonly_summary) {
 
     panel.select_page(SettingsPage::Appearance);
     const auto rows = panel.visible_rows();
-    // 仍未落地的专用形态：如实显示当前值，而不是给一个「点了没反应」的控件（S9 / D3-a 同口径）。
-    const SettingsPanel::VisibleRow *family = find_row(rows, "appearance.font_family");
-    AURORA_TEST_REQUIRE(family != nullptr);
-    AURORA_TEST_CHECK_FALSE(family->editable);
-    AURORA_TEST_CHECK_EQ(family->summary, probe.base.appearance.font_family);
-    // 主题卡、16 格色板与回退链三处已落成区段：可交互，且摘要留空——当前值在它们自己的控件里，行上
-    // 再显示一份就是第二个真值源。回退链那条空链显示的也不是「空摘要」而是「空列表 + 一句提示」，
-    // 故它满足的是下面那条「可交互行摘要一律留空」的通则，这里只把它从占位行的名单里摘出来。
+    // 主题卡、16 格色板、字体族选择器与回退链四处已落成区段：可交互，且摘要留空——当前值在它们自己的
+    // 控件里，行上再显示一份就是第二个真值源。回退链那条空链显示的也不是「空摘要」而是「空列表 + 一句
+    // 提示」，故它满足的是下面那条「可交互行摘要一律留空」的通则，这里只把它从占位行的名单里摘出来。
     AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.theme")->editable);
     AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.palette.basic")->editable);
+    AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.font_family")->editable);
     AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.font_fallback_chain")->editable);
     // 可交互行的摘要一律留空——值在它自己的控件里，两处同时显示就是第二个真值源。
     // 只判这一个方向：占位行的摘要可以是空串（缺省值本就是空文本的 FreeText 与空回退链都是）。
@@ -1482,6 +1478,78 @@ enum class ChainButton {
     }
     return spot;
 }
+
+/// @brief 把字体行那枚常驻触发按钮送进派发可见带（A4 的四例共用）。
+///
+/// 外观页被主题卡与 16 格色板两个区段整体下推，`appearance.font_family` 在反向核对表里排第 9 行，
+/// 落在 offset 0 的可见带之外 ⇒ 与 `reveal_chain_button` 同一处境、同一滚法（每轮 12 格 × 最多 20 轮，
+/// 命中即止；滚到哪一档不是判据）。
+/// @param h 驱动台。
+/// @param panel 面板（按钮指针在每次重建浮层时换，故按当前值现取）。
+/// @return 该按钮的命中点与窗口坐标下的可达框；未找到时 `widget` 为空。
+[[nodiscard]] auto reveal_font_trigger(Harness &h, SettingsPanel &panel) -> HitSpot {
+    HitSpot spot;
+    for (int attempt = 0; attempt < 20 && spot.widget == nullptr; ++attempt) {
+        au::Widget *const want = panel.font_button();
+        if (want != nullptr) {
+            spot = h.find_first("Button", 0.0F, [want](au::Widget *widget) -> bool { return widget == want; });
+        }
+        if (spot.widget == nullptr) {
+            for (int notch = 0; notch < 12; ++notch) {
+                h.scroll(450.0F, 300.0F, -1.0F);  // 负方向是往下滚（`ScrollViewport` 的符号约定）
+            }
+            h.render();
+        }
+    }
+    return spot;
+}
+
+/// 浮层里**真点得到**的那一档：它的命中点与自己那份标签（族名）。
+struct FontPick {
+    HitSpot spot{};
+    std::string family{};
+};
+
+/// @brief 在开着的候选浮层里挑一档「派发链交得回它」且族名不等于当前生效族的候选。
+///
+/// 不写死序号有两处原因：① 浮层贴着按钮下沿铺开，无头窗口只有 600 dp 高，最靠下的几档会被裁掉而
+/// 交不回命中链，按序号点就可能点在空白上（那种点会被遮罩接走 ⇒ 连面板一起关，判据读成假绿）；
+/// ② 置顶那档就是当前生效族，点它是「改回同一个值」，而表单的脏标记按值比较 ⇒ 既不落盘也不广播，
+/// 「一次真点＝一次落盘一次广播」那条判据会被静默放过。
+/// 族名从按钮自己那份 `label` 现读，而不是从 `family_view().choices` 抄：本例判的是「点这一档，落盘
+/// 里就该是这一档」，两侧同源自证就什么都抓不到（改的是池子算法时，读数会跟着一起变）。
+/// @param h 驱动台。
+/// @param panel 面板（候选按钮指针表随每次开浮层重建）。
+/// @param avoid 要跳过的族名（当前生效的那一族）。
+/// @return 命中的那一档；一档都点不到时 `spot.widget` 为空。
+[[nodiscard]] auto pick_font_candidate(Harness &h, SettingsPanel &panel, std::string_view avoid) -> FontPick {
+    for (std::size_t index = 0;; ++index) {
+        au::Widget *const want = panel.font_candidate(index);
+        if (want == nullptr) {
+            break;  // 候选按钮表按池宽建，越界即到底
+        }
+        const HitSpot spot =
+            h.find_first("Button", 0.0F, [want](au::Widget *widget) -> bool { return widget == want; });
+        if (spot.widget == nullptr) {
+            continue;  // 被窗口下沿裁掉的那一档：真实派发交不回它，点它就没有判据
+        }
+        auto *button = dynamic_cast<au::Button *>(spot.widget);
+        if (button == nullptr) {
+            continue;
+        }
+        const std::string family = button->label.get().text;
+        if (family == avoid) {
+            continue;
+        }
+        return FontPick{.spot = spot, .family = family};
+    }
+    return FontPick{};
+}
+
+/// 候选浮层的一档行高与浮层宽（判据文 A4-d 的量）。**刻意取独立字面量而不是 `settings_panel.cpp` 的
+/// `kFontItemHeightDp` / `kFontPopupWidthDp`**：那是实现自己的输出，拿它当预期就只剩「常量与常量相等」。
+constexpr float kFontItemTestDp = 30.0F;
+constexpr float kFontPopupWidthTestDp = 260.0F;
 
 /// 预览夹具里那三格 16 色基本色**底色**档的落点（`src/ui/settings_preview.cpp` 的 `build_fixture()` 第 4
 /// 行：`└──────┘` 之后依次是 `ESC[41m`（`basic[1]`）、`42m`（`basic[2]`）、`44m`（`basic[4]`））。
@@ -2536,6 +2604,302 @@ AURORA_TEST_CASE(escape_releases_a_keyboard_chain_grab_before_it_closes_the_pane
     AURORA_TEST_CHECK_EQ(h.shortcuts().count(), 0U);
 }
 
+/// @brief 字体族区段把「生效的那族 / 回落留痕 / 浮层候选池」三件事投影出来（A4-b 与 A4-d 的模型腿）。
+///
+/// 三段各钉住一种错法：
+/// ① 触发按钮的标签取**生效族**而不是配置里那一串——A4-b 明令禁止「把选择器显示成那个不存在的族」。
+///    先判缺省档（配置值在目录里 ⇒ 逐字相同且没有留痕），再造「目录里没有那族」与「命中目录但度量非
+///    等宽」两档现场，各判 `effective != configured` 且留痕非空。留痕以**整句**比而不是只判非空：
+///    写成回退链的那句提示同样非空，而界面就在说另一件事。
+/// ② 候选池＝等宽筛 + 逐字节字典序 + 置顶两档（A4-d）。置顶只在**确实在池里**时提，同值合一（配置值
+///    就是缺省族时只占一档）；目录里那枚非等宽族整个不出现——它既进不了池，也正好是①的第二档现场。
+/// ③ 次序**逐位**比而不是比集合：「字典序」与「当前值在前」两条口径在集合上不可区分。
+///
+/// 为什么本例在无头通道而不是纯模型通道：`effective` 与 `notice` 两列**从控件本体读**（现算值在漏掉一次
+/// 刷新腿时照样正确，而那正是本例要抓的陈旧），而整张卡片是 `LayoutBuilder` 的闭包、只在布局期建，故每段
+/// 都得先排一帧。每段结束显式 `close()`：本件析构不撤自己的浮层，留着旧卡片会让下一段渲染跑到已销毁面板
+/// 的闭包上。
+AURORA_TEST_CASE(the_family_section_projects_the_effective_family_and_the_pinned_pool) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+
+    // ① 缺省档：配置值就是目录里的等宽族，既没有回落也不写留痕。
+    {
+        StoreProbe as_is;
+        std::unique_ptr<SettingsPanel> panel = h.attach(as_is);
+        h.open(*panel);
+        const SettingsPanel::FamilyView view = panel->family_view();
+        AURORA_TEST_CHECK_EQ(view.configured, std::string{"Cascadia Code"});
+        AURORA_TEST_CHECK_EQ(view.effective, std::string{"Cascadia Code"});
+        AURORA_TEST_CHECK_TRUE(view.notice.empty());
+        AURORA_TEST_CHECK_FALSE(view.popup_open);
+        check_key_sequence("the pool with the configured value equal to the built-in default", view.choices,
+                           {"Cascadia Code", "Consolas", "DejaVu Sans Mono", "Fira Code", "JetBrains Mono",
+                            "Noto Sans Mono"});
+        panel->close();
+    }
+
+    // ② 配置值在池里而**不是**字典序首档：它置顶，内置缺省族随其后各占一档（同值合一在此不成立，故两档）。
+    {
+        StoreProbe pinned;
+        pinned.base.appearance.font_family = "Fira Code";
+        std::unique_ptr<SettingsPanel> panel = h.attach(pinned);
+        h.open(*panel);
+        const SettingsPanel::FamilyView view = panel->family_view();
+        AURORA_TEST_CHECK_EQ(view.effective, std::string{"Fira Code"});
+        AURORA_TEST_CHECK_TRUE(view.notice.empty());
+        check_key_sequence("the configured family pinned above the built-in default", view.choices,
+                           {"Fira Code", "Cascadia Code", "Consolas", "DejaVu Sans Mono", "JetBrains Mono",
+                            "Noto Sans Mono"});
+        panel->close();
+    }
+
+    // ③ 目录里没有那族（拼写漂移 / 未安装，裁决 7.46③ 的静默回落）：显示生效族，留痕点名两侧。
+    {
+        StoreProbe unlisted;
+        unlisted.base.appearance.font_family = "Courier New";
+        std::unique_ptr<SettingsPanel> panel = h.attach(unlisted);
+        h.open(*panel);
+        const SettingsPanel::FamilyView view = panel->family_view();
+        AURORA_TEST_CHECK_EQ(view.configured, std::string{"Courier New"});
+        AURORA_TEST_CHECK_EQ(view.effective, std::string{"Cascadia Code"});
+        AURORA_TEST_CHECK_EQ(view.notice,
+                             borealis::ui::settings_label("settings.font.fallback",
+                                                          {au::LocalizedString{std::string{"Courier New"}},
+                                                           au::LocalizedString{std::string{"Cascadia Code"}}}));
+        // 配置值不在池里就不置顶（把目录里没有的名摆到第一档，等于请用户再点一次那族用不了的名字）。
+        check_key_sequence("an unlisted configured value is not pinned", view.choices,
+                           {"Cascadia Code", "Consolas", "DejaVu Sans Mono", "Fira Code", "JetBrains Mono",
+                            "Noto Sans Mono"});
+        panel->close();
+    }
+
+    // ④ 命中目录但度量非等宽：同样回落，且**这一族不进候选池**（A4-d 的等宽筛）。
+    {
+        StoreProbe not_mono;
+        not_mono.base.appearance.font_family = "Arial";
+        not_mono.family_catalog.push_back(FontFamilyEntry{.family = "Arial", .monospace = false});
+        std::unique_ptr<SettingsPanel> panel = h.attach(not_mono);
+        h.open(*panel);
+        const SettingsPanel::FamilyView view = panel->family_view();
+        AURORA_TEST_CHECK_EQ(view.effective, std::string{"Cascadia Code"});
+        AURORA_TEST_CHECK_EQ(view.notice,
+                             borealis::ui::settings_label("settings.font.fallback",
+                                                          {au::LocalizedString{std::string{"Arial"}},
+                                                           au::LocalizedString{std::string{"Cascadia Code"}}}));
+        AURORA_TEST_CHECK_EQ(view.choices.size(), 6U);  // 目录给了七档，池里只有六档
+        for (const std::string &family : view.choices) {
+            AURORA_TEST_CHECK_NE(family, std::string{"Arial"});
+        }
+        panel->close();
+    }
+
+    // ⑤ 提交通过之后标签与留痕跟着走：这是「面板显示的族」与「表单里的族」不可能分叉的那一腿。
+    StoreProbe picker;
+    picker.base.appearance.font_family = "Courier New";
+    std::unique_ptr<SettingsPanel> panel = h.attach(picker);
+    h.open(*panel);
+    AURORA_TEST_CHECK_NE(panel->family_view().effective, std::string{"Consolas"});
+    AURORA_TEST_CHECK_EQ(panel->commit("appearance.font_family", FormValue::text("Consolas")), CommitIssue::None);
+    AURORA_TEST_CHECK_EQ(panel->family_view().effective, std::string{"Consolas"});
+    AURORA_TEST_CHECK_EQ(panel->family_view().configured, std::string{"Consolas"});
+    AURORA_TEST_CHECK_TRUE(panel->family_view().notice.empty());  // 换成一族可用名：留痕随之撤掉
+    AURORA_TEST_CHECK_EQ(picker.persist_calls, 1U);
+    AURORA_TEST_CHECK_EQ(picker.broadcast_calls, 1U);  // 该键 `Wired ∧ Immediate`
+    panel->close();
+}
+
+/// @brief A4-e + A4-d + A4-b：真点触发按钮 ⇒ 浮层贴在**那一次 Press** 的按钮下沿、按池宽铺开，留痕行在其下。
+///
+/// A4-e 那句「锚点只能取同一次 Press 的坐标对，不得由 `paint_bounds()` 折算」在本例才**可判**：触发按钮
+/// 是 `reveal_font_trigger` 滚出来的，行区偏移非零（本例先断这一条作反空转前提），而 `Scroll` 的内容子节点
+/// 那份 bounds 是**内容坐标**（文件头与裁决 7.60②），两种算法由此给出两个不同的数。基准一律取
+/// `HitSpot::box`（派发链在窗口坐标里量出来的可达框），不引入第二个坐标假设。
+///
+/// 尺寸两条用独立字面量（一档 30 dp × 目录六档、浮层宽 260 dp）而不是实现里的常量：`Popup` 自身不画底与
+/// 边，那份尺寸来自内容侧 `Scroll` 上锁死的 modifier，取实现的常量就只剩「常量与常量相等」。六档这一数
+/// 与 `StoreProbe::family_catalog` 同源，而它的**次序**由同通道的模型例
+/// `the_family_section_projects_the_effective_family_and_the_pinned_pool` 逐位守，本例不重复。
+AURORA_TEST_CASE(clicking_the_font_trigger_anchors_a_popup_at_that_press_below_the_button) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    const HitSpot trigger = reveal_font_trigger(h, *panel);
+    AURORA_TEST_REQUIRE_MSG(trigger.widget != nullptr, "the font trigger button is not dispatch-reachable");
+    AURORA_TEST_CHECK_FALSE(panel->family_view().popup_open);
+    AURORA_TEST_REQUIRE_EQ(h.overlay_count(), 1U);  // 只有面板那一层
+    au::Scroll *area = h.row_scroll(trigger.x, trigger.y);
+    AURORA_TEST_REQUIRE(area != nullptr);
+    AURORA_TEST_CHECK_GT(area->offset_y(), 0.0F);  // 反空转前提：这一行是滚出来的，偏移非零
+
+    h.click(trigger.x, trigger.y);
+    h.render();
+
+    auto *popup = dynamic_cast<au::Popup *>(panel->font_popup());
+    AURORA_TEST_REQUIRE_MSG(popup != nullptr, "the candidate layer is not the framework's Popup");
+    AURORA_TEST_CHECK_TRUE(popup->is_open());
+    AURORA_TEST_CHECK_TRUE(panel->family_view().popup_open);
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 2U);  // 浮层加在面板浮层之后（`close()` 降序摘除的前提）
+    const au::Rect box = popup->content_bounds();
+    AURORA_TEST_CHECK_NEAR(box.origin.y, trigger.box.origin.y + trigger.box.size.height, 2.0F);
+    AURORA_TEST_CHECK_NEAR(box.origin.x, trigger.box.origin.x, 2.0F);
+    AURORA_TEST_CHECK_NEAR(box.size.height, kFontItemTestDp * 6.0F, 1.0F);
+    AURORA_TEST_CHECK_NEAR(box.size.width, kFontPopupWidthTestDp, 1.0F);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);  // 打开浮层不是提交
+
+    // 浮层之外那一片仍是面板的遮罩：浮层没有把整窗盖住，A4-c 那一腿才有「点空白」可点。
+    au::Widget *outside = h.hit(4.0F, static_cast<float>(kWindowHeight) * 0.5F);
+    AURORA_TEST_REQUIRE(outside != nullptr);
+    AURORA_TEST_CHECK_EQ(std::string_view{outside->type_name()}, std::string_view{"Canvas"});
+
+    // A4-b：留痕是字体行**下方**那一条独立行。`Text` 不可点，故 `reachable_box` 那套量法对它无效
+    // （命中链只收「自身可点或含可点后代」的节点，裁决 7.61⑤），本例只比同一坐标空间里的上下关系。
+    au::Widget *const notice = panel->font_notice_text();
+    AURORA_TEST_REQUIRE(notice != nullptr);
+    AURORA_TEST_CHECK_GT(notice->paint_bounds().origin.y,
+                         trigger.widget->paint_bounds().origin.y + trigger.widget->paint_bounds().size.height);
+    // 缺省档（配置里的族在目录里且等宽）：没有留痕可写，按钮显示的正是生效的那一族。
+    AURORA_TEST_CHECK_TRUE(panel->family_view().notice.empty());
+    AURORA_TEST_CHECK_EQ(panel->family_view().effective, panel->family_view().configured);
+}
+
+/// @brief A4-d 的行为腿：真点一档＝一次落盘 + 一次广播，浮层**关掉而不摘除**，再开时按当前表单重置顶。
+///
+/// 「关掉而不摘除」是本件的一条承重口径（`choose_family()` 的注释）：候选按钮正被这次派发链持有，在派发栈内
+/// `remove_overlay` 会 erase 掉它自己的祖先。于是关掉之后的浮层仍挂在宿主上（`on_paint` 与命中链在 `!open_`
+/// 时早返回 ⇒ 不可见也不可达），本例因此判 `overlay_count()` **仍是 2** 而不是回 1；摘除只发生在 `close()`
+/// 与重建浮层那两处（后者由 `the_scrim_and_escape...` 那条的末段判）。
+///
+/// 「点的那一族」从按钮自己那份 `label` 现读（见 `pick_font_candidate`），落盘内容与该串逐字相等，于是
+/// 「池子算错而提交跟着错」这种实现不会自证为绿。
+AURORA_TEST_CASE(a_real_click_on_a_font_candidate_commits_that_family_and_only_closes_the_popup) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    const HitSpot trigger = reveal_font_trigger(h, *panel);
+    AURORA_TEST_REQUIRE_MSG(trigger.widget != nullptr, "the font trigger button is not dispatch-reachable");
+    h.click(trigger.x, trigger.y);
+    h.render();
+    AURORA_TEST_REQUIRE(panel->family_view().popup_open);
+    const std::string before = panel->family_view().effective;
+
+    const FontPick pick = pick_font_candidate(h, *panel, before);
+    AURORA_TEST_REQUIRE_MSG(pick.spot.widget != nullptr, "no font candidate is dispatch-reachable");
+    h.click(pick.spot.x, pick.spot.y);
+    h.render();
+
+    const SettingsPanel::FamilyView after = panel->family_view();
+    AURORA_TEST_CHECK_EQ(after.effective, pick.family);
+    AURORA_TEST_CHECK_EQ(after.configured, pick.family);
+    AURORA_TEST_CHECK_TRUE(after.notice.empty());  // 换成了目录里的一族 ⇒ 回落留痕随之清空
+    AURORA_TEST_CHECK_FALSE(after.popup_open);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);   // 该键 `Wired ∧ Immediate`：一次改档一次落盘
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 1U);
+    AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 1U);
+    AURORA_TEST_CHECK_EQ(probe.persisted.front().appearance.font_family, pick.family);
+    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
+
+    // 关掉而不摘除：宿主上仍是两层，而那一档已从派发链上消失。
+    AURORA_TEST_REQUIRE(panel->font_popup() != nullptr);
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 2U);
+    AURORA_TEST_CHECK(h.hit(pick.spot.x, pick.spot.y) != pick.spot.widget);
+
+    // 再开一次：池子按**当前**表单重置顶（点开的那一族回到第一档，缺省族退居第二）。
+    const HitSpot again = reveal_font_trigger(h, *panel);
+    AURORA_TEST_REQUIRE_MSG(again.widget != nullptr, "the trigger is not reachable after the pick");
+    h.click(again.x, again.y);
+    h.render();
+    AURORA_TEST_REQUIRE(panel->family_view().popup_open);
+    const std::vector<std::string> repinned = panel->family_view().choices;
+    // 预期由用例侧独立折一遍（等宽全集字典序 → 摘掉「当前值」与缺省族 → 把它们按这对次序插回前面），
+    // 而不是抄实现给出的那一列：`pick.family` 是点出来的，写死序号在点到 `Consolas` 那一档时就错了。
+    const std::vector<std::string> kPool{"Cascadia Code", "Consolas", "DejaVu Sans Mono", "Fira Code",
+                                         "JetBrains Mono", "Noto Sans Mono"};  // 与 `family_catalog` 同批手抄
+    std::vector<std::string> rest;
+    for (const std::string &name : kPool) {
+        if (name != pick.family && name != "Cascadia Code") {
+            rest.push_back(name);
+        }
+    }
+    std::vector<std::string> want{pick.family, "Cascadia Code"};
+    want.insert(want.end(), rest.begin(), rest.end());
+    check_key_sequence("the pool re-pinned to the newly chosen family", repinned, want);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);  // 重开浮层不是第二次提交
+}
+
+/// @brief A4-c：遮罩那枚「点空白处关面板」的闭包在浮层开着时**只关浮层**；`Escape` 的三层交接同理。
+///
+/// 两条腿各钉一个入口（指针与键盘），且都写成**一对**：第一次只关浮层、第二次才动面板。单独判「第一次面板
+/// 还开着」有两条假绿路径——浮层压根没开（本例先断 `popup_open`），或点击被别的东西接走而两边都没关（本例
+/// 先断浮层确实关掉了）。
+///
+/// 浮层摘除只在 `close()` 那一刻发生，故关掉之后 `overlay_count()` 仍是 2、摘除之后回 0，这两数在本例里
+/// 是「谁被关掉」的判据而不是计数装饰。`Escape` 经 `shortcuts().handle()` 派发（驱动台的 `press()` 走事件
+/// 派发器，而后者不持有快捷键表——与 `escape_releases_a_keyboard_chain_grab_...` 同一条口径）。
+AURORA_TEST_CASE(a_font_popup_takes_the_scrim_and_escape_before_they_reach_the_panel) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    const auto open_popup = [&h, &panel]() -> void {
+        const HitSpot trigger = reveal_font_trigger(h, *panel);
+        AURORA_TEST_REQUIRE_MSG(trigger.widget != nullptr, "the font trigger button is not dispatch-reachable");
+        h.click(trigger.x, trigger.y);
+        h.render();
+        AURORA_TEST_REQUIRE(panel->family_view().popup_open);
+    };
+
+    // ① 遮罩那一腿：第一次只关浮层。
+    open_popup();
+    h.click(4.0F, static_cast<float>(kWindowHeight) * 0.5F);
+    h.render();
+    AURORA_TEST_CHECK_FALSE(panel->family_view().popup_open);
+    AURORA_TEST_CHECK_TRUE(panel->is_open());
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 2U);
+    AURORA_TEST_CHECK_EQ(h.shortcuts().count(), 1U);  // 解绑只发生在关面板那一刻
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);    // 关浮层不是提交，也不撤销表单
+    AURORA_TEST_CHECK_EQ(panel->family_view().effective, panel->family_view().configured);
+
+    // ② 同一处遮罩、浮层已关的那一次才撤面板（与既有的关面板例同判据，这里是「只在浮层关掉之后」这一序）。
+    h.click(4.0F, static_cast<float>(kWindowHeight) * 0.5F);
+    h.render();
+    AURORA_TEST_CHECK_FALSE(panel->is_open());
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 0U);
+    AURORA_TEST_REQUIRE_EQ(h.shortcuts().count(), 0U);
+    AURORA_TEST_CHECK(panel->font_popup() == nullptr);  // 摘除发生在 `close()`，两层一起下树
+    AURORA_TEST_CHECK(panel->font_button() == nullptr);
+
+    // ③ 重开面板与浮层，走键盘那一腿：第一次 `Escape` 只关浮层。
+    h.open(*panel);
+    open_popup();
+    auto escape = []() -> au::KeyEvent {
+        au::KeyEvent event;
+        event.key = static_cast<int>(au::KeyCode::Escape);
+        event.action = au::KeyAction::Down;
+        return event;
+    }();
+    AURORA_TEST_REQUIRE(h.shortcuts().handle(escape, false));
+    AURORA_TEST_CHECK_FALSE(panel->family_view().popup_open);
+    AURORA_TEST_CHECK_TRUE(panel->is_open());
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 2U);
+    AURORA_TEST_CHECK_EQ(h.shortcuts().count(), 1U);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+
+    // ④ 没有浮层的那一次才关面板：交接腿不能把 `Escape` 永久吞在浮层上。
+    AURORA_TEST_REQUIRE(h.shortcuts().handle(escape, false));
+    AURORA_TEST_CHECK_FALSE(panel->is_open());
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 0U);
+    AURORA_TEST_CHECK_EQ(h.shortcuts().count(), 0U);
+}
+
 /// @brief 行区交回无障碍通道的滚动读数是「视口占内容的比例」，而不是旧式把跨度当分母（G33 回货的消费腿）。
 ///
 /// 登记这条缺口的正是 #130 那次真机走查：`IScrollProvider::get_VerticalViewSize` 报 99.2126%，反解恰是
@@ -2871,6 +3235,22 @@ AURORA_TEST_CASE(the_candidate_append_is_open_until_the_chain_reaches_the_framew
 }
 
 AURORA_TEST_CASE(escape_releases_a_keyboard_chain_grab_before_it_closes_the_panel) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_family_section_projects_the_effective_family_and_the_pinned_pool) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(clicking_the_font_trigger_anchors_a_popup_at_that_press_below_the_button) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_real_click_on_a_font_candidate_commits_that_family_and_only_closes_the_popup) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_font_popup_takes_the_scrim_and_escape_before_they_reach_the_panel) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 

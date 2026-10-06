@@ -47,6 +47,11 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"settings.chain.truncated", "链长超过上限 {0}：超出部分不参与绘制"},
     {"settings.chain.no_match", "没有匹配的族名"},
 
+    // ---- 字体族区段（A4-b：配置那族不可用时在字体行下方留痕，而不是把按钮显示成那族）----
+    // 一句话覆盖「目录里没有」与「目录里有但度量非等宽」两档（两者对用户是同一件事），两个位置参数是
+    // **取值**而非词条 key，故交字面档。
+    {"settings.font.fallback", "配置的 {0} 不可用：实际使用 {1}"},
+
     // ---- 外观域 ----
     {"appearance.theme", "主题"},
     {"appearance.palette.basic", "16 色重映射"},
