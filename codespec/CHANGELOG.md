@@ -4,6 +4,46 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.74（2026-10-06）**接 G36 回货：A4 字体族浮层为绕开它而写的两处过渡形态按预诺撤除，锚点改取框架公共入口 `Widget::window_bounds()`**（判据入册为裁决 **7.73**）
+
+**动机**：G36 是 #114 A4 本体棒实测登记的框架公共 API 缺口（裁决 7.70③ 派发，任务书随裁决在会话内产出），人已明示「G36 已完成，请更新代码」。本棒是**接货复验**而不是新功能：Aurora 当日活动分支 `416b27bc` 到货后，本仓此前为绕开该缺口而写的两处过渡形态**必须撤除**——预诺原文在册（G36 行末与裁决 7.70③）：「`AnchorButton` 自记同一次 Press 的坐标对 ＋ 面板自持 `row_area_` 现读 `offset_y()` 折算，回货即撤这两处，与 G32 的补偿同口径」。
+
+**回货形态**（读其公共头与 `widget.cpp` 实现体而得，不是只读声明面）：新增 `Widget::window_bounds() const -> std::optional<Rect>`，**查询时**沿 `layout_parent_` 现算、恒窗口逻辑 dp、不读任何绘制期缓存；新增父侧虚钩子 `Widget::scroll_content_offset(cb.origin, out)`（缺省零，**只有 `Scroll` 覆写**为 `{0, -offset_y_}`，`LazyList` / `LazyRow` / `GridView` 的偏移已参与子布局故保持缺省）——「谁提供偏移修正」由此是容器的显式声明而不是基类按类型猜测，而 `buffer_origin_y_` **刻意不参与**（缓冲录制锚点，扣它就会二次偏移）。递推式 `origin = origin + cb.origin + scroll_delta + tf.translation` 与 `Container::on_paint` 的下降式逐字同构而方向相反，`tf` 按父实际用于绘制的盒尺寸 `cb.size` 重算（与 G31 那条 `content_origin` 同源）；几何权威取父侧 `Node::bounds_` 而非控件自报的 `size_`；负守卫一律 `nullopt`（`show` 为假 / 从未测量 / 按地址在 `child_nodes()` 找不到该子），为此新增 `has_measured_` 一个 bool 而不是几何字段，以区分「从未布局」与「布局过但零尺寸」。`paint_bounds()` / `paint()` 形参 / `paint_bounds_` / `focus_bounds()` 四处注释随实修改口（回货判据③ 兑现）。
+
+**本棒最该留痕的一条：回货判据② 被框架自己实测否证并改口**（裁决 7.73②）。登记时写的「该入口与派发链 `HitNode.origin` 同源」在该仓落地时不成立——`Scroll` 后代上的 `HitNode.origin` **本身不是窗口坐标**（＝视口原点 + 内容盒原点，未扣 `offset_y_`），其文档对照读数「真窗口位 60 / `window_bounds()` 60 / `HitNode.origin.y` 260」，故「逐位等于 `HitNode.origin`」与「语义为窗口绝对盒」两条**互斥**，判据改成「逐位等于独立复算的真窗口位」。顺带查明 `HitNode.origin` 缺 `offset_y_` 是一条**活的派发缺陷**（滚动容器内控件的 `local_position` 整体多一个 `offset_y_`），已记进该仓 `05-event-navigation.md` 待另开提案而本次不动。**对本仓判据写法的直接后果**：出账证人只能以**派发落点**（`e.position` 本身即窗口坐标）为基准，即既有的 `Harness::reachable_box()`；而旧过渡形态吃的恰好是这条缺陷路径（`position − local_position` 落在内容坐标系），撤除后本仓不再依赖它。
+
+**撤除点两处、零新增算式**：`src/ui/settings_panel.cpp` 的私有 `AnchorButton` 子类**整段退役**（全仓无残留），`SettingsPanel` 自持行区 `Scroll` 句柄的 `row_area_` 成员与其赋值一并删除；锚点改为一行取 `anchor->window_bounds()`、配 `size().height` 得下沿，查不到有效窗口盒（未测量 / `show` 为假）就**不弹**——宁可不弹也不猜位置。实现侧净减 **47 行**，本仓自此不持有任何「控件 → 窗口坐标」的私有折算，也不再把 `scroll.h` 那条几何契约复制进应用侧（§5 第 2 条）。
+
+**验收**：既有那条真点锚点例 `clicking_the_font_trigger_anchors_a_popup_at_that_press_below_the_button`（用例名保留在册引用不改，以免裁决 7.70 的引用成死链）**判据未动而照旧绿**，即新入口与过渡形态给出同一落点；该例补两句出账证人——⑴ `window_bounds()` 与该控件的派发可达框逐位相符（容差 1 dp＝采样步长），⑵ 同帧同一控件的 `paint_bounds().origin.y` 与窗口框**必然不相当**（差值 > 1 dp，既挡住「锚点改回 `paint_bounds()`」那一类回退，也钉住本例吃的确实是新入口）。**两次变异各抓一处**：把本仓实现退回 `paint_bounds()` ⇒ 两例红；在 Aurora 树临时去掉递推里的 `scroll_content_offset` 修正 ⇒ 同样两例红（读数 `826 vs 442`、`864 vs 481`，第三条用例红在「no font candidate is dispatch-reachable」）。全量构建通过，`itest_settings_panel` **45 例全绿**、非 e2e 通道 `ctest -E etest_` **38 项全绿**（30.06 s）；每次重链前 `find build -name '*.ilk' -delete`。变异已全量还原，该树 `git status --porcelain` 为空、HEAD 仍 `416b27bc`，**本仓不提交 Aurora 任何改动**。**未复跑吞吐门禁**并给理由：新入口只在面板打开与点该按钮时被查询一次，不在每帧绘制与布局路径上，基准三场景不含面板。**G36 出账后 `SPECIFICATIONS.md` 附录 A.2 的开放缺口为 0**（G1 ~ G36 全部闭合）。真机走查照旧未做（会话锁屏下 `SendInput` 静默失效，裁决 7.31①），字体族浮层的选档手感仍在欠账清单上，故本条不宣称面板「可用」。
+
+**落点**：`src/ui/settings_panel.{h,cpp}`、`tests/integration/itest_settings_panel.cpp`；文档回写＝`codespec/SPECIFICATIONS.md` §7 的 7.73 与 7.70③ 的闭合句、附录 A.2 的 G36 行结项（含「回货结论」续行），`codespec/UI_SETTINGS.draft.md` §4 A4-e 与 §6 标题行、§8 现状段，`codespec/PLAN.md` 的 `SPEC.FEAT.PREF.02` 行与 §6 缺口表，`AGENTS.md` §6。
+
+## v0.73（2026-10-06）**#116 第二棒：快捷键只读表的行源与冲突比对落成纯逻辑件**（`include/borealis/ui/shortcuts_table.h` + `src/ui/shortcuts_table.cpp`，人已拍板的三条口径同批入册，判据入册为裁决 **7.72**）
+
+**动机**：`SPEC.FEAT.PREF.02` 的 D 页（快捷键页）首版**只读**（裁决 7.52 的 S9：重绑需要键位录制件与 `shortcuts.overrides` 的消费方，两者都不在本件射程内）。开工前人已在 AskUserQuestion 上拍板三条口径（行源、孤儿行、冲突比对的两半），本棒把那句话落成可单测的纯逻辑件，界面腿留后续（#148 / #149）。
+
+**三条拍板口径与它们的根据**：⑴ **行源是注册表而不是覆盖表**——`CommandRegistry::all()` 逐字交进来（装配层折成 `ShortcutCommandEntry`），覆盖表只贡献**孤儿行**（配置里写了命令 id 而注册表查无此命令）。两条实测事实决定了不能反过来：框架 `bind_shortcuts` 逐字登记注册表的 `default_binding`，而 `ShortcutBinding` **不带命令 id**，故那张表结构上无法把「哪条命令被覆盖成什么」投影回命令行；且覆盖表当下**无消费方**（裁决 7.27② 同源），把一条未生效的覆盖画成一行就是谎报生效。已注册命令的覆盖条目因此**既不产生行也不改写那一行**。⑵ **冲突比对吃 `term::KeyPress` 而不是文本**——`KeyCombo::to_string()` 只用于显示，公共面**没有**它的反向解析（`key_name` 是单向表），在界面上比字符串就必须自造一张键名反查表（第二真值源，违 §5 第 2 条）。故显示文本与比对值由装配层从**同一个 `KeyCombo` 同行取出**（`ShortcutCommandEntry{binding_text, binding}` 分成两次取就是让二者各走一条路），比对值与行表**平行存放**，面板只读得到算好的那一列——这正是判据文 D2-a「标注来自实际比对」的证人形态。孤儿行因此 `comparable=false`、**恒不参与比对**，如实呈现为「延后」而不是「无冲突」。⑶ **保留位含本仓十二条分屏键位**——那些键位不经 `ShortcutRegistry`（`workspace_keys.h` 文件头的三条派发理由），而同一个组合键在派发上是快捷键层先消费（裁决 7.51③ 理由 (a)）；于是一条命令若与分屏键位同形，实际生效的是快捷键而**分屏命令按不到**，这一格必须标冲突，不能留给用户自己去试。
+
+**一条修饰位口径是三处承重点**：比对只取 `sym` 与 Shift / Ctrl / Alt / Meta 四个**可按住的**位，`num_lock` 不参与（裁决 7.51①），与 `ui::workspace_command` 及框架 `KeyCombo::matches` **逐位一致**。三处任一改成「整字节相等」都会让这张表报出派发上并不存在的冲突。件为此新增 `WorkspaceKeyBinding` 与 `workspace_key_bindings()`：它**不另列一份修饰常量**，只把 `kBindings` 折成公共形态，故新增键位时「列表」与「认领集」结构上不可能分叉（`utest_workspace_keys` 两条新例即此判据）。**行序**：注册行照注册序在前、孤儿行按覆盖表自身次序在后，面板不自排第二次。
+
+**验收**：`tests/unit/utest_shortcuts_table.cpp` **十二例**（行源与次序三例、比对域三例、冲突两半四例、空表与未绑定两例）+ `utest_workspace_keys` 九例→**十一例**；**八条变异注入各有转红证人**（把 `num_lock` 放进比对／去掉 Shift 位／只单向标注→四例同红／已注册命令的覆盖也建行／把孤儿行标成可比对／不与保留位比对→两例／`has_conflict()` 只判表内一半／把孤儿行标成已注册），每次重链前删 `build/**/*.ilk`。非 e2e 通道 `ctest -E etest_` **37 → 38 项全绿**（新注册一项）。未复跑吞吐门禁并给理由：纯逻辑件，不进任何绘制与布局路径。
+
+**两条以实测登记的坑（判据写法与工具链，裁决 7.72⑧）**：⑴ 索引 `conflicts_with[0]` 之前**必须**先 `AURORA_TEST_REQUIRE_EQ(size(), 1U)`——Debug 档（`_ITERATOR_DEBUG_LEVEL=2`）的越界读是 `0xC0000409` fastfail，会把「变异被抓到」的读数从**一条指名用例**变成**一个退出码**（本棒首轮实测如此，与裁决 7.54 那条「行数判据须先 `REQUIRE` 再逐格比」同口径）。⑵ 脚本做变异注入时 `shutil.copy` 备份 + `os.replace` 还原会**保留备份文件的旧 mtime**，ninja 据此跳过重编，于是「已还原之后的构建」仍是变异体（实测表现为一条断言假红而源文件逐字已还原）；纪律补一条：**还原后 `touch` 被改文件并确认重编确实发生**。
+
+**落点**：`include/borealis/ui/shortcuts_table.h`、`src/ui/shortcuts_table.cpp`、`include/borealis/ui/workspace_keys.h` + `src/ui/workspace_keys.cpp`、`src/CMakeLists.txt`、`tests/unit/utest_shortcuts_table.cpp`、`tests/unit/utest_workspace_keys.cpp`；文档回写＝`codespec/SPECIFICATIONS.md` §7 的 7.72、`codespec/UI_SETTINGS.draft.md` §4 D1-a / D2-a / D3-a 的取数口径更正与 §8 现状段、`codespec/PLAN.md` 的 `SPEC.FEAT.PREF.02` 行，`AGENTS.md` §2 与 §6。**界面腿未落**（#148 / #149：面板 `Hooks::commands` 接缝、`build_shortcuts_section()` 自绘四列、装配层 `app.commands().all()` 折算与框架 `KeyCombo` → `term::KeyPress` 的唯一互转点），故本条不宣称快捷键页「可用」。
+
+## v0.72（2026-10-06）**#116 第一棒补账：延后档位改由两处文字表达（`Absent` 行不再灰置）＋ 状态栏十枚开关组与三条组顶说明落地**（代码已在 `aa9d654` / `89fe339` 落库，本条随裁决 **7.74** 同批出账）
+
+**动机**：裁决 **7.68③** 人已拍板——反向核对表里 `ConsumerStatus::Absent` 的那批行（状态栏十枚、终端页三条、SSH 五项、串口六项）**一律可用而只落盘**。本条把该口径的代码落地补齐在册（先前两次提交只写了提交信息，文档欠账由本条清偿）。
+
+**口径转移的落点是「能不能点」而不是「生效条件」**：`apply_scope()` 本就把「无消费方 ∧ 即时」折成 `PersistOnly`（裁决 7.52 的 S3 那一半），故本棒不动该算式、也不新增广播判定；`SettingsPanel::is_editable()` 撤掉 `Absent` 那条早返回，「这条改动当下不会生效」因此在界面上只剩两处文字承担——行尾「延后」角标与落在该组第一行之前的**组顶说明**。不灰置的根据写进 `settings_panel.h` 文件头：把可用控件画成不可用，会让「四分类骨架全建」那句在交互面上**不可验证**。三条说明各点名**哪个消费方还没开工**（状态栏关闭件 / SSH 连接族 / 串口连接族）而不是泛称「延后」，词条落 `settings_i18n.cpp` 的 `settings.note.*`，插入位置由 `kGroupNotes` 的 `{first_key, note_key}` 对表在 `build_card()` 的行循环里按行表次序决定，不另数一遍页。
+
+**观测点 `visible_notes()` 是这条口径的直接后果**：延后既然只剩文字，判据就只能比文字；而 `Text` **无可点语义**，真实派发量法对它无效（裁决 7.61⑤ 的命中链物理），故新开该只读观测点（与 `theme_cards()` / `chain_view()` 同一写法）而不是伪造像素断言。
+
+**验收**：`itest_settings_panel` 44 → **45 例**（须 `AURORA_BACKEND_HEADLESS`），判据是「点得动 + 只落盘不广播 + 两处文字」而非灰置态；通则 `row.editable == (kind != ReadOnlyTable)` 同步改判（`sidebar_collapsed` 同为 `Absent` 故断 TRUE）。取样**不按 key 取控件**（面板没有 per-key 观测点，再开一个是第 5 处观测面），改为滚到内容下沿后挑**开着态**的 `Switch`，身份由**落盘差分**钉住（状态栏组必须变、同为 `Absent` 的 `sidebar_collapsed` 必须不变）——误取已接线开关会让广播计数与差分同红，没有假绿通道。变异自证：把灰置那一支加回 ⇒ 行落进占位分支、链上没有 `Switch`、`find_first` 回空，**两条用例同红**。**一处判据边界如实登记**（按 7.49⑥）：「这段说明文字确实进了控件树」结构上抓不到，归真机走查欠账。
+
+**落点**：`src/ui/settings_panel.{h,cpp}`、`src/ui/settings_i18n.cpp`、`tests/integration/itest_settings_panel.cpp`；文档回写＝`codespec/SPECIFICATIONS.md` §7 的 7.74，`codespec/UI_SETTINGS.draft.md` §1 表行 31 / §2 注 / §4 B3-a / C2-a / A9-a 与 §5 S15① 那几处「灰置」措辞的就地更正，`codespec/PLAN.md` 的 `SPEC.FEAT.PREF.02` 行，`AGENTS.md` §6。
+
 ## v0.71（2026-10-06）**接 G35 回货：三处「调用方自备 `BuildContext`」的运行期挂载补偿据此撤除，并补一条挂载计数控件作面板腿的唯一证人**（判据入册为裁决 **7.71**）
 
 **动机**：G35 是 #115 预览盒棒读源实测登记的框架运行期挂载语义缺口（裁决 7.66⑥ 派发，任务书随裁决在会话内产出），人已明示「G35 已完成，G36 进行中」。本棒是**接货复验**而不是新功能：Aurora 当日活动分支 `9202ec46` 到货后，本仓此前为绕开该缺口而写的三处补偿**按 §5 第 2 条「不长期持有框架分叉」必须撤除**——框架回货的口径写在公共头上（`add_overlay` 的文档注释直接声明「运行期追加的子树由框架在下一次布局入口以父侧 ctx 补挂，调用方无须自备 `BuildContext`」），本仓再自备一份 ctx 去 `mount` 就是把框架的生命周期动作搬进应用侧。
