@@ -744,10 +744,8 @@ auto SettingsPanel::build_card() -> aurora::Node {
                 // 横条是卡片的**第三条**子节点，故它从 `body`（`expand()`）那一段里扣 140 dp，卡片总高不变
                 // （判据文 F-e：高度做成常量、不改卡片尺寸）。
                 auto bar = build_preview_bar();
-                // 浮层子树不经 `Window::present_root` 那一次遍历挂载（`OverlayHost::add_overlay` 只 push +
-                // 标脏布局），故本视口的 `on_mount` 要在这里补——不补则闪烁档与主题订阅永不注册
-                // （裁决 7.49④ 同一条物理事实；`Widget::mount` 幂等，重建闭包再跑一次也无害）。
-                preview_->ensure_mounted(ctx);
+                // 浮层子树的挂载不归本件：`OverlayHost::add_overlay` 登记待补挂，框架在下一次布局入口
+                // 以父侧 ctx 挂上（G35 回货；裁决 7.66⑥ 那处自备 ctx 的补偿据此撤除）。
                 card_children.push_back(std::move(bar));
             }
             auto card = std::make_shared<aurora::Column>(aurora::ColumnProps{

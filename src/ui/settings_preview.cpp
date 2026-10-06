@@ -125,12 +125,4 @@ auto SettingsPreview::pump() -> void {
     view_->on_frame();
 }
 
-auto SettingsPreview::ensure_mounted(const aurora::BuildContext &ctx) -> void {
-    if (mounted_) {
-        return;
-    }
-    mounted_ = true;
-    view_->mount(ctx);
-}
-
 }  // namespace borealis::ui

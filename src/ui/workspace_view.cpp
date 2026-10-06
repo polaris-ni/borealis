@@ -286,12 +286,6 @@ auto WorkspaceView::on_pointer_event(aurora::MouseEvent &e) -> void {
     aurora::Widget::on_pointer_event(e);
 }
 
-auto WorkspaceView::on_mount(const aurora::BuildContext &ctx) -> void {
-    mounted_ = true;
-    mount_ctx_ = ctx;
-    Container::on_mount(ctx);
-}
-
 auto WorkspaceView::cursor_shape() const -> std::optional<aurora::CursorShape> {
     const std::optional<DividerKey> key = dragging_.has_value() ? dragging_ : hovered_;
     if (!key.has_value()) {
@@ -385,11 +379,8 @@ auto WorkspaceView::split_pane(PaneId target, PaneAxis axis) -> void {
     views_.emplace(pane, created.get());
     wire_view(*created, pane);
     add(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(created))});
-    if (mounted_) {
-        // 根只在场景切换时挂载一次，运行期新加的子节点不在那次遍历里；不补 mount 则该格的闪烁档
-        // 与主题订阅永不注册（症状是新 pane 有画面但光标不闪）。
-        view_of(pane)->mount(mount_ctx_);
-    }
+    // 新视图的挂载不归本层：`Container::add` 登记待补挂，框架在下一次布局入口以父侧 ctx 挂上
+    // （G35 回货；裁决 7.49④ 那处自备 ctx 的补偿据此撤除）。
     apply_focus(pane, aurora::FocusArrival::Keyboard);  // 新格当场选中（判据 1）
     mark_needs_paint();
 }

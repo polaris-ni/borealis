@@ -16,8 +16,9 @@
 //   `PaneTree::focused()` 只是它的投影，改焦点经 `apply_focus` 两处一并写。
 // - **把手区必须显式入命中链**：基类只在「后代链非空 / 可点击 / 可滚动 / 有 Input 修饰」时把自身
 //   入链，缝隙里既无后代也无修饰，不显式返回就被当点击空白丢弃（与框架 `Splitter` 同法）。
-// - **新 pane 的视图要显式挂载**：`Window::present_root` 只在根变化时 mount 一次，切分出来的视图
-//   若不补 `mount`，其 `on_mount` 里的闪烁档与主题订阅永不注册。
+// - **新 pane 的视图不用本层挂载**：`Container::add` 只登记待补挂，真正的 `mount(ctx)` 由框架在
+//   下一次布局入口以父侧 ctx 完成（Aurora 9202ec46 闭合缺口 G35）。本层若自备一份 ctx 去 `mount`，
+//   就是把框架的生命周期动作搬进应用侧（裁决 7.49④ 的补偿据此撤除）。
 // ============================================================
 
 #include <chrono>
@@ -108,9 +109,6 @@ class WorkspaceView final : public aurora::Container {
     /// @brief 把手的 Press / 拖拽 Move / Release，与非拖拽 Move 的 hover 态。
     auto on_pointer_event(aurora::MouseEvent &e) -> void override;
 
-    /// @brief 缓存挂载上下文（切分出的新视图要补挂载）并递归挂载子树。
-    auto on_mount(const aurora::BuildContext &ctx) -> void override;
-
     /// @brief 把手上的悬停光标：沿该层排布轴给双向箭头。
     [[nodiscard]] auto cursor_shape() const -> std::optional<aurora::CursorShape> override;
 
@@ -194,8 +192,6 @@ class WorkspaceView final : public aurora::Container {
     aurora::TimerHandle debounce_timer_;
     PaneId next_pane_ = 2U;  ///< 首个 pane 取 1，故自增从 2 起；标识只增不复用。
     PaneId last_focused_ = 1U;  ///< 最后一次真实读到的持焦格（把手 Press 那一瞬框架读数为空）。
-    bool mounted_ = false;
-    aurora::BuildContext mount_ctx_{};
 };
 
 }  // namespace borealis::ui

@@ -81,18 +81,10 @@ class SettingsPreview {
     /// @brief 排一帧：取脏行提交并标脏绘制（宿主在 `Application::set_on_frame` 里逐帧调）。
     auto pump() -> void;
 
-    /// @brief 首次进树时补一次挂载。
-    ///
-    /// `Window::present_root` 只在根变化时遍历挂载，运行期新加的浮层子节点不在那一次里（裁决 7.49④
-    /// 同一条物理事实），不补则本视口的闪烁档与主题订阅永不注册。
-    /// @param ctx 宿主布局时的那一份构建上下文。
-    auto ensure_mounted(const aurora::BuildContext &ctx) -> void;
-
   private:
     term::UnicodeWidthPolicy width_policy_{};  ///< 必须先于会话析构：会话持它的引用。
     std::unique_ptr<session::Session> session_{};
     std::shared_ptr<TerminalView> view_{};  ///< 必须先于会话析构：视口持会话的裸引用。
-    bool mounted_ = false;
 };
 
 }  // namespace borealis::ui
