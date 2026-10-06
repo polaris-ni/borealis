@@ -16,7 +16,7 @@
 | D2 | 帧唤醒句柄的持有方 | ① `session::Session` 增 `set_frame_wake(std::function<void()>)`，在**出锁后**、本次确有提交时调用；② `DamageQueue` 构造时持句柄、push 时调用；③ 不唤醒，靠主循环超时轮询 | **①** | ② 会把回调放进网格锁临界区（`push_rows` 在锁内），与「锁内不做 IO」的纪律相抵；③ 在 `Surface::wait_events` 阻塞期间输入延迟不可控，`SPEC.NF.PERF.02` 的输入延迟项直接受损 |
 | D3 | 主线程本地副本的归属域 | ① `session` 域新增纯逻辑件（`session::ScreenMirror`）；② `ui` 域新增同名件；③ 副本直接由 `TerminalView` 持有、不抽件 | **①** | 副本的输入是「权威网格 + 脏行提交」，与 `DamageQueue`/`Session` 同一话题，归 session 域可全量单测（`grid::Storage` 侧无框架依赖）；选③ 则副本合并逻辑只能在像素层验，回归面变大 |
 | D4 | 装饰线与光标的粗细口径 | ① 一律「1 物理像素」= `1.0F / scale` dp，下划线贴基线下方、删除线取 ascent 中点；② 用 `Painter::draw_line`（AA 圆帽） | **①** | `draw_line` 是抗锯齿线，半透边缘会让 1px 规则在暗底上发灰；`fill_rect` 落在整 dp 坐标上，与网格边界天然对齐。粗细不随字号放大是本条的**刻意选择**，需在 §9 验收里写清 |
-| D5 | 本棒是否画 scrollback 偏移 | ① 恒画视口（偏移 0），滚动随后续棒接；② 现在就接滚轮与 `ScrollViewport` | **②**（扩了本棒范围） | 正文按②改写，边界见 §1「做/不做」与 §6.1：**鼠标上报模式下的滚轮转发**（`SPEC.FEAT.TERM.06`）不属本棒，以一句口径 + `TODO` 留痕，不做半截实现 |
+| D5 | 本棒是否画 scrollback 偏移 | ① 恒画视口（偏移 0），滚动随后续棒接；② 现在就接滚轮与 `ScrollViewport` | **②**（扩了本棒范围） | 正文按②改写，边界见 §1「做/不做」与 §6.1：**鼠标上报模式下的滚轮转发**（`SPEC.FEAT.TERM.06`）不属本棒，以一句口径 + `TODO` 留痕，不做半截实现。**该 TODO 已于 2026-10-07 随 `SPEC.FEAT.TERM.06` 棒消除**，`on_scroll` 现为四档短路（`Ctrl` 缩放 → 上报 → 备屏翻页 → 本地回看），见裁决 **7.77** |
 | D6 | **回看态遇到新输出怎么锚定**（D5② 带出的新议题，已拍板） | ① **距底恒定**：新输出时把窗口推到 `offset_y = max_offset() - back_rows`，画面随输出上移、始终「距底 N 行」；不需要改 `Storage`；② **绝对行锚定**：画面内容不动（`offset_y` 不动），要真做到需在 `grid::Storage` 增一个「已溢出/已覆盖的最旧行数」单调计数（公共头 + 单测 + 文档回写），否则 scrollback 饱和后逻辑行号整体左移一格，画面会逐行漂移；③ **回看时收到输出就跳回底部**（放弃回看态） | **①**（2026-10-01 拍板） | ① 零改动、语义自洽（「距底 N 行」正是 §6.1 派生量 `back_rows` 的定义），代价是读历史时新行会把内容顶走，长输出下看不清固定片段——该代价经裁决接受，若日后要换成②，改动面收敛在 `on_scroll` 之外的一处每帧推窗，且须同时动 `grid::Storage` 公共头；② 是 xterm/Windows Terminal 的常见手感，但在选区到来前（`SPEC.FEAT.INTERACT.02`）没有别的消费者，属为未来需求先付代价；③ 实现最省但等于没有回看，与 D5② 的意图相反 |
 
 ---
@@ -27,7 +27,7 @@
 - **不做**（各归其棒，本稿不留半成品接缝）：文本选择与选区着色（`SPEC.FEAT.INTERACT.02`）、IME preedit 绘制与候选窗定位（`SPEC.FEAT.INTERACT.06`）、键映射与字节发送（`SPEC.FEAT.INTERACT.01`）、字号/字体可配（`SPEC.FEAT.RENDER.02`）、DPI 变更后的度量与字形缓存重建（`SPEC.FEAT.RENDER.05`）、尺寸去抖合并（裁决 7.23④）、吞吐基准与时间门禁（`SPEC.NF.PERF.02`，2026-10-02 已落，形态与口径见裁决 7.34）。
 - **D5 选② 带出的两条明确边界**（本棒只留口径与 `TODO`，不实装）：
   1. **回看态遇到新输出的锚定语义**：这是 D5 选② 才出现的问题（回看画面 + 后台仍在产出行），已按 **D6①「距底恒定」** 拍板（§0 表末行、实现式见 §6.1），不改 `grid::Storage` 公共头。
-  2. **鼠标上报模式下的滚轮**：`SPEC.FEAT.TERM.06` 的上报模式与 alternate scroll（DECSET 1007）要求滚轮**转发给应用**而非本地回看，本棒不做该分派（键映射与字节发送不在本棒），故 `on_scroll` 里以 `TODO(SPEC.FEAT.TERM.06): 上报模式与备屏 alternate scroll 优先于本地回看` 标一处，代码路径恒走本地回看。
+  2. **鼠标上报模式下的滚轮**：`SPEC.FEAT.TERM.06` 的上报模式与 alternate scroll（DECSET 1007）要求滚轮**转发给应用**而非本地回看，本棒不做该分派（键映射与字节发送不在本棒），故 `on_scroll` 里以 `TODO(SPEC.FEAT.TERM.06): 上报模式与备屏 alternate scroll 优先于本地回看` 标一处，代码路径恒走本地回看。**该 TODO 已随 2026-10-07 的 `SPEC.FEAT.TERM.06` 棒消除**，判据见裁决 **7.77**。
 
 ---
 
@@ -157,7 +157,7 @@ rows = min(geom.rows, mirror.rows())
 - **偏移变了就整窗重取**：不在控件侧判——`ScreenMirror::apply` 自己比较可见窗绝对起点（§4 的三个触发条件之一），控件只比较 `apply` 前后的 `back_rows()` 来决定要不要 `mark_needs_paint()`（架构 §9.5 的「偏移变化即整屏脏重建」；行级脏模型表达不出整窗换源，与 `Storage::scroll_up` 同一理由）。不请求重排：盒尺寸没变。
 - **备屏（`SPEC.FEAT.TERM.03`）天然不可滚**：`Terminal` 的备屏以 scrollback 容量 0 构造（`alt_{columns, rows, 0}`），故切到备屏后 `total_lines() == rows` → `max_offset() == 0` → `clamp_offset` 恒回 0，无需特判。像素用例已断言「备屏里连滚 5 格后两帧逐位相同」。
 - 无惯性/动量：一步一格是刻意选择，`ScrollGlide` 的 150ms 吸附属框架 `Scroll` 路径，本层不引。
-- **鼠标上报模式下的滚轮**（`SPEC.FEAT.TERM.06` 的转发与 alternate scroll）不在本棒，`on_scroll` 开头留一处 `TODO(SPEC.FEAT.TERM.06): 上报模式与备屏 alternate scroll 优先于本地回看`，代码路径恒走本地回看。
+- **鼠标上报模式下的滚轮**（`SPEC.FEAT.TERM.06` 的转发与 alternate scroll）不在本棒，`on_scroll` 开头留一处 `TODO(SPEC.FEAT.TERM.06): 上报模式与备屏 alternate scroll 优先于本地回看`，代码路径恒走本地回看。**该 TODO 已随 2026-10-07 的 `SPEC.FEAT.TERM.06` 棒消除**，本地回看降为四档短路的最后一档，见裁决 **7.77**。
 - **回看态遇到新输出：距底恒定（D6 已拍板①）**。`back_rows` 是用户意图，内核的 `offset_y` 只是它在当前 `total` 下的投影，故每帧拿到新的 `total_lines()` 后重投影一次（发生在 `Session::read` 的临界区内、`apply` 之前，因为 `apply` 要的就是这个返回值）：
 
 ```
@@ -224,7 +224,7 @@ rows = min(geom.rows, mirror.rows())
 1. ✅ `AGENTS.md` §2 的 `src/` 行补 `src/ui/terminal_view.{h,cpp}` 与 `src/session/screen_mirror.cpp`、`include/borealis/` 行补 `session/screen_mirror.h`；§6「尚无」条目里的 `include/borealis/ui/terminal_view.h` 已删除并注明**「绘制侧控件刻意无公共头」是裁决 D1① 的形态而非欠项**。
 2. ✅ `ARCHITECTURE.md` §9.2 标题改为「视口控件的取用形态与绘制序列（已落地）」并吸收本稿 §3/§6/§7 的正文（五层序列、两批 opts、光标三段式的 opts 纪律、裁剪无像素可观测面），§9.5 补记 D5②/D6① 的实际形态（内核量以「行」为单位、不声明 `overflow_strategy(Scroll)` 的理由、`remaining_y` 上冒、备屏天然不可滚），§3.2/§3.3 的唤醒描述按本稿 §8 改写并加「已落地形态」段，§9.6 改写为「无框架阻塞项」。**两份 `.draft.md` 与配图保留**：正式文档折进的是正文判据，视觉对照图与逐条 V1~V27 / §9 的实测手段明细仍被 `PLAN.md` §8 与 `CHANGELOG.md` v0.25 引用，删除会造出死链（AGENTS.md §4.2 第 13 条）。
 3. ✅ `SPECIFICATIONS.md` §7 新增裁决 7.28（下划线 SGR 编码与笔形）与 7.29（四条缺口回货与 G13 分流撤销）——本稿的 D1~D6 六项全部取了推荐项，故除这两条实测口径外无需另立裁决；`CHANGELOG.md` 记 **v0.25**（本稿写作时预想的 v0.22 已被配置层之前的批次占用，v0.22~v0.24 是宽度判定、视觉稿与配置层的条目）；`PLAN.md` §8 的 M1 现状与待接接缝表按落地结果更新，并新增「网格 → 主线程副本 → 视口绘制」一行。
-4. ✅ `src/session/session.cpp` 的 `TODO(SPEC.FEAT.RENDER.01)` 已随唤醒接线消除，残留的 `au::post_to_main` 表述一并去掉（全仓 grep 无该符号）；闪烁频率仍内置，`TODO(SPEC.FEAT.PREF.02)` 挂在装配处 `src/main.cpp` 的帧回调注释点名「配置里的光标缺省形态与闪烁档、Ambiguous 口径尚无会消费的字段」，闪烁周期本身作为构造参数进 `TerminalView`），另有一处 `TODO(SPEC.FEAT.TERM.06)` 在 `src/ui/terminal_view.cpp` 的 `on_scroll` 上报模式分支。
+4. ✅ `src/session/session.cpp` 的 `TODO(SPEC.FEAT.RENDER.01)` 已随唤醒接线消除，残留的 `au::post_to_main` 表述一并去掉（全仓 grep 无该符号）；闪烁频率仍内置，`TODO(SPEC.FEAT.PREF.02)` 挂在装配处 `src/main.cpp` 的帧回调注释点名「配置里的光标缺省形态与闪烁档、Ambiguous 口径尚无会消费的字段」，闪烁周期本身作为构造参数进 `TerminalView`），另有一处 `TODO(SPEC.FEAT.TERM.06)` 在 `src/ui/terminal_view.cpp` 的 `on_scroll` 上报模式分支（**该 TODO 已随 2026-10-07 的 `SPEC.FEAT.TERM.06` 棒消除，见裁决 7.77**）。
 
 ---
 

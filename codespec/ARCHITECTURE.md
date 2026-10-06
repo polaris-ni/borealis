@@ -362,7 +362,7 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 - **不声明 `overflow_strategy(Scroll)`**：实测 `Widget::paint_content` 只在该策略下把 `offset_y` 当 **dp** 平移量加进 `on_paint` 的 `bounds.origin.y`，而本层的偏移是「取哪几行」的语义，平移会让首行画到盒外、底部留白且单位对不上。故保持默认 `Visible`，覆写 `wants_scroll()` 拿滚轮、`on_scroll()` 自己驱动内核，并把 clamp 吃不尽的余量写进 `e.remaining_y` 上冒给更浅的可滚动祖先（工作区分屏场景）。副作用记一句：基类 getter `scroll_offset_y()` 因此返回「距顶行数」而非 dp，本控件不对外暴露该语义。
 - **回看态遇新输出＝距底恒定**（裁决 D6①）：`back_rows` 是用户意图、`offset_y` 只是它在当前 `total` 下的投影，故每帧拿到新 `total_lines()` 后重投影一次再交副本；效果是可见窗整体向更早方向推一行（`row_band(grown, i) == row_band(again, i + 1)`），既非画面静止也非底部多一行。代价是长输出下固定片段会被顶走；若日后改取绝对行锚定，改动面是去掉这段重投影 + `grid::Storage` 补一个「已覆盖最旧行数」的单调计数。
 - **备屏天然不可滚**：`Terminal` 的备屏以 scrollback 容量 0 构造，故 `total_lines() == rows` → `max_offset() == 0` → clamp 恒回 0，无需特判（像素用例已断言备屏连滚 5 格两帧逐位相同）。
-- 无惯性 / 动量：一步一格是刻意选择，`ScrollGlide` 的 150ms 吸附属框架 `Scroll` 路径，本层不引。`SPEC.FEAT.TERM.06` 上报模式下的滚轮转发与 alternate scroll 尚未接入，代码处留 `TODO(SPEC.FEAT.TERM.06)`，当前恒走本地回看。
+- 无惯性 / 动量：一步一格是刻意选择，`ScrollGlide` 的 150ms 吸附属框架 `Scroll` 路径，本层不引。**滚轮的四处让位已由 `SPEC.FEAT.TERM.06` 接入**（2026-10-07，裁决 **7.77**）：`on_scroll` 现在是「`Ctrl` 缩放 → 上报模式转发 → 备屏 alternate scroll 翻页 → 本地回看」的四档短路，任一档吃掉即把 `e.remaining_y` 置 0 并认领，本地回看因此降到最后一档而非恒走。
 
 ### 9.6 交互阻塞项
 
