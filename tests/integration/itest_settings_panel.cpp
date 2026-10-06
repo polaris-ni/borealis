@@ -60,6 +60,11 @@
 ///              入口），故「达上限时点不动」的证人是真点一次并判它既不落盘也不广播，另加一条「浮层还在」
 ///              ——点击被遮罩接走也会关掉面板，那一档计数同样不变。登记时本段写作「禁用按钮不进命中链、
 ///              扫不到它」，该句实测不成立并已就地更正。
+///           ⑪ **运行期追加的浮层子树由框架补挂**（缺口 **G35** 的回货复验，裁决 7.71）：本仓三处「调用方
+///              自备 `BuildContext` 去 `mount`」的补偿（裁决 7.49④ / 7.66⑥）随回货撤除，证人因此必须自带——
+///              一枚挂载计数控件走面板 `open()` 所用的同一条公共入口，判「追加时 0 → 排一帧 1 → 再排仍 1
+///              且不退订 → 孙辈同挂 → 第二次追加不动第一棵」五句。本套件其余用例在无头通道里都测不到挂载
+///              本身（`on_mount` 只影响闪烁档与主题订阅，两者都不进那些用例的判据，裁决 7.66 已登记这条边界）。
 ///
 ///           一条测试现场的必要构造：`OverlayHost` 的浮层序号是从「基础内容之后」起算的
 ///           （`add_overlay` 返回 `children_.size() - 1`，回货后宿主无基础内容时返回 `std::nullopt`），
@@ -3087,7 +3092,7 @@ AURORA_TEST_CASE(the_preview_bar_and_a_second_viewport_of_the_same_fixture_shift
     // 视口铺满整窗并把横条压在下面（`find_first` 因此一台预览也探不到）。
     control->view().width(au::px(kControlWidthDp));
     control->view().height(au::px(kControlHeightDp));
-    control->ensure_mounted(au::BuildContext{});  // 与面板那条补偿同源（G35：宿主不在运行期挂新浮层）
+    // 运行期追加的浮层子树由框架在下一次布局入口补挂（G35 回货），调用方不再自备 ctx。
     h.add_overlay(control->node());
     h.pump_and_render(*panel, control.get());
 
@@ -3170,6 +3175,83 @@ AURORA_TEST_CASE(the_preview_grid_is_whole_cells_in_its_own_rect_and_follows_the
     AURORA_TEST_CHECK_GT(after.cell_width, before.cell_width);
     AURORA_TEST_CHECK_LT(after.rows, before.rows);
     AURORA_TEST_CHECK_LT(after.columns, before.columns);
+}
+
+/// @brief 挂载计数控件：只为本例存在，把「这棵子树有没有被挂上」折成一个可数的量。
+///
+/// `au::Widget` 的三个纯虚入口（`type_name` / `on_layout` / `on_paint`）是最小可子类化面，其余一律用缺省。
+/// 计数器是公有裸 `int` 而不是原子量：挂载只在主线程的布局入口发生，且本件不进任何生产路径。
+class MountCounter final : public au::Widget {
+public:
+    int mounts = 0;
+    int unmounts = 0;
+
+    [[nodiscard]] auto type_name() const -> const char * override { return "MountCounter"; }
+
+    auto on_mount(const aurora::BuildContext &ctx) -> void override {
+        ++mounts;
+        au::Widget::on_mount(ctx);
+    }
+
+    auto on_unmount(const aurora::BuildContext &ctx) -> void override {
+        ++unmounts;
+        au::Widget::on_unmount(ctx);
+    }
+
+private:
+    auto on_layout(const au::Constraints &c, const au::BuildContext &) -> au::Size override {
+        return c.constrain(au::Size{.width = 40.0F, .height = 40.0F});
+    }
+
+    auto on_paint(au::Painter &, const au::Rect &, const au::BuildContext &) -> void override {}
+};
+
+/// @brief 运行期追加的浮层子树由框架在下一次布局入口补挂，且同宿主不重挂（**G35** 回货的消费面证人）。
+///
+/// 登记时的病灶是 `OverlayHost::add_overlay` 只 push_back + 标脏布局，新子树因此不经 `mount(ctx)`——
+/// `on_mount` 里的订阅永不注册（症状是浮层有画面却不跟主题、光标不闪）。本仓当时的补偿是调用方自备 ctx
+/// 去 `mount`（裁决 7.49④ / 7.66⑥），回货后三处补偿已撤除，本例因此是撤除之后**仅剩**的证人：它判的是
+/// 本仓所用公共入口（`Harness::add_overlay` 走的就是面板 `open()` 那一条 `OverlayHost::add_overlay`）在
+/// 消费面上的后果，而不复制框架的补挂算式来测（§5 第 2 条）。
+///
+/// 五句各守一件事，缺一都不算守住：
+/// ⑴ 追加那一刻、未排布局 ⇒ 计数 0。**这一句是反空转前提**：没有它，「`add_overlay` 当场就挂上」那种
+///    实现照样让后面四句全绿，而那恰恰是缺口存在时也没有的行为。
+/// ⑵ 排一帧 ⇒ 恰 1（补挂确实发生在布局入口）。
+/// ⑶ 再排一帧 ⇒ 仍 1 且退订 0（宿主身份幂等：既不退订再订，也不重复订阅。这一句是本仓撤除补偿的
+///    直接依据——复用件在同宿主下由 `mount` 自己跳过，无须面板代调 `unmount()`）。
+/// ⑷ 孙辈同样为 1（补挂是递归的：外层 `Column` 的 `on_mount` 逐子补挂，浮层里的嵌套子树不会半挂）。
+/// ⑸ 运行期再追加第二棵 ⇒ 前者仍 1、后者 1（补挂不是整树重来，先前那棵的订阅不受影响）。
+AURORA_TEST_CASE(a_runtime_appended_overlay_subtree_is_mounted_at_the_next_layout_G35) {
+    Harness h;
+
+    auto leaf = std::make_shared<MountCounter>();
+    auto nested = std::make_shared<MountCounter>();
+    auto inner = std::make_shared<au::Column>(aurora::ColumnProps{
+        .children = std::vector<au::Node>{au::Node{nested}}, .gap = 0.0F});
+    auto outer = std::make_shared<au::Column>(aurora::ColumnProps{
+        .children = std::vector<au::Node>{au::Node{leaf}, au::Node{inner}}, .gap = 0.0F});
+
+    h.add_overlay(au::Node{outer});
+    AURORA_TEST_CHECK_EQ(leaf->mounts, 0);      // ⑴
+    AURORA_TEST_CHECK_EQ(nested->mounts, 0);
+
+    h.render();
+    AURORA_TEST_CHECK_EQ(leaf->mounts, 1);      // ⑵
+    AURORA_TEST_CHECK_EQ(nested->mounts, 1);    // ⑷
+
+    h.render();
+    AURORA_TEST_CHECK_EQ(leaf->mounts, 1);      // ⑶
+    AURORA_TEST_CHECK_EQ(leaf->unmounts, 0);
+    AURORA_TEST_CHECK_EQ(nested->mounts, 1);
+    AURORA_TEST_CHECK_EQ(nested->unmounts, 0);
+
+    auto second = std::make_shared<MountCounter>();
+    h.add_overlay(au::Node{second});
+    h.render();
+    AURORA_TEST_CHECK_EQ(second->mounts, 1);    // ⑸
+    AURORA_TEST_CHECK_EQ(leaf->mounts, 1);
+    AURORA_TEST_CHECK_EQ(leaf->unmounts, 0);
 }
 
 #else
@@ -3271,6 +3353,10 @@ AURORA_TEST_CASE(the_preview_bar_and_a_second_viewport_of_the_same_fixture_shift
 }
 
 AURORA_TEST_CASE(the_preview_grid_is_whole_cells_in_its_own_rect_and_follows_the_font_size) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_runtime_appended_overlay_subtree_is_mounted_at_the_next_layout_G35) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
