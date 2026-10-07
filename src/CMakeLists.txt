@@ -47,12 +47,21 @@ add_library(borealis_core STATIC
         ui/workspace_view.cpp)
 
 # 平台层实现按目标平台编入：共享路径只见接口，ConPTY 句柄与 Win32 API 留在 src/platform/ 内
-# （裁决 7.11、架构 §2.2）。posix 侧等价实现待建，见 codespec/PLAN.md §8。
+# （裁决 7.11、架构 §2.2）。POSIX 腿于 2026-10-08 落地（SPEC.FEAT.CONN.01）。
 if (WIN32)
     target_sources(borealis_core PRIVATE
             platform/win/conpty_connection.cpp
             platform/win/local_terminal.cpp
             platform/win/win_text.cpp)
+elseif (UNIX)
+    target_sources(borealis_core PRIVATE
+            platform/posix/forkpty_connection.cpp
+            platform/posix/local_terminal.cpp)
+    # forkpty 需要链接 libutil（某些发行版如 Debian/Ubuntu 需要显式指定）。
+    find_library(UTIL_LIBRARY util)
+    if (UTIL_LIBRARY)
+        target_link_libraries(borealis_core PRIVATE ${UTIL_LIBRARY})
+    endif ()
 endif ()
 
 # 消费者统一配置（链接 aurora + C++20 + 共享 PCH + 统一告警），额外私有头目录为本仓公共头根。
