@@ -26,6 +26,7 @@
 #include "ui/settings_panel.h"
 #include "ui/startup_notice.h"
 #include "ui/terminal_view.h"
+#include <aurora/widget/command_palette.h>
 
 namespace {
 
@@ -279,6 +280,33 @@ auto main() -> int {
     open_search.default_binding = au::KeyCombo{au::ModifierKey::Control, au::KeyCode::F};
     open_search.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(open_search));
+
+    // 命令面板实例（`SPEC.FEAT.WS.07`）：挂在 `OverlayHost` 上作为全局模态浮层，与设置面板同级。
+    // 先建实例再登记打开命令，这样 action 闭包可以捕获面板指针。
+    auto command_palette = std::make_shared<au::CommandPalette>(&app.commands());
+    command_palette->set_on_execute([&app](const std::string &id) -> void {
+        // 框架的 `execute_selected()` 已经调过 `invoke`，这里只做收尾：面板已在 execute_selected()
+        // 内部关闭，故只需记录日志（若需要）。
+        AURORA_LOG_INFO("main", "command palette executed: ", id);
+    });
+    // 面板的中文占位符与空态文案等框架 G38/G39 回货后再走 i18n（当前仍硬编码英文）。
+    // TODO(SPEC.FEAT.WS.07): 框架回货后调用 set_placeholder() / set_empty_state() 交中文词条。
+
+    // 把命令面板挂进场景根（`OverlayHost` 的子节点 [1..] 是按需追加的浮层）：初始不打开，故只建不弹。
+    // 面板的 `open()` / `close()` 会自动管理焦点作用域（push_scope / pop_scope），与设置面板同口径。
+    (void)host->add_overlay(std::static_pointer_cast<au::Widget>(command_palette));
+
+    // 命令面板的打开入口（判据文 §3 D1）：`Ctrl+Shift+P` 呼出，语义同 Tabby / Windows Terminal。
+    // 框架侧 CommandPalette 已具备模态浮层 + 即时过滤 + Enter/Esc/↑/↓ 全接管能力（widget/command_palette.h）。
+    au::Command open_command_palette;
+    open_command_palette.id = "command_palette.open";
+    open_command_palette.title = borealis::ui::settings_label("command_palette.action.open");
+    open_command_palette.category = "workspace";
+    open_command_palette.action = [command_palette]() -> void { command_palette->open(); };
+    open_command_palette.default_binding = au::KeyCombo{au::ModifierKey::Control | au::ModifierKey::Shift, au::KeyCode::P};
+    open_command_palette.scope = au::ShortcutScope::Global;
+    app.commands().add(std::move(open_command_palette));
+
     app.commands().bind_shortcuts(app.shortcuts());
 
     // 启动降级提示（`SPEC.FEAT.PREF.07`，裁决 7.76⑤）：`LoadOutcome` 四态里只有两条降级态会弹，弹一次即止。

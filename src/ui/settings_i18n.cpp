@@ -104,6 +104,13 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"search.next", "下一个"},
     {"search.close", "关闭"},
 
+    // ---- 命令面板（`SPEC.FEAT.WS.07`，判据文 `codespec/UI_WORKSPACE.draft.md` §4）----
+    // 占位符与空态两条文案等框架 G38/G39 回货后走 i18n 路径（当前仍硬编码英文，见裁决 7.81②）。
+    {"command_palette.title", "命令面板"},
+    {"command_palette.placeholder", "输入命令..."},
+    {"command_palette.empty", "没有匹配的命令"},
+    {"command_palette.action.open", "打开命令面板"},
+
     // ---- 外观域 ----
     {"appearance.theme", "主题"},
     {"appearance.palette.basic", "16 色重映射"},
