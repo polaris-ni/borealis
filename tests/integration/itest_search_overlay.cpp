@@ -273,12 +273,6 @@ public:
     }
 
     /// @brief 在浮层内容盒上扫出**最后一个**被该控件认领的点（最底行最右列，供右缘点击用）。
-    ///
-    /// 取点与 `spot_of` 同源（真命中链），刻意不用 `Widget::window_bounds()` 推算：该读数
-    /// 对 `Popup` 内容结构性看不到锚点平移——`anchor_` 只活在 `Popup` 自己的绘制 / 命中钩子
-    /// 里，而 `OverlayHost::on_layout` 又把浮层子盒 origin 钉在 {0,0}，布局父链上无该项。
-    /// 实测它报输入框原点 {8,11} 而真实盒是 {20,23}，差恰是锚点 {12,12}（登记为 G37，
-    /// 任务书在会话内产出）。
     [[nodiscard]] auto right_spot_of(au::Widget *target) -> std::optional<Point> {
         const ui::SearchOverlay *bar = overlay();
         if (bar == nullptr || bar->popup() == nullptr || target == nullptr) {
