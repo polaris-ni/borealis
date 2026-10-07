@@ -9,10 +9,10 @@
 
 ## 0 本稿的性质：目标态（D1~D8 于 2026-10-07 自拍，结论见 §3 行末）
 
-- 图上每一格按**目标网格**逐格落位（与 `codespec/RENDER_UI.draft.md` §0、`codespec/UI_SELECTION.draft.md` §0 同一套矢量法），不是任何一次真实渲染的截图——出本稿时本仓还没有浮层绘制代码，画不出「现状」。
+- 图上每一格按**目标网格**逐格落位（与 `codespec/RENDER_UI.draft.md` §0、`codespec/UI_SELECTION.draft.md` §0 同一套矢量法），不是任何一次真实渲染的截图——出本稿时本仓还没有浮层绘制代码，画不出「现状」。**该句随裁决 7.81 已过期**（浮层本体已落，本稿不重出图）。
 - **本稿不新增任何配置键**：命中色取既有 16 色格的 `basic[11]`（§3 D2），因此设置面板的反向核对表、色板格数与「自定义」角标的判定档位一律不变（那三处各是五档 palette 槽，多一个槽就是多一处跨件判据，见裁决 7.61 的角标段）。需求原文没有「命中色可配」这一项，本稿不自造（AGENTS.md §4.1 第 1 条）。
 - 本稿依赖的既有事实：五层绘制序列与「选中格的底色在色带层内替换、不另立一层」（架构 §9.2，裁决 7.38① D1① / D4①）；`ui::layout_row` 目前**只收一段** `RowSpan`（`include/borealis/ui/cell_layout.h:183`；**该句随裁决 7.80 过期**——命中区间入参与三层底色折叠已落地，形态见彼条①）；场景根是 `au::OverlayHost`（`src/main.cpp:178`）；`au::Popup` / `au::TextInput` / `au::Button` / `au::Canvas` 均在框架公共 API 上（面板五处区段与右键菜单已是四次先例）。
-- **框架缺口 0**：本稿没有一处需要框架代劳。锚点取裁决 7.73 回货的 `Widget::window_bounds()`；浮层的「点浮层外即关」按裁决 7.41③ / 7.70③ 由本仓在 Press 分支自驱；开关 chip 用 `Button` 的选中态底色自绘，不用框架 `Switch`（后者在深色面板上的禁用档色值硬编码浅色，裁决 7.68② 实测）。
+- **框架缺口 0**：本稿没有一处需要框架代劳。锚点取裁决 7.73 回货的 `Widget::window_bounds()`；浮层的「点浮层外即关」按裁决 7.41③ / 7.70③ 由本仓在 Press 分支自驱；开关 chip 用 `Button` 的选中态底色自绘，不用框架 `Switch`（后者在深色面板上的禁用档色值硬编码浅色，裁决 7.68② 实测）。**该「缺口 0」的射程随裁决 7.81 收窄**：实现腿实测登记 **G37**（`Popup` 内容的 `window_bounds()` 取不到锚点平移，见附录 A.2 / 裁决 7.81②）——本稿的生产路径不受影响（锚点取的是焦点 pane 的视口盒而非 `Popup` 内的控件），受影响的只有集成用例对 `Popup` 内容的事后几何取点，本仓已走真实命中链规避。
 
 ---
 
@@ -108,8 +108,8 @@
 2. **每帧的区间表折算**：匹配表的坐标是**存储行序**（`include/borealis/ui/search.h` 头注），可见窗是另一档起点，二者换算仍只有 `session::ScreenMirror::window_top()` 一个量（裁决 7.40② 为选区立的同一条）。新输出把顶边推走时，`SearchMatches::translate_rows(rows_up)` 要在每帧吃两次 `dropped_lines()` 读数之差——与选区的折算共用同一次快照，**不新增锁**（裁决 7.78③）。逐行命中列表按可见行过滤，上限档的表（10,000 条 ≈ 240 KB）不得整份拷进帧里（`spans()` 给的是视图而非快照，正是为此）。**已随裁决 7.79 / 7.80 落完**。
 3. **视口侧的扫描接缝**：`ui::search` 收 `grid::Storage`，而权威网格只在会话锁内可及；沿用裁决 7.40① 给复制腿改判的那条路径——在既有 `Session::read` 短临界区内一次扫完并把结果搬出锁外，界面层不新开线程、不做网格快照（裁决 7.78⑥ 的执行侧）。**已随裁决 7.79 落完**。
 4. **程序化滚动入口**：条目 D2/D6 需要「把存储行 X 滚进可见窗且尽量居中」的写入口，现无（只有 `on_scroll` 的滚轮驱动与 `scrollback_rows_from_bottom()` 的读数）。**已随裁决 7.80 落完**（`TerminalView::scroll_row_into_view`，窗内不动而窗外居中）。
-5. **浮层本体**：`src/ui/search_overlay.{h,cpp}`（第四个触达 `au::Painter` / `au::Widget` 的 TU，私有头形态同裁决 D1①）＋ 视口侧的持有与开关两处；打开入口 `search.open` + `Ctrl+F` 在装配层注册，`Escape` 的登记与解绑按 F2-a。
-6. **词条**：`search.placeholder` / `search.count_none` / `search.count_cap` / `search.count_invalid` / `search.pending_enter` / `search.reopen_hint` / `search.toggle_case` / `search.toggle_regex` / `search.prev` / `search.next` / `search.close` 进本仓词条表（上屏文案属 AGENTS.md §4.3 第 14 条的 `CJK-LITERAL: 上屏文案` 例外），chip 上的 `Aa` / `.*` 与按钮的 `↑` / `↓` 是符号而非文案、不进表，但两档各自的**无障碍标签**进表（裁决 7.61 那条「卡名逐字取存储键」之外的另一形态：符号在屏上、中文名在树里）。
+5. **浮层本体**：`src/ui/search_overlay.{h,cpp}`（**第五个**触达 `au::Painter` / `au::Widget` 的 TU，私有头形态同裁决 D1①）＋ 视口侧的持有与开关两处；打开入口 `search.open` + `Ctrl+F` 在装配层注册，`Escape` 的登记与解绑按 F2-a。**已随裁决 7.81 落完**。
+6. **词条**：`search.placeholder` / `search.count_none` / `search.count_cap` / `search.count_invalid` / `search.pending_enter` / `search.reopen_hint` / `search.toggle_case` / `search.toggle_regex` / `search.prev` / `search.next` / `search.close` 进本仓词条表（上屏文案属 AGENTS.md §4.3 第 14 条的 `CJK-LITERAL: 上屏文案` 例外），chip 上的 `Aa` / `.*` 与按钮的 `↑` / `↓` 是符号而非文案、不进表，但两档各自的**无障碍标签**进表（裁决 7.61 那条「卡名逐字取存储键」之外的另一形态：符号在屏上、中文名在树里）。**已随裁决 7.81 落完**，且差额入册：实际 12 条——另补 `search.action.open`（F1-a 的命令标题，不在上面十一条之内）。
 
 ---
 
@@ -120,7 +120,7 @@
   - 两帧差分断三件事——**命中的每格变为各半档**、**当前命中格变为全色档**、**未命中且未选中的格不受影响**；再断 C1-a（同格相撞时读数＝选区色而非命中色）与 C2-b（块形光标压在命中格上时该格仍非底色）。
   - 前景那条走既有 `min_contrast` 路径，故断「全色档那一格的前景与 `default_foreground` 不同」而不是自算一个目标值（裁决 7.26① 的阈值 4.5 是同一条判据的真值源）。
   - **一条判据边界照搬 UI_SELECTION §5 的实测订正**（裁决 7.40⑨）：按边界重切 run 会让同 run 内后续字形的亚像素覆盖改变，故「未选格逐位不变」只对**无字形**格成立；带字形的未命中格改断「该格带色回到 `default_background`」。
-- **交互 / 集成**（`tests/integration/itest_search_overlay.cpp`，真指针派发 + `au::OverlayHost`）：打开即得焦点且不向会话发出任何字节；打字→置脏→一帧内出现高亮且**一轮只扫一次**（以扫描计数为据）；正则档打字不扫、Enter 才扫；四种关闭各一条；`Escape` 关闭后**该键位已解绑**（判据是「同一帧再按 Escape 时被会话收到」，否则 S2 那条静默吞键的病灶无人守）；B3 触顶形态；B4 保留旧表；E 三档降级各一条（断控件盒宽与条高）；D2 的居中落位；D7 的「关高亮不关回看位置」。
+- **交互 / 集成**（`tests/integration/itest_search_overlay.cpp`，真指针派发 + `au::OverlayHost`）：打开即得焦点且不向会话发出任何字节；打字→置脏→一帧内出现高亮且**一轮只扫一次**（以扫描计数为据）；正则档打字不扫、Enter 才扫；四种关闭各一条；`Escape` 关闭后**该键位已解绑**（判据是「同一帧再按 Escape 时被会话收到」，否则 S2 那条静默吞键的病灶无人守）；B3 触顶形态；B4 保留旧表；E 三档降级各一条（断控件盒宽与条高）；D2 的居中落位；D7 的「关高亮不关回看位置」。**已随裁决 7.81 落完**（十五条集成见证；其中「四种关闭」落成三条真路径——点「关闭」/ `Escape` / 点浮层外——并附一条 `Enter` 恒不关的负向断言，见裁决 7.81⑥）。
 - **性能**：判据在基准与门禁，不在测试（AGENTS.md §4.4 第 21 条）——`tools/bench/render_throughput.cpp` 第四场景 + `tools/check/perf_baseline.json` 的 **B-8**（绝对线 200 ms、相对线 10%、三次独立进程中位、`build_config` 与 `search_fixture` 双硬判，裁决 7.78⑤）。界面腿**不**另配时间断言：单线程 UI 上的节流形态由「每帧至多一次扫描」的计数判据守，成本本身已由 B-8 锁。
 - **不做**：真机目视以外的手感（chip 符号是否认得出、`↑↓` 图标档的可辨性、居中滚动跟手、`Ctrl+F` 被截走后 vim 用户的接受度、极窄 pane 上无跳转按钮）不在本稿验收面，须人工走查（会话锁屏下 `SendInput` 静默失效，同裁决 7.31 口径）。界面腿的用例是无头像素与文本断言，不构成「可用」的结论。
 
