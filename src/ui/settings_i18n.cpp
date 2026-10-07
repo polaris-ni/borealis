@@ -84,11 +84,14 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"settings.startup.ack", "知道了"},
 
     // ---- 终端内搜索浮层（`SPEC.FEAT.INTERACT.04`，判据文 `codespec/UI_SEARCH.draft.md` §4 第 6 条）----
-    // 那一条列出的就是这十一句：chip 上的 `Aa` / `.*` 与按钮的 `↑` / `↓` 是**符号而非文案**，不进表
-    // （A1-d 的宽度算式要求它们在 44 dp 单行内恰占 40 dp，而中文标签会把 E 段的三档全部顶穿）；
+    // 那一条列出的就是下面那十一句界面词条：chip 上的 `Aa` / `.*` 与按钮的 `↑` / `↓` 是**符号而非文案**，
+    // 不进表（A1-d 的宽度算式要求它们在 44 dp 单行内恰占 40 dp，而中文标签会把 E 段的三档全部顶穿）；
     // 但符号档的**无障碍标签**进表，于是「屏上是符号、树里是中文」由 `set_accessibility_label` 一处兑现。
     // `search.count_cap` 的位置参数是 `ui::kMaxSearchMatches` 的十进制形态（取值，B3 的 `+` 即裁决
     // 7.78④「不得谎报总数」在界面上的兑现形态），故不在界面里写死那个串。
+    // `search.action.open` 不在 §4 第 6 条那十一句之内，是 F1-a 那条打开入口的命令标题——它与
+    // `settings.action.open` 同一格角色（快捷键只读表的「动作名」列），故同表登记（裁决 7.81）。
+    {"search.action.open", "打开搜索"},
     {"search.placeholder", "搜索终端内容"},
     {"search.count_none", "无匹配"},
     {"search.count_cap", "{0}+"},

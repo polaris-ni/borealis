@@ -189,6 +189,9 @@ auto main() -> int {
     // 框架不在启动时给焦点序里的首个控件派焦点（只有模态 `push_scope` 会这么做），不设这一步则
     // 按键与滚轮都路由不到视口，光标也永远停在失焦的空心描边形态。
     app.focus().set_focus(view.get());
+    // 搜索浮层的两条框架依赖：`Escape` 的登记表与焦点管理器。与上面的 `set_overlay_host` 分开挂，
+    // 且必须在建 `app` 之后——宿主是场景根的成员而快捷键层与焦点序归 `Application` 持有（判据文 §4 第 5 条）。
+    view->set_search_dependencies(app.shortcuts(), app.focus());
 
     // 面板的三条接缝都在装配层兑现：装载取 `Store` 的当前配置，落盘走 `apply_form` + `replace()`，
     // 广播把刚落盘的配置重新折算成外观包与交互项交回视口（`SPEC.FEAT.PREF.02` 的「即时生效」腿）。
@@ -265,6 +268,17 @@ auto main() -> int {
     open_settings.default_binding = au::KeyCombo{au::ModifierKey::Control, au::KeyCode::Comma};
     open_settings.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(open_settings));
+    // 搜索浮层的打开入口与设置面板同形态（判据文 F1-a）：命令是快捷键、菜单与命令面板的共同真源，
+    // 故这里登记一次就同时得到 `Ctrl+F` 与快捷键只读表上那一行。`Ctrl+F` 由快捷键层在控件消费之前
+    // 拦截，**不进会话**——需求原文写死了这个组合，vim 的整屏翻页因此被拿走，代价登记在 §3 D8。
+    au::Command open_search;
+    open_search.id = "search.open";
+    open_search.title = borealis::ui::settings_label("search.action.open");
+    open_search.category = "terminal";
+    open_search.action = [&view]() -> void { view->open_search(); };
+    open_search.default_binding = au::KeyCombo{au::ModifierKey::Control, au::KeyCode::F};
+    open_search.scope = au::ShortcutScope::Global;
+    app.commands().add(std::move(open_search));
     app.commands().bind_shortcuts(app.shortcuts());
 
     // 启动降级提示（`SPEC.FEAT.PREF.07`，裁决 7.76⑤）：`LoadOutcome` 四态里只有两条降级态会弹，弹一次即止。
