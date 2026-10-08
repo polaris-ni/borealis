@@ -4,6 +4,18 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.92（2026-10-08）**入口文档 `AGENTS.md` 压缩到注入预算内并新增 `check_agents_size` 体积门禁：§6 现状快照由逐条登记改判为指针式，同批就地更正 `PLAN.md` 的两处活引用**（`AGENTS.md` + `tools/check/check_agents_size.py`（新）+ `cmake/BorealisTests.cmake` + `codespec/SPECIFICATIONS.md` §7 + `codespec/PLAN.md` §8，判据入册为裁决 **7.92**，本条零代码改动）
+
+**动机**：`AGENTS.md` 是每次协作会话原样注入的单一入口，超出注入预算的部分被**静默从中部截断**，被丢掉的必然是尾部两节——文档导航与硬规则，恰是它仅有的两项职责。本仓实测该文件长到 325571 字节，约为 8 KiB 预算的 40 倍，也就是绝大多数时候真正进入上下文的只有开头一小段。Aurora 主仓同病已由其 `tools/check/check_agents_size.py` 治理（8 KiB 上限、超限即硬失败），本仓照搬该治理形态而不是自造一套，把细则交回 `codespec/` 权威文档。
+
+**决定形态的口径**：⑴ **入口只留路由（§3）与硬约束（§4 / §5）**，细则一律下沉权威文档、不留副本；⑵ **§6 现状快照改判为指针式**——逐条现状以 `SPECIFICATIONS.md` §7 / 附录 A.2 与 `CHANGELOG.md`、`PLAN.md` 为准，§6 只保留长期成立两条（无 CI 工作流、本机 vcpkg 未接）。因此 `PLAN.md` §8 前言那句「文件级现状以 `AGENTS.md` §6 为唯一来源」与验证现状段那句「逐棒的例数与变异自证见 `AGENTS.md` §6」两处**活引用**随本条就地更正；`CHANGELOG.md` 其余各处提到的「落点：`AGENTS.md` §6」是当时事实的历史照录，按本文件自述的「旧条目原文保留」不改；⑶ **不丢条目按逐条点名核**：§4 的 1~33 号硬规则、§4.1–§4.6 子节号、§5 的 1~5 号边界条款、§1–§7 分节号、对外引用句式与 12 处受保护字面量原样保留（后者 grep 各命中一次），删的是重复措辞、裁决号的括号从句（追溯走 `SPECIFICATIONS.md` §7）与 Markdown 加粗——去加粗是本仓相对 Aurora 多用的那档手段，因本仓 §4 内容密度更高、再压不下任何一条规则；⑷ **门禁的失败形态是四类硬失败**（缺文件 / 非法 UTF-8 / 扫不到二级标题即空转 / 超 8192 字节），退出码 1，绝不空过；⑸ 脚本镜像 Aurora 同件并**四处适配**：docstring 的实测事实换成本仓读数、用法行与 `--root` 帮助改本仓名、删去本仓不存在的 `check_arch_module_map.py` 交叉引用（AGENTS.md §4.2 第 13 条引用可达）、根探测改取「同时含 `CMakeLists.txt` 与 `AGENTS.md` 的最近祖先」——本仓 `tools/` 自带 `CMakeLists.txt`，Aurora 的「首个 `CMakeLists.txt` 命中」在本仓会停在 `tools/`，该适配由「不带 `--root` 直接运行」实测抓出而非推断。
+
+**代价**：① 入口不再有逐条现状账，查现状须多走一跳（`CHANGELOG.md` / `SPECIFICATIONS.md` §7 与附录 A.2 / `PLAN.md` §8），旧全文只在 git（`ce7bd74`）；② 预算余量 15 字节，此后往入口加一行就得先删一行——这正是门禁的设计意图，代价是抬高协作摩擦；③ 门禁依赖本机 Python，`find_program` 探测不到即不注册（不阻断 C++ 测试），该情形下入口体积无人守护；④ 本仓无 CI 工作流（`AGENTS.md` §6 在册条目），门禁只在本地 `ctest` 生效，`SPEC.NF.PERF.02` 的「进 CI」仍未闭环；⑤ 本条占去 v0.92 与裁决 7.92 两个号，在途的 G38 / G39 接货复验落地时改取 v0.93 / 7.93；⑥ 补记说明——门禁那一提交（`75c333e`）按 Aurora 先例当时未随附本条，本条应用把进展落档的要求补上，不回改已落的那笔提交。
+
+**验收**：门禁按 AGENTS.md §4.4 第 22 条以变异注入自证、不单配单元测试。四条 FAIL 分支各有实测红与正确退出码——加 200 字节的副本报「over budget by 185 bytes」、剥掉全部二级标题的副本报「no level-2 section heading - scan would be vacuous」、空目录报「AGENTS.md not found under …」、尾部塞两字节非法 UTF-8 的副本报「is not valid UTF-8」，四条退出码皆 1；真实文件报「PASS: within budget」退出 0，且带 `--root` 与不带（自动探测根目录）两条入口各自实测通过。`cmake --preset linux` 重配后 `ctest --preset linux -R check_agents_size -V` 绿（该项注册为 CTest #1）。非 e2e 通道自此 **48 → 49 项**：新增那一项是本条唯一实测绿者，其余 48 项 C++ 用例维持在册未复跑，在途的 `itest_command_palette` 不计入也不背书。
+
+**落点**：`AGENTS.md`（§1–§7 全量重写，325571 → 8177 字节）、`tools/check/check_agents_size.py`（新）、`cmake/BorealisTests.cmake`（注册 CTest 项）、`codespec/SPECIFICATIONS.md` §7 的裁决 **7.92** 与该节标题追加范围（顺带补齐 7.91 漏记的一段）、`codespec/PLAN.md` §8 前言与验证现状两处、本文件 v0.92；另顺带就地更正 `codespec/SPECIFICATIONS.md`「版本与变更历史」那句的当前版本——在册值停在 v0.53 而未随各棒回填，现改记 v0.92。
+
 ## v0.91（2026-10-08）**`SPEC.FEAT.WS.04` 的断线 / 退出角标（本地腿）落地：`Tab::exited` 是每帧推入的投影而没有清除入口，同批修掉两处让已落角标从未上屏的潜在缺陷**（`include/borealis/ui/tab_strip.h` + `src/ui/tab_strip.cpp` + `src/ui/tab_bar.{h,cpp}` + `src/main.cpp` + `tests/unit/utest_tab_strip.cpp` + `tests/integration/itest_tab_bar.cpp`（新），判据入册为裁决 **7.91**）
 
 **动机**：`SPEC.FEAT.WS.04` 的三条视觉提示里，v0.82 落了活动绿点与 BEL 红点两枚（裁决 7.82③），断线 / 退出角标一直是未落档，而它才是多标签工作区里唯一「用户不看会话内容也知道那一格已经死了」的信号。本条落的是**本地腿**：判据 `Session::alive()` 已在册，装配层的 `has_live_session` lambda 也已在关闭前确认那一棒落完（裁决 7.83），故本条不新起判据源，只把它折进标签栏。**这一腿是本仓自己的活而不是框架侧一腿**：判定、折叠、上屏全在本仓，Aurora 只提供 `Painter::draw_rect` 这一落笔原语。
