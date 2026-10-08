@@ -549,8 +549,8 @@ AURORA_TEST_CASE(every_catalog_key_resolves_to_a_display_label) {
         AURORA_TEST_REQUIRE_MSG(borealis::ui::has_settings_string(key), std::string{key} + " missing");
     }
 
-    // 提交未通过的十三个原因全都要有词条：面板把失败写进状态列时只有这一条查表路径，缺一个就是空标签。
-    for (CommitIssue issue : {CommitIssue::UnknownKey, CommitIssue::NotLoaded, CommitIssue::ReadOnly,
+    // 提交未通过的十二个原因全都要有词条：面板把失败写进状态列时只有这一条查表路径，缺一个就是空标签。
+    for (CommitIssue issue : {CommitIssue::UnknownKey, CommitIssue::NotLoaded,
                               CommitIssue::DomainMismatch, CommitIssue::TextNotAccepted, CommitIssue::MalformedNumber,
                               CommitIssue::NotIntegral, CommitIssue::OutOfRange, CommitIssue::NotAChoice,
                               CommitIssue::MalformedColor, CommitIssue::UnsetNotAllowed, CommitIssue::SlotOutOfRange,
@@ -1441,10 +1441,14 @@ public:
     ///        那句反空转前提写在各用例里作为断言，而不是靠本参数的算术守住。
     /// @param accept 附加筛选（按控件实例）：chrome 用例要的是「关闭态的开关」，同类型的另一档底色
     ///        是强调色，拿它判「底色不亮」会把正确实现读成红。
+    /// @param start_x_dp 扫描起点的横坐标：**模态浮层**（键位绑定对话框）把按钮排在左导航列那 200 dp
+    ///        之内，缺省的 220 起点会整列跳过它们（实测「确定」的可达点在 x≈110）。故探浮层里的控件时
+    ///        由调用方把起点交回到窗口左沿，而行区用例照旧用缺省起点以躲开导航列。
     [[nodiscard]] auto find_first(std::string_view type_name, float room_below_dp = 0.0F,
-                                  const std::function<bool(au::Widget *)> &accept = {}) -> HitSpot {
+                                  const std::function<bool(au::Widget *)> &accept = {},
+                                  float start_x_dp = 220.0F) -> HitSpot {
         for (float y = kCardEdgeDp + 4.0F; y < static_cast<float>(kWindowHeight) - kCardEdgeDp; y += 4.0F) {
-            for (float x = 220.0F; x < static_cast<float>(kWindowWidth) - kCardEdgeDp; x += 4.0F) {
+            for (float x = start_x_dp; x < static_cast<float>(kWindowWidth) - kCardEdgeDp; x += 4.0F) {
                 au::Widget *widget = hit(x, y);
                 if (widget == nullptr || type_name != widget->type_name()) {
                     continue;
@@ -1893,6 +1897,52 @@ constexpr float kShortcutLineGapTestDp = 6.0F;
         titles.push_back(row.title);
     }
     return titles;
+}
+
+/// @brief 按**解析后的显示标签**在真实派发链上找一枚按钮。
+///
+/// 取框架 `accessibility_label()` 而不直读 `label.get().text`：`button.h` 那条 i18n 契约明写布局、绘制
+/// 与无障碍共用同一份 `resolved_label()`，读这条才与屏幕上那一格同源。面板交的是 `settings_label(...)`
+/// 已解析的字面串，故这里的入参就是本件按同一条查表算出的预期串。
+/// @param h 驱动台（已排过帧）。
+/// @param label 期望的显示标签。
+/// @param start_x_dp 扫描起点横坐标（探模态浮层里的控件时要往左交回窗口左沿，见 `find_first`）。
+///        缺省取 20 dp 而不是 `find_first` 的 220：对话框把按钮排在左导航列那 200 dp 之内，而这里按
+///        **显示标签**筛，导航列那几枚按钮的标签与「编辑 / 确定 / 取消」都不相干，往左扫不会挑错控件。
+/// @return 命中点与可达框；链上没有这枚按钮时 `widget` 为空。
+[[nodiscard]] auto find_button(Harness &h, const std::string &label, float start_x_dp = 20.0F) -> HitSpot {
+    return h.find_first("Button", 0.0F, [&label](au::Widget *widget) -> bool {
+        const auto *button = dynamic_cast<const au::Button *>(widget);
+        return button != nullptr && button->accessibility_label() == label;
+    }, start_x_dp);
+}
+
+/// @brief 快捷键页上「编辑」那一列的第一枚按钮（本件只放一行命令，故不存在挑哪一行的问题）。
+[[nodiscard]] auto first_edit_button(Harness &h) -> HitSpot {
+    return find_button(h, borealis::ui::settings_label("settings.action.edit"));
+}
+
+/// @brief 链上是否存在某一层的类型名就是 `name`（模态层有没有接走这一击的判据）。
+[[nodiscard]] auto chain_has(Harness &h, float x_dp, float y_dp, std::string_view name) -> bool {
+    for (const au::HitNode &node : h.chain_at(x_dp, y_dp)) {
+        if (name == node.ptr->type_name()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// @brief 对话框里那只键位输入框（浮层把控件排在左导航列之内，故起点往左交回 20 dp）。
+[[nodiscard]] auto dialog_input(Harness &h) -> HitSpot {
+    return h.find_first("TextInput", 0.0F, {}, 20.0F);
+}
+
+/// @brief 一次 `Escape` 按下（面板的关闭键挂的是 Global，故这里直接问注册表而不造窗口事件）。
+[[nodiscard]] auto escape_press() -> au::KeyEvent {
+    au::KeyEvent event;
+    event.key = static_cast<int>(au::KeyCode::Escape);
+    event.action = au::KeyAction::Down;
+    return event;
 }
 
 }  // namespace
@@ -4323,6 +4373,198 @@ AURORA_TEST_CASE(escape_leaves_the_snapshot_view_before_it_closes_the_panel) {
     AURORA_TEST_CHECK_EQ(h.shortcuts().count(), 0U);
 }
 
+/// @brief 真点一行「编辑」即把键位绑定对话框**挂进派发链**（PREF.04 的 D3-a：编辑按钮不是死按钮）。
+///
+/// 判据全部落在真实派发结果上，而不是面板私有的成员：一棵只 `Dialog::show()` 而未挂进 `OverlayHost` 的
+/// 子树既不参与绘制也不进命中链（框架 `dialog.h` 的命中注自陈关闭态恒空链，反过来说**没挂在树上**时
+/// 连打开态也空链），于是那一格看上去是按钮、点下去什么也不发生。本例以三处「挂上才有」的读数把它
+/// 钉住：浮层序号 +1、对话框里的输入框与「确定」进得了链、而表里那枚「编辑」从此被模态层盖住。
+AURORA_TEST_CASE(a_real_click_on_an_edit_button_mounts_the_binding_dialog_into_the_dispatch_chain) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    probe.command_table = {make_command("x.copy.line", "Copy line", "Edit", "Ctrl+Shift+Q",
+                                        press_of(KeySym::Q, true, true, false, false, false))};
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    panel->select_page(SettingsPage::Shortcuts);
+    h.render();
+
+    // 打开之前：面板浮层是唯一的一层，而链上既没有键位输入框也没有「确定」。
+    AURORA_TEST_REQUIRE_EQ(h.overlay_count(), 1U);
+    AURORA_TEST_CHECK_EQ(find_button(h, borealis::ui::settings_label("settings.action.confirm")).widget, nullptr);
+    AURORA_TEST_CHECK_EQ(dialog_input(h).widget, nullptr);
+
+    const HitSpot edit = first_edit_button(h);
+    AURORA_TEST_REQUIRE_MSG(edit.widget != nullptr, "no edit button is dispatch-reachable on the shortcuts page");
+    const std::optional<au::Point> center = h.pointer_to(edit.widget, edit.x, edit.y);
+    AURORA_TEST_REQUIRE(center.has_value());
+    h.click(center->x, center->y);
+    h.render();
+
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 2U);  // 对话框那一层真的追加进了宿主
+    AURORA_TEST_CHECK_NE(find_button(h, borealis::ui::settings_label("settings.action.confirm")).widget, nullptr);
+    AURORA_TEST_CHECK_NE(find_button(h, borealis::ui::settings_label("settings.action.cancel")).widget, nullptr);
+    const HitSpot input = dialog_input(h);
+    AURORA_TEST_CHECK_MSG(chain_has(h, input.x, input.y, "Dialog"), "the mounted dialog does not claim its own content");
+    // 模态层的另一面有两处：表里那枚「编辑」不再被派发交回，而**卡片之内**那一段无人认领的留白也不落穿
+    // 到行区上——框架 `Dialog` 只在内容盒**之外**吸收（其 `on_hit_test_chain` 在盒内原样交回内容的子树
+    // 链，链为空即让宿主继续往下问），故这一格由本件挂在卡片自己身上（`clickable` 落在绘制者，裁决
+    // 7.61③ 同一条口径）。留白点不预设坐标而是扫出来：链上有 `Dialog`、而最深者是卡片那一层 `Column`。
+    AURORA_TEST_CHECK_EQ(find_button(h, borealis::ui::settings_label("settings.action.edit")).widget, nullptr);
+    {
+        au::Widget *blank_owner = nullptr;
+        float blank_x = 0.0F;
+        float blank_y = 0.0F;
+        for (float y = kCardEdgeDp; y < static_cast<float>(kWindowHeight) - kCardEdgeDp && blank_owner == nullptr;
+             y += 2.0F) {
+            for (float x = 20.0F; x < static_cast<float>(kWindowWidth) - kCardEdgeDp; x += 2.0F) {
+                au::Widget *widget = h.hit(x, y);
+                if (widget == nullptr || std::string_view(widget->type_name()) != "Column"
+                    || !chain_has(h, x, y, "Dialog")) {
+                    continue;
+                }
+                blank_owner = widget;
+                blank_x = x;
+                blank_y = y;
+                break;
+            }
+        }
+        AURORA_TEST_REQUIRE_MSG(blank_owner != nullptr, "no blank spot inside the dialog card is dispatch-claimed");
+        AURORA_TEST_CHECK_MSG(!chain_has(h, blank_x, blank_y, "Scroll"),
+                              "a click inside the dialog card falls through to the row area");
+    }
+    // 打开本身不提交任何东西：落盘只发生在「确定」那一条腿上。
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_CHECK_TRUE(panel->is_open());
+}
+
+/// @brief 真点对话框里的「确定」＝覆盖表落盘一次，且这一条动作之后对话框不再在链上。
+///
+/// 输入框打开时已按当前行的显示串播种（`open_binding_dialog()` 的那条初值），故这里不需要打字：判的是
+/// **提交腿**（对话框挂上之后有没有人真的认领这一击、以及它走的是哪一条落盘路），打字腿归表单校验。
+/// 快捷键行是 `Absent` 档，故只落盘不广播。
+AURORA_TEST_CASE(a_real_click_on_the_dialogs_confirm_persists_the_override_once_and_retires_the_dialog) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    probe.command_table = {make_command("x.copy.line", "Copy line", "Edit", "Ctrl+Shift+Q",
+                                        press_of(KeySym::Q, true, true, false, false, false))};
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    panel->select_page(SettingsPage::Shortcuts);
+    h.render();
+
+    const HitSpot edit = first_edit_button(h);
+    AURORA_TEST_REQUIRE(edit.widget != nullptr);
+    h.click(edit.x, edit.y);
+    h.render();
+
+    const HitSpot confirm = find_button(h, borealis::ui::settings_label("settings.action.confirm"));
+    AURORA_TEST_REQUIRE_MSG(confirm.widget != nullptr, "the confirm button is not dispatch-reachable");
+    const std::optional<au::Point> center = h.pointer_to(confirm.widget, confirm.x, confirm.y);
+    AURORA_TEST_REQUIRE(center.has_value());
+    h.click(center->x, center->y);
+    h.render();
+
+    AURORA_TEST_REQUIRE_EQ(probe.persist_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);  // `Absent` ⇒ 只落盘（`apply_scope()` 的既有算式）
+    // 覆盖表在配置侧是映射（`command → combo`）、在表单侧才是数组（裁决 7.27②），故这里按键取值。
+    const std::map<std::string, std::string> &written = probe.persisted.back().shortcuts.overrides;
+    AURORA_TEST_REQUIRE_EQ(written.size(), 1U);
+    AURORA_TEST_CHECK_EQ(written.at("x.copy.line"), "Ctrl+Shift+Q");
+    // 提交走的是 `rebuild_overlay()` 那一条重建，故对话框连同它的序号一起退场（留着就会在下一次
+    // 降序摘除时指到别的节点上）。
+    AURORA_TEST_CHECK_EQ(find_button(h, borealis::ui::settings_label("settings.action.confirm")).widget, nullptr);
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 1U);
+    AURORA_TEST_CHECK_TRUE(panel->is_open());
+}
+
+/// @brief 「取消」与 `Escape` 都不提交任何值，且关闭后的对话框仍**常驻而挂着**（不摘浮层）。
+///
+/// 关闭态的 `Dialog` 不渲染也不参与命中（框架自陈），故留着这一层是零成本；而在按钮回调里
+/// `remove_overlay` 就是销毁正在派发的那一枚按钮——本仓在字体族候选那一处已按同口径立过句
+/// （`choose_family()`）。第二遍重开用的是同一层，故浮层序号不许多增一次，那同时是「序号不会漂」的证人。
+/// `Escape` 排在最里一层，先关对话框再关面板（与快照视图那一档同形，判据 D3-b）。
+AURORA_TEST_CASE(cancel_and_escape_close_the_binding_dialog_without_committing_and_the_panel_survives) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    probe.command_table = {make_command("x.copy.line", "Copy line", "Edit", "Ctrl+Shift+Q",
+                                        press_of(KeySym::Q, true, true, false, false, false))};
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    panel->select_page(SettingsPage::Shortcuts);
+    h.render();
+    const std::string confirm = borealis::ui::settings_label("settings.action.confirm");
+
+    const HitSpot edit = first_edit_button(h);
+    AURORA_TEST_REQUIRE(edit.widget != nullptr);
+    h.click(edit.x, edit.y);
+    h.render();
+    AURORA_TEST_REQUIRE_EQ(h.overlay_count(), 2U);
+
+    const HitSpot cancel = find_button(h, borealis::ui::settings_label("settings.action.cancel"));
+    AURORA_TEST_REQUIRE(cancel.widget != nullptr);
+    h.click(cancel.x, cancel.y);
+    h.render();
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_CHECK_EQ(find_button(h, confirm).widget, nullptr);
+    AURORA_TEST_CHECK_TRUE(panel->is_open());
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 2U);  // 关闭而不摘：见本例开头那条常驻口径
+
+    // 重开落在同一层上：对话框跨开合复用一只（与候选浮层同形），序号不许多一个。
+    h.click(edit.x, edit.y);
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 2U);
+    AURORA_TEST_CHECK_NE(find_button(h, confirm).widget, nullptr);
+
+    // `Escape` 的第一次只交还给对话框，面板与它的关闭键都还在。
+    AURORA_TEST_REQUIRE(h.shortcuts().handle(escape_press(), false));
+    AURORA_TEST_CHECK_TRUE(panel->is_open());
+    AURORA_TEST_CHECK_EQ(find_button(h, confirm).widget, nullptr);
+    AURORA_TEST_CHECK_EQ(h.shortcuts().count(), 1U);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+
+    AURORA_TEST_REQUIRE(h.shortcuts().handle(escape_press(), false));
+    AURORA_TEST_CHECK_FALSE(panel->is_open());
+    AURORA_TEST_CHECK_EQ(h.shortcuts().count(), 0U);
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 0U);  // 关面板时按降序把常驻那层一起摘掉
+}
+
+/// @brief 点对话框内容之外那一片**既不关对话框也不关面板**（模态层吸收，现状钉子）。
+///
+/// 框架的 `Dialog` 遮罩区只回一条含自身的链而**不**触发 `on_close_`（其头注自陈），于是这一击止于模态层；
+/// 面板那枚遮罩 `clickable` 因此也不会跑起来把整块面板撤掉。这条与「键盘是唯一出口」是一对：`Escape` 与
+/// 「取消」是出口，点空白处不是。
+AURORA_TEST_CASE(a_click_on_the_dialogs_scrim_neither_closes_the_dialog_nor_the_panel) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    probe.command_table = {make_command("x.copy.line", "Copy line", "Edit", "Ctrl+Shift+Q",
+                                        press_of(KeySym::Q, true, true, false, false, false))};
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    panel->select_page(SettingsPage::Shortcuts);
+    h.render();
+
+    const HitSpot edit = first_edit_button(h);
+    AURORA_TEST_REQUIRE(edit.widget != nullptr);
+    h.click(edit.x, edit.y);
+    h.render();
+    const std::string confirm = borealis::ui::settings_label("settings.action.confirm");
+    AURORA_TEST_REQUIRE(find_button(h, confirm).widget != nullptr);
+
+    // 取一点确在对话框遮罩内而**不在**其内容盒内：宿主铺满整窗而对话框铺满宿主，故窗口左上角那一片
+    // 正属于遮罩区（内容盒居中，不触及边角）。
+    AURORA_TEST_CHECK_NE(h.hit(20.0F, 20.0F), nullptr);
+    h.click(20.0F, 20.0F);
+    h.render();
+    AURORA_TEST_CHECK_TRUE(panel->is_open());
+    AURORA_TEST_CHECK_NE(find_button(h, confirm).widget, nullptr);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+}
+
 #else
 
 AURORA_TEST_CASE(the_scrim_covers_the_whole_window_and_a_real_click_closes_the_panel) {
@@ -4482,6 +4724,22 @@ AURORA_TEST_CASE(escape_leaves_the_snapshot_view_before_it_closes_the_panel) {
 }
 
 AURORA_TEST_CASE(the_shortcut_rows_grow_the_row_area_content_and_a_click_on_the_table_commits_nothing) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_real_click_on_an_edit_button_mounts_the_binding_dialog_into_the_dispatch_chain) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_real_click_on_the_dialogs_confirm_persists_the_override_once_and_retires_the_dialog) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(cancel_and_escape_close_the_binding_dialog_without_committing_and_the_panel_survives) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_click_on_the_dialogs_scrim_neither_closes_the_dialog_nor_the_panel) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 

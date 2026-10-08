@@ -355,16 +355,22 @@ AURORA_TEST_CASE(family_chain_keeps_order_and_empty_is_a_value_not_unset) {
                          CommitIssue::DomainMismatch);
 }
 
-AURORA_TEST_CASE(read_only_rows_refuse_edits_entirely) {
+AURORA_TEST_CASE(the_override_table_takes_only_the_value_its_own_control_gives) {
     SettingsForm form{entries_for_whole_catalog()};
     const auto overrides = std::string{"shortcuts.overrides"};
     const std::vector<ShortcutOverride> rows{ShortcutOverride{"workspace.split.right", "Ctrl+Alt+Right"}};
-    // S9 / D3-a：快捷键页首版只读，故本件不给它任何可改动的路径（面板因此画不出会失灵的按钮）。
-    AURORA_TEST_CHECK_EQ(form.commit_value(overrides, FormValue::overrides(rows)).issue, CommitIssue::ReadOnly);
+    // S9 / D3-a 那句「不给会失灵的按钮」如今由**入口形态**守住而不是由「这个键不可写」守住：表体没有文本
+    // 入口、没有色槽，形态不合的值仍按域挡下。`SPEC.FEAT.PREF.04` 的编辑对话框走的是最后那一条，故它必须
+    // 真能落盘（此前整行拒改，那枚「确定」是死按钮）。
     AURORA_TEST_CHECK_EQ(form.commit_text(overrides, "workspace.split.right").issue, CommitIssue::TextNotAccepted);
     AURORA_TEST_CHECK_EQ(form.commit_unset_color(overrides).issue, CommitIssue::DomainMismatch);
+    AURORA_TEST_CHECK_EQ(form.commit_value(overrides, FormValue::text("workspace.split.right")).issue,
+                         CommitIssue::DomainMismatch);
+    AURORA_TEST_CHECK_EQ(form.commit_value(overrides, FormValue::overrides(rows)).issue, CommitIssue::None);
+    AURORA_TEST_CHECK(form.is_dirty(overrides));
+    // 改回装载的那一份（空表）即不脏：按值判脏的直接推论，与族名链那一例同一口径。
+    AURORA_TEST_CHECK_EQ(form.commit_value(overrides, FormValue::overrides({})).issue, CommitIssue::None);
     AURORA_TEST_CHECK_FALSE(form.is_dirty(overrides));
-    AURORA_TEST_CHECK_FALSE(form.has_unsaved_changes());
 }
 
 AURORA_TEST_CASE(dirty_marks_follow_values_not_clicks) {
