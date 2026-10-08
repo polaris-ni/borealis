@@ -1,5 +1,5 @@
 /// 测试类型: e2e
-/// 目标单元: src/ui/terminal_view.cpp 的键盘/文本入口 → src/term/keymap.cpp → 真实 ConPTY
+/// 目标单元: src/ui/terminal_view.cpp 的键盘/文本入口 → src/term/keymap.cpp → 真实 PTY
 /// 测试说明: `SPEC.FEAT.INTERACT.01` 的**真机腿**：按键经框架事件派发落到视口控件，编码成 VT 字节
 ///           后会话写连接，子进程侧的**行编辑与命令提交**就是这些字节被正确解释的证据——cmd.exe
 ///           的键盘钩子只认真正的控制码（退格要 0x7F、回车要 CR），发错一个字节这行命令就不会成型。
@@ -8,8 +8,12 @@
 ///
 ///           断言一律取权威网格里「用户看到的那一行」，不比原始字节（ConPTY 输出夹光标定位与回显）。
 ///
-///           本文件依赖真实 ConPTY，须在有窗口站/桌面的交互会话里跑（裁决 7.19⑤）；当前只有
-///           Win32 侧有连接实现（posix 等价待建，见 codespec/PLAN.md §8）。
+///           两条平台腿只差交互 shell 的素材形态：Windows 取 cmd.exe，POSIX 取 /bin/sh。判据逐字
+///           共用，这正是 `SPEC.NF.PLAT.01` 要的等价核验（2026-10-08 补上 POSIX 腿，裁决 7.89）：
+///           退格发 DEL 这一条在 POSIX 侧由**终端行规程的 VERASE**接受，回车发 CR 由 **ICRNL** 折成
+///           换行提交，与 cmd 自己的键盘钩子是两套完全不同的接受机制。
+///
+///           本文件依赖真实 PTY，须在有窗口站/桌面的交互会话里跑（裁决 7.19⑤）。
 
 #include <chrono>
 #include <cstddef>
@@ -48,6 +52,17 @@ using borealis::term::TermModes;
 using borealis::ui::PaletteSpec;
 using borealis::ui::TerminalView;
 using borealis::ui::Typography;
+
+#if defined(_WIN32)
+/// 交互 shell：cmd.exe 自己实现行编辑，故 DEL 与 CR 由它接受。
+constexpr std::string_view kInteractiveShell = "cmd.exe";
+#else
+/// 交互 shell：/bin/sh 交终端行规程编辑，VERASE 缺省即 DEL、EOL 缺省认 CR 与 LF。
+constexpr std::string_view kInteractiveShell = "/bin/sh";
+#endif
+
+/// 两例的命令动词：输出行不含它，回显行含它——这是排除「键盘还在键入那一行」的判据材料。
+constexpr std::string_view kCommandVerb = "echo";
 
 constexpr Size kViewport{120U, 30U};
 constexpr std::size_t kScrollback = 200U;
@@ -121,10 +136,19 @@ class Harness {
         }
     }
 
-    /// @brief 等一行逐字等于 @p text：命令**输出行**与键入回显行的区别只在整行相等，
-    ///        子串匹配会把用户正在键入的那一行也算命中。
-    [[nodiscard]] auto wait_for_exact(std::string_view text) -> std::optional<std::string> {
-        return wait_for([&text](const std::string &line) { return line == text; });
+    /// @brief 等 @p text 的**命令输出行**：该行以它结尾、且不含 @p command_word（命令的那个动词）。
+    ///
+    /// 子串匹配会把用户正在键入的那一行也算命中，故判据须把回显行排除；但两侧的回显行与输出行
+    /// 并不同形——cmd 把提示符与命令打在同行（`C:\…>echo x`）而输出行逐字就是 `x`，POSIX 的 dash
+    /// 把提示符 `$ ` 留在输出那一行的行首。所以整行相等只在 Windows 腿成立，而「以素材结尾 ∧ 不含
+    /// 动词」在两腿都只可能是输出行，且比子串强：回显行含动词，被第二条排除。
+    [[nodiscard]] auto wait_for_output(std::string_view text, std::string_view command_word)
+        -> std::optional<std::string> {
+        return wait_for([&text, &command_word](const std::string &line) {
+            const auto ends_with = line.size() >= text.size() &&
+                                   line.compare(line.size() - text.size(), text.size(), text) == 0;
+            return ends_with && line.find(command_word) == std::string::npos;
+        });
     }
 
     /// @brief 轮询整个可见区直到某行满足 @p matches，返回该行；超时返回空。
@@ -166,26 +190,27 @@ class Harness {
 }  // namespace
 
 AURORA_TEST_CASE(typed_keys_and_enter_submit_a_command_on_the_pty) {
-    Harness h{"cmd.exe"};
+    Harness h{std::string{kInteractiveShell}};
     h.type_each("echo borealis-key-submit");
-    // 回车经 KeyEvent 编码成 CR：cmd 的行编辑只在收到 CR 时提交，命令的**输出行**即提交成功的证据
-    // （回显行含提示符，整行相等才只可能是输出行）。
+    // 回车经 KeyEvent 编码成 CR：两侧的提交都只认它（cmd 自己的行编辑 / POSIX 的 ICRNL），
+    // 命令的**输出行**即提交成功的证据（回显行含动词，被 wait_for_output 的第二条排除）。
     h.press(au::KeyCode::Enter);
-    const auto line = h.wait_for_exact("borealis-key-submit");
+    const auto line = h.wait_for_output("borealis-key-submit", kCommandVerb);
     AURORA_TEST_REQUIRE_MSG(line.has_value(), "typed keys never produced command output on the PTY");
     h.close();
 }
 
 AURORA_TEST_CASE(backspace_key_edits_the_line_on_the_pty) {
-    Harness h{"cmd.exe"};
+    Harness h{std::string{kInteractiveShell}};
     h.type_each("echo borealis-bs-abc");
-    // 退格发 DEL(0x7F) 而非 BS(0x08)：cmd 的行编辑只把 DEL 当删除，三个 DEL 后接 "xyz" 才是最终行。
+    // 退格发 DEL(0x7F) 而非 BS(0x08)：cmd 的行编辑只把 DEL 当删除，POSIX 侧 VERASE 的缺省字符也
+    // 正是 DEL，三个 DEL 后接 "xyz" 才是最终行。
     for (std::size_t attempt = 0; attempt < 3U; ++attempt) {
         h.press(au::KeyCode::Backspace);
     }
     h.type_each("xyz");
     h.press(au::KeyCode::Enter);
-    const auto line = h.wait_for_exact("borealis-bs-xyz");
+    const auto line = h.wait_for_output("borealis-bs-xyz", kCommandVerb);
     AURORA_TEST_REQUIRE_MSG(line.has_value(), "the DEL bytes did not edit the line on the PTY");
     h.close();
 }

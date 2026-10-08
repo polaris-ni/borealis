@@ -18,6 +18,14 @@ file(GLOB BOREALIS_TEST_FRAMEWORK_SOURCES CONFIGURE_DEPENDS
 file(GLOB BOREALIS_TEST_CASE_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/*.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/*.cpp")
+# 平台专属的探测腿套件只编进自己那一侧：`utest_posix_local_terminal` 取的是 `access()`/`setenv()`，
+# Windows 上没有这两个入口；反过来同理。按文件名过滤而不是在源里 `#ifdef` 掏空用例——后者会让
+# runner 拿到一条「no test case matched」的红灯（注册式框架按文件 stem 匹配，空套件等于失败）。
+if (WIN32)
+    list(FILTER BOREALIS_TEST_CASE_SOURCES EXCLUDE REGEX "/utest_posix_")
+else ()
+    list(FILTER BOREALIS_TEST_CASE_SOURCES EXCLUDE REGEX "/utest_win_")
+endif ()
 if (BOREALIS_BUILD_E2E)
     file(GLOB BOREALIS_TEST_E2E_SOURCES CONFIGURE_DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/*.cpp")

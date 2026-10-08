@@ -7,8 +7,9 @@
 ///
 ///           内容断言一律经会话读权威网格，而不是比对原始字节：ConPTY 的输出里夹着光标定位与
 ///           清屏序列，只有过完状态机才是「用户看到的那一行」。
-///
-///           本文件依赖真实 ConPTY，当前只有 Win32 侧有实现（posix 等价待建，见 codespec/PLAN.md §8）。
+///           两条平台腿只差「一次性命令的素材形态」（cmd.exe 的 `/c echo` 对 `/bin/sh -c 'echo'`），
+///           判据一律共用——这正是 `SPEC.NF.PLAT.01` 要的等价核验（2026-10-08 补上 POSIX 腿，
+///           裁决 7.89）。须在有 PTY 的会话里跑（Windows 侧另须窗口站/桌面，裁决 7.19⑤）。
 
 #include <algorithm>
 #include <cctype>
@@ -116,15 +117,26 @@ SingleWidthPolicy width_policy;
     return false;
 }
 
-/// @brief 路径的比较形态：反斜杠统一、去尾分隔符、转小写（cmd 报的是长路径，环境给的大小写不定）。
+/// @brief 路径的比较形态：先做词法归一（`repo_root()` 在本机上带尾部的 `/.`，`pwd` 报的没有），
+///           再统一分隔符、去尾分隔符、转小写（cmd 报的是长路径，环境给的大小写不定）。
 [[nodiscard]] auto normalize_path(std::string_view path) -> std::string {
-    auto out = std::string{path};
+    auto out = std::filesystem::path{path}.lexically_normal().string();
     std::replace(out.begin(), out.end(), '/', '\\');
     while (!out.empty() && out.back() == '\\') {
         out.pop_back();
     }
     std::transform(out.begin(), out.end(), out.begin(),
                    [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+    return out;
+}
+
+/// @brief 素材一律 ASCII，逐字符升成码点交会话（`Session::send_text` 吃码点串）。
+[[nodiscard]] auto to_code_points(std::string_view text) -> std::u32string {
+    auto out = std::u32string{};
+    out.reserve(text.size());
+    for (const auto character : text) {
+        out.push_back(static_cast<char32_t>(static_cast<unsigned char>(character)));
+    }
     return out;
 }
 
@@ -138,6 +150,72 @@ SingleWidthPolicy width_policy;
     return out;
 }
 
+// ------------------------------------------------------------
+// 平台素材：两条腿只有「跑一条一次性命令」的写法不同，判据一律共用。
+// POSIX 侧的单引号形态同时是命令行切件那档单引号支持的消费证人（`SPEC.NF.PLAT.01`）。
+// ------------------------------------------------------------
+#if defined(_WIN32)
+
+/// @brief 一次性命令：跑完即退出。
+[[nodiscard]] auto once_command(std::string_view body) -> std::string {
+    return std::string{"cmd.exe /c "} + std::string{body};
+}
+
+/// @brief 交互式 shell 的命令行。
+constexpr std::string_view kInteractiveShell = "cmd.exe";
+
+/// @brief 高频突发输出：cmd 的 `for /l` 循环。
+[[nodiscard]] auto burst_command() -> std::string {
+    return "cmd.exe /c \"for /l %i in (1,1,3000) do @echo line-%i\"";
+}
+
+/// @brief 报告当前目录的一次性命令。
+[[nodiscard]] auto print_directory_command() -> std::string {
+    return once_command("cd");
+}
+
+/// 键入腿的素材：cmd 的 echo 原样打印字面量，故「看到的那行」与「敲进去的那行」同源。
+constexpr std::string_view kTypedCommand = "echo borealis-typed";
+constexpr std::string_view kTypedOutput = "borealis-typed";
+constexpr std::string_view kResizeCommand = "echo borealis-after-resize";
+constexpr std::string_view kResizeOutput = "borealis-after-resize";
+constexpr std::string_view kKeptCommand = "echo borealis-kept";
+constexpr std::string_view kKeptOutput = "borealis-kept";
+/// 环境变量的展开形态：cmd 用 `%VAR%`。
+constexpr std::string_view kEnvProbeBody = "echo TERM=%TERM% COLORTERM=%COLORTERM%";
+constexpr std::string_view kSingleEnvProbeBody = "echo TERM=%TERM%";
+
+#else
+
+/// @brief 一次性命令：交给 `/bin/sh -c`，单引号内一律字面量（含 `$`、`;`、`(`）。
+[[nodiscard]] auto once_command(std::string_view body) -> std::string {
+    return std::string{"/bin/sh -c '"} + std::string{body} + "'";
+}
+
+constexpr std::string_view kInteractiveShell = "/bin/sh";
+
+[[nodiscard]] auto burst_command() -> std::string {
+    return once_command("i=1; while [ $i -le 3000 ]; do echo line-$i; i=$((i+1)); done");
+}
+
+[[nodiscard]] auto print_directory_command() -> std::string {
+    return once_command("pwd");
+}
+
+// POSIX 侧让**展开后的值**与敲进去的那行不同（`$((1+1))` 由 shell 算），于是这两例断的是
+// 「子进程算出来的输出」而不是终端对键入的回显——回显在两条腿上都可能凑巧满足判据。
+constexpr std::string_view kTypedCommand = "echo borealis-typed-$((1+1))";
+constexpr std::string_view kTypedOutput = "borealis-typed-2";
+constexpr std::string_view kResizeCommand = "echo borealis-after-resize-$((2+2))";
+constexpr std::string_view kResizeOutput = "borealis-after-resize-4";
+constexpr std::string_view kKeptCommand = "echo borealis-kept-$((3+3))";
+constexpr std::string_view kKeptOutput = "borealis-kept-6";
+/// 环境变量的展开形态：shell 用 `$VAR`。
+constexpr std::string_view kEnvProbeBody = "echo TERM=$TERM COLORTERM=$COLORTERM";
+constexpr std::string_view kSingleEnvProbeBody = "echo TERM=$TERM";
+
+#endif
+
 }  // namespace
 
 AURORA_TEST_CASE(default_shell_probe_returns_an_existing_executable) {
@@ -150,24 +228,27 @@ AURORA_TEST_CASE(default_shell_probe_returns_an_existing_executable) {
 }
 
 AURORA_TEST_CASE(custom_command_output_reaches_the_grid) {
-    const auto session = make_session("cmd.exe /c echo borealis-e2e");
+    const auto session = make_session(once_command("echo borealis-e2e"));
     const auto line = wait_for_line(*session, "borealis-e2e");
-    AURORA_TEST_REQUIRE_MSG(line.has_value(), "no output from ConPTY within timeout");
+    AURORA_TEST_REQUIRE_MSG(line.has_value(), "no output from the local PTY within timeout");
+    // 逐行相等而不只是「含这段素材」：shell 解析失败时它把 $0（就是命令行的第二个 token）印进
+    // 错误前缀，于是 `borealis-e2e': 1: Syntax error` 也满足「包含」，而它并不是命令的输出。
+    AURORA_TEST_CHECK_STREQ(*line, "borealis-e2e");
     AURORA_TEST_CHECK(wait_until_dead(*session));  // 一次性命令跑完即退出
 }
 
 AURORA_TEST_CASE(pty_environment_is_injected_into_the_child) {
     // SPEC.FEAT.CONN.01：PTY 环境注入 TERM=xterm-256color 与 COLORTERM=truecolor。
-    const auto session = make_session("cmd.exe /c echo TERM=%TERM% COLORTERM=%COLORTERM%");
+    const auto session = make_session(once_command(kEnvProbeBody));
     const auto line = wait_for_line(*session, "TERM=xterm-256color");
-    AURORA_TEST_REQUIRE_MSG(line.has_value(), "TERM was not injected into the ConPTY environment");
+    AURORA_TEST_REQUIRE_MSG(line.has_value(), "TERM was not injected into the child environment");
     AURORA_TEST_CHECK(line->find("COLORTERM=truecolor") != std::string::npos);
 }
 
 AURORA_TEST_CASE(profile_environment_overrides_the_default_term) {
     // 注入是默认值而非硬编码：规格里的同名变量覆盖它（`LocalTerminalSpec::environment`）。
     auto spec = LocalTerminalSpec{};
-    spec.command_line = "cmd.exe /c echo TERM=%TERM%";
+    spec.command_line = once_command(kSingleEnvProbeBody);
     spec.environment["TERM"] = "dumb";
     auto connection = conn::make_local_terminal_connection(spec, Size{kColumns, kRows});
     auto session =
@@ -179,10 +260,17 @@ AURORA_TEST_CASE(profile_environment_overrides_the_default_term) {
 }
 
 AURORA_TEST_CASE(working_directory_applies_at_startup) {
-    const auto root = aurora::testing::paths::repo_root();
-    AURORA_TEST_REQUIRE(!root.empty());
-    const auto session = make_session("cmd.exe /c cd", root);
-    const auto expected = normalize_path(root);
+    // 请求的目录必须**不是测试进程自己的当前目录**：两者相同时「应用了启动目录」与「继承了进程
+    // cwd」给出同一个读数，判据结构上抓不到子进程侧 fchdir 那一腿被删（变异实测八例全绿）。
+    const auto requested =
+        std::filesystem::path{aurora::testing::paths::repo_root()} / "codespec";
+    AURORA_TEST_REQUIRE(std::filesystem::exists(requested));
+    const auto expected = normalize_path(requested.string());
+    AURORA_TEST_REQUIRE_MSG(
+        expected != normalize_path(std::filesystem::current_path().string()),
+        "the requested directory equals the test process working directory, so this case cannot tell "
+        "'applied' from 'inherited'");
+    const auto session = make_session(print_directory_command(), requested.string());
     const auto deadline = std::chrono::steady_clock::now() + kSettleTimeout;
     auto found = false;
     while (std::chrono::steady_clock::now() < deadline && !found) {
@@ -197,23 +285,37 @@ AURORA_TEST_CASE(working_directory_applies_at_startup) {
     AURORA_TEST_REQUIRE_MSG(found, "child process did not start in the requested directory");
 }
 
+AURORA_TEST_CASE(a_missing_startup_directory_fails_the_launch) {
+    // 两条腿的错误等价：Windows 侧 `CreateProcessW` 对坏 `lpCurrentDirectory` 是整个启动失败，
+    // POSIX 侧必须在 fork **之前**把目录打开判掉，而不是悄悄起一个停在继承目录里的 shell——
+    // 那副样子是「配了启动目录却什么都没发生」且不留任何痕迹。
+    const auto missing =
+        std::filesystem::path{aurora::testing::paths::repo_root()} / "no-such-startup-dir";
+    AURORA_TEST_REQUIRE_FALSE(std::filesystem::exists(missing));
+    const auto session = make_session(std::string{kInteractiveShell}, missing.string());
+    AURORA_TEST_CHECK_FALSE(session->alive());
+    for (const auto &row : screen_rows(*session)) {
+        AURORA_TEST_CHECK(row.empty());  // 没有任何 shell 提示符上过屏：启动确实没发生
+    }
+}
+
 AURORA_TEST_CASE(typed_input_round_trips_and_size_change_keeps_the_stream) {
-    // SPEC.FEAT.XFER.01 的 Windows 腿：ResizePseudoConsole 之后子进程仍照常输出。
-    const auto session = make_session("cmd.exe");
-    session->send_text(U"echo borealis-typed\r");
-    AURORA_TEST_REQUIRE_MSG(wait_for_line(*session, "borealis-typed").has_value(),
-                            "typed input never came back from ConPTY");
+    // SPEC.FEAT.XFER.01 的平台腿：改尺寸之后子进程仍照常输出。
+    const auto session = make_session(std::string{kInteractiveShell});
+    session->send_text(to_code_points(kTypedCommand) + U"\r");
+    AURORA_TEST_REQUIRE_MSG(wait_for_line(*session, kTypedOutput).has_value(),
+                            "typed input never came back from the PTY");
 
     session->resize(Size{100U, 24U});
     AURORA_TEST_CHECK(session->alive());
-    session->send_text(U"echo borealis-after-resize\r");
-    AURORA_TEST_REQUIRE_MSG(wait_for_line(*session, "borealis-after-resize").has_value(),
-                            "output stalled after ResizePseudoConsole");
+    session->send_text(to_code_points(kResizeCommand) + U"\r");
+    AURORA_TEST_REQUIRE_MSG(wait_for_line(*session, kResizeOutput).has_value(),
+                            "output stalled after the size change");
 }
 
 AURORA_TEST_CASE(burst_output_stays_bounded_and_consistent) {
-    // SPEC.NF.PERF.06 的真机腿：`for /l` 式高频输出下不卡死、队列条目数有界、最终内容仍等于输出。
-    const auto session = make_session("cmd.exe /c \"for /l %i in (1,1,3000) do @echo line-%i\"");
+    // SPEC.NF.PERF.06 的真机腿：高频输出下不卡死、队列条目数有界、最终内容仍等于输出。
+    const auto session = make_session(burst_command());
     const auto last = wait_for_line(*session, "line-3000");
     AURORA_TEST_REQUIRE_MSG(last.has_value(), "high-frequency output stalled before the last line");
     const auto stats = session->queue_stats();
@@ -222,9 +324,9 @@ AURORA_TEST_CASE(burst_output_stays_bounded_and_consistent) {
 }
 
 AURORA_TEST_CASE(close_terminates_the_process_and_keeps_the_grid) {
-    const auto session = make_session("cmd.exe");
-    session->send_text(U"echo borealis-kept\r");
-    AURORA_TEST_REQUIRE(wait_for_line(*session, "borealis-kept").has_value());
+    const auto session = make_session(std::string{kInteractiveShell});
+    session->send_text(to_code_points(kKeptCommand) + U"\r");
+    AURORA_TEST_REQUIRE(wait_for_line(*session, kKeptOutput).has_value());
     AURORA_TEST_REQUIRE(session->alive());
 
     session->close();
@@ -233,7 +335,7 @@ AURORA_TEST_CASE(close_terminates_the_process_and_keeps_the_grid) {
     const auto rows = screen_rows(*session);
     auto kept = false;
     for (const auto &row : rows) {
-        kept = kept || row.find("borealis-kept") != std::string::npos;
+        kept = kept || row.find(std::string{kKeptOutput}) != std::string::npos;
     }
     AURORA_TEST_CHECK(kept);
 }

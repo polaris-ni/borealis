@@ -25,6 +25,26 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
+    },
+    {
+      "name": "linux",
+      "displayName": "GCC + Ninja (default)",
+      "description": "The POSIX leg of SPEC.NF.PLAT.01: same Ninja generator and Debug build type, host toolchain taken from PATH (c++). No developer-environment wrapper is needed here, unlike the msvc preset.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-bench",
+      "displayName": "GCC + Ninja (RelWithDebInfo, benchmarks)",
+      "description": "Optimized POSIX build for the time-class gates, same contract as msvc-bench (ruling 7.35): a Debug reading inflates the write chain, so a benchmark must declare its build config.",
+      "inherits": "linux",
+      "binaryDir": "${sourceDir}/build-bench",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
     }
   ],
   "buildPresets": [
@@ -37,6 +57,16 @@
       "name": "msvc-bench",
       "displayName": "Build (build-bench/, optimized)",
       "configurePreset": "msvc-bench"
+    },
+    {
+      "name": "linux",
+      "displayName": "Build (build/)",
+      "configurePreset": "linux"
+    },
+    {
+      "name": "linux-bench",
+      "displayName": "Build (build-bench/, optimized)",
+      "configurePreset": "linux-bench"
     }
   ],
   "testPresets": [
@@ -44,6 +74,17 @@
       "name": "msvc",
       "displayName": "Test (build/, parallel)",
       "configurePreset": "msvc",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 0
+      }
+    },
+    {
+      "name": "linux",
+      "displayName": "Test (build/, parallel)",
+      "configurePreset": "linux",
       "output": {
         "outputOnFailure": true
       },
