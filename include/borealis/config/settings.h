@@ -184,6 +184,20 @@ struct SerialDefaults {
     [[nodiscard]] auto operator==(const SerialDefaults &other) const noexcept -> bool = default;
 };
 
+/// @brief 最近连接列表的定长上限（`SPEC.FEAT.CONN.07` 明写五条）。
+constexpr std::size_t kRecentConnectionLimit = 5;
+
+/// @brief 最近连接里的一条（`SPEC.FEAT.CONN.07`）。
+///
+/// 只存档案 id 与时间戳，不存任何凭据；与撤销关闭标签（`SPEC.FEAT.WS.10`）的栈分开维护。
+struct RecentConnection {
+    std::string profile_id{}; ///< 档案 id；quick connect 用其临时 id。
+    std::int64_t used_at{0};  ///< Unix 秒时间戳，只用于排序与展示。
+
+    /// @brief 逐字段全等比较（配置往返断言用）。
+    [[nodiscard]] auto operator==(const RecentConnection &other) const noexcept -> bool = default;
+};
+
 /// @brief 连接域：本地终端、SSH 与串口的默认值（`SPEC.FEAT.PREF.02` 的「连接」）。
 struct ConnectionSettings {
     std::string local_shell{};       ///< 空＝走探测链（Windows PowerShell → cmd → WSL；POSIX `$SHELL` → /bin/bash → /bin/sh；裁决 7.19④ 与 7.89）。
@@ -194,9 +208,21 @@ struct ConnectionSettings {
     bool session_logging{false};   ///< 会话日志默认关闭（裁决 7.9），开启须逐会话显式动作。
     std::string session_log_dir{}; ///< 空＝未设置；日志路径配置归本域（架构 §7.5）。
 
+    /// @brief 最近连接（最近在前，定长 `kRecentConnectionLimit`）。
+    ///
+    /// 与 `SPEC.FEAT.WS.10` 撤销关闭标签的栈是两回事：那条栈记「关掉的会话」，这张表记
+    /// 「用过哪些档案」，两者各自维护、互不复用。
+    std::vector<RecentConnection> recent{};
+
     /// @brief 逐字段全等比较（配置往返断言用）。
     [[nodiscard]] auto operator==(const ConnectionSettings &other) const noexcept -> bool = default;
 };
+
+/// @brief 登记一次「用过这条连接」：按 id 去重并置顶，超出 `kRecentConnectionLimit` 丢弃尾部。
+///
+/// 纯逻辑、不读时钟也不碰文件系统——`used_at` 由调用方传入，故可无头单测。
+auto push_recent_connection(ConnectionSettings &connection, std::string_view profile_id, std::int64_t used_at)
+    -> void;
 
 /// @brief 快捷键域：以 Command id 为锚的覆盖表（`SPEC.FEAT.PREF.04`、`SPEC.FEAT.WS.07`）。
 ///

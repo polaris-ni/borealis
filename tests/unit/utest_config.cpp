@@ -168,6 +168,10 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     gateway.ssh.known_hosts_policy = conn::KnownHostsPolicy::Ask;
     gateway.ssh.credential = conn::SecretHandle::reference("vault://demo-gateway");
     next.profiles.push_back(std::move(gateway));
+
+    // 最近连接（`SPEC.FEAT.CONN.07`）：两条非缺省条目，覆盖 connection 域新增表的往返等值。
+    next.connection.recent.push_back(config::RecentConnection{"ssh-import:gateway", 1700000000});
+    next.connection.recent.push_back(config::RecentConnection{"local:default", 1699999999});
     return next;
 }
 

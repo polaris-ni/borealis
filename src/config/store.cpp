@@ -323,6 +323,36 @@ class ScopeReader {
         return out;
     }
 
+    /// @brief 读最近连接表（`SPEC.FEAT.CONN.07`）：数组元素形态是 `{"profile_id": ..., "used_at": ...}`。
+    ///
+    /// 形态与留痕口径同 `command_overrides`：坏一项只丢该元素并留痕其下标，不让整张表失效。
+    /// 表里只有 id 与时间戳，不含任何凭据，故不触碰 CONN.09 的明文审计。
+    [[nodiscard]] auto recent_list(std::string_view key, std::vector<RecentConnection> fallback)
+        -> std::vector<RecentConnection> {
+        known_.emplace_back(key);
+        if (node_ == nullptr) {
+            return fallback;
+        }
+        const Value *value = node_->at(key);
+        if ((value == nullptr) || !value->is_array()) {
+            reject(key);
+            return fallback;
+        }
+        std::vector<RecentConnection> out;
+        for (std::size_t index = 0; index < value->size(); ++index) {
+            const Value *item = value->at(index);
+            const auto profile_id = text_of(item == nullptr ? nullptr : item->at("profile_id"));
+            const Value *stamp = item == nullptr ? nullptr : item->at("used_at");
+            const auto used_at = (stamp == nullptr) ? std::nullopt : stamp->as_int();
+            if (!profile_id || profile_id->empty() || !used_at) {
+                report_.rejected_keys.push_back(qualified(key) + "[" + std::to_string(index) + "]");
+                continue;
+            }
+            out.push_back(RecentConnection{std::string{*profile_id}, *used_at});
+        }
+        return out;
+    }
+
   private:
     /// @brief 取键并解析：缺失 / null / 解析失败都留痕一次，返回空 optional。
     /// @tparam Parser 返回 `std::optional<T>` 的可调用件。
@@ -481,6 +511,17 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
 
     put(node, "session_logging", connection.session_logging);
     put(node, "session_log_dir", connection.session_log_dir);
+
+    // 数组而不是「id 作键」的映射：理由同快捷键覆盖表（命令 id 里的点号会被拆成嵌套对象），
+    // 且空表也必须留得下来——空对象在装载时会被拍平掉。
+    auto recent = Value::array();
+    for (const auto &item : connection.recent) {
+        auto entry = Value::object();
+        put(entry, "profile_id", item.profile_id);
+        put(entry, "used_at", item.used_at);
+        recent.push_back(std::move(entry));
+    }
+    node.set("recent", std::move(recent));
     return node;
 }
 
@@ -690,6 +731,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
 
     connection.session_logging = scope.boolean("session_logging", defaults.connection.session_logging);
     connection.session_log_dir = scope.text("session_log_dir", defaults.connection.session_log_dir);
+    connection.recent = scope.recent_list("recent", defaults.connection.recent);
     scope.collect_unknown();
     return connection;
 }
