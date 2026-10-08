@@ -4,6 +4,18 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.83（2026-10-08）**`SPEC.FEAT.WS.01` 的关闭前确认（有运行中进程时）已落：装配层按 7.47⑧ 判据呼一次确认框、答 Yes 才关整张标签**（`src/main.cpp`、判据入册为裁决 **7.83**）
+
+**动机**：v0.82 交付多标签批次时把「关闭前确认（有运行中进程时）」明列为未落项——标签条的 close 钮当时无条件走「摘标签 → 记闭包栈 → 销毁工作区与会话」，于是用户在 vim / build / ssh 还在跑的时候点一下 × 就把进程静默杀掉了。判据早在裁决 7.47⑧ 拍死，本条只是把它接上装配层。
+
+**决定形态的口径**：⑴ **判据一字照取 7.47⑧**——「该标签**任一** pane 的会话进程仍在（`Session::alive()`）」即呼确认框，**一次确认关整张标签**（逐 pane 追问在多 pane 标签上是 N 个对话框；只看选中 pane 会静默杀掉未选中 pane 里跑着的任务），全部已退出则直接关、不再问。⑵ **关闭动作收敛成单一 `perform_close` 闭包**：原先「确认」与「直接关」两条路径各写一遍「摘标签 → 记闭包栈 → 销毁工作区 → 必要时切相邻标签」，两份就会分叉（典型症状是「确认后关闭漏记闭包栈，撤销关闭找不回那一张」）；现两条路径共用同一支，差别只在要不要先问一句。⑶ **确认框与多行粘贴确认同形态**——懒挂一只常驻 `au::Dialog`（首次 `host->add_overlay` 之后复用同一实例换文案），内容取框架 `au::confirm(title, message, bool_callback)`，答话闭包先 `close()` 再按 `accepted` 决定是否 `perform_close`；生存期用成员 `shared_ptr` 跨过 Show→答话那一段，与 `TerminalView::ask_multiline_warning` 同一条持有理由。**代价如实登记**：`src/main.cpp` 是 `add_executable(borealis main.cpp)` 而**不编入** `borealis_core`，故 CTest runner 结构上抓不到装配层这条路径；判据本体是 `any_of(alive)` ＋「呼出一次对话框」，抽一枚纯逻辑件来测只是把 `any_of` 再测一遍（会话存活判定本身已由 `utest_session` 覆盖），按裁决 7.49⑥ 的等价注入口径**不伪造绿灯**，其证人归真机走查。
+
+**验收**：构建通过；非 e2e 通道 `ctest -E etest_` 维持 **47 项全绿**（本条未新增用例，理由见上）。
+
+**未落与代价**：真机走查未做（会话锁屏下 `SendInput` 静默失效，裁决 7.31①）——确认框呈现、答 No 后标签仍在、答 Yes 后整张关且进闭包栈可撤销，三处只能人工判，故不宣称 WS.01「可用」。
+
+**文档回写**：本条、裁决 **7.83** 与 §7 标题段日期范围、`SPEC.FEAT.WS.01` 那条的落地现状句、`codespec/PLAN.md` 的 M2 未交付清单与 `SPEC.FEAT.WS.01` 行、`AGENTS.md` §6。
+
 ## v0.82（2026-10-08）**M2 工作区多标签批次：标签条界面腿 ＋ 装配层多会话化 ＋ WS.04/06/07/10 ＋ PREF.04 重绑 ＋ RELI.01 调试面板 ＋ PERF.03–05 资源门禁，同批登记框架缺口 G38 / G39**（`src/ui/tab_bar.{h,cpp}` 新增、`include/borealis/ui/closed_tab_stack.h` + `src/ui/closed_tab_stack.cpp` 新增、`src/ui/debug_panel.{h,cpp}` 新增、`include/borealis/ui/tab_strip.h` + `src/ui/tab_strip.cpp`、`include/borealis/term/terminal.h` + `src/term/terminal.cpp`、`include/borealis/session/session.h` + `src/session/session.cpp`、`src/ui/settings_panel.{h,cpp}` + `src/ui/settings_i18n.cpp`、`src/main.cpp`、`src/CMakeLists.txt`、`tools/CMakeLists.txt` + `tools/bench/{startup_time,memory_usage,idle_cpu}.cpp` + `tools/check/check_startup_gate.{sh,ps1}` / `check_memory_gate.sh` / `check_idle_cpu_gate.sh`、`tests/unit/utest_closed_tab_stack.cpp` 新增 + `tests/unit/utest_tab_strip.cpp` / `utest_terminal.cpp` / `utest_session.cpp` 新例 + `tests/integration/itest_debug_panel.cpp` 新增 + `tests/integration/itest_settings_panel.cpp` 重绑新例，判据入册为裁决 **7.82**）
 
 **动机**：v0.81 之前装配层始终持单会话——`ui::TabStrip`、`ui::PaneTree`、`ui::TerminalView` 三件各自齐备却从未在同一棵树上接起来，标签条与分屏对用户不可见。本条覆盖五提交（WS.07 命令面板装配 `e626918`、三条资源门禁 `057554e`、多标签批次 `ae45559`、调试面板 `9fbbdbb`、快捷键重绑 `66aec8c`）一并出账，因为「装配层多会话化」「帧泵范围」「每视图浮层挂接」是同一棵树上的三件事，拆开记账会留下互相引用的空洞。

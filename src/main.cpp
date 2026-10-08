@@ -272,17 +272,78 @@ auto main() -> int {
         stack->mark_needs_paint();
     };
 
-    // 标签栏界面腿已在上面 root_stack 创建时内联定义，此处不再重复
-
     // 右键菜单与多行粘贴确认都是浮层，故场景根是浮层宿主而非视口本身（裁决 7.41③）：宿主的子节点
     // [0] 是撑满窗口的标签栏，[1] 是当前工作区，[2..] 是按需追加的 Popup / Dialog / 面板浮层。
     auto host = std::make_shared<au::OverlayHost>();
-    
+
     // 添加标签栏（用 Stack 承载，因为 OverlayHost 只管理浮层，常规内容须走普通容器）
     auto root_stack = std::make_shared<au::Stack>();
     root_stack->modifier.set(au::Modifier{}.fill_max_size());
-    
-    // 标签栏需要 shared_ptr 才能加入场景树
+
+    // 真正关闭一张标签：从标签条摘除、记进闭包栈、销毁工作区与会话、必要时切到相邻标签。
+    // 「确认」与「直接关」两条路径共用这一支，差别只在要不要先问一句（裁决 7.47⑧）。
+    auto perform_close = [&](std::uint64_t raw_id) -> void {
+        const borealis::ui::TabId id = static_cast<borealis::ui::TabId>(raw_id);
+        const bool removed = tab_strip.close(id);
+        if (!removed) {
+            return;
+        }
+        // 关闭前记录到闭包栈（`SPEC.FEAT.WS.10`）
+        auto it = tab_workspaces.find(id);
+        if (it != tab_workspaces.end()) {
+            borealis::ui::ClosedTabSpec spec;
+            // 名称与位置都取 `close()` 记下的那份：此刻该标签已不在表里，回查只会拿到空名，
+            // 于是重开回来的标签变成一个无名格——那正是本件要避免的「内容不可恢复」被扩大成
+            // 「名字也丢了」。
+            if (const auto closed = tab_strip.last_closed(); closed.has_value()) {
+                static_cast<void>(borealis::term::encode_utf8(closed->name, spec.name));
+                spec.index_in_strip = closed->index_in_strip;
+            }
+            // 本地终端的连接规格从配置取（目前只支持本地终端，SSH 腿到货后追加）
+            spec.local_shell = settings.connection.local_shell;
+            spec.startup_directory = settings.connection.startup_directory;
+            closed_tab_stack.push(std::move(spec));
+            // 销毁对应的 WorkspaceView 和会话
+            tab_workspaces.erase(it);
+        }
+        if (current_tab_id.has_value() && current_tab_id.value() == id) {
+            // 选下一个或上一个
+            const auto next = tab_strip.selected();
+            if (next.has_value()) {
+                current_tab_id = next.value();
+            } else {
+                current_tab_id.reset();
+            }
+            // 更新显示的工作区
+            rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
+        }
+    };
+
+    // 关闭确认对话框常驻一只：判据是该标签**任一** pane 的会话进程仍在（`Session::alive()`），
+    // 一次确认关整张标签（逐 pane 追问在多 pane 标签上就是 N 个对话框）。全部已退出则直接关、不再问。
+    // 对话框盖在浮层宿主上，故其生存期须跨过 Show→答话这一段，用一只成员 shared_ptr 持有；与多行粘贴
+    // 确认（`TerminalView::ask_multiline_warning`）同形态，首次挂入后复用同一实例换文案。
+    auto close_confirm = std::make_shared<au::Dialog>();
+    bool close_confirm_mounted = false;
+    auto ask_close_confirm = [&](std::uint64_t raw_id) -> void {
+        if (!close_confirm_mounted) {
+            static_cast<void>(host->add_overlay(aurora::Node{std::static_pointer_cast<au::Widget>(close_confirm)}));
+            close_confirm_mounted = true;
+        }
+        close_confirm->set_content(
+            au::confirm(
+                "关闭标签",  // CJK-LITERAL: 上屏文案 - 面向用户的对话框标题
+                "该标签里还有正在运行的进程，关闭会终止它们。确定关闭吗？",  // CJK-LITERAL: 上屏文案 - 面向用户的对话框正文
+                [raw_id, &perform_close, close_confirm](bool accepted) -> void {
+                    close_confirm->close();
+                    if (accepted) {
+                        perform_close(raw_id);
+                    }
+                }));
+        close_confirm->show();
+    };
+
+    // 标签栏界面腿已在上面 root_stack 创建时内联定义，此处不再重复
     auto tab_bar_ptr = std::make_shared<borealis::ui::TabBarWidget>(borealis::ui::TabBarHooks{
         .tabs = [&]() -> std::vector<borealis::ui::TabVisual> {
             std::vector<borealis::ui::TabVisual> out;
@@ -309,38 +370,23 @@ auto main() -> int {
             tab_strip.take_activity(static_cast<borealis::ui::TabId>(id));
         },
         .close = [&](std::uint64_t id) -> void {
-            const bool removed = tab_strip.close(static_cast<borealis::ui::TabId>(id));
-            if (removed) {
-                // 关闭前记录到闭包栈（`SPEC.FEAT.WS.10`）
-                auto it = tab_workspaces.find(static_cast<borealis::ui::TabId>(id));
-                if (it != tab_workspaces.end()) {
-                    borealis::ui::ClosedTabSpec spec;
-                    // 名称与位置都取 `close()` 记下的那份：此刻该标签已不在表里，回查只会拿到空名，
-                    // 于是重开回来的标签变成一个无名格——那正是本件要避免的「内容不可恢复」被扩大成
-                    // 「名字也丢了」。
-                    if (const auto closed = tab_strip.last_closed(); closed.has_value()) {
-                        static_cast<void>(borealis::term::encode_utf8(closed->name, spec.name));
-                        spec.index_in_strip = closed->index_in_strip;
+            // 判据：该标签任一 pane 的会话进程仍在 ⇒ 一次确认关整张标签；全部已退出 ⇒ 直接关、不再问
+            //（裁决 7.47⑧）。
+            bool any_alive = false;
+            if (const auto found = tab_workspaces.find(static_cast<borealis::ui::TabId>(id));
+                found != tab_workspaces.end()) {
+                for (const auto &session : found->second.sessions) {
+                    if (session->alive()) {
+                        any_alive = true;
+                        break;
                     }
-                    // 本地终端的连接规格从配置取（目前只支持本地终端，SSH 腿到货后追加）
-                    spec.local_shell = settings.connection.local_shell;
-                    spec.startup_directory = settings.connection.startup_directory;
-                    closed_tab_stack.push(std::move(spec));
-                    // 销毁对应的 WorkspaceView 和会话
-                    tab_workspaces.erase(it);
-                }
-                if (current_tab_id.has_value() && current_tab_id.value() == static_cast<borealis::ui::TabId>(id)) {
-                    // 选下一个或上一个
-                    const auto next = tab_strip.selected();
-                    if (next.has_value()) {
-                        current_tab_id = next.value();
-                    } else {
-                        current_tab_id.reset();
-                    }
-                    // 更新显示的工作区
-                    rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
                 }
             }
+            if (any_alive) {
+                ask_close_confirm(id);
+                return;
+            }
+            perform_close(id);
         },
         .rename = [&](std::uint64_t id, std::u32string name) -> void {
             tab_strip.rename(static_cast<borealis::ui::TabId>(id), std::move(name));
