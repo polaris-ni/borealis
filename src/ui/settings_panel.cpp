@@ -34,6 +34,7 @@
 #include "aurora/widget/button.h"
 #include "aurora/widget/canvas.h"
 #include "aurora/widget/containers.h"
+#include "aurora/widget/dialog.h"
 #include "aurora/widget/dropdown.h"
 #include "aurora/widget/layout_builder.h"
 #include "aurora/widget/radio_spin.h"
@@ -1309,11 +1310,12 @@ auto SettingsPanel::build_shortcuts_section(std::size_t ordinal) -> aurora::Node
     // 行投影在本函数开头清一次：卡片是 `LayoutBuilder`，本闭包在每次布局都会重跑（裁决 7.61 在主题卡
     // 那一区撞过的同一条），不清就会让观测面报出界面上并不存在的行。
     shortcuts_rows_.clear();
+    shortcut_edit_buttons_.clear();
 
     const SettingsControl &control = *rows_[ordinal];
-    // 表头那一行的状态列取 `editable=false`：该行的角标是「延后」（覆盖表无消费方），而这一页没有任何
-    // 提交入口，故状态列不会被 `after_commit` 改写。
-    auto [label, status] = build_header(ordinal, control, false);
+    // 表头那一行的状态列取 `editable=false`：该行的角标是「延后」（覆盖表无消费方），而这一页有
+    // 「恢复默认」按钮，故状态列会被 `after_commit` 改写。
+    auto [label, status] = build_header(ordinal, control, true);
     auto header = std::make_shared<aurora::Row>(aurora::RowProps{
         .children = {std::move(label), std::move(status)},
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
@@ -1368,18 +1370,70 @@ auto SettingsPanel::build_shortcuts_section(std::size_t ordinal) -> aurora::Node
                                  settings_label("settings.shortcut.column.note")));
 
     const std::string unbound = settings_label("settings.shortcut.unbound");
-    for (const ShortcutTableRow &row : table) {
+    for (std::size_t i = 0; i < table.size(); ++i) {
+        const ShortcutTableRow &row = table[i];
         const std::string binding = row.binding_text.empty() ? unbound : row.binding_text;
         const std::string note = shortcut_note_text(row, table);
-        children.push_back(make_line(false, row.title, row.category, binding, note));
+        
+        // 每行四列 + 编辑按钮
+        auto edit_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
+            .label = settings_label("settings.action.edit"),
+            .color = kControlBg,
+            .on_color = kText,
+            .border_color = kCardLine,
+            .border_width = 1.0F,
+            .min_width = 56.0F,
+        });
+        edit_btn->set_on_click([this, command_id = row.command, index = i]() -> void {
+            open_binding_dialog(command_id, index);
+        });
+        shortcut_edit_buttons_.push_back(edit_btn);
+        
+        auto title_cell = make_cell(row.title, kText, 0.0F);
+        auto category_cell = make_cell(row.category, kText, kShortcutCategoryWidthDp);
+        auto binding_cell = make_cell(binding, kText, kShortcutBindingWidthDp);
+        auto note_cell = make_cell(note, kTextDim, kShortcutNoteWidthDp);
+        
+        auto row_node = std::make_shared<aurora::Row>(aurora::RowProps{
+            .children = {std::move(title_cell),
+                         std::move(category_cell),
+                         std::move(binding_cell),
+                         std::move(note_cell),
+                         aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(edit_btn))}},
+            .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
+            .gap = 12.0F,
+        });
+        row_node->modifier.set(aurora::Modifier{}.fill_max_width().height(kShortcutRowHeightDp));
+        children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(row_node))});
+        
         shortcuts_rows_.push_back(ShortcutRowView{
             .title = row.title,
             .category = row.category,
             .binding_text = binding,
             .note = note,
             .deferred = !row.registered,
+            .command_id = row.command,
         });
     }
+
+    // 「恢复默认」按钮：清空所有覆盖，回到注册表的 default_binding
+    auto restore_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
+        .label = settings_label("settings.action.restore_defaults"),
+        .color = kControlBg,
+        .on_color = kText,
+        .border_color = kCardLine,
+        .border_width = 1.0F,
+        .min_width = 120.0F,
+    });
+    restore_btn->set_on_click([this]() -> void { restore_shortcut_defaults(); });
+    
+    auto footer = std::make_shared<aurora::Row>(aurora::RowProps{
+        .children = {std::static_pointer_cast<aurora::Widget>(std::move(restore_btn))},
+        .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
+        .gap = 12.0F,
+    });
+    footer->modifier.set(aurora::Modifier{}.fill_max_width());
+    children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(footer))});
 
     auto section = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(children),
                                                                        .gap = kSectionGapDp});
@@ -2107,9 +2161,256 @@ auto SettingsPanel::is_editable(const SettingsControl &control) -> bool {
         case ControlKind::FamilyList:
             return true;  // 四个区段在 `build_row` 就分派出去，本函数只为行表与观察面给出可交互判据
         case ControlKind::ReadOnlyTable:
-            return false;  // 快捷键表首版只读（S9 / D3-a）：表体已经画出，但没有一个提交入口
+            return true;  // 快捷键表现在可编辑（PREF.04）：有编辑按钮与恢复默认功能
     }
     return false;
+}
+
+auto SettingsPanel::open_binding_dialog(const std::string &command_id, std::size_t row_index) -> void {
+    if (row_index >= shortcuts_rows_.size()) {
+        return;  // 索引越界：该行不在当前可见集里
+    }
+    
+    editing_command_id_ = command_id;
+    editing_row_index_ = row_index;
+    
+    const ShortcutRowView &row = shortcuts_rows_[row_index];
+    
+    // 建对话框：标题 + 输入框 + 冲突提示 + 确定/取消按钮
+    if (binding_dialog_ == nullptr) {
+        binding_input_ = std::make_shared<aurora::TextInput>();
+        binding_input_->set_background(kControlBg);
+        binding_input_->set_border_color(kCardLine);
+        binding_input_->set_focused_border_color(kAccent);
+        binding_input_->set_text_color(kText);
+        binding_input_->modifier.set(aurora::Modifier{}.width(280.0F));
+        
+        // 冲突提示文本
+        conflict_notice_ = std::make_shared<aurora::Text>(aurora::TextProps{
+            .content = {},
+        });
+        conflict_notice_->modifier.set(aurora::Modifier{}.fill_max_width());
+        
+        // 确定按钮
+        auto ok_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
+            .label = settings_label("settings.action.confirm"),
+            .color = kAccent,
+            .on_color = kText,
+            .min_width = 80.0F,
+        });
+        ok_btn->set_on_click([this]() -> void {
+            if (binding_input_ != nullptr) {
+                commit_binding(binding_input_->value());
+            }
+        });
+        
+        // 取消按钮
+        auto cancel_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
+            .label = settings_label("settings.action.cancel"),
+            .color = kControlBg,
+            .on_color = kText,
+            .border_color = kCardLine,
+            .border_width = 1.0F,
+            .min_width = 80.0F,
+        });
+        cancel_btn->set_on_click([this]() -> void { close_binding_dialog(); });
+        
+        // 对话框内容：标题 + 输入框 + 冲突提示 + 按钮行
+        auto title_text = make_text(settings_label("settings.shortcut.edit_title"), kText);
+        auto button_row = std::make_shared<aurora::Row>(aurora::RowProps{
+            .children = {
+                aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(ok_btn))},
+                aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(cancel_btn))},
+            },
+            .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
+            .gap = 12.0F,
+        });
+        
+        auto content = std::make_shared<aurora::Column>(aurora::ColumnProps{
+            .children = {
+                title_text,
+                aurora::Node{std::static_pointer_cast<aurora::Widget>(binding_input_)},
+                aurora::Node{std::static_pointer_cast<aurora::Widget>(conflict_notice_)},
+                aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(button_row))},
+            },
+            .gap = 8.0F,
+        });
+        content->modifier.set(aurora::Modifier{}.padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F}));
+        
+        binding_dialog_ = std::make_shared<aurora::Dialog>(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(content))});
+    }
+    
+    // 初始化输入框为当前绑定值
+    if (binding_input_ != nullptr) {
+        binding_input_->set_value(row.binding_text);
+    }
+    
+    // 检测初始冲突
+    update_conflict_notice(row.binding_text);
+    
+    // 监听输入变化以实时更新冲突提示
+    binding_input_->set_on_changed([this](const std::string &text) -> void {
+        update_conflict_notice(text);
+    });
+    
+    // 显示对话框
+    binding_dialog_->show();
+}
+
+auto SettingsPanel::close_binding_dialog() -> void {
+    if (binding_dialog_ != nullptr) {
+        binding_dialog_->close();
+    }
+    editing_command_id_.clear();
+    editing_row_index_ = 0;
+}
+
+auto SettingsPanel::update_conflict_notice(const std::string &combo_text) -> void {
+    if (conflict_notice_ == nullptr) {
+        return;
+    }
+    
+    const std::vector<std::string> conflicts = detect_conflicts(combo_text, editing_command_id_);
+    if (conflicts.empty()) {
+        conflict_notice_->content = {};
+    } else {
+        std::string notice = settings_label("settings.shortcut.conflict_warning") + ": ";
+        for (std::size_t i = 0; i < conflicts.size(); ++i) {
+            if (i > 0) {
+                notice += ", ";
+            }
+            notice += conflicts[i];
+        }
+        conflict_notice_->content = notice;
+    }
+    conflict_notice_->mark_needs_paint();
+}
+
+auto SettingsPanel::commit_binding(const std::string &combo_text) -> void {
+    if (editing_command_id_.empty()) {
+        return;  // 没有正在编辑的命令
+    }
+    
+    // 验证组合键文本格式（简单检查：非空且不是纯空白）
+    if (combo_text.empty() || combo_text.find_first_not_of(' ') == std::string::npos) {
+        // 空绑定＝清除覆盖，回到默认
+        clear_binding_override(editing_command_id_);
+        close_binding_dialog();
+        rebuild_overlay();  // 重建以刷新表格
+        return;
+    }
+    
+    // 写入覆盖表
+    set_binding_override(editing_command_id_, combo_text);
+    
+    // 触发落盘与广播
+    const SettingsControl *control = find_settings_control(kShortcutsKey);
+    if (control != nullptr) {
+        after_commit(kShortcutsKey, *control, CommitIssue::None);
+    }
+    
+    close_binding_dialog();
+    rebuild_overlay();  // 重建以刷新表格
+}
+
+auto SettingsPanel::restore_shortcut_defaults() -> void {
+    // 清空所有覆盖：表单里提交一个空的 overrides 列表
+    commit(kShortcutsKey, FormValue::overrides({}));
+    
+    const SettingsControl *control = find_settings_control(kShortcutsKey);
+    if (control != nullptr) {
+        after_commit(kShortcutsKey, *control, CommitIssue::None);
+    }
+    
+    rebuild_overlay();  // 重建以刷新表格
+}
+
+auto SettingsPanel::detect_conflicts(const std::string &combo_text, const std::string &exclude_command_id) const -> std::vector<std::string> {
+    if (combo_text.empty()) {
+        return {};
+    }
+    
+    std::vector<std::string> conflicts;
+    
+    // 从表单获取当前的覆盖表
+    std::vector<ShortcutOverride> overrides;
+    if (const FormValue *value = form_.value(std::string{kShortcutsKey}); value != nullptr) {
+        if (const auto table = value->as_overrides(); table.has_value()) {
+            overrides = *table;
+        }
+    }
+    
+    // 检查覆盖表中是否有其他命令使用了相同的组合键
+    for (const ShortcutOverride &override_entry : overrides) {
+        if (override_entry.command == exclude_command_id) {
+            continue;  // 跳过自己
+        }
+        if (override_entry.combo == combo_text) {
+            // 找到冲突：需要查出该命令的标题
+            if (hooks_.commands) {
+                const auto entries = hooks_.commands();
+                for (const ShortcutCommandEntry &entry : entries) {
+                    if (entry.command == override_entry.command) {
+                        conflicts.push_back(entry.title);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
+    // 还要检查是否与注册表的 default_binding 冲突（且该命令没有被覆盖）
+    // 注意：ShortcutCommandEntry 没有 default_binding 字段，它来自 CommandRegistry
+    // 这里我们只检测覆盖表内的冲突，框架侧的 default_binding 冲突由 bind_shortcuts 处理
+    
+    return conflicts;
+}
+
+auto SettingsPanel::set_binding_override(const std::string &command_id, const std::string &combo_text) -> void {
+    // 读取当前覆盖表
+    std::vector<ShortcutOverride> overrides;
+    if (const FormValue *value = form_.value(std::string{kShortcutsKey}); value != nullptr) {
+        if (const auto table = value->as_overrides(); table.has_value()) {
+            overrides = *table;
+        }
+    }
+    
+    // 查找是否已有该命令的覆盖
+    auto it = std::find_if(overrides.begin(), overrides.end(),
+                           [&command_id](const ShortcutOverride &o) {
+                               return o.command == command_id;
+                           });
+    
+    if (it != overrides.end()) {
+        // 更新现有覆盖
+        it->combo = combo_text;
+    } else {
+        // 添加新覆盖
+        overrides.push_back(ShortcutOverride{command_id, combo_text});
+    }
+    
+    // 提交到表单
+    commit(kShortcutsKey, FormValue::overrides(overrides));
+}
+
+auto SettingsPanel::clear_binding_override(const std::string &command_id) -> void {
+    // 读取当前覆盖表
+    std::vector<ShortcutOverride> overrides;
+    if (const FormValue *value = form_.value(std::string{kShortcutsKey}); value != nullptr) {
+        if (const auto table = value->as_overrides(); table.has_value()) {
+            overrides = *table;
+        }
+    }
+    
+    // 移除该命令的覆盖
+    overrides.erase(std::remove_if(overrides.begin(), overrides.end(),
+                                   [&command_id](const ShortcutOverride &o) {
+                                       return o.command == command_id;
+                                   }),
+                    overrides.end());
+    
+    // 提交到表单
+    commit(kShortcutsKey, FormValue::overrides(overrides));
 }
 
 }  // namespace borealis::ui

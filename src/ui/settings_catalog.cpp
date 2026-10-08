@@ -325,7 +325,7 @@ namespace {
     // 生效档位记的是「展示」：这张表本身即消费方，而重绑与恢复默认无接缝故挂延后角标。
     catalog.push_back(row("shortcuts.overrides",
                           SettingsPage::Shortcuts,
-                          ControlKind::ReadOnlyTable,
+                          ControlKind::ReadOnlyTable,  // PREF.04: 虽标只读但每行有 edit 按钮
                           ValueDomain::OverrideMap,
                           {},
                           {},

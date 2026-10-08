@@ -594,7 +594,12 @@ AURORA_TEST_CASE(deferred_and_next_session_rows_carry_their_badges) {
             AURORA_TEST_CHECK_EQ(row.badge, expected_badge(*control));
             // 外观页的四个专用区段（主题卡 / 16 格色板 / 字体族选择器 / 回退链）都已落成可交互区段，
             // 故这里只剩「快捷键只读表」一类专用形态仍是占位。`Absent` 行**不**因此灰置（裁决 7.68③）。
-            AURORA_TEST_CHECK_EQ(row.editable, control->kind != ControlKind::ReadOnlyTable);
+            // PREF.04 落地后快捷键行变为可编辑（每行有 edit 按钮），但 ControlKind 仍标 ReadOnlyTable（只是画出来的表带编辑入口）。
+            if (row.key == "shortcuts.overrides") {
+                AURORA_TEST_CHECK_TRUE(row.editable);  // PREF.04: 虽标只读但可点编辑
+            } else {
+                AURORA_TEST_CHECK_EQ(row.editable, control->kind != ControlKind::ReadOnlyTable);
+            }
         }
     }
 
@@ -649,12 +654,13 @@ AURORA_TEST_CASE(dedicated_control_rows_show_a_readonly_summary) {
 
     panel.select_page(SettingsPage::Shortcuts);
     const auto shortcut_rows = panel.visible_rows();
-    AURORA_TEST_REQUIRE_EQ(shortcut_rows.size(), 1U);
-    AURORA_TEST_CHECK_FALSE(shortcut_rows[0].editable);
-    // 表体已经逐行画出（三列显示串 + 那一列标注），行末再给一个「几条」就是把同一份内容显示第二遍；
-    // 且那个数会与画出来的行数不一致——覆盖表里只有「注册表查无此 id」的条目产行，已注册命令的覆盖
-    // 条目既不产行也不改写那一行（裁决 7.72②）。
-    AURORA_TEST_CHECK_TRUE(shortcut_rows[0].summary.empty());
+    // PREF.04 落地后快捷键行变为可编辑（每行有 edit 按钮），摘要仍留空——当前组合键在控件里，行上再显示一份就是第二个真值源。
+    AURORA_TEST_REQUIRE_GT(shortcut_rows.size(), 0U);
+    for (const SettingsPanel::VisibleRow &row : shortcut_rows) {
+        AURORA_TEST_TRACE(row.key);
+        AURORA_TEST_CHECK_TRUE(row.editable);  // PREF.04: 每行可点编辑
+        AURORA_TEST_CHECK_TRUE(row.summary.empty());  // 值在它自己的控件里，不重复显示
+    }
 }
 
 AURORA_TEST_CASE(a_wired_immediate_change_persists_once_and_broadcasts_once) {

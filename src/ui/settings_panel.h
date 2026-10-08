@@ -467,6 +467,7 @@ public:
         std::string binding_text{};  ///< 「当前组合键」列；未绑定显示已解析的「未绑定」文案。
         std::string note{};          ///< 标注列：冲突（可多条）或「延后」；无标注为空。
         bool deferred{};             ///< 孤儿行＝覆盖表里的命令 id 在注册表查无，其标注恒为「延后」而非「无冲突」。
+        std::string command_id{};    ///< 命令唯一标识，用于编辑时定位要修改的覆盖条目。
     };
 
     /// @brief 快捷键只读表当前画出的行，次序＝排版次序（该区段未画时为空表）。
@@ -586,13 +587,47 @@ private:
     /// @brief 画链条目手柄带的那一条：三行等长的短横点阵（框架的手柄带只留命中区、不画 grip）。
     auto paint_chain_handle(aurora::Painter &painter, const aurora::Rect &box) const -> void;
 
-    /// @brief 建快捷键只读表区段：表头 + 逐命令一行四列（动作名 / 分组 / 当前组合键 / 标注）。
+    /// @brief 建快捷键只读表区段：表头 + 逐命令一行四列（动作名 / 分组 / 当前组合键 / 标注）+ 编辑按钮。
     ///
     /// 自绘而不借框架 `data_widgets.h` 的那三件表控件：它们的 `on_paint` 形参一律不读 ctx，故 `Theme`
     /// 到不了、色值硬编码浅色（裁决 7.68①），沿用主题卡 / 16 格色板 / 回退链三处的自绘先例。
     /// 行内容与标注都取 `ui::build_shortcut_rows()` 一次算好的那张表（本件不自己比第二次键位），
     /// 故本函数只在区段第一次建时跑完就把行投影进 `shortcuts_rows_`。
     [[nodiscard]] auto build_shortcuts_section(std::size_t ordinal) -> aurora::Node;
+
+    /// @brief 打开键位绑定对话框：让用户输入新的组合键并检测冲突。
+    /// @param command_id 要编辑的命令 id。
+    /// @param row_index 该行在 shortcuts_rows_ 里的索引。
+    auto open_binding_dialog(const std::string &command_id, std::size_t row_index) -> void;
+
+    /// @brief 关闭键位绑定对话框。
+    auto close_binding_dialog() -> void;
+
+    /// @brief 更新冲突提示文本（输入框内容变化时调用）。
+    /// @param combo_text 当前输入的组合键文本。
+    auto update_conflict_notice(const std::string &combo_text) -> void;
+
+    /// @brief 提交新的键位绑定：写入覆盖表并触发落盘与广播。
+    /// @param combo_text 用户输入的组合键文本。
+    auto commit_binding(const std::string &combo_text) -> void;
+
+    /// @brief 恢复所有快捷键为默认值：清空覆盖表。
+    auto restore_shortcut_defaults() -> void;
+
+    /// @brief 检测给定的组合键是否与已有绑定冲突。
+    /// @param combo_text 待检测的组合键文本。
+    /// @param exclude_command_id 排除的命令 id（正在编辑的那个）。
+    /// @return 冲突的命令标题列表；无冲突时为空。
+    [[nodiscard]] auto detect_conflicts(const std::string &combo_text, const std::string &exclude_command_id) const -> std::vector<std::string>;
+
+    /// @brief 设置某个命令的覆盖绑定。
+    /// @param command_id 命令 id。
+    /// @param combo_text 新的组合键文本。
+    auto set_binding_override(const std::string &command_id, const std::string &combo_text) -> void;
+
+    /// @brief 清除某个命令的覆盖绑定（回到默认）。
+    /// @param command_id 命令 id。
+    auto clear_binding_override(const std::string &command_id) -> void;
 
     /// @brief 画一张主题卡：底色、四格样例、分隔线、描边与选中勾（闭包在绘制时读 `form_`）。
     auto paint_theme_card(aurora::Painter &painter, const aurora::Rect &box, std::size_t index) const -> void;
@@ -706,6 +741,14 @@ private:
     /// 快捷键只读表当前画出的行投影（区段建好即写，重建浮层与关面板两处清空）。留着上一版的行等于让
     /// 观测面报出界面上并不存在的行——那与本件其余三处「清派生态」的口径同族。
     std::vector<ShortcutRowView> shortcuts_rows_{};
+    std::vector<std::shared_ptr<aurora::Button>> shortcut_edit_buttons_{};  ///< 每行的编辑按钮。
+
+    /// 键位绑定对话框：点击某行的编辑按钮时弹出，让用户输入新的组合键。
+    std::shared_ptr<aurora::Dialog> binding_dialog_{};
+    std::size_t editing_row_index_{};       ///< 正在编辑的行索引。
+    std::string editing_command_id_{};      ///< 正在编辑的命令 id。
+    std::shared_ptr<aurora::TextInput> binding_input_{};  ///< 对话框里的文本输入框。
+    std::shared_ptr<aurora::Text> conflict_notice_{};     ///< 冲突提示文本。
 
     /// 预览盒的本体（S7）。每次 `open()` 现建、`close()` 即销毁：浮层撤掉之后它的控件树已脱离宿主，
     /// 复用一份脱离树的控件正是最难查的那类陈旧态，重建一次的代价只是重投一次夹具。（登记时这里另写了
