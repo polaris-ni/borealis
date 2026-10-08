@@ -954,7 +954,7 @@ constexpr std::array<std::string_view, 5> kBannedKeyNames{
     return std::string{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
 }
 
-/// @brief 按框架 `flush()` 的同一条纪律写一份文件：临时文件 + rename（裁决 7.87⑦）。
+/// @brief 按框架 `flush()` 的同一条纪律写一份文件：临时文件 + rename（裁决 7.87⑧）。
 ///
 /// 目标由用户点名，框架的锁与临时文件只管自家配置文件，故这一小段不经 `Preferences`；
 /// 导出不该留下写一半的文件，那是换机迁移的唯一一份素材。
