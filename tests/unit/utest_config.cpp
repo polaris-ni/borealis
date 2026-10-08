@@ -37,6 +37,7 @@ namespace au = aurora;
 using borealis::config::BellMode;
 using borealis::config::builtin_themes;
 using borealis::config::kDefaultThemeName;
+using borealis::config::kSnapshotRetention;
 using borealis::config::LoadOutcome;
 using borealis::config::LongLinePolicy;
 using borealis::config::PasteNewlinePolicy;
@@ -171,7 +172,297 @@ auto collect_keys(const au::json::Value &node, std::vector<std::string> &out) ->
     }
 }
 
+/// @brief 目录里的全部常规文件（快照与导出件的凭据扫描用）。
+[[nodiscard]] auto directory_files(const std::filesystem::path &dir) -> std::vector<std::filesystem::path> {
+    std::vector<std::filesystem::path> out;
+    std::error_code ec;
+    for (const auto &item : std::filesystem::directory_iterator{dir, ec}) {
+        if (item.is_regular_file()) {
+            out.emplace_back(item.path());
+        }
+    }
+    std::ranges::sort(out);
+    return out;
+}
+
+/// @brief 一份快照的路径与它应当包含的内容。
+struct Scene {
+    std::filesystem::path path;
+    std::string text;
+};
+
+/// @brief 连写若干轮之后的两份材料：每次落盘的现场文本，与快照列表（新→旧）及其预期内容。
+struct Run {
+    std::vector<std::string> writes;
+    std::vector<Scene> scenes;
+};
+
+/// @brief 以可区分的内容连写 `rounds` 轮。
+[[nodiscard]] auto run_rounds(std::size_t rounds, const std::filesystem::path &file) -> Run {
+    Run run;
+    Store store{file};
+    for (std::size_t round = 0; round < rounds; ++round) {
+        auto next = non_default();
+        next.terminal.scrollback_limit = 1000 + round;  // 每轮一份可区分的内容
+        if (const auto error = store.replace(next); error.has_value()) {
+            AURORA_TEST_CHECK_MSG(false, "replace failed at round " + std::to_string(round) + ": " + *error);
+        }
+        run.writes.emplace_back(read_file(file));
+    }
+    const auto list = store.snapshots();
+    // 第 k 次落盘之前拍的那一份就是 `writes[k-1]`（首次落盘没有现场可拍），列表按新→旧排，
+    // 故第 i 项对应「倒数第 i+1 次落盘之前」那一份。
+    for (std::size_t index = 0; index < list.size(); ++index) {
+        run.scenes.emplace_back(Scene{list[index].path, run.writes[rounds - 2 - index]});
+    }
+    return run;
+}
+
 }  // namespace
+
+AURORA_TEST_CASE(first_write_snapshots_nothing_and_the_second_keeps_the_previous_scene) {
+    const auto file = make_path("snapshots.json");
+    Store store{file};
+
+    auto first = non_default();
+    first.terminal.scrollback_limit = 1000;
+    AURORA_TEST_CHECK_FALSE(store.replace(first).has_value());
+    // 首次落盘没有「将被覆盖的现场」，那不是失败也不该记成一份快照（裁决 7.87②）。
+    AURORA_TEST_CHECK_TRUE(store.snapshots().empty());
+
+    const auto scene = read_file(file);
+    auto second = first;
+    second.terminal.scrollback_limit = 2000;
+    AURORA_TEST_CHECK_FALSE(store.replace(second).has_value());
+
+    const auto list = store.snapshots();
+    AURORA_TEST_REQUIRE(list.size() == 1U);
+    // 列表第一项恒是「上一次变更之前」那份现场：面板的「回滚到上一次」因此落得着地。
+    AURORA_TEST_CHECK_EQ(read_file(list[0].path), scene);
+    AURORA_TEST_CHECK_GT(list[0].timestamp_epoch, 0);
+    AURORA_TEST_CHECK_EQ(list[0].size_bytes, scene.size());
+}
+
+AURORA_TEST_CASE(retention_keeps_the_newest_snapshots_in_order) {
+    const auto file = make_path("retention.json");
+    const auto run = run_rounds(8, file);
+
+    AURORA_TEST_REQUIRE(run.scenes.size() == kSnapshotRetention);
+    for (std::size_t index = 0; index < run.scenes.size(); ++index) {
+        AURORA_TEST_CHECK_MSG(read_file(run.scenes[index].path) == run.scenes[index].text,
+                              "snapshot " + std::to_string(index));
+    }
+    // 淘汰的是最旧那几份：头两次落盘的现场已不在列表里，而最近一次落盘之前的那份排在首位。
+    AURORA_TEST_CHECK_FALSE(std::ranges::any_of(run.scenes, [&](const Scene &scene) {
+                                return scene.text == run.writes[0] || scene.text == run.writes[1];
+                            }));
+    AURORA_TEST_CHECK_EQ(read_file(run.scenes[0].path), run.writes[6]);
+}
+
+AURORA_TEST_CASE(foreign_files_never_appear_in_the_snapshot_list) {
+    const auto file = make_path("foreign.json");
+    Store store{file};
+    AURORA_TEST_CHECK_FALSE(store.replace(non_default()).has_value());
+    AURORA_TEST_CHECK_FALSE(store.replace(non_default()).has_value());
+    AURORA_TEST_REQUIRE(store.snapshots().size() == 1U);
+
+    const auto legit = store.snapshots()[0].path;
+
+    // 同前缀但尾段不成形态、或干脆不是常规文件：都不进候选集（回滚的入口因此抓不到它们）。
+    write_file(std::filesystem::path{file.string() + ".snapshot-abc"}, "x");
+    write_file(std::filesystem::path{file.string() + ".snapshot-10-2x"}, "x");
+    write_file(std::filesystem::path{file.string() + ".snapshot"}, "x");
+    write_file(std::filesystem::path{file.string() + ".corrupt-10"}, "x");
+    write_file(make_path("other.json.snapshot-1"), "x");
+    std::error_code ec;
+    std::filesystem::create_directory(std::filesystem::path{file.string() + ".snapshot-9999999999"}, ec);
+
+    const auto list = store.snapshots();
+    AURORA_TEST_REQUIRE(list.size() == 1U);
+    AURORA_TEST_CHECK_TRUE(list[0].path == legit);
+}
+
+AURORA_TEST_CASE(rollback_restores_a_saved_scene_and_keeps_the_current_one) {
+    const auto file = make_path("rollback.json");
+    Store store{file};
+
+    auto first = non_default();
+    first.appearance.theme = "nord";
+    AURORA_TEST_CHECK_FALSE(store.replace(first).has_value());
+    auto second = first;
+    second.appearance.theme = "monokai";
+    AURORA_TEST_CHECK_FALSE(store.replace(second).has_value());
+    const auto scene = read_file(file);
+
+    const auto list = store.snapshots();
+    AURORA_TEST_REQUIRE(list.size() == 1U);
+    AURORA_TEST_CHECK_FALSE(store.rollback_to(list[0].path).has_value());
+
+    AURORA_TEST_CHECK_TRUE(store.settings() == first);
+    // 回滚是一条普通的写：它先把当前现场拍成快照，于是「回滚回去」也不会毁掉「刚被回滚掉的那一份」。
+    const auto after = store.snapshots();
+    AURORA_TEST_REQUIRE(after.size() == 2U);
+    AURORA_TEST_CHECK_EQ(read_file(after[0].path), scene);
+    AURORA_TEST_CHECK_TRUE(std::filesystem::exists(file));
+    AURORA_TEST_CHECK_FALSE(store.settings() == second);
+}
+
+AURORA_TEST_CASE(rollback_refuses_paths_that_are_not_our_snapshots) {
+    const auto file = make_path("guarded.json");
+    Store store{file};
+    AURORA_TEST_CHECK_FALSE(store.replace(non_default()).has_value());
+    const auto scene = read_file(file);
+    const auto count = store.snapshots().size();
+
+    // 配置文件本身、别家的快照、根本不存在的路径：三条都拒，且不产生任何写入。
+    for (const auto &target : {file,
+                              make_path("other.json.snapshot-1"),
+                              std::filesystem::path{file.string() + ".snapshot-1"}}) {
+        const auto reason = store.rollback_to(target);
+        AURORA_TEST_REQUIRE(reason.has_value());
+        AURORA_TEST_CHECK_MSG(reason->find("roll back") != std::string::npos, *reason);
+    }
+    AURORA_TEST_CHECK_EQ(read_file(file), scene);
+    AURORA_TEST_CHECK_TRUE(store.snapshots().size() == count);
+}
+
+AURORA_TEST_CASE(an_exported_document_has_the_same_shape_as_the_config_file) {
+    const auto file = make_path("export.json");
+    Store store{file};
+    AURORA_TEST_CHECK_FALSE(store.replace(non_default()).has_value());
+
+    const auto target = make_path("portable.json");
+    AURORA_TEST_CHECK_FALSE(store.export_settings(target).has_value());
+
+    const auto exported = au::json::parse(read_file(target));
+    AURORA_TEST_REQUIRE(exported.ok());
+    const auto stored = au::json::parse(read_file(file));
+    AURORA_TEST_REQUIRE(stored.ok());
+    std::vector<std::string> export_keys;
+    for (const auto &entry : exported.value().entries()) {
+        export_keys.emplace_back(entry.key);
+    }
+    std::vector<std::string> stored_keys;
+    for (const auto &entry : stored.value().entries()) {
+        stored_keys.emplace_back(entry.key);
+    }
+    // 与配置文件同构（顶层版本 + 四域）：唯一差别是框架自己那份元数据键，它不属本仓 schema。
+    std::erase(stored_keys, "__aurora_preference_meta__");
+    std::ranges::sort(export_keys);
+    std::ranges::sort(stored_keys);
+    AURORA_TEST_CHECK_TRUE(export_keys == stored_keys);
+    // 临时文件不留残段（导出件是换机迁移的唯一素材，写一半的文件比不写更糟）。
+    AURORA_TEST_CHECK_FALSE(std::filesystem::exists(std::filesystem::path{target.string() + ".tmp"}));
+}
+
+AURORA_TEST_CASE(an_exported_document_imports_back_the_same_settings) {
+    const auto source = make_path("roundtrip-source.json");
+    const auto target = make_path("roundtrip-target.json");
+    const auto exported = make_path("roundtrip.json");
+
+    const auto wanted = non_default();
+    {
+        Store store{source};
+        AURORA_TEST_CHECK_FALSE(store.replace(wanted).has_value());
+        AURORA_TEST_CHECK_FALSE(store.export_settings(exported).has_value());
+    }
+
+    Store other{target};
+    AURORA_TEST_CHECK_TRUE(other.settings() == Settings{});
+    AURORA_TEST_CHECK_FALSE(other.import_settings(exported).has_value());
+    AURORA_TEST_CHECK_TRUE(other.settings() == wanted);
+    // 导入即落盘：换一个新仓库读得到同一份，否则「一键回滚」在下次启动就消失。
+    const Store reloaded{target};
+    AURORA_TEST_CHECK_TRUE(reloaded.settings() == wanted);
+}
+
+AURORA_TEST_CASE(an_unsafe_document_is_refused_whole_and_changes_nothing) {
+    const auto file = make_path("refuse.json");
+    Store store{file};
+    AURORA_TEST_CHECK_FALSE(store.replace(non_default()).has_value());
+    const auto scene = read_file(file);
+    const auto settings = store.settings();
+    const auto count = store.snapshots().size();
+
+    struct Case {
+        std::string_view name;
+        std::string_view text;
+        std::string_view reason;
+    };
+    // 与装载侧的宽容**刻意相反**（裁决 7.87⑥）：顶层结构不合是「这根本不是一份配置」。
+    for (const Case &test : {
+             Case{"corrupt", "not json at all", "not readable JSON"},
+             Case{"array", R"([1,2])", "not a JSON object"},
+             Case{"no version", R"({"appearance":{"theme":"nord"}})", "has no schema_version"},
+             Case{"newer version", R"({"schema_version":999,"appearance":{"theme":"nord"}})", "newer than supported"},
+             Case{"no domain", R"({"schema_version":1})", "carries none of the four"},
+             Case{"credential", R"({"schema_version":1,"appearance":{"password":"hunter2"}})", "credential-like key"},
+             Case{"nested credential",
+                  R"({"schema_version":1,"shortcuts":{"overrides":[{"command":"a.b","private_key":"x"}]}})",
+                  "credential-like key"},
+             Case{"unreadable", std::string_view{"never written"}, "cannot read"},
+         }) {
+        const auto path = make_path(std::string{"refuse-"} + std::string{test.name} + ".json");
+        if (test.name != std::string_view{"unreadable"}) {
+            write_file(path, test.text);
+        }
+        const auto reason = store.import_settings(path);
+        AURORA_TEST_REQUIRE_MSG(reason.has_value(), test.name);
+        AURORA_TEST_CHECK_MSG(reason->find(std::string{test.reason}) != std::string::npos,
+                             std::string{test.name} + " -> " + *reason);
+    }
+
+    AURORA_TEST_CHECK_TRUE(store.settings() == settings);
+    AURORA_TEST_CHECK_EQ(read_file(file), scene);
+    AURORA_TEST_CHECK_TRUE(store.snapshots().size() == count);
+}
+
+AURORA_TEST_CASE(imported_values_outside_the_domain_still_fall_back) {
+    const auto file = make_path("lenient.json");
+    Store store{file};
+
+    const auto path = make_path("lenient-source.json");
+    write_file(path, R"({"schema_version":1,"appearance":{"theme":"nord","font_size_pt":9999}})");
+    AURORA_TEST_CHECK_FALSE(store.import_settings(path).has_value());
+
+    // 单值域外是版本之间的正常演进（照装载侧回落），结构不合才是「不是配置」。
+    AURORA_TEST_CHECK_EQ(store.settings().appearance.theme, "nord");
+    AURORA_TEST_CHECK_EQ(store.settings().appearance.font_size_pt, Settings{}.appearance.font_size_pt);
+    AURORA_TEST_CHECK_TRUE(store.settings().terminal == Settings{}.terminal);
+}
+
+AURORA_TEST_CASE(no_file_written_into_the_config_directory_carries_a_credential_name) {
+    const auto file = make_path("credentials.json");
+    Store store{file};
+    AURORA_TEST_CHECK_FALSE(store.replace(non_default()).has_value());
+    AURORA_TEST_CHECK_FALSE(store.replace(non_default()).has_value());
+    AURORA_TEST_REQUIRE(!store.snapshots().empty());
+    AURORA_TEST_CHECK_FALSE(store.rollback_to(store.snapshots()[0].path).has_value());
+    AURORA_TEST_CHECK_FALSE(store.export_settings(make_path("credentials-export.json")).has_value());
+
+    // AGENTS.md §4.5 第 24 条的自动化腿：扫描覆盖配置目录里的**每一种**写入产物，不只是当前文件。
+    std::size_t scanned{};
+    for (const auto &entry : directory_files(file.parent_path())) {
+        const auto parsed = au::json::parse(read_file(entry));
+        if (!parsed.ok()) {
+            // 落盘由框架承担，它的跨进程 advisory 锁件不是 JSON（`.lock` 是那族文件唯一的豁免形态）。
+            // 豁免必须钉住形态，否则「自家产物不再是 JSON」也会走这一支而把本例读成空转。
+            AURORA_TEST_REQUIRE_MSG(entry.filename().string().ends_with(".lock"), entry.filename().string());
+            continue;
+        }
+        ++scanned;
+        std::vector<std::string> keys;
+        collect_keys(parsed.value(), keys);
+        for (const auto &key : keys) {
+            for (std::string_view banned : {"password", "passphrase", "secret", "token", "private_key"}) {
+                AURORA_TEST_CHECK_MSG(key.find(banned) == std::string::npos,
+                                      entry.filename().string() + ": " + key + " ~ " + std::string{banned});
+            }
+        }
+    }
+    // 当前文件 + 两份快照 + 导出件：扫描集合非空才说明上面那些断言真的判过东西。
+    AURORA_TEST_REQUIRE(scanned >= 4U);
+}
 
 AURORA_TEST_CASE(defaults_are_the_first_launch_shape) {
     const Settings defaults{};

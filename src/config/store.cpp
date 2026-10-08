@@ -1,10 +1,11 @@
 // ============================================================
-// 配置 schema 的读写与损坏降级（src/config/store.cpp）
+// 配置 schema 的读写、损坏降级与快照回滚（src/config/store.cpp）
 // ------------------------------------------------------------
 // 全仓唯一触达 Aurora `Preferences` 的翻译单元：公共头因此不含框架类型（裁决 7.26③），
 // 「临时文件 + 原子 rename + 跨进程 advisory 锁」直接取用框架的 `flush()`，本文件不重造
-// （架构 §11.3）；框架不管的两件事在这里做——schema 自校验与 `SPEC.FEAT.PREF.07` 的降级备份
-// （裁决 7.26④）。
+// （架构 §11.3）；框架不管的三件事在这里做——schema 自校验、`SPEC.FEAT.PREF.07` 的降级备份
+// （裁决 7.26④），以及同一那份需求的快照滚动与导出导入（裁决 7.87；导出件的落盘按框架
+// `flush()` 的同一条纪律自己做一次「临时文件 + rename」，因为目标路径由用户点名而框架只认自家配置文件）。
 //
 // 键名在「读」与「写」两处各列一遍是刻意的：两侧按同一顺序逐字段对应，往返等值与「写出的键
 // 恰是 schema 全集」由 `tests/unit/utest_config.cpp` 守住。表驱动的单一 schema 描述要为 40 个
@@ -15,18 +16,23 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "aurora/core/json.h"
+#include "aurora/core/log.h"
 #include "aurora/preferences/preferences.h"
 
 #include "borealis/config/themes.h"
@@ -614,15 +620,19 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return shortcuts;
 }
 
-/// @brief 从存储读出一份配置，并把校验留痕写进报告。
-[[nodiscard]] auto read_settings(const au::preferences::Preferences &prefs, LoadReport &report) -> Settings {
+/// @brief 把一份顶层 JSON 对象读成 `Settings`，并把校验留痕写进报告。
+///
+/// 装载、回滚与导入三条路都走这里（裁决 7.87③）：快照与导出件本来就是同一个 schema 的文档，
+/// 另起一份读侧就是第二真值源，一份能装载的文件在另一条路上装载不出同样的值即分叉。
+[[nodiscard]] auto read_settings(const Value &root, LoadReport &report) -> Settings {
     const Settings defaults{};
     Settings settings{};
 
     for (std::string_view domain : kDomainKeys) {
-        const Value node = prefs.get<Value>(std::string(domain), Value{});
-        ScopeReader scope(std::string(domain), node.is_object() ? &node : nullptr, report);
-        if (!node.is_object()) {
+        const Value *node = root.at(domain);
+        const bool is_domain = (node != nullptr) && node->is_object();
+        ScopeReader scope(std::string(domain), is_domain ? node : nullptr, report);
+        if (!is_domain) {
             report.rejected_keys.push_back(std::string(domain));
         }
         if (domain == "appearance") {
@@ -636,14 +646,42 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
         }
     }
 
-    for (const auto &key : prefs.keys()) {
+    for (const auto &entry : root.entries()) {
+        const std::string_view key = entry.key;
         if ((key == kVersionKey) || (std::ranges::find(kDomainKeys, key) != kDomainKeys.end())) {
             continue;
         }
-        report.unknown_keys.push_back(key);
+        report.unknown_keys.emplace_back(key);
     }
     return settings;
 }
+
+/// @brief 把存储里的顶层键摊成一份 JSON 对象，交同一条读侧。
+///
+/// 逐个键搬而不是只搬四域：`report.unknown_keys` 记的就是 schema 之外的顶层键，只搬四域的话
+/// 那条留痕结构上抓不到东西。框架的元数据键已由 `keys()` 剥离（`utest_config` 的落盘形态例同断）。
+[[nodiscard]] auto root_from_preferences(const au::preferences::Preferences &prefs) -> Value {
+    auto root = Value::object();
+    for (const auto &key : prefs.keys()) {
+        root.set(key, prefs.get<Value>(key, Value{}));
+    }
+    return root;
+}
+
+/// @brief 一份配置 → 落盘/导出共用的顶层文档（版本号 + 四域，裁决 7.87④）。
+///
+/// 「导出的文件能原样被 `import_settings()` 装回」这条判据的根据就是这一份文档同时是给
+/// `Preferences` 的写入内容与导出件的正文；两处各列一遍四域，导出件就会落后于 schema。
+[[nodiscard]] auto settings_to_json(const Settings &settings) -> Value {
+    auto root = Value::object();
+    root.set(kVersionKey, Value(kSupportedSchemaVersion));
+    root.set("appearance", appearance_to_json(settings.appearance));
+    root.set("terminal", terminal_to_json(settings.terminal));
+    root.set("connection", connection_to_json(settings.connection));
+    root.set("shortcuts", shortcuts_to_json(settings.shortcuts));
+    return root;
+}
+
 
 /// @brief 把损坏文件备份为 `<file>.corrupt-<epoch 秒>`（裁决 7.26④）。
 ///
@@ -661,6 +699,291 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
         return std::nullopt;
     }
     return target;
+}
+
+// ------------------------------------------------------------
+// 快照的命名形态与滚动保留（`SPEC.FEAT.PREF.07`，裁决 7.87）
+// ------------------------------------------------------------
+
+/// @brief 快照文件名里配置文件名与序号之间的那段（与 `.corrupt-` 同族形态）。
+constexpr std::string_view kSnapshotInfix = ".snapshot-";
+
+/// @brief 一份快照的排序键：同一秒内的多次落盘靠序号分先后（epoch 秒是文件名的一部分）。
+struct SnapshotStamp {
+    std::int64_t epoch{};
+    std::int64_t seq{};
+};
+
+/// @brief 快照文件名（不含目录）的前缀，用于筛选与校验。
+[[nodiscard]] auto snapshot_name_prefix(const fs::path &file) -> std::string {
+    return file.filename().string() + std::string{kSnapshotInfix};
+}
+
+/// @brief 读一段纯十进制数字；有空闲字符、越界或空串都算不合形态。
+[[nodiscard]] auto parse_digits(std::string_view text) -> std::optional<std::int64_t> {
+    std::int64_t value{};
+    const auto *begin = text.data();
+    const auto *end = begin + text.size();
+    const auto [next, error] = std::from_chars(begin, end, value);
+    if ((error != std::errc{}) || (next != end)) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+/// @brief 解析 `.snapshot-` 之后的尾段：`<epoch>` 或 `<epoch>-<seq>`。
+[[nodiscard]] auto parse_snapshot_tail(std::string_view tail) -> std::optional<SnapshotStamp> {
+    const auto dash = tail.find('-');
+    const auto epoch = parse_digits(tail.substr(0, dash));
+    if (!epoch) {
+        return std::nullopt;
+    }
+    if (dash == std::string_view::npos) {
+        return SnapshotStamp{*epoch, 0};
+    }
+    const auto seq = parse_digits(tail.substr(dash + 1));
+    if (!seq) {
+        return std::nullopt;
+    }
+    return SnapshotStamp{*epoch, *seq};
+}
+
+/// @brief 列出本目录内的快照，按**新→旧**排列；不属于本仓命名形态的文件一律不出现。
+///
+/// 回滚的「只接受自家快照」这条安全判据就落在这里（裁决 7.87⑤）：UI 交回的路径是外部输入，
+/// 而目录里既有的文件才是候选集，membership 检查同时钉住了目录、命名与存在性三件事。
+[[nodiscard]] auto collect_snapshots(const fs::path &file) -> std::vector<SnapshotInfo> {
+    const auto prefix = snapshot_name_prefix(file);
+    std::vector<std::pair<SnapshotStamp, SnapshotInfo>> listed;
+    std::error_code ec;
+    for (const fs::directory_entry &item : fs::directory_iterator{file.parent_path(), ec}) {
+        if (!item.is_regular_file(ec)) {
+            continue;
+        }
+        const std::string name = item.path().filename().string();
+        if ((name.size() <= prefix.size()) || (name.compare(0, prefix.size(), prefix) != 0)) {
+            continue;
+        }
+        const auto stamp = parse_snapshot_tail(std::string_view{name}.substr(prefix.size()));
+        if (!stamp) {
+            continue;
+        }
+        std::error_code size_ec;
+        const auto size = item.file_size(size_ec);
+        listed.emplace_back(*stamp,
+                            SnapshotInfo{item.path(),
+                                         stamp->epoch,
+                                         size_ec ? 0U : static_cast<std::uint64_t>(size)});
+    }
+    std::ranges::sort(listed, [](const auto &left, const auto &right) {
+        return std::tie(left.first.epoch, left.first.seq) > std::tie(right.first.epoch, right.first.seq);
+    });
+    std::vector<SnapshotInfo> out;
+    out.reserve(listed.size());
+    for (const auto &entry : listed) {
+        out.emplace_back(entry.second);
+    }
+    return out;
+}
+
+/// @brief 删掉超出保留档数的那几份（尽力而为：删不掉只留痕，不影响本次落盘）。
+auto prune_snapshots(const fs::path &file) -> void {
+    const auto list = collect_snapshots(file);
+    for (std::size_t index = kSnapshotRetention; index < list.size(); ++index) {
+        std::error_code ec;
+        fs::remove(list[index].path, ec);
+        if (ec) {
+            AURORA_LOG_WARN("config", "failed to prune a retired config snapshot: ", list[index].path.string());
+        }
+    }
+}
+
+/// @brief 同一秒内下一份快照的序号：取该秒已有尾段序号的最大值 + 1。
+///
+/// 不能从 0 起找第一个空位——淘汰删掉的恰是最旧那一份，也就是这一秒里序号最低的那格，
+/// 复用它等于把刚拍的「最新现场」命名为最旧档，下一次落盘的淘汰会立刻把它删掉。
+[[nodiscard]] auto next_snapshot_seq(const fs::path &file, std::int64_t epoch) -> std::int64_t {
+    const auto prefix = snapshot_name_prefix(file);
+    std::int64_t max_seq{-1};
+    std::error_code ec;
+    for (const fs::directory_entry &item : fs::directory_iterator{file.parent_path(), ec}) {
+        if (!item.is_regular_file(ec)) {
+            continue;
+        }
+        const std::string name = item.path().filename().string();
+        if ((name.size() <= prefix.size()) || (name.compare(0, prefix.size(), prefix) != 0)) {
+            continue;
+        }
+        const auto stamp = parse_snapshot_tail(std::string_view{name}.substr(prefix.size()));
+        if (stamp && (stamp->epoch == epoch)) {
+            max_seq = std::max(max_seq, stamp->seq);
+        }
+    }
+    return max_seq + 1;
+}
+
+/// @brief 落盘之前把当前配置文件复制成一份快照（裁决 7.87②）。
+///
+/// 取在「写之前」而不是「写之后」，于是列表第一项恒是「这次即将被覆盖掉的那一份现场」：
+/// 面板的「回滚到上一次」因此落在一个真实存在过的状态上，而回滚本身也不必另设应急备份——
+/// 它就是一条普通的写，走同一条复制。
+///
+/// 同一秒内的第二次落盘会撞名（epoch 只到秒），故撞名即加序号。首次落盘时没有现场可拍，
+/// 那不是失败也不该记成一份快照，回空值。
+[[nodiscard]] auto snapshot_current(const fs::path &file) -> std::optional<fs::path> {
+    std::error_code ec;
+    if (!fs::exists(file, ec)) {
+        return std::nullopt;
+    }
+    const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
+    const auto seq = next_snapshot_seq(file, epoch);
+    const auto target =
+        fs::path{file.string() + std::string{kSnapshotInfix} + std::to_string(epoch) +
+                 (seq == 0 ? std::string{} : "-" + std::to_string(seq))};
+    fs::copy_file(file, target, fs::copy_options::none, ec);
+    if (ec) {
+        AURORA_LOG_WARN("config", "failed to snapshot the current config file: ", file.string());
+        return std::nullopt;
+    }
+    prune_snapshots(file);
+    return target;
+}
+
+// ------------------------------------------------------------
+// 导出件的凭据闸（`SPEC.FEAT.PREF.07` 的「凭据句柄不导出」，裁决 7.26⑥）
+// ------------------------------------------------------------
+
+/// @brief 禁列名单：任何层级的键名撞到其中之一就拒绝导出/导入。
+///
+/// schema 里本来就没有凭据字段（裁决 7.26⑥ 把它挡在 `Settings` 之外），所以这道闸对本仓自己
+/// 写出的文件是永不开启的分支——它守的是**外部交回**的那一份：手改过的配置文件、别人机器上
+/// 旧版本的导出件。`utest_config` 的落盘形态例已在键名维度证过同一份名单，本件是它的执行点。
+constexpr std::array<std::string_view, 5> kBannedKeyNames{
+    {"password", "passphrase", "secret", "token", "private_key"}};
+
+/// @brief 递归找一个撞名单的键名，命中即回它的点号路径。
+[[nodiscard]] auto find_credential_key(const Value &node, std::string_view path) -> std::optional<std::string> {
+    if (node.is_object()) {
+        for (const auto &entry : node.entries()) {
+            std::string child{entry.key};
+            if (!path.empty()) {
+                child = std::string{path} + "." + child;
+            }
+            for (std::string_view banned : kBannedKeyNames) {
+                if (entry.key.find(banned) != std::string_view::npos) {
+                    return child;
+                }
+            }
+            if (const auto hit = find_credential_key(entry.value, child); hit) {
+                return hit;
+            }
+        }
+    } else if (node.is_array()) {
+        for (std::size_t index = 0; index < node.size(); ++index) {
+            const Value *item = node.at(index);
+            if (item == nullptr) {
+                continue;
+            }
+            const std::string child{std::string{path} + "[" + std::to_string(index) + "]"};
+            if (const auto hit = find_credential_key(*item, child); hit) {
+                return hit;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+/// @brief 把一份 JSON 文本验成「本仓的文档形态」；不合即回原因、不回值。
+///
+/// 与装载侧的宽容**刻意相反**（裁决 7.87⑥）：自家损坏文件要「逐键回落 + 仍能起来」，
+/// 外部交回的错文件只能整体拒绝——把一份手滑的文件读成「一堆默认值」再落盘，就是需求
+/// 那句「绝不静默清空」要挡的事。取值域之外的单个值仍走 `read_settings` 的回落，那是
+/// 版本之间正常的演进，而顶层结构不合是「这根本不是一份配置」。
+/// @param text 文件全文。
+/// @param source 只用于诊断文本的来源描述。
+/// @param reason 失败时写入 ASCII 英文原因。
+/// @return 成功是顶层对象；失败为空。
+[[nodiscard]] auto parse_document(std::string_view text, std::string_view source, std::string &reason)
+    -> std::optional<Value> {
+    const auto fail = [&reason, source](std::string tail) -> std::optional<Value> {
+        reason = std::string{source} + " " + tail;
+        return std::nullopt;
+    };
+    const auto parsed = au::json::parse(text);
+    if (!parsed.ok()) {
+        return fail("is not readable JSON: " + parsed.error().message);
+    }
+    Value root = parsed.value();
+    if (!root.is_object()) {
+        return fail("is not a JSON object");
+    }
+    const Value *version = root.at(kVersionKey);
+    if (version == nullptr) {
+        return fail("has no schema_version");
+    }
+    const auto stored = version->as_int();
+    if (!stored) {
+        return fail("has a non-integer schema_version");
+    }
+    if (*stored > kSupportedSchemaVersion) {
+        return fail("has schema_version " + std::to_string(*stored) + " which is newer than supported " +
+                    std::to_string(kSupportedSchemaVersion));
+    }
+    bool any_domain = false;
+    for (std::string_view domain : kDomainKeys) {
+        const Value *node = root.at(domain);
+        any_domain = any_domain || ((node != nullptr) && node->is_object());
+    }
+    if (!any_domain) {
+        return fail("carries none of the four config domains");
+    }
+    if (const auto hit = find_credential_key(root, {}); hit) {
+        return fail("carries a credential-like key: " + *hit);
+    }
+    return root;
+}
+
+/// @brief 把一份文档全文读进内存（文件不存在与读失败都回原因，不回空文本当成「合法的空配置」）。
+[[nodiscard]] auto read_text(const fs::path &file) -> std::optional<std::string> {
+    std::ifstream in{file, std::ios::binary};
+    if (!in) {
+        return std::nullopt;
+    }
+    return std::string{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
+}
+
+/// @brief 按框架 `flush()` 的同一条纪律写一份文件：临时文件 + rename（裁决 7.87⑦）。
+///
+/// 目标由用户点名，框架的锁与临时文件只管自家配置文件，故这一小段不经 `Preferences`；
+/// 导出不该留下写一半的文件，那是换机迁移的唯一一份素材。
+/// @return 成功为空；失败为 ASCII 英文原因。
+[[nodiscard]] auto write_document(const fs::path &file, const Value &root) -> std::optional<std::string> {
+    const auto dumped = au::json::dump(root, au::json::DumpOptions{.indent = 2});
+    if (!dumped.ok()) {
+        return dumped.error().message;
+    }
+    const auto temp = fs::path{file.string() + ".tmp"};
+    std::error_code ec;
+    {
+        std::ofstream out{temp, std::ios::binary | std::ios::trunc};
+        if (!out) {
+            return "cannot open the export temporary file: " + temp.string();
+        }
+        const auto text = dumped.value();
+        out.write(text.data(), static_cast<std::streamsize>(text.size()));
+        out.close();
+        if (!out) {
+            return "failed writing the export temporary file: " + temp.string();
+        }
+    }
+    fs::rename(temp, file, ec);
+    if (ec) {
+        fs::remove(temp, ec);
+        return "failed to move the export into place: " + file.string();
+    }
+    return std::nullopt;
 }
 
 }  // namespace
@@ -693,7 +1016,7 @@ struct Store::Impl {
             return;
         }
         report.outcome = LoadOutcome::Loaded;
-        settings = read_settings(*prefs, report);
+        settings = read_settings(root_from_preferences(*prefs), report);
     }
 
     /// @brief 提交并落盘。
@@ -702,6 +1025,9 @@ struct Store::Impl {
         if (!writes_allowed) {
             return std::string("refused to write the config file: the damaged original was not backed up");
         }
+        // 快照取在**写之前**：列表第一项因此恒是「这次即将被覆盖掉的那一份现场」，回滚不必另设应急备份
+        // （裁决 7.87②）。拍不成只留痕、不拦下用户的保存——保存是他的意图，快照是保险。
+        static_cast<void>(snapshot_current(report.file));
         auto &prefs = *this->prefs;
         prefs.set(std::string(kVersionKey), kSupportedSchemaVersion);
         prefs.set("appearance", appearance_to_json(next.appearance));
@@ -712,6 +1038,32 @@ struct Store::Impl {
             return flushed.error().message;
         }
         return std::nullopt;
+    }
+
+    /// @brief 把一份文件装成生效配置并落盘：回滚与导入共用同一条腿（裁决 7.87③）。
+    ///
+    /// 三条路（装载/回滚/导入）共用 `read_settings`，于是一份能装载的文件在另一条路上必然装载出
+    /// 同样的值；另起一份读侧就是第二真值源。
+    /// @param label 只用于诊断文本的来源描述（ASCII 英文）。
+    auto apply_document(const fs::path &file, std::string_view label) -> std::optional<std::string> {
+        const auto text = read_text(file);
+        if (!text) {
+            return std::string{"cannot read "} + std::string{label} + ": " + file.string();
+        }
+        std::string reason;
+        const auto root = parse_document(*text, label, reason);
+        if (!root) {
+            return reason;
+        }
+        LoadReport scratch{};
+        const auto next = read_settings(*root, scratch);
+        if (!scratch.rejected_keys.empty()) {
+            AURORA_LOG_WARN("config",
+                            "a config document was accepted with keys outside their domain; they fell back to "
+                            "defaults: ",
+                            file.string());
+        }
+        return store(next);
     }
 
     std::optional<au::preferences::Preferences> prefs;
@@ -755,6 +1107,28 @@ auto Store::report() const noexcept -> const LoadReport & {
 
 auto Store::replace(const Settings &next) -> std::optional<std::string> {
     return impl_->store(next);
+}
+
+auto Store::snapshots() const -> std::vector<SnapshotInfo> {
+    return collect_snapshots(impl_->report.file);
+}
+
+auto Store::rollback_to(const std::filesystem::path &snapshot) -> std::optional<std::string> {
+    // membership 检查同时钉住目录、命名形态与存在性：这条入口拿到的是 UI 交回的字符串，
+    // 让它指向目录外任一文件就是把「回滚」变成「覆盖任意文件」（裁决 7.87⑤）。
+    const auto list = collect_snapshots(impl_->report.file);
+    if (std::ranges::find(list, snapshot, &SnapshotInfo::path) == list.end()) {
+        return "refused to roll back: the path is not one of this directory's config snapshots: " + snapshot.string();
+    }
+    return impl_->apply_document(snapshot, "the config snapshot");
+}
+
+auto Store::export_settings(const std::filesystem::path &file) const -> std::optional<std::string> {
+    return write_document(file, settings_to_json(impl_->settings));
+}
+
+auto Store::import_settings(const std::filesystem::path &file) -> std::optional<std::string> {
+    return impl_->apply_document(file, "the imported config file");
 }
 
 }  // namespace borealis::config
