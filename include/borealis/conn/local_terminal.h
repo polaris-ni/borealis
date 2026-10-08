@@ -5,7 +5,7 @@
 // ------------------------------------------------------------
 // `SPEC.FEAT.CONN.01` 的公共声明面：连接类型归 `borealis::conn`（架构 §2.1），实现归
 // `src/platform/`。本头只出现标准类型——ConPTY 句柄、Win32 类型、码页 API 一律留在实现内
-// （裁决 7.11），否则后补 posix 等价时会变成重写而不是补一个实现文件。
+// （裁决 7.11），于是 posix 腿补进来时只需添一个实现文件而不用动共享路径（`SPEC.NF.PLAT.01`）。
 //
 // profile 的持久化与配置层（`SPEC.FEAT.PREF.03`）尚未落地，故启动目录、环境变量与自定义
 // 命令行以 `LocalTerminalSpec` 的形态由调用方显式给出（架构 §2.2 把 profile 归
@@ -39,9 +39,11 @@ inline const std::map<std::string, std::string> kPtyDefaultEnvironment = {
     {"COLORTERM", "truecolor"},
 };
 
-/// @brief 探测平台默认 shell 的命令行（`SPEC.FEAT.CONN.01`：Windows 为 PowerShell → cmd → WSL）。
+/// @brief 探测平台默认 shell 的命令行（`SPEC.FEAT.CONN.01`：Windows 为 PowerShell → cmd → WSL，
+///        POSIX 为 `$SHELL` → `/bin/bash` → `/bin/sh`）。
 ///
-/// 返回值可直接作为 @ref LocalTerminalSpec::command_line 使用；含空格的程序路径已带引号。
+/// 返回值可直接作为 @ref LocalTerminalSpec::command_line 使用；Windows 侧含空格的程序路径已带引号，
+/// POSIX 侧的候选一律是绝对路径且已 existence 判定通过，故不含需要加引号的空格。
 /// 探测只做存在性判断，不启动任何进程。
 /// @return 命令行（UTF-8）；平台上一个候选都找不到时为空串。
 [[nodiscard]] auto default_shell_command_line() -> std::string;
@@ -53,7 +55,8 @@ inline const std::map<std::string, std::string> kPtyDefaultEnvironment = {
 /// 后续尺寸变更经 `Connection::resize`。
 /// @param spec 启动规格。
 /// @param initial_size 视口初始尺寸（列 × 行）。
-/// @return 未启动的连接；当前仅 Win32 有实现（posix 侧待建，见 codespec/PLAN.md §8）。
+/// @return 未启动的连接；Win32 取 ConPTY，POSIX 取 `forkpty`（两腿的公共判据见
+///         `tests/e2e/etest_local_terminal.cpp`，`SPEC.NF.PLAT.01`）。
 [[nodiscard]] auto make_local_terminal_connection(const LocalTerminalSpec &spec,
                                                   session::Size initial_size)
     -> std::unique_ptr<session::Connection>;

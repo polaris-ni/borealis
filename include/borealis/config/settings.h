@@ -185,7 +185,7 @@ struct SerialDefaults {
 
 /// @brief 连接域：本地终端、SSH 与串口的默认值（`SPEC.FEAT.PREF.02` 的「连接」）。
 struct ConnectionSettings {
-    std::string local_shell{};       ///< 空＝走探测链 PowerShell → cmd → WSL（裁决 7.19④）。
+    std::string local_shell{};       ///< 空＝走探测链（Windows PowerShell → cmd → WSL；POSIX `$SHELL` → /bin/bash → /bin/sh；裁决 7.19④ 与 7.89）。
     std::string startup_directory{}; ///< 空＝继承进程当前目录。
     SshDefaults ssh{};
     SerialDefaults serial{};
