@@ -110,6 +110,11 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     // ---- 撤销关闭标签（`SPEC.FEAT.WS.10` 的命令标题，待 WS.01 多标签落地后启用）----
     {"tab.action.undo_close", "重开最近关闭的标签"},
 
+    // ---- dead-session 一键重启（`SPEC.FEAT.WS.05`：`session.restart` 命令标题 + 视口浮层两处文案）----
+    {"session.restart.title", "重启会话"},
+    {"session.restart.hint", "会话已退出"},
+    {"session.restart.button", "重启"},
+
     // ---- 命令面板（`SPEC.FEAT.WS.07`，判据文 `codespec/UI_WORKSPACE.draft.md` §4）----
     // 占位符与空态两条文案等框架 G38/G39 回货后走 i18n 路径（当前仍硬编码英文，见裁决 7.81②）。
     {"command_palette.title", "命令面板"},

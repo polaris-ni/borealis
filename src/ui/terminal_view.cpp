@@ -34,6 +34,8 @@
 #include "borealis/term/utf8.h"
 #include "borealis/ui/selection.h"
 #include "search_overlay.h"
+#include "settings_i18n.h"
+#include "settings_panel.h"
 
 namespace borealis::ui {
 namespace {
@@ -56,6 +58,21 @@ constexpr float kMenuMinWidthDp = 168.0F;
 
 /// @brief 菜单条目的内边距：横向留得比 `Button` 缺省窄一档，让整列宽度由条目宽度而非文字决定。
 constexpr aurora::EdgeInsets kMenuPadding{.left = 10.0F, .top = 5.0F, .right = 10.0F, .bottom = 5.0F};
+
+/// @brief dead-session 浮层的几何（`SPEC.FEAT.WS.05`，逻辑 dp）。
+///
+/// 卡片宽度按视口宽度取「min(320, box − 24)」——固定 320 在最小合法 pane（228 dp，`UI_SEARCH.draft`
+/// 那条边界）上就伸出可视区，`min` 保证「窄 pane 里按钮还在画面里」。按钮尺寸取自与搜索浮层 chip
+/// 同一档，让面板打开时两处的可点感是同一档。
+constexpr double kRestartCardWidthDp = 320.0;
+constexpr double kRestartCardHeightDp = 88.0;
+constexpr double kRestartCardHorizontalInsetDp = 12.0;
+constexpr double kRestartButtonWidthDp = 96.0;
+constexpr double kRestartButtonHeightDp = 32.0;
+constexpr double kRestartButtonGapDp = 8.0;       ///< 提示行与按钮行之间的纵向留白。
+constexpr double kRestartCardPaddingDp = 14.0;    ///< 卡片文字距卡片边的留白。
+constexpr double kRestartHintLineHeightDp = 20.0; ///< 提示行行高，配合按钮档使卡片总高 == 88 dp。
+constexpr double kRestartStrokeDp = 1.0;          ///< 卡片描边宽（与搜索浮层条体同档）。
 
 /// @brief 把滚轮增量折成「档」：一 notch 即一档（Win32 与 X11 给 ±1，高分屏与 GLFW 可给小数）。
 ///        非零增量至少算一档——发零条上报等于吞掉这一事件而不告诉任何人。
@@ -261,6 +278,16 @@ auto TerminalView::set_grid_size_sink(GridSizeSink sink) -> void { grid_size_sin
 
 auto TerminalView::set_key_pre_filter(KeyPreFilter filter) -> void { key_pre_filter_ = std::move(filter); }
 
+auto TerminalView::set_restart_hook(std::function<void()> hook) -> void {
+    restart_hook_ = std::move(hook);
+    // 装/拆钩子都是一次可观测的绘制变更：装钩那一刻若会话已退（装配顺序不保证，重启闭包可能晚于
+    // `on_closed`），浮层要立刻显形；拆钩那一刻反之要立刻消失。两种情形都不问 alive()，一次无条件
+    // 标脏，让下一帧重新判一次——条件判断留在绘制侧，接缝只负责把「值得重看一眼」传出去。
+    mark_needs_paint();
+}
+
+auto TerminalView::session_dead() const -> bool { return !session_->alive(); }
+
 auto TerminalView::set_search_query(SearchQuery query) -> void {
     if (query == search_query_) {
         return;
@@ -411,6 +438,10 @@ auto TerminalView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, cons
     }
     paint_cursor(p, bounds, rows);
     paint_scroll_indicator(p, bounds, rows);
+    // dead-session 浮层排在最后一层（`SPEC.FEAT.WS.05`）：它是「会话已退出」这一状态上的模态提示，
+    // 盖在回看内容与指示条之上都不为过。判据现取 `Session::alive()` 而不是缓存的翻转标志——
+    // `on_closed` 那一次唤醒会带着最后一批 damage 排上帧，于是浮层与「最后一段输出」同一帧落定。
+    paint_restart_overlay(p, bounds);
 }
 
 auto TerminalView::type_name() const -> const char * { return "TerminalView"; }
@@ -515,6 +546,20 @@ auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
     if (e.action == aurora::MouseAction::Press && host_ != nullptr && host_->handle_outside_click(e.position)) {
         e.is_handled = true;
         return;
+    }
+    // dead-session 浮层的重启按钮（`SPEC.FEAT.WS.05`）在上报档之前判定：会话已经退出，上报模式是
+    // 陈旧的远端状态、不再有任何进程会读到它；而落点若是按钮就是本层自己的一次动作，与选区无关。
+    // 命中按钮之外仍照旧落到选区分支——需求那句「保留终端内容供回看」正要求内容仍可选可复制。
+    if (e.action == aurora::MouseAction::Press && !session_->alive() && restart_hook_ &&
+        restart_button_box_.has_value()) {
+        const Rect &box = *restart_button_box_;
+        const double x = static_cast<double>(e.local_position.x);
+        const double y = static_cast<double>(e.local_position.y);
+        if (x >= box.x && x < box.x + box.width && y >= box.y && y < box.y + box.height) {
+            restart_hook_();
+            e.is_handled = true;
+            return;
+        }
     }
     // 上报档优先于本地选区（`SPEC.FEAT.TERM.06`，裁决 7.77①②）：分流判据在选区之前，故一次
     // 让位是整笔手势让位而不是半笔——见 `takes_pointer_by_report` 的那三条短路。
@@ -915,6 +960,57 @@ auto TerminalView::paint_scroll_indicator(aurora::Painter &p, const aurora::Rect
     const Rect thumb{static_cast<double>(bounds.size.width) - kIndicatorWidthDp, thumb_top, kIndicatorWidthDp,
                      thumb_height};
     p.fill_rect(to_rect(thumb, bounds.origin), to_color(spec_.default_foreground));
+}
+
+auto TerminalView::paint_restart_overlay(aurora::Painter &p, const aurora::Rect &bounds) -> void {
+    // 会话进程已退出且装配层装了重启钩子，才画这一层。`session_->alive()` 每帧现取，而不是缓一份
+    // 标志——`Session::on_closed` 那一次唤醒与最后一批 damage 同帧抵达，缓存标志就要在事件回调里
+    // 翻，而那是 IO 边界之外的一条通道（AGENTS.md §4.5 第 25 条）。
+    if (session_->alive() || !restart_hook_) {
+        restart_button_box_.reset();
+        return;
+    }
+    const double box_w = static_cast<double>(bounds.size.width);
+    const double box_h = static_cast<double>(bounds.size.height);
+    // 覆盖整可见区的半透明带：向纯黑各半混合。固定 alpha 在浅色主题上会把提示吞掉，而「哪一档主题」
+    // 是运行期决定的（`apply_appearance`），故把降级量交给 `mix_half` 而不是写一个十六进制数。
+    const auto band = mix_half(spec_.default_background, RgbaColor{0U, 0U, 0U, 255U});
+    p.fill_rect(bounds, to_color(band));
+
+    const auto chrome = settings_chrome();
+    const double card_w = std::min(kRestartCardWidthDp, box_w - 2.0 * kRestartCardHorizontalInsetDp);
+    const double card_h = kRestartCardHeightDp;
+    const double card_x = (box_w - card_w) / 2.0;
+    const double card_y = (box_h - card_h) / 2.0;
+    const Rect card{card_x, card_y, card_w, card_h};
+    p.fill_rect(to_rect(card, bounds.origin), chrome.card_bg);
+    // 四边描线：框架 `Painter` 无 stroke-rect 入口，与 `search_overlay` 里条体描边同款四条 `fill_rect`。
+    const double inner_h = card_h - 2.0 * kRestartStrokeDp;
+    p.fill_rect(to_rect(Rect{card_x, card_y, card_w, kRestartStrokeDp}, bounds.origin), chrome.card_line);
+    p.fill_rect(to_rect(Rect{card_x, card_y + card_h - kRestartStrokeDp, card_w, kRestartStrokeDp}, bounds.origin),
+                chrome.card_line);
+    p.fill_rect(to_rect(Rect{card_x, card_y + kRestartStrokeDp, kRestartStrokeDp, inner_h}, bounds.origin),
+                chrome.card_line);
+    p.fill_rect(to_rect(Rect{card_x + card_w - kRestartStrokeDp, card_y + kRestartStrokeDp, kRestartStrokeDp,
+                             inner_h},
+                        bounds.origin),
+                chrome.card_line);
+
+    const double text_x = card_x + kRestartCardPaddingDp;
+    const double text_top = card_y + kRestartCardPaddingDp;
+    const double text_w = card_w - 2.0 * kRestartCardPaddingDp;
+    p.draw_text(to_rect(Rect{text_x, text_top, text_w, kRestartHintLineHeightDp}, bounds.origin),
+                settings_label("session.restart.hint"), ref_font_, chrome.text);
+
+    const double button_top = text_top + kRestartHintLineHeightDp + kRestartButtonGapDp;
+    const double button_left = card_x + (card_w - kRestartButtonWidthDp) / 2.0;
+    const Rect button_box{button_left, button_top, kRestartButtonWidthDp, kRestartButtonHeightDp};
+    p.fill_rect(to_rect(button_box, bounds.origin), chrome.accent);
+    p.draw_text(to_rect(button_box, bounds.origin), settings_label("session.restart.button"), ref_font_,
+                chrome.window_bg);
+    // 交进 `restart_button_box_` 的是**控件本地 dp**，与 `e.local_position` 同一坐标空间，
+    // 于是指针入口不需要再补 `bounds.origin`（框架派发那条原点已在 G31 回货里对齐到本控件的绘制盒）。
+    restart_button_box_ = button_box;
 }
 
 auto TerminalView::mirror_line_of(std::size_t storage_row) const noexcept -> const grid::Row * {

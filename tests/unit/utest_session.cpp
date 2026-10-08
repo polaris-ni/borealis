@@ -3,7 +3,8 @@
 /// 测试说明: 会话层的读侧接线（字节 → 解码 → 状态机 → 网格 → 脏行提交）与写侧通道
 ///           （文本编码下发、尺寸下发、DSR/DA1 应答回写、OSC 52 读方向应答）、OSC 消费产物
 ///           的会话侧取值（标题 / 工作目录 / 超链接 / 剪贴板待写合并）、帧唤醒句柄的注入与
-///           唤醒时机，以及对端退出时的解码收尾与非法字节替换
+///           唤醒时机（含「连接生死那一次唤醒独立于批量输入有没有产出提交」这一条 `SPEC.FEAT.WS.05`
+///           的例外），以及对端退出时的解码收尾与非法字节替换
 ///           （SPEC.FEAT.TERM.01 查询响应、SPEC.FEAT.TERM.07 OSC 消费、
 ///           SPEC.FEAT.TERM.09 双向编码、SPEC.FEAT.XFER.01 尺寸同步、SPEC.FEAT.WS.01 存活判定、
 ///           架构 §3.2/§3.3/§7.2）。
@@ -372,6 +373,22 @@ AURORA_TEST_CASE(bell_flag_survives_the_drain_and_is_taken_once) {
     fixture.connection->deliver("abc");
     static_cast<void>(drain_all(*fixture.session));
     AURORA_TEST_CHECK_FALSE(fixture.session->take_bell_triggered());  // 普通输出不点亮
+}
+
+AURORA_TEST_CASE(clean_close_wakes_the_frame_even_with_no_pending_damage) {
+    // `SPEC.FEAT.WS.05` 的 dead-session 浮层判据挂在「连接生死」这一边沿上，而不是「最后一次批量
+    // 输入有没有产出提交」。头注那句「无提交即不唤醒」讲的是 `on_bytes` 那一路；`on_closed` 是其
+    // 例外——若把它塞进 `ingest({}, true)` 的返回值判定里，进程干净退出（残留半截序列在上一次 flush
+    // 之后已被吞掉）就成了「无 damage ⇒ 无 wake」的静默档，浮层要等下一次别的唤醒才显形。
+    auto fixture = make_session();
+    int wakes = 0;
+    fixture.session->set_frame_wake([&wakes]() { ++wakes; });
+    // 先排掉 `start()` 那一路可能留下的任何提交，让「干净退出」现场真的干净。
+    static_cast<void>(drain_all(*fixture.session));
+    AURORA_TEST_REQUIRE_FALSE(fixture.session->has_damage());
+
+    fixture.connection->deliver_closed();
+    AURORA_TEST_CHECK_EQ(wakes, 1);
 }
 
 }  // namespace borealis::test_cases::utest_session

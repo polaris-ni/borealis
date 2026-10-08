@@ -199,6 +199,12 @@ auto main() -> int {
     // **结构上弹不起来**（裁决 7.41③ / 7.81），而集成用例经替身宿主测的是接线而非这里。
     std::function<void(borealis::ui::TerminalView &)> wire_view;
 
+    // dead-session 浮层「重启」按钮的动作（`SPEC.FEAT.WS.05`）：与命令层 `session.restart` 同源一份，
+    // 于是按钮点击与 `Ctrl+Shift+R` 走的是同一次换会话。声明在前是必需的——`wire_view` 定义得比它早，
+    // 若把 `restart_current_tab` 直接闭包进 `wire_view` 就取不到；捕获**引用**并在实际点击时读它，
+    // 首标签那一只视口因此结构上不可能拿到一个空的钩子。
+    std::function<void()> restart_current_tab;
+
     /// 上一次写到窗口标题栏的串：逐帧都调 `set_title` 就是每帧一次 `WM_SETTEXT`，而这个量在
     /// 用户不换标签、对端不改 OSC 标题时根本不动。
     std::string last_window_title;
@@ -423,9 +429,16 @@ auto main() -> int {
     
     // 视口的两条浮层依赖此刻才取得到，先给已存在的全部视图（首标签那一只）补挂，再交给
     // `create_new_tab` 与撤销重开在创建那一刻调用——两条建视图路径共用同一处接线，结构上不可能分叉。
-    wire_view = [&host, &app](borealis::ui::TerminalView &view) -> void {
+    wire_view = [&host, &app, &restart_current_tab](borealis::ui::TerminalView &view) -> void {
         view.set_overlay_host(*host);
         view.set_search_dependencies(app.shortcuts(), app.focus());
+        // 视口只持一份可调用体；真正的重启在装配层实现（见下方 `restart_current_tab` 的赋值处）。
+        // 按引用捕获那支 `std::function`：赋值发生在 `wire_view` 之后、点击之前，钩子里读到的永远是最新那一份。
+        view.set_restart_hook([&restart_current_tab]() -> void {
+            if (restart_current_tab) {
+                restart_current_tab();
+            }
+        });
     };
     for (auto &[tab_id, workspace] : tab_workspaces) {
         static_cast<void>(tab_id);
@@ -659,6 +672,79 @@ auto main() -> int {
     undo_close_tab.default_binding = au::KeyCombo{au::ModifierKey::Control | au::ModifierKey::Shift, au::KeyCode::T};
     undo_close_tab.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(undo_close_tab));
+
+    // dead-session 一键重启（`SPEC.FEAT.WS.05`）：**同 TabId 就地换会话**而不是新加一格。
+    // 与撤销重开共享建会话/建视口/建工作区那三步（`Session` 不可拷贝不可移动，`TerminalView`
+    // 的会话指针在构造那一刻定死），差别只在两处——闭包栈不入不取，`tab_strip` 不动顺序也不动名。
+    // 于是「同一格标签、同一份回看内容被同一格重新起用」这条语义是结构性成立的，而不是靠用户
+    // 自己去辨别两格同名标签。
+    restart_current_tab = [&]() -> void {
+        if (!current_tab_id.has_value()) {
+            AURORA_LOG_INFO("main", "restart: no current tab");
+            return;
+        }
+        const borealis::ui::TabId id = *current_tab_id;
+        auto it = tab_workspaces.find(id);
+        if (it == tab_workspaces.end()) {
+            AURORA_LOG_WARN("main", "restart: tab id not present in workspace map");
+            return;
+        }
+        // 关掉旧会话（返回后不再回调 `ConnectionEvents`，架构 §7.3 的旧内容保留到这一步为止）。
+        for (auto &old : it->second.sessions) {
+            old->close();
+        }
+        it->second.sessions.clear();
+
+        // 起新会话：命令与目录一律从**当前**配置读，与「本会话最初那一格用的那份」脱钩，
+        // 因为用户在面板里可能已经改过 `connection.local_shell` 或 `connection.startup_directory`。
+        borealis::conn::LocalTerminalSpec spec;
+        spec.command_line = settings.connection.local_shell;
+        spec.working_directory = settings.connection.startup_directory;
+        borealis::term::UnicodeWidthPolicy width_policy;
+        auto session = std::make_shared<borealis::session::Session>(
+            borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
+            kNominalViewport, settings.terminal.scrollback_limit, width_policy,
+            make_terminal_defaults(settings));
+        session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
+        session->start();
+
+        auto view = std::make_shared<borealis::ui::TerminalView>(
+            *session, make_appearance(settings, catalog), make_interaction(settings));
+        if (wire_view) {
+            wire_view(*view);
+        }
+
+        borealis::ui::WorkspaceView::Hooks ws_hooks;
+        ws_hooks.make_pane = [session, view](borealis::ui::PaneId) -> std::shared_ptr<borealis::ui::TerminalView> {
+            return view;
+        };
+        ws_hooks.dispatch_grid = [session](borealis::ui::PaneId, borealis::ui::GridSize size) -> void {
+            session->resize({size.columns, size.rows});
+        };
+        ws_hooks.teardown_pane = [](borealis::ui::PaneId) -> void {};
+
+        auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
+        // **同 TabId 覆盖**：`tab_strip` 一格不动，`current_tab_id` 一格不动，仅 `tab_workspaces[id]` 换一份。
+        it->second = TabWorkspace{.workspace = std::move(workspace), .sessions = {std::move(session)}};
+        rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
+        AURORA_LOG_INFO("main", "restart: tab ", id, " session replaced");
+    };
+
+    // `session.restart` 命令（`SPEC.FEAT.WS.05`）：与浮层按钮同源，判据是「同一份闭包、两处入口」。
+    // 快捷键 `Ctrl+Shift+R`（先前拍板建议档）——不与本仓分屏保留位十二键中的任何一条同形（`workspace_key_bindings`）。
+    au::Command restart_session;
+    restart_session.id = "session.restart";
+    restart_session.title = borealis::ui::settings_label("session.restart.title");
+    restart_session.category = "workspace";
+    restart_session.action = [&restart_current_tab]() -> void {
+        if (restart_current_tab) {
+            restart_current_tab();
+        }
+    };
+    restart_session.default_binding =
+        au::KeyCombo{au::ModifierKey::Control | au::ModifierKey::Shift, au::KeyCode::R};
+    restart_session.scope = au::ShortcutScope::Global;
+    app.commands().add(std::move(restart_session));
 
     // 调试面板（`SPEC.NF.RELI.01`）：F12 开合，打开那一刻对**全部标签的每个会话**取一次计数器快照
     // （解析降级 / 非法字节 / 背压水位三族）。快照而非活读：面板只在打开时被填一次，之后不再触碰会话，

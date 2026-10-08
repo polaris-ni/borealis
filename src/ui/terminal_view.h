@@ -309,6 +309,27 @@ class TerminalView final : public aurora::LeafWidget {
         return search_overlay_.get();
     }
 
+    /// @brief 装上一键重启的钩子（`SPEC.FEAT.WS.05` 的本地腿）。
+    ///
+    /// 视口不重建会话（那是装配层的职责），只在会话进程已退出时把浮层上的「重启」按钮点亮，
+    /// 由该钩子决定「按下之后发生什么」。**留空即不画按钮**——那是装配层尚未接好这条腿的形态，
+    /// 而不是「画了但不响」：按 §4.1 的「无宿主就不问」同一条判据（`ask_multiline_warning` 里
+    /// `pending_paste_.reset()` 那一路）。
+    /// @param hook 重启动作，装配层通常让它复用 `session.restart` 命令的那一支闭包。
+    auto set_restart_hook(std::function<void()> hook) -> void;
+
+    /// @brief 会话进程是否已退出（`!Session::alive()`）——dead-session 浮层的绘制判据。
+    ///
+    /// 只读不缓存：`Session::alive()` 是一次短临界区内的原子标志读取（`connection_->alive()`），
+    /// 视口每帧绘制的两次判据（画与不画浮层、指针是否命中重启按钮）都取现值，避免「缓存说活着、
+    /// 连接说已断」的错帧。
+    [[nodiscard]] auto session_dead() const -> bool;
+
+    /// @brief 本帧的「重启」按钮窗口 dp 盒；未画即空（真点取点的观测点，`itest_render_viewport`）。
+    [[nodiscard]] auto restart_button_box() const noexcept -> const std::optional<Rect> & {
+        return restart_button_box_;
+    }
+
   protected:
     /// @brief 撑满父级，并在此重取整格几何与下发行列尺寸（`SPEC.FEAT.XFER.01` 的 UI 取值腿）。
     [[nodiscard]] auto on_layout(const aurora::Constraints &c, const aurora::BuildContext &ctx)
@@ -485,6 +506,14 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 画回看位置的指示条（视觉稿 U1）：贴底时不画。
     auto paint_scroll_indicator(aurora::Painter &p, const aurora::Rect &bounds, std::size_t rows) -> void;
 
+    /// @brief 画 dead-session 浮层（`SPEC.FEAT.WS.05`）：会话进程已退出且装了重启钩子时才落笔。
+    ///
+    /// 形态是一条覆盖整可视区的半透明带 + 居中一枚「重启」按钮。带用 `ui::mix_half` 而不是硬编码
+    /// alpha：主视口底色随主题而变，固定 alpha 在浅色主题上会把提示吞掉。按钮位置与尺寸本帧写进
+    /// `restart_button_box_`，供指针入口判命中；没装钩子时那个成员就回空，指针因此**不会**命中重启
+    /// 按钮而照旧落到选区分支——「装配层没接好这条腿」和「接好了但这一格不是按钮」是两句不同的话。
+    auto paint_restart_overlay(aurora::Painter &p, const aurora::Rect &bounds) -> void;
+
     /// @brief 取某存储行在当前可见窗里的那一行；已滚出可见窗（含被 scrollback 挤出顶端）时回空。
     [[nodiscard]] auto mirror_line_of(std::size_t storage_row) const noexcept -> const grid::Row *;
 
@@ -644,6 +673,14 @@ class TerminalView final : public aurora::LeafWidget {
     bool paste_pending_ = false;  ///< 粘贴已请求、剪贴板读取留到下一帧的 `on_frame` 落地。
     std::optional<term::PastePlan> pending_paste_;  ///< 等用户确认的处置计划（对话框放行才发送）。
     std::vector<aurora::TimerHandle> paste_timers_; ///< 在途的逐块节流任务；析构时统一取消。
+
+    /// @brief dead-session 浮层（`SPEC.FEAT.WS.05`）：装配层注入的重启钩子，未装即不画按钮。
+    std::function<void()> restart_hook_;
+    /// @brief 本帧画出的「重启」按钮盒（控件本地 dp）；未画即空，指针入口据此判命中。
+    ///
+    /// 只在 `paint_restart_overlay` 里写、且**每次画都写**（会话已退但无钩子时写空），故读取者
+    /// 拿到的永远是当前帧的形态而不是上一帧的陈旧矩形。
+    std::optional<Rect> restart_button_box_;
 };
 
 }  // namespace borealis::ui

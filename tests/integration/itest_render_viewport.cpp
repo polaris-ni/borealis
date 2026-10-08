@@ -18,7 +18,9 @@
 ///           （裁决 7.52 的 S4①，`SPEC.FEAT.PREF.02` 的「修改即时生效」）：换外观包后色带与选区色
 ///           按新值重画而**选区与回看偏移原样保留**（视口没有被重建）、字号与内边距改动经既有的
 ///           下发腿重取行列数、换链后字距与格推进仍同源、闪烁周期改动按新周期重注册（每 tick 恰翻
-///           一次），以及换交互口径后「下一次读」用新变换而存下的选区端点未被回头改写。
+///           一次），以及换交互口径后「下一次读」用新变换而存下的选区端点未被回头改写；另有 dead-session
+///           浮层（`SPEC.FEAT.WS.05`）的四例：会话活着时浮层不现身、干净退出那一刻浮层落地并把重启按钮
+///           交进窗口 dp 盒、真点按钮只唤一次钩子、点按钮之外仍走选区（「保留终端内容供回看」那一半）。
 ///           像素一律比 RGBA 四通道含 alpha：Headless 帧底色是全透明黑 (0,0,0,0)，只比 RGB 会让
 ///           「画了个纯黑」与「什么都没画」混为一谈。
 ///
@@ -108,6 +110,18 @@ class FakeConnection final : public Connection {
     auto close() -> void override { alive_ = false; }
 
     [[nodiscard]] auto alive() const noexcept -> bool override { return alive_; }
+
+    /// @brief 关掉进程并**发出 `on_closed` 事件**（`SPEC.FEAT.WS.05` 判据的触发腿）。
+    ///
+    /// 只翻 `alive_` 而不发事件是「假死」：视口的浮层与 `Session::on_closed` 里那一次唤醒都不成立，
+    /// 于是重启判据抓不到任何东西。生产里 `close()` 与 `on_closed()` 是分开的两条路径（主动关 vs.
+    /// 子进程被动终结都会走到同一个 `ConnectionEvents::on_closed`），测试侧须把两条串起来才成现场。
+    auto close_and_notify() -> void {
+        alive_ = false;
+        if (events_ != nullptr) {
+            events_->on_closed();
+        }
+    }
 
     auto deliver(std::string_view bytes) -> void {
         std::vector<std::byte> raw;
@@ -327,6 +341,34 @@ class Harness {
                au::ModifierKey modifiers = au::ModifierKey::None) -> void {
         pointer(au::MouseAction::Press, row, column, modifiers);
         pointer(au::MouseAction::Release, row, column, modifiers);
+    }
+
+    /// @brief 发一个「窗口 dp 坐标」的指针事件（`SPEC.FEAT.WS.05`：dead-session 浮层按钮的落点
+    ///        不由格网决定而由 `restart_button_box()` 决定，故这里绕开行列换算）。
+    auto pointer_at(au::MouseAction action, double x_dp, double y_dp) -> void {
+        au::MouseEvent event;
+        event.position = au::Point{.x = static_cast<float>(origin_x_ + x_dp),
+                                   .y = static_cast<float>(origin_y_ + y_dp)};
+        event.button = au::MouseButton::Left;
+        event.action = action;
+        (void)pointer_dispatcher_.dispatch_mouse(root_.widget(), event, &focus_);
+    }
+
+    /// @brief 装上一枚计数的重启钩子（`SPEC.FEAT.WS.05` 的观测点）。
+    auto install_restart_counter() -> void {
+        restart_hook_calls_ = 0U;
+        view_->set_restart_hook([this]() -> void { ++restart_hook_calls_; });
+    }
+
+    [[nodiscard]] auto restart_hook_calls() const noexcept -> std::size_t { return restart_hook_calls_; }
+
+    /// @brief 本帧重启按钮的窗口 dp 盒（未画即空，`TerminalView::restart_button_box()` 的转口）。
+    [[nodiscard]] auto restart_button_box() const -> std::optional<Rect> { return view_->restart_button_box(); }
+
+    /// @brief 让会话「干净退出」：翻 `alive_` 并发出 `ConnectionEvents::on_closed`，随后排帧一轮到见底。
+    auto kill_session_and_render() -> void {
+        connection_->close_and_notify();
+        render();
     }
 
     /// @brief 选区文本（复制腿的产物，不经系统剪贴板）。
@@ -570,6 +612,7 @@ class Harness {
     float scale_ = 1.0F;
     double origin_x_ = 0.0;
     double origin_y_ = 0.0;
+    std::size_t restart_hook_calls_ = 0U;  ///< `SPEC.FEAT.WS.05`：重启钩子的调用计数。
 };
 
 /// @brief 一格带子里「有墨的横行」的首末行号（行高腿的观测手段）。
@@ -1922,6 +1965,104 @@ AURORA_TEST_CASE(hits_keep_both_tiers_on_blur_while_the_selection_blends_half) {
     for (const std::size_t column : {std::size_t{4U}, std::size_t{5U}}) {
         AURORA_TEST_CHECK(h.cell_probe(blurred, 2U, column, 0.06) == hit);
     }
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+// ---- `SPEC.FEAT.WS.05` 的 dead-session 浮层四例 ------------------------------------------------
+//
+// 判据落点是「进程退出后保留终端内容供回看（可一键重启）」的两半：
+//   ① 会话活着时**不现身**（那一条状态判据不能反过来把浮层当成常驻元素），
+//   ② 干净退出那一刻**落地**且把按钮盒交进窗口 dp 空间（重启判据的可观测形态），
+//   ③ 真点按钮**只唤一次**钩子（装配层据此重建会话；唤两次就是二次重启），
+//   ④ 点按钮之外**仍走选区**（需求那句「保留终端内容供回看」的另一半，浮层是模态提示而不是遮罩）。
+// 前三例须装钩子（`install_restart_counter`），第四例把「装了钩子 ∧ 会话已死」的现场再点一次格子。
+
+AURORA_TEST_CASE(restart_overlay_absent_while_session_alive) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.install_restart_counter();
+    // 会话仍活：钩子内不短路绘制判据（那是 `session_->alive()` 那一半），故本例断的是
+    // 「装了钩子但会话还活着 ⇒ 按钮盒未交出来」，而不是「没装钩子所以什么都没画」。
+    h.render();
+    AURORA_TEST_CHECK_FALSE(h.restart_button_box().has_value());
+    AURORA_TEST_CHECK_EQ(h.restart_hook_calls(), 0U);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(restart_overlay_lands_after_clean_close) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.feed("\x1b[?25l\x1b[3;1HGOODBYE");
+    h.install_restart_counter();
+    const auto before = h.pixels();
+    AURORA_TEST_REQUIRE_FALSE(h.restart_button_box().has_value());
+
+    h.kill_session_and_render();
+
+    // 判据①：干净退出之后本帧必须交出按钮盒（视口 `restart_button_box_` 由 `paint_restart_overlay`
+    // 落笔时填入，未画即空，故这就是「浮层画上了」的观测点）。
+    const auto box = h.restart_button_box();
+    AURORA_TEST_REQUIRE_MSG(box.has_value(), "dead-session overlay never reached the frame");
+    // 判据②：整帧确实变了——浮层不是「画了但看不出来」的空档。差集要覆盖到按钮盒那一段。
+    AURORA_TEST_REQUIRE_GT(Harness::count_diff(before, h.pixels()), 0U);
+    // 判据③：按钮盒交出来的宽高与实装的常量相符（守「`paint_restart_overlay` 落的正是本件那一份」，
+    // 而不是任何一处 `fill_rect` 顺带产生的矩形）。
+    AURORA_TEST_CHECK_EQ(box->width, 96.0);
+    AURORA_TEST_CHECK_EQ(box->height, 32.0);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(click_on_restart_button_invokes_hook_once) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.feed("\x1b[?25l\x1b[3;1HGOODBYE");
+    h.install_restart_counter();
+    h.kill_session_and_render();
+    const auto box = h.restart_button_box();
+    AURORA_TEST_REQUIRE(box.has_value());
+
+    // 落点取按钮盒中心，`pointer_at` 吃窗口 dp 而 `restart_button_box_` 存的是控件本地 dp，
+    // 两者相差 `view->paint_bounds().origin`（本用例里视口就是场景根，origin 恒 {0,0}，故本地即窗口）。
+    const double cx = box->x + box->width / 2.0;
+    const double cy = box->y + box->height / 2.0;
+    h.pointer_at(au::MouseAction::Press, cx, cy);
+    h.pointer_at(au::MouseAction::Release, cx, cy);
+    AURORA_TEST_CHECK_EQ(h.restart_hook_calls(), 1U);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(click_outside_restart_button_still_selects_dead_pane) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    // 内容先经真实字节流落在**回看还可达**的行里；重启判据的另一半是「终端内容供回看」，
+    // 若按浮层遮罩来做，那一半就落不到——本例断的就是「装了钩子 ∧ 会话已死 ∧ 点格子而非按钮」时
+    // 选区仍成立。
+    h.feed("\x1b[?25l\x1b[3;1HELKJ");
+    h.install_restart_counter();
+    h.kill_session_and_render();
+    const auto box = h.restart_button_box();
+    AURORA_TEST_REQUIRE(box.has_value());
+
+    // 落点：第 2 行第 1 列起、拖到第 3 列（视口左上偏内一格），既在格网之内又在浮层按钮之外。
+    // 单击按既有口径两端重合即不成选区（裁决 7.32），故这里须走拖扫而不是 `click`。
+    h.pointer(au::MouseAction::Press, 2U, 1U);
+    h.pointer(au::MouseAction::Move, 2U, 3U);
+    h.pointer(au::MouseAction::Release, 2U, 3U);
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.restart_hook_calls(), 0U);
+    AURORA_TEST_CHECK_FALSE(h.selected_text().empty());
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif

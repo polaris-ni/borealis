@@ -117,7 +117,15 @@ auto Session::take_bell_triggered() -> bool {
 
 auto Session::on_bytes(std::span<const std::byte> bytes) -> void { ingest(bytes, false); }
 
-auto Session::on_closed() -> void { ingest({}, true); }
+auto Session::on_closed() -> void {
+    ingest({}, true);
+    // 连接终止是一次**状态变更**而不只是一轮批量输入：`SPEC.FEAT.WS.05` 的 dead-session 浮层
+    // 判据正是这个边沿，若只沿「有提交才唤醒」那条路径排帧，进程干净退出（无残留半截序列且最后一次
+    // flush 已排在上一帧的边界之后）就成了无提交的一轮，浮层要等到下一次别的唤醒才显形——那已经
+    // 是「过了一晚上终于看到进程早挂了」的形态。头注那句「一轮没有产出任何提交就不唤醒」讲的是
+    // 批量输入这一路径，本条是其例外：连接生死本身就是要让主线程看一眼的变化。
+    wake_frame();
+}
 
 auto Session::ingest(std::span<const std::byte> bytes, bool end_of_stream) -> void {
     std::vector<Damage> damage;
