@@ -56,6 +56,7 @@ auto TabStrip::add(TabId id, std::u32string default_name) -> bool {
     }
     tabs_.push_back(Tab{.id = id, .names = TabNames{.default_name = std::move(default_name)}});
     selected_index_ = tabs_.size() - 1;  // 新建即切换。
+    notify_changed();
     return true;
 }
 
@@ -69,6 +70,7 @@ auto TabStrip::insert_at(std::size_t index, TabId id, std::u32string default_nam
     tabs_.insert(tabs_.begin() + static_cast<std::ptrdiff_t>(index),
                  Tab{.id = id, .names = TabNames{.default_name = std::move(default_name)}});
     selected_index_ = index;  // 插入即选中。
+    notify_changed();
     return true;
 }
 
@@ -96,6 +98,7 @@ auto TabStrip::close(TabId id) -> bool {
     } else if (from < selected_index_) {
         --selected_index_;  // 选中的那格因为前面少了一格而整体左移。
     }
+    notify_changed();
     return true;
 }
 
@@ -111,7 +114,12 @@ auto TabStrip::select(TabId id) -> bool {
     if (!at.has_value()) {
         return false;
     }
+    // 只在选中位真的挪动时通知：点已经选中的那一格是常见手势（确认焦点），标脏重排整条栏不值得。
+    if (selected_index_ == *at) {
+        return true;
+    }
     selected_index_ = *at;
+    notify_changed();
     return true;
 }
 
@@ -130,6 +138,7 @@ auto TabStrip::select_relative(int step) -> bool {
         return false;
     }
     selected_index_ = static_cast<std::size_t>(target);
+    notify_changed();
     return true;
 }
 
@@ -162,6 +171,7 @@ auto TabStrip::move(TabId id, std::size_t to_index) -> bool {
             break;
         }
     }
+    notify_changed();
     return true;
 }
 
@@ -170,7 +180,11 @@ auto TabStrip::rename(TabId id, std::u32string name) -> bool {
     if (!at.has_value()) {
         return false;
     }
+    if (tabs_[*at].names.manual_name == name) {
+        return true;  // 同名提交（就地重命名后原样回车）不改状态也不通知。
+    }
     tabs_[*at].names.manual_name = std::move(name);
+    notify_changed();
     return true;
 }
 
@@ -179,7 +193,11 @@ auto TabStrip::set_osc_title(TabId id, std::u32string title) -> bool {
     if (!at.has_value()) {
         return false;
     }
+    if (tabs_[*at].names.osc_title == title) {
+        return true;  // `OSC 2` 被对端逐帧重发同一个标题是常态，每次都标脏就是每帧一次整栏重排。
+    }
     tabs_[*at].names.osc_title = std::move(title);
+    notify_changed();
     return true;
 }
 
@@ -188,41 +206,78 @@ auto TabStrip::last_closed() const -> std::optional<LastClosedInfo> {
 }
 
 auto TabStrip::mark_bell_triggered(TabId id) -> bool {
-    auto at = index_of(id);
+    const auto at = index_of(id);
     if (!at.has_value()) {
         return false;
     }
+    if (tabs_[*at].bell_triggered) {
+        return true;
+    }
     tabs_[*at].bell_triggered = true;
+    notify_changed();
     return true;
 }
 
 auto TabStrip::take_bell_triggered(TabId id) -> bool {
-    auto at = index_of(id);
+    const auto at = index_of(id);
     if (!at.has_value()) {
         return false;
     }
-    bool was = tabs_[*at].bell_triggered;
+    const bool was = tabs_[*at].bell_triggered;
     tabs_[*at].bell_triggered = false;
+    if (was) {
+        notify_changed();  // 熄灭也是一次真实转移，角标得从屏上撤掉。
+    }
     return was;
 }
 
 auto TabStrip::mark_activity(TabId id) -> bool {
-    auto at = index_of(id);
+    const auto at = index_of(id);
     if (!at.has_value()) {
         return false;
     }
+    if (tabs_[*at].has_activity) {
+        return true;
+    }
     tabs_[*at].has_activity = true;
+    notify_changed();
     return true;
 }
 
 auto TabStrip::take_activity(TabId id) -> bool {
-    auto at = index_of(id);
+    const auto at = index_of(id);
     if (!at.has_value()) {
         return false;
     }
-    bool was = tabs_[*at].has_activity;
+    const bool was = tabs_[*at].has_activity;
     tabs_[*at].has_activity = false;
+    if (was) {
+        notify_changed();
+    }
     return was;
+}
+
+auto TabStrip::set_exited(TabId id, bool exited) -> bool {
+    const auto at = index_of(id);
+    if (!at.has_value()) {
+        return false;
+    }
+    if (tabs_[*at].exited == exited) {
+        return true;  // 会话活着时每帧都推同一个 `false`，这里不挡就是每帧一次整栏重排。
+    }
+    tabs_[*at].exited = exited;
+    notify_changed();
+    return true;
+}
+
+auto TabStrip::set_changed_hook(std::function<void()> hook) -> void {
+    changed_hook_ = std::move(hook);
+}
+
+auto TabStrip::notify_changed() -> void {
+    if (changed_hook_) {
+        changed_hook_();
+    }
 }
 
 }  // namespace borealis::ui

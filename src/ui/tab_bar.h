@@ -41,6 +41,11 @@ struct TabVisual {
     bool has_close_button = true;   ///< 是否显示关闭钮（末位标签通常不给关，但那是装配层的决定）。
     bool bell_triggered = false;    ///< BEL 触发标记（`SPEC.FEAT.WS.04`）：需显示铃铛角标。
     bool has_activity = false;      ///< 是否有新活动（输出更新）：用于活动高亮指示。
+    /// @brief 会话是否已全部退出（`SPEC.FEAT.WS.04` 的断线/退出角标）。
+    ///
+    /// 与上面两枚**事件**角标的分工：那是「刚发生过什么」，这是「现在是什么状态」，故选中格也要画
+    /// （用户在一个已退出的格子上打字时，正该看见它已退出）。
+    bool exited = false;
 };
 
 /// @brief 标签栏的装配层接缝。

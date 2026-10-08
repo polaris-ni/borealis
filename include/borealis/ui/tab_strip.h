@@ -25,6 +25,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -58,15 +59,21 @@ struct TabNames {
     [[nodiscard]] auto operator==(const TabNames &other) const noexcept -> bool = default;
 };
 
-/// @brief 一格标签：身份与三个名字来源，别的都不在（本件不持会话、不持图标与角标）。
+/// @brief 一格标签：身份、三个名字来源与三枚角标的当前位。
 ///
-/// 图标与活动状态属 `SPEC.FEAT.WS.04` 与连接族，「有运行中进程」的判据属会话侧，都不进本件——
-/// 一旦在这里存了会话指针，标签列表就再也无法脱离会话单测（AGENTS.md §4.4 第 20 条）。
+/// 图标（逐标签连接类型）与「有运行中进程」的判据属会话侧，不进本件——一旦在这里存了会话指针，
+/// 标签列表就再也无法脱离会话单测（AGENTS.md §4.4 第 20 条）。BEL 与活动两枚角标（7.82）与退出角标
+/// （7.91）是例外且各有分工：它们存的是**已经发生的事实**（主线程每帧现取现推来的位），不是判据本身。
 struct Tab {
     TabId id = 0;
     TabNames names{};
     bool bell_triggered = false;   ///< BEL 触发标记（`SPEC.FEAT.WS.04`）：主线程每帧取走后清零。
     bool has_activity = false;     ///< 是否有新活动（输出更新）：用于活动高亮指示。
+    /// @brief 会话是否已全部退出（`SPEC.FEAT.WS.04` 的退出角标）。
+    ///
+    /// 是**投影缓存**而不是判据：判据权威恒在 `Session::alive()`，装配层每帧重算后经 `set_exited`
+    /// 推入（裁决 **7.91**②），故这里不需要「清除」那一半——会话重启后下一帧推进来的就是 `false`。
+    bool exited = false;
 
     /// @brief 逐字段全等比较（顺序断言用）。
     [[nodiscard]] auto operator==(const Tab &other) const noexcept -> bool = default;
@@ -194,10 +201,33 @@ class TabStrip final {
     /// @return 自上次调用以来是否有活动。
     auto take_activity(TabId id) -> bool;
 
+    /// @brief 推入「该标签的会话是否已全部退出」（`SPEC.FEAT.WS.04` 的退出角标）。
+    ///
+    /// 单向写入而没有对应的清除入口，因为本件存的是一次**投影**而不是判据：判据权威恒在会话侧的
+    /// `alive()`（裁决 7.47⑧ 的关闭确认用的就是它），装配层每帧重算后推进来。会话重启后下一帧推进来的
+    /// 就是 `false`，角标因此自行熄灭——留一个 `clear_exited` 会让两处各清一次而分叉。
+    /// 值没变时不触发变更钩子（输出洪流里每帧都推同一个 `false`，否则标签栏每帧重排）。
+    /// @param id 目标标签。
+    /// @param exited 该标签的**全部** pane 会话是否都已退出。
+    /// @return 该标签是否存在；不存在时状态不变。
+    auto set_exited(TabId id, bool exited) -> bool;
+
+    /// @brief 装一个「可见状态真的变了」的钩子（绘制侧据此标脏，裁决 **7.91**④）。
+    ///
+    /// 需要它的原因是框架的布局缓存：祖先会因后代标脏而重排，但**输入在本件之外**变化的叶子控件自己的
+    /// 缓存仍然有效，于是 `on_layout` 里现取的标签列表不会被跑到——角标落不了屏。钩子只在**发生实际
+    /// 转移**时触发（顺序、选中、名字、BEL、活动、退出六者任一），故后台标签的输出洪流只点亮一次。
+    /// @param hook 变更回调；传空函数即撤销。
+    auto set_changed_hook(std::function<void()> hook) -> void;
+
   private:
+    /// @brief 有一次真实变更时叫醒钩子（钩子为空即什么都不做）。
+    auto notify_changed() -> void;
+
     std::vector<Tab> tabs_;
     std::size_t selected_index_ = 0;  ///< 选中位在表内的下标；`tabs_` 非空时恒合法，空表时不生效。
     std::optional<LastClosedInfo> last_closed_;  ///< 最近一次关闭的标签信息（WS.10 撤销用）。
+    std::function<void()> changed_hook_;  ///< 可见状态的实际转移通知（7.91④）；未装即空。
 };
 
 }  // namespace borealis::ui

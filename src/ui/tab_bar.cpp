@@ -231,6 +231,20 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
             p.fill_rect(activity_dot, activity_color);
         }
 
+        // 断线/退出角标（`SPEC.FEAT.WS.04`）：右下角一枚**空心**方框。
+        // 与上面两枚的分工是形态上的而不是颜色上的：BEL 与活动是「刚发生过什么」的事件位（且活动只在
+        // 未选中格显形，裁决 7.82①），退出是「现在是什么状态」，故选中格**也要**画——用户在一个已退出
+        // 的格子里打字时正该看见它已退出。空心描边 + 落在右下，与右上角的实心铃铛在位置和形状两档都
+        // 不撞，两枚同格出现时各自可判。
+        if (tab.exited) {
+            const au::Color exit_color{255, 184, 108, 255};  // amber
+            const au::Rect exit_ring{
+                .origin = au::Point{.x = tab_box.origin.x + w - 8.0F,
+                                    .y = tab_box.origin.y + bar_height_ - 12.0F},
+                .size = au::Size{.width = 6.0F, .height = 6.0F}};
+            p.draw_rect(exit_ring, exit_color);
+        }
+
         // 拖拽落点导引线
         if (drag_.has_value() && drag_->is_dragging && drag_->drop_index.has_value()) {
             // 简化：在被拖标签与目标位置之间画一条 2 dp 竖线

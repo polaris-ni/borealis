@@ -312,6 +312,22 @@ auto main() -> int {
     auto root_stack = std::make_shared<au::Stack>();
     root_stack->modifier.set(au::Modifier{}.fill_max_size());
 
+    // 「该标签还有活着的会话吗」的**唯一**判定点：关闭确认（`SPEC.FEAT.WS.01`，裁决 7.47⑧）与退出角标
+    //（`SPEC.FEAT.WS.04`）吃的是同一个量，两处各写一遍就会出现「画着角标的格子关掉时却弹『还有进程在
+    // 运行』」这种自相矛盾。判据权威恒在 `Session::alive()`，本件不复制一份状态。
+    auto has_live_session = [&tab_workspaces](borealis::ui::TabId id) -> bool {
+        const auto found = tab_workspaces.find(id);
+        if (found == tab_workspaces.end()) {
+            return false;
+        }
+        for (const auto &session : found->second.sessions) {
+            if (session->alive()) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     // 真正关闭一张标签：从标签条摘除、记进闭包栈、销毁工作区与会话、必要时切到相邻标签。
     // 「确认」与「直接关」两条路径共用这一支，差别只在要不要先问一句（裁决 7.47⑧）。
     auto perform_close = [&](std::uint64_t raw_id) -> void {
@@ -389,6 +405,7 @@ auto main() -> int {
                     .has_close_button = (tab_strip.count() > 1),  // 末位不给关
                     .bell_triggered = tab.bell_triggered,
                     .has_activity = tab.has_activity,
+                    .exited = tab.exited,
                 });
             }
             return out;
@@ -398,23 +415,15 @@ auto main() -> int {
             current_tab_id = static_cast<borealis::ui::TabId>(id);
             // 切换当前显示的工作区视图
             rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
-            // 切换到该标签时清除活动标记（`SPEC.FEAT.WS.04`）
+            // 切到该标签即把两枚**事件**角标取走（`SPEC.FEAT.WS.04`）：BEL 与活动同一口径，只清活动
+            // 会让铃铛在用户已经站在那一格之后还亮着且再也没有取走的入口。
             tab_strip.take_activity(static_cast<borealis::ui::TabId>(id));
+            tab_strip.take_bell_triggered(static_cast<borealis::ui::TabId>(id));
         },
         .close = [&](std::uint64_t id) -> void {
             // 判据：该标签任一 pane 的会话进程仍在 ⇒ 一次确认关整张标签；全部已退出 ⇒ 直接关、不再问
-            //（裁决 7.47⑧）。
-            bool any_alive = false;
-            if (const auto found = tab_workspaces.find(static_cast<borealis::ui::TabId>(id));
-                found != tab_workspaces.end()) {
-                for (const auto &session : found->second.sessions) {
-                    if (session->alive()) {
-                        any_alive = true;
-                        break;
-                    }
-                }
-            }
-            if (any_alive) {
+            //（裁决 7.47⑧）。与退出角标共用 `has_live_session`，两处不可能各判一次。
+            if (has_live_session(static_cast<borealis::ui::TabId>(id))) {
                 ask_close_confirm(id);
                 return;
             }
@@ -433,6 +442,15 @@ auto main() -> int {
         },
     });
     root_stack->child_nodes_mut().push_back(aurora::Node{tab_bar_ptr});
+
+    // 标签真值源有任何一次**实际转移**就把标签栏标脏（裁决 **7.91**④）。不装这一钩子，三枚角标与显示名
+    // 都落不了屏：`TabBarWidget` 的输入全在 `on_layout` 里经 hooks 现取，而框架的布局缓存在「约束没变
+    // 且本控件未被标脏」时直接复用上次尺寸并**跳过 `on_layout`**——窗口大小没变正是常态，于是缓存恒有效。
+    // 钩子装在 `TabStrip` 一侧而不是每帧都标脏，就是为了让后台标签的输出洪流只点亮一次而不是每帧重排。
+    tab_strip.set_changed_hook([bar = tab_bar_ptr]() -> void {
+        bar->mark_needs_layout();
+        bar->mark_needs_paint();
+    });
     
     // 添加当前工作区
     if (current_tab_id.has_value()) {
@@ -850,7 +868,7 @@ auto main() -> int {
     }
 
     app.set_on_frame([&tab_workspaces, &current_tab_id, &outbox, &panel, &tab_strip, &app, &settings,
-                      &last_window_title]() -> void {
+                      &last_window_title, &has_live_session]() -> void {
         // 排帧范围是**全部标签**每帧都排（含隐藏标签，裁决 7.47⑩）：可见性只影响绘制不影响数据。
         // 只排当前标签的后果是三处静默失灵——别的标签的 `OSC 52` 永远留在队列里（取走语义按会话
         // 记账，裁决 7.21③）、BEL 与活动角标要等用户切过去才补亮、OSC 标题不落进标签名。
@@ -880,6 +898,9 @@ auto main() -> int {
                     tab_strip.set_osc_title(tab_id, osc.title);
                 }
             }
+            // 退出角标（`SPEC.FEAT.WS.04`）：每帧现算现推，`set_exited` 自己在值没变时不通知，
+            // 会话重启（`SPEC.FEAT.WS.05`）之后不必另找清除入口——下一帧推进来的就是 false。
+            tab_strip.set_exited(tab_id, !has_live_session(tab_id));
         }
         
         // 窗口标题＝**选中标签的显示名**（`SPEC.FEAT.WS.06`）：名只经 `resolve_tab_name` 这一个判定处
