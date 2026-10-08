@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "borealis/config/themes.h"
+#include "borealis/conn/profile.h"
 #include "borealis/grid/storage.h"
 #include "borealis/term/paste.h"
 #include "borealis/term/terminal.h"
@@ -211,12 +212,16 @@ struct ShortcutsSettings {
     [[nodiscard]] auto operator==(const ShortcutsSettings &other) const noexcept -> bool = default;
 };
 
-/// @brief 一份完整配置：四分类各一域，`Settings{}` 即 `SPEC.FEAT.PREF.06` 的首次启动形态。
+/// @brief 一份完整配置：四分类各一域 + 连接档案域（M3 的 `SPEC.FEAT.CONN.03`），
+///        `Settings{}` 即 `SPEC.FEAT.PREF.06` 的首次启动形态。
 struct Settings {
     AppearanceSettings appearance{};
     TerminalSettings terminal{};
     ConnectionSettings connection{};
     ShortcutsSettings shortcuts{};
+    /// @brief 连接档案（SSH/本地终端的分组、收藏、搜索、quick connect、ssh config 导入）。
+    ///        凭据按 `SPEC.FEAT.CONN.09` 只以 `SecretHandle` 引用/哨兵形态落盘，绝不存明文。
+    std::vector<conn::Profile> profiles{};
 
     /// @brief 逐域全等比较：配置往返（写盘再读回）的判据就是它。
     [[nodiscard]] auto operator==(const Settings &other) const noexcept -> bool = default;

@@ -36,6 +36,7 @@
 #include "aurora/preferences/preferences.h"
 
 #include "borealis/config/themes.h"
+#include "borealis/conn/profile.h"
 #include "borealis/grid/storage.h"
 #include "borealis/term/width.h"
 #include "borealis/ui/color_text.h"
@@ -53,11 +54,28 @@ using au::json::Value;
 
 /// @brief 顶层版本键。
 constexpr std::string_view kVersionKey = "schema_version";
-/// @brief 四个域键名（裁决 7.26① 的四分类）。
-constexpr std::array<std::string_view, 4> kDomainKeys{
-    {"appearance", "terminal", "connection", "shortcuts"}};
+/// @brief 域键名（裁决 7.26① 的四分类 + M3 的连接档案域 `profiles`）。
+constexpr std::array<std::string_view, 5> kDomainKeys{
+    {"appearance", "terminal", "connection", "shortcuts", "profiles"}};
 
 constexpr std::array<std::string_view, 4> kSshAuthMethods{"password", "privatekey", "agent", "keyboard-interactive"};
+
+/// @brief 连接类型 ↔ JSON 名（`SPEC.FEAT.CONN.03`）。
+constexpr std::array<EnumName, 2> kConnectionTypeNames{
+    EnumName{"local", static_cast<std::int64_t>(conn::ConnectionType::Local)},
+    EnumName{"ssh", static_cast<std::int64_t>(conn::ConnectionType::Ssh)}};
+
+/// @brief 已知主机策略 ↔ JSON 名（`SPEC.FEAT.CONN.03`）。
+constexpr std::array<EnumName, 4> kKnownHostsPolicyNames{
+    EnumName{"accept-new", static_cast<std::int64_t>(conn::KnownHostsPolicy::AcceptNew)},
+    EnumName{"yes", static_cast<std::int64_t>(conn::KnownHostsPolicy::Yes)},
+    EnumName{"no", static_cast<std::int64_t>(conn::KnownHostsPolicy::No)},
+    EnumName{"ask", static_cast<std::int64_t>(conn::KnownHostsPolicy::Ask)}};
+
+/// @brief 凭据句柄形态 ↔ JSON 名（`SPEC.FEAT.CONN.09`）。
+constexpr std::array<EnumName, 2> kSecretKindNames{
+    EnumName{"reference", static_cast<std::int64_t>(conn::SecretKind::Reference)},
+    EnumName{"ask", static_cast<std::int64_t>(conn::SecretKind::AskEveryTime)}};
 
 constexpr std::array<std::string_view, 3> kSerialParities{"none", "even", "odd"};
 
@@ -481,6 +499,70 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return node;
 }
 
+[[nodiscard]] auto credential_to_json(const conn::SecretHandle &secret) -> Value {
+    auto node = Value::object();
+    put_enum(node, "kind", kSecretKindNames, static_cast<std::int64_t>(secret.kind));
+    put(node, "vault_id", secret.vault_id);
+    put(node, "profile_id", secret.profile_id);
+    put(node, "label", secret.label);
+    return node;
+}
+
+[[nodiscard]] auto local_profile_to_json(const conn::LocalProfile &local) -> Value {
+    auto node = Value::object();
+    put(node, "command_line", local.command_line);
+    put(node, "working_directory", local.working_directory);
+    auto env = Value::object();
+    for (const auto &[key, value] : local.environment) {
+        env.set(key, Value(value));
+    }
+    node.set("environment", std::move(env));
+    return node;
+}
+
+[[nodiscard]] auto ssh_profile_to_json(const conn::SshProfile &ssh) -> Value {
+    auto node = Value::object();
+    put(node, "host", ssh.host);
+    put(node, "port", static_cast<std::int64_t>(ssh.port));
+    put(node, "user", ssh.user);
+    put(node, "auth_method", ssh.auth_method);
+    put(node, "identity_file", ssh.identity_file);
+    put(node, "agent_forwarding", ssh.agent_forwarding);
+    put_enum(node, "known_hosts_policy", kKnownHostsPolicyNames, static_cast<std::int64_t>(ssh.known_hosts_policy));
+    node.set("credential", credential_to_json(ssh.credential));
+    return node;
+}
+
+[[nodiscard]] auto profiles_to_json(const std::vector<conn::Profile> &profiles) -> Value {
+    auto node = Value::object();
+    auto items = Value::array();
+    for (const auto &profile : profiles) {
+        auto item = Value::object();
+        put(item, "id", profile.id);
+        put(item, "name", profile.name);
+        put_enum(item, "type", kConnectionTypeNames, static_cast<std::int64_t>(profile.type));
+        auto tags = Value::array();
+        for (const auto &tag : profile.tags) {
+            tags.push_back(Value(tag));
+        }
+        item.set("tags", std::move(tags));
+        auto groups = Value::array();
+        for (const auto &group : profile.groups) {
+            groups.push_back(Value(group));
+        }
+        item.set("groups", std::move(groups));
+        put(item, "favorite", profile.favorite);
+        if (profile.type == conn::ConnectionType::Local) {
+            item.set("local", local_profile_to_json(profile.local));
+        } else {
+            item.set("ssh", ssh_profile_to_json(profile.ssh));
+        }
+        items.push_back(std::move(item));
+    }
+    node.set("items", std::move(items));
+    return node;
+}
+
 /// @brief 读外观域。
 [[nodiscard]] auto read_appearance(ScopeReader &scope, const Settings &defaults) -> AppearanceSettings {
     AppearanceSettings appearance{};
@@ -620,6 +702,181 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return shortcuts;
 }
 
+/// @brief 读凭据句柄（CONN.09）：只还原引用/哨兵，绝不触达明文。
+[[nodiscard]] auto read_credential(const Value *node) -> conn::SecretHandle {
+    conn::SecretHandle secret;
+    if ((node == nullptr) || !node->is_object()) {
+        return secret;
+    }
+    const auto kind_text = text_of(node->at("kind"));
+    if (kind_text) {
+        const auto value = value_of(kSecretKindNames, *kind_text);
+        secret.kind = value ? static_cast<conn::SecretKind>(*value) : conn::SecretKind::Reference;
+    }
+    const auto vault_id = text_of(node->at("vault_id"));
+    if (vault_id) {
+        secret.vault_id = std::string{*vault_id};
+    }
+    const auto profile_id = text_of(node->at("profile_id"));
+    if (profile_id) {
+        secret.profile_id = std::string{*profile_id};
+    }
+    const auto label = text_of(node->at("label"));
+    if (label) {
+        secret.label = std::string{*label};
+    }
+    return secret;
+}
+
+/// @brief 读本地终端档案块。
+[[nodiscard]] auto read_local(const Value *node) -> conn::LocalProfile {
+    conn::LocalProfile local{};
+    if ((node == nullptr) || !node->is_object()) {
+        return local;
+    }
+    const auto command_line = text_of(node->at("command_line"));
+    if (command_line) {
+        local.command_line = std::string{*command_line};
+    }
+    const auto working_directory = text_of(node->at("working_directory"));
+    if (working_directory) {
+        local.working_directory = std::string{*working_directory};
+    }
+    const Value *env = node->at("environment");
+    if ((env != nullptr) && env->is_object()) {
+        for (const auto &entry : env->entries()) {
+            const auto value = text_of(&entry.value);
+            if (value) {
+                local.environment.emplace(std::string{entry.key}, std::string{*value});
+            }
+        }
+    }
+    return local;
+}
+
+/// @brief 读 SSH 档案块（凭据按 CONN.09 只还原句柄）。
+[[nodiscard]] auto read_ssh(const Value *node, LoadReport &report, std::string_view path) -> conn::SshProfile {
+    conn::SshProfile ssh{};
+    if ((node == nullptr) || !node->is_object()) {
+        return ssh;
+    }
+    const auto host = text_of(node->at("host"));
+    if (host) {
+        ssh.host = std::string{*host};
+    }
+    const Value *port = node->at("port");
+    if (port != nullptr) {
+        const auto parsed = port->as_int();
+        if (parsed) {
+            ssh.port = static_cast<int>(*parsed);
+        }
+    }
+    const auto user = text_of(node->at("user"));
+    if (user) {
+        ssh.user = std::string{*user};
+    }
+    const auto auth_method = text_of(node->at("auth_method"));
+    if (auth_method) {
+        if (std::ranges::find(kSshAuthMethods, *auth_method) == kSshAuthMethods.end()) {
+            report.rejected_keys.push_back(std::string{path} + ".auth_method");
+        } else {
+            ssh.auth_method = std::string{*auth_method};
+        }
+    }
+    const auto identity_file = text_of(node->at("identity_file"));
+    if (identity_file) {
+        ssh.identity_file = std::string{*identity_file};
+    }
+    const Value *forwarding = node->at("agent_forwarding");
+    if (forwarding != nullptr) {
+        const auto flag = forwarding->as_bool();
+        if (flag) {
+            ssh.agent_forwarding = *flag;
+        }
+    }
+    const auto policy = text_of(node->at("known_hosts_policy"));
+    if (policy) {
+        const auto value = value_of(kKnownHostsPolicyNames, *policy);
+        if (value) {
+            ssh.known_hosts_policy = static_cast<conn::KnownHostsPolicy>(*value);
+        } else {
+            report.rejected_keys.push_back(std::string{path} + ".known_hosts_policy");
+        }
+    }
+    ssh.credential = read_credential(node->at("credential"));
+    return ssh;
+}
+
+/// @brief 读连接档案域（`SPEC.FEAT.CONN.03`）：顶层 `{ "items": [...] }`。
+[[nodiscard]] auto read_profiles(const Value *domain, LoadReport &report) -> std::vector<conn::Profile> {
+    std::vector<conn::Profile> out;
+    if ((domain == nullptr) || !domain->is_object()) {
+        return out;
+    }
+    const Value *items = domain->at("items");
+    if ((items == nullptr) || !items->is_array()) {
+        report.rejected_keys.push_back("profiles");
+        return out;
+    }
+    for (std::size_t index = 0; index < items->size(); ++index) {
+        const Value *item = items->at(index);
+        if ((item == nullptr) || !item->is_object()) {
+            report.rejected_keys.push_back("profiles.items[" + std::to_string(index) + "]");
+            continue;
+        }
+        conn::Profile profile;
+        const auto id = text_of(item->at("id"));
+        if (id) {
+            profile.id = std::string{*id};
+        }
+        const auto name = text_of(item->at("name"));
+        if (name) {
+            profile.name = std::string{*name};
+        }
+        const auto type_text = text_of(item->at("type"));
+        if (type_text) {
+            const auto value = value_of(kConnectionTypeNames, *type_text);
+            profile.type = value ? static_cast<conn::ConnectionType>(*value) : conn::ConnectionType::Local;
+        }
+        const Value *tags = item->at("tags");
+        if ((tags != nullptr) && tags->is_array()) {
+            for (std::size_t tag = 0; tag < tags->size(); ++tag) {
+                const auto text = text_of(tags->at(tag));
+                if (text) {
+                    profile.tags.emplace_back(std::string{*text});
+                } else {
+                    report.rejected_keys.push_back("profiles.items[" + std::to_string(index) + "].tags[" +
+                                                   std::to_string(tag) + "]");
+                }
+            }
+        }
+        const Value *groups = item->at("groups");
+        if ((groups != nullptr) && groups->is_array()) {
+            for (std::size_t group = 0; group < groups->size(); ++group) {
+                const auto text = text_of(groups->at(group));
+                if (text) {
+                    profile.groups.emplace_back(std::string{*text});
+                }
+            }
+        }
+        const Value *favorite = item->at("favorite");
+        if (favorite != nullptr) {
+            const auto flag = favorite->as_bool();
+            if (flag) {
+                profile.favorite = *flag;
+            }
+        }
+        const std::string base = "profiles.items[" + std::to_string(index) + "]";
+        if (profile.type == conn::ConnectionType::Local) {
+            profile.local = read_local(item->at("local"));
+        } else {
+            profile.ssh = read_ssh(item->at("ssh"), report, base);
+        }
+        out.push_back(std::move(profile));
+    }
+    return out;
+}
+
 /// @brief 把一份顶层 JSON 对象读成 `Settings`，并把校验留痕写进报告。
 ///
 /// 装载、回滚与导入三条路都走这里（裁决 7.87③）：快照与导出件本来就是同一个 schema 的文档，
@@ -641,6 +898,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
             settings.terminal = read_terminal(scope, defaults);
         } else if (domain == "connection") {
             settings.connection = read_connection(scope, defaults);
+        } else if (domain == "profiles") {
+            settings.profiles = read_profiles(is_domain ? node : nullptr, report);
         } else {
             settings.shortcuts = read_shortcuts(scope, defaults);
         }
@@ -658,7 +917,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
 
 /// @brief 把存储里的顶层键摊成一份 JSON 对象，交同一条读侧。
 ///
-/// 逐个键搬而不是只搬四域：`report.unknown_keys` 记的就是 schema 之外的顶层键，只搬四域的话
+/// 逐个键搬而不是只搬各域：`report.unknown_keys` 记的就是 schema 之外的顶层键，只搬各域的话
 /// 那条留痕结构上抓不到东西。框架的元数据键已由 `keys()` 剥离（`utest_config` 的落盘形态例同断）。
 [[nodiscard]] auto root_from_preferences(const au::preferences::Preferences &prefs) -> Value {
     auto root = Value::object();
@@ -668,10 +927,10 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return root;
 }
 
-/// @brief 一份配置 → 落盘/导出共用的顶层文档（版本号 + 四域，裁决 7.87④）。
+/// @brief 一份配置 → 落盘/导出共用的顶层文档（版本号 + 各域，裁决 7.87④）。
 ///
 /// 「导出的文件能原样被 `import_settings()` 装回」这条判据的根据就是这一份文档同时是给
-/// `Preferences` 的写入内容与导出件的正文；两处各列一遍四域，导出件就会落后于 schema。
+/// `Preferences` 的写入内容与导出件的正文；两处各列一遍各域，导出件就会落后于 schema。
 [[nodiscard]] auto settings_to_json(const Settings &settings) -> Value {
     auto root = Value::object();
     root.set(kVersionKey, Value(kSupportedSchemaVersion));
@@ -679,6 +938,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     root.set("terminal", terminal_to_json(settings.terminal));
     root.set("connection", connection_to_json(settings.connection));
     root.set("shortcuts", shortcuts_to_json(settings.shortcuts));
+    root.set("profiles", profiles_to_json(settings.profiles));
     return root;
 }
 
@@ -937,7 +1197,7 @@ constexpr std::array<std::string_view, 5> kBannedKeyNames{
         any_domain = any_domain || ((node != nullptr) && node->is_object());
     }
     if (!any_domain) {
-        return fail("carries none of the four config domains");
+        return fail("carries none of the config domains");
     }
     if (const auto hit = find_credential_key(root, {}); hit) {
         return fail("carries a credential-like key: " + *hit);
@@ -1034,6 +1294,7 @@ struct Store::Impl {
         prefs.set("terminal", terminal_to_json(next.terminal));
         prefs.set("connection", connection_to_json(next.connection));
         prefs.set("shortcuts", shortcuts_to_json(next.shortcuts));
+        prefs.set("profiles", profiles_to_json(next.profiles));
         if (const auto flushed = prefs.flush(); !flushed.ok()) {
             return flushed.error().message;
         }
