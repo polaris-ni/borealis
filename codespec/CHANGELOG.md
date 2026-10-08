@@ -4,6 +4,18 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.93（2026-10-09）**`SPEC.FEAT.CONN.03` / `SPEC.FEAT.CONN.09` 的连接档案与凭据纯逻辑模型落地，并接进 `config::Store` 第五域 `profiles`**（`include/borealis/conn/profile.h` + `src/conn/profile.cpp` + `include/borealis/config/settings.h` + `include/borealis/config/store.h` + `src/config/store.cpp` + `src/CMakeLists.txt` + `tests/unit/utest_profile.cpp` + `tests/unit/utest_config.cpp`，判据入册为裁决 **7.93**）
+
+**动机**：M3 起步切片。CONN.03（SSH 档案管理）缺的「档案存储形态」正是裁决 7.87⑥ 点名的 PREF.07 导出/导入「档案」一腿的前置——此前导出件只能载四域，因为档案根本没有存储结构。CONN.09（凭据安全）的审计逻辑（`kBannedKeyNames` + `find_credential_key`）早已就位，缺的是「凭据以何种形态存在于内存与配置里」的模型。本棒一次性补上两者，并把档案接进既有的单文件落盘腿，使导出/导入/快照回滚对档案天然成立。
+
+**决定形态的口径**：⑴ **纯逻辑、可独立单测**：`Profile` / `LocalProfile` / `SshProfile` / `SecretHandle` / `ProfileStore` / `parse_ssh_config` 全在标准类型上，头不含 Aurora 类型、不含序列化；序列化留 `config::Store`（与 `LocalTerminalSpec` 同纪律，见 AGENTS.md §2）。⑵ **`SecretHandle` 永不持明文**：只两态——OS 库引用 / 每次询问哨兵，`is_plaintext()` 恒为 `false`，且**没有**任何接受明文的构造入口；降级（OS 库不可用）只返回询问哨兵。真实 OS 后端（libsecret / Keychain / CredMan）留独立任务，不在此切片。⑶ **`config::Store` 第五域**：`Settings` 增 `std::vector<conn::Profile> profiles`，`kDomainKeys` 4→5，读写对称加 `profiles_to_json` / `read_profiles`；`borealis_core` 是显式源列表，须手动把 `conn/profile.cpp` 编入。⑷ **凭据 JSON 键名取 `credential` 而非 `secret`**：`secret` 在 CONN.09 明文审计禁列中，取它会让第五域整域被「外部不可信文件」闸拦下；句柄本就不持明文，改名不削弱审计（password / passphrase / secret / token / private_key 仍被拦，见 `store.cpp` 的 `kBannedKeyNames`）。⑸ **`~/.ssh/config` 只读导入是纯函数**：确定性 id（主机名派生，非随机）、跳 `*` / `?` 通配与 `Match`、单 `Host` 多别名各成一条、单向（变更检测由消费方比对，本件不回写）。
+
+**代价**：① UI 件（侧栏档案树、新建向导、quick connect 入口）仍留 M3 后续，本棒不声称「可用」；② ProxyJump 仍属延后子项（PLAN.md §4）；③ 真实 OS 凭据后端与「配置目录明文凭据」审计用例的接线（断言逻辑已在 `store.cpp` 就位，只差指向 `profiles` 域）留独立任务；④ `ProfileStore` 当前是内存模型，持久化靠 `config::Store` 整体落盘而非增量写，符合「纯逻辑层可独立单测」口径；⑤ 全 runner 745 例仅 `etest_*` 因沙箱无 PTY 失败，与本次无关。
+
+**验收**：`utest_profile` 0 → **7 例**（`SecretHandle` 不变量、两凭据库替身、ProfileStore 增删改查/搜索、`~/.ssh/config` 导入的确定性 id 与通配跳过）；`utest_config` 的 `non_default()` 增一条非缺省 SSH 档案覆盖第五域往返，**22 例全绿**；主程序 `borealis` 构建通过；非 e2e 通道 `ctest -E etest_` 维持全绿（仅 `etest_*` 环境失败）。三笔分层提交（`06a5ae4` / `80c2c8e` / `5389343`）已上 `origin/master`。
+
+**落点**：`include/borealis/conn/profile.h` + `src/conn/profile.cpp`（模型）、`include/borealis/config/settings.h` + `include/borealis/config/store.h` + `src/config/store.cpp`（第五域接入）、`src/CMakeLists.txt`（显式源列表）、`tests/unit/utest_profile.cpp` + `tests/unit/utest_config.cpp`（单测与第五域回归）；判据入册为裁决 **7.93**、`codespec/SPECIFICATIONS.md` §4.5 的 `SPEC.FEAT.CONN.03` / `SPEC.FEAT.CONN.09` 落地现状句、`codespec/PLAN.md` 的 §3 两行与 §8 的 M3 行；本文件 v0.93。
+
 ## v0.92（2026-10-08）**入口文档 `AGENTS.md` 压缩到注入预算内并新增 `check_agents_size` 体积门禁：§6 现状快照由逐条登记改判为指针式，同批就地更正 `PLAN.md` 的两处活引用**（`AGENTS.md` + `tools/check/check_agents_size.py`（新）+ `cmake/BorealisTests.cmake` + `codespec/SPECIFICATIONS.md` §7 + `codespec/PLAN.md` §8，判据入册为裁决 **7.92**，本条零代码改动）
 
 **动机**：`AGENTS.md` 是每次协作会话原样注入的单一入口，超出注入预算的部分被**静默从中部截断**，被丢掉的必然是尾部两节——文档导航与硬规则，恰是它仅有的两项职责。本仓实测该文件长到 325571 字节，约为 8 KiB 预算的 40 倍，也就是绝大多数时候真正进入上下文的只有开头一小段。Aurora 主仓同病已由其 `tools/check/check_agents_size.py` 治理（8 KiB 上限、超限即硬失败），本仓照搬该治理形态而不是自造一套，把细则交回 `codespec/` 权威文档。
