@@ -1886,19 +1886,6 @@ constexpr float kShortcutLineGapTestDp = 6.0F;
     return found == rows.end() ? nullptr : &*found;
 }
 
-/// @brief 把表行的动作名按排版次序折成一个串，交 `check_key_sequence` 逐位比（行序就是判据本身）。
-/// @param rows 面板画出的表行。
-/// @return 动作名序列。
-[[nodiscard]] auto shortcut_titles(const std::vector<SettingsPanel::ShortcutRowView> &rows)
-    -> std::vector<std::string> {
-    std::vector<std::string> titles;
-    titles.reserve(rows.size());
-    for (const SettingsPanel::ShortcutRowView &row : rows) {
-        titles.push_back(row.title);
-    }
-    return titles;
-}
-
 /// @brief 按**解析后的显示标签**在真实派发链上找一枚按钮。
 ///
 /// 取框架 `accessibility_label()` 而不直读 `label.get().text`：`button.h` 那条 i18n 契约明写布局、绘制
