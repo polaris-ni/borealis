@@ -150,6 +150,24 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
 
     next.shortcuts.overrides["terminal.new_tab"] = "Ctrl+T";
     next.shortcuts.overrides["app.settings"] = "Ctrl+Shift+Comma";
+
+    // M3 连接档案域：一条非缺省的 SSH 档案，覆盖 profiles 域的往返等值守卫（裁决 7.26① 第五域）。
+    conn::Profile gateway;
+    gateway.id = "demo-gateway";
+    gateway.name = "Gateway";
+    gateway.type = conn::ConnectionType::Ssh;
+    gateway.tags = {"infra", "prod"};
+    gateway.groups = {"datacenter"};
+    gateway.favorite = true;
+    gateway.ssh.host = "gw.example.com";
+    gateway.ssh.port = 2222;
+    gateway.ssh.user = "admin";
+    gateway.ssh.auth_method = "privatekey";
+    gateway.ssh.identity_file = "~/.ssh/gw";
+    gateway.ssh.agent_forwarding = true;
+    gateway.ssh.known_hosts_policy = conn::KnownHostsPolicy::Ask;
+    gateway.ssh.credential = conn::SecretHandle::reference("vault://demo-gateway");
+    next.profiles.push_back(std::move(gateway));
     return next;
 }
 
@@ -395,7 +413,7 @@ AURORA_TEST_CASE(an_unsafe_document_is_refused_whole_and_changes_nothing) {
              Case{"array", R"([1,2])", "not a JSON object"},
              Case{"no version", R"({"appearance":{"theme":"nord"}})", "has no schema_version"},
              Case{"newer version", R"({"schema_version":999,"appearance":{"theme":"nord"}})", "newer than supported"},
-             Case{"no domain", R"({"schema_version":1})", "carries none of the four"},
+             Case{"no domain", R"({"schema_version":1})", "carries none of the config domains"},
              Case{"credential", R"({"schema_version":1,"appearance":{"password":"hunter2"}})", "credential-like key"},
              Case{"nested credential",
                   R"({"schema_version":1,"shortcuts":{"overrides":[{"command":"a.b","private_key":"x"}]}})",
@@ -681,8 +699,8 @@ AURORA_TEST_CASE(missing_domains_are_reported_once_each) {
     AURORA_TEST_CHECK_TRUE(store.report().outcome == LoadOutcome::Loaded);
     AURORA_TEST_CHECK_TRUE(store.settings() == Settings{});
     // 父作用域整体缺失只留痕父键一次：逐子键刷屏会让截断文件报出几十条噪声。
-    AURORA_TEST_CHECK_EQ(store.report().rejected_keys.size(), 4U);
-    for (std::string_view domain : {"appearance", "terminal", "connection", "shortcuts"}) {
+    AURORA_TEST_CHECK_EQ(store.report().rejected_keys.size(), 5U);
+    for (std::string_view domain : {"appearance", "terminal", "connection", "shortcuts", "profiles"}) {
         AURORA_TEST_CHECK_MSG(holds(store.report().rejected_keys, domain), std::string{domain});
     }
     AURORA_TEST_CHECK_TRUE(store.report().unknown_keys.empty());
@@ -786,7 +804,7 @@ AURORA_TEST_CASE(newer_schema_version_is_backed_up_before_defaulting) {
     AURORA_TEST_CHECK_TRUE(store.report().rejected_keys.empty());
 }
 
-AURORA_TEST_CASE(stored_file_is_a_single_json_with_four_domains) {
+AURORA_TEST_CASE(stored_file_is_a_single_json_with_all_schema_domains) {
     const auto file = make_path("shape.json");
     {
         Store writer{file};
@@ -806,9 +824,10 @@ AURORA_TEST_CASE(stored_file_is_a_single_json_with_four_domains) {
     // 框架的元数据键由 `Preferences` 自己读写，不属本仓 schema（`keys()` 亦已剥离它）。
     std::erase(domains, "__aurora_preference_meta__");
     std::ranges::sort(domains);
-    AURORA_TEST_CHECK_TRUE((domains == std::vector<std::string>{"appearance", "connection", "schema_version",
-                                                                "shortcuts", "terminal"}));
-    for (std::string_view domain : {"appearance", "terminal", "connection", "shortcuts"}) {
+    AURORA_TEST_CHECK_TRUE((domains == std::vector<std::string>{"appearance", "connection", "profiles",
+                                                                "schema_version", "shortcuts", "terminal"}));
+    for (std::string_view domain :
+         {"appearance", "terminal", "connection", "shortcuts", "profiles"}) {
         const au::json::Value *node = root.at(domain);
         AURORA_TEST_REQUIRE(node != nullptr);
         AURORA_TEST_CHECK_MSG(node->is_object(), std::string{domain});
