@@ -1,4 +1,5 @@
 #include <chrono>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -8,6 +9,7 @@
 #include <vector>
 
 #include "aurora/aurora.h"
+#include "aurora/app/file_dialog.h"
 #include "aurora/core/log.h"
 #include "aurora/render/font_discovery.h"
 #include "aurora/window/native_surfaces.h"
@@ -133,6 +135,30 @@ constexpr borealis::session::Size kNominalViewport{80U, 24U};
         .meta = (combo.modifiers & au::ModifierKey::Meta) != 0U,
         .num_lock = (combo.modifiers & au::ModifierKey::NumLock) != 0U,
     };
+}
+
+/// @brief 让用户点名一个要写出的文件；空串＝取消。
+///
+/// 失败（平台对话框起不来）与取消走同一个空串，因为面板那一条腿的判据就是「没给路径就整条不跑、
+/// 连留痕都不写」，把「取消」读成一次失败反而会在界面上谎报「导出失败」。
+[[nodiscard]] auto picked_save_path() -> std::string {
+    aurora::file_dialog::Options opts;
+    opts.title = "Export settings";  // 平台对话框的标题由 OS 呈现，不经本仓词条表（S13② 的同一条口径）
+    opts.filters = {{"JSON", {"*.json"}}};
+    const au::Result<std::string> result = aurora::file_dialog::save_file(opts);
+    return result.ok() ? result.value() : std::string{};
+}
+
+/// @brief 让用户点名一个要读入的文件；空串＝取消（同上）。
+[[nodiscard]] auto picked_open_path() -> std::string {
+    aurora::file_dialog::Options opts;
+    opts.title = "Import settings";
+    opts.filters = {{"JSON", {"*.json"}}};
+    const au::Result<std::vector<std::string>> result = aurora::file_dialog::open_file(opts);
+    if (!result.ok() || result.value().empty()) {
+        return std::string{};
+    }
+    return result.value().front();
 }
 
 /// @brief 定长 UTF-8 串的码点收集器（与 `session.cpp` 的 `BufferSink` 同一形态，装配侧另有一份）。
@@ -524,6 +550,29 @@ auto main() -> int {
         }
         return out;
     };
+    // `SPEC.FEAT.PREF.07` 的四条动作腿与两条取路径腿。面板只认 `std::filesystem::path` 与「空串＝取消」，
+    // 于是 `config::Store` 与平台对话框都留在装配层这一侧（面板不得认识 `config` 类型，7.32① 同因）。
+    hooks.snapshots = [&store]() -> std::vector<borealis::ui::SettingsPanel::SnapshotEntry> {
+        std::vector<borealis::ui::SettingsPanel::SnapshotEntry> out;
+        for (const borealis::config::SnapshotInfo &info : store.snapshots()) {
+            out.push_back(borealis::ui::SettingsPanel::SnapshotEntry{
+                .path = info.path, .timestamp_epoch = info.timestamp_epoch, .size_bytes = info.size_bytes});
+        }
+        return out;
+    };
+    hooks.rollback = [&store](const std::filesystem::path &snapshot) -> std::optional<std::string> {
+        return store.rollback_to(snapshot);
+    };
+    hooks.export_config = [&store](const std::filesystem::path &file) -> std::optional<std::string> {
+        return store.export_settings(file);
+    };
+    // 导入与回滚都只是**存储侧动作**：把新落盘的配置广播回视口是面板那条 `reload_from_store()` 的腿
+    // （重装载 → 整份广播 → 预览 → 重建浮层），故两条动作共用同一次生效而不各写一遍。
+    hooks.import_config = [&store](const std::filesystem::path &file) -> std::optional<std::string> {
+        return store.import_settings(file);
+    };
+    hooks.pick_export_path = []() -> std::string { return picked_save_path(); };
+    hooks.pick_import_path = []() -> std::string { return picked_open_path(); };
     borealis::ui::SettingsPanel panel{*host, app.shortcuts(), std::move(hooks)};
 
     // 打开入口按 `SPEC.FEAT.PREF.02` 走命令层：命令是快捷键、菜单与命令面板的共同真源（架构 §11.2），

@@ -89,6 +89,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -343,6 +344,33 @@ public:
     /// `base.shortcuts.overrides`（真实装载腿），于是「孤儿行只由覆盖表贡献」这条判据测的是接线而不是替身。
     std::vector<ShortcutCommandEntry> command_table;
 
+    // ==================== `SPEC.FEAT.PREF.07` 的六条接缝 ====================
+
+    /// @brief 六条动作腿装不装（缺省**不装**，与既有夹具保持一致：不装即界面上一枚动作按钮都不画）。
+    ///
+    /// 与 `with_preview` 同一条理由：装的是**闭包本身**而不是调用时才读的 bool，故须在 `hooks()` 之前设。
+    /// `omit_a_pick_leg` 是那条「六条成组才画」判据的第二档现场——少一条取路径腿，三枚按钮一起消失。
+    bool with_config_actions = false;
+    bool omit_a_pick_leg = false;
+    /// @brief 交回面板的快照名单（新→旧；装配层那份 `Store::snapshots()` 的替身）。
+    std::vector<SettingsPanel::SnapshotEntry> snapshot_list;
+    std::size_t snapshots_calls = 0;   ///< 名单被现取了几次（每次建浮层一次）。
+    std::size_t rollback_calls = 0;
+    std::size_t export_calls = 0;
+    std::size_t import_calls = 0;
+    std::vector<std::filesystem::path> rollback_targets;  ///< 每次回滚交回来的路径，按序。
+    std::vector<std::filesystem::path> export_targets;
+    std::vector<std::filesystem::path> import_targets;
+    bool fail_rollback = false;  ///< 回滚腿交回 ASCII 原因（存储侧「那份文件不在名单里 / 读不出来」的形态）。
+    bool fail_export = false;
+    bool fail_import = false;
+    /// @brief 两条取路径腿交回的路径；**空串＝用户取消**（面板据此整条不跑）。
+    std::string export_pick;
+    std::string import_pick;
+    /// @brief 回滚 / 导入成功时存储侧变成的那一份（真 `Store` 在那两条动作里就是把现场换掉，故基线随之推进）。
+    std::optional<Settings> after_rollback;
+    std::optional<Settings> after_import;
+
     /// @brief 交出一副挂到本替身上的 `Hooks`。
     ///
     /// 各闭包都按 `this` 取值而不是按建立时的快照，故 `hooks()` 交出之后仍可改 `load_script`、
@@ -400,6 +428,55 @@ public:
             out.preview_wake = [this]() -> void {
                 ++preview_wake_calls;
             };
+        }
+        if (with_config_actions) {
+            out.snapshots =
+                [this]() -> std::vector<SettingsPanel::SnapshotEntry> {
+                    ++snapshots_calls;
+                    return snapshot_list;
+                };
+            out.rollback =
+                [this](const std::filesystem::path &snapshot) -> std::optional<std::string> {
+                    ++rollback_calls;
+                    rollback_targets.push_back(snapshot);
+                    if (fail_rollback) {
+                        return std::string{"snapshot not found"};  // ASCII 诊断，只进日志
+                    }
+                    if (after_rollback.has_value()) {
+                        base = *after_rollback;  // 真存储回滚就是把现场换掉，基线随之推进
+                    }
+                    return std::nullopt;
+                };
+            out.export_config =
+                [this](const std::filesystem::path &file) -> std::optional<std::string> {
+                    ++export_calls;
+                    export_targets.push_back(file);
+                    if (fail_export) {
+                        return std::string{"cannot write target"};
+                    }
+                    return std::nullopt;
+                };
+            out.import_config =
+                [this](const std::filesystem::path &file) -> std::optional<std::string> {
+                    ++import_calls;
+                    import_targets.push_back(file);
+                    if (fail_import) {
+                        return std::string{"envelope rejected"};
+                    }
+                    if (after_import.has_value()) {
+                        base = *after_import;
+                    }
+                    return std::nullopt;
+                };
+            out.pick_export_path = [this]() -> std::string {
+                return export_pick;
+            };
+            // `omit_a_pick_leg` 造的是「少一条腿」那一档：三枚动作按钮整组不画，而不是画两枚少一枚。
+            if (!omit_a_pick_leg) {
+                out.pick_import_path = [this]() -> std::string {
+                    return import_pick;
+                };
+            }
         }
         return out;
     }
@@ -3791,6 +3868,461 @@ AURORA_TEST_CASE(the_shortcut_rows_grow_the_row_area_content_and_a_click_on_the_
     AURORA_TEST_CHECK_TRUE(panel->is_open());
 }
 
+// ==================== `SPEC.FEAT.PREF.07`：快照名单 / 一键回滚 / 本地导出导入 ====================
+
+/// @brief 快照名单的替身现场（新→旧，名字自带 epoch 秒）。
+///
+/// 界面上那串字是 `path.filename()`，而交回存储侧的是**整条路径**——两件事各有证人，故 fixture 把两者
+/// 做成明显不相等的形态（路径带目录段）。路径取绝对形而**不**在本机存在：面板只是传话人，它既不开
+/// 文件也不解析（存储侧只接受自家名单里的路径，裁决 7.87⑤）。
+[[nodiscard]] auto snapshot_fixture() -> std::vector<SettingsPanel::SnapshotEntry> {
+    return {
+        SettingsPanel::SnapshotEntry{
+            .path = std::filesystem::path{"/borealis-test/settings.config.snapshot-1720000300-1"},
+            .timestamp_epoch = 1720000300,
+            .size_bytes = 4096},
+        SettingsPanel::SnapshotEntry{
+            .path = std::filesystem::path{"/borealis-test/settings.config.snapshot-1720000200"},
+            .timestamp_epoch = 1720000200,
+            .size_bytes = 512},
+        SettingsPanel::SnapshotEntry{
+            .path = std::filesystem::path{"/borealis-test/settings.config.snapshot-1720000100"},
+            .timestamp_epoch = 1720000100,
+            .size_bytes = 0},
+    };
+}
+
+/// @brief 把一枚按钮送进真实派发的可见带并交回命中点（滚到哪一档不是判据，命中即止）。
+///
+/// 头部三枚动作按钮按 offset 0 就该在带内，快照行的「回滚」则随名单长度可能靠下；这里统一走
+/// `reveal_chain_button` 那一套「每滚一段重扫一次」的取点，免得判据依赖「恰好第一屏放得下」。
+[[nodiscard]] auto reveal_button(Harness &h, au::Widget *want) -> HitSpot {
+    HitSpot spot;
+    if (want == nullptr) {
+        return spot;
+    }
+    for (int attempt = 0; attempt < 20 && spot.widget == nullptr; ++attempt) {
+        spot = h.find_first("Button", 0.0F, [want](au::Widget *widget) -> bool { return widget == want; });
+        if (spot.widget == nullptr) {
+            for (int notch = 0; notch < 12; ++notch) {
+                h.scroll(450.0F, 300.0F, -1.0F);  // 负方向是往下滚（`ScrollViewport` 的符号约定）
+            }
+            h.render();
+        }
+    }
+    return spot;
+}
+
+/// @brief 走生产路径进入快照视图：真点头部那枚「配置快照」，再排一帧。
+///
+/// 不经 `show_snapshots()`：它是私有方法，而「按钮点得动且落在这枚按钮上」正是 E1-a 那一腿的一部分。
+auto enter_snapshot_view(Harness &h, SettingsPanel &panel) -> void {
+    const HitSpot spot = reveal_button(h, panel.snapshots_button());
+    AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr, "the snapshots action button is not dispatch-reachable");
+    h.click(spot.x, spot.y);
+    h.render();
+    AURORA_TEST_REQUIRE_MSG(panel.showing_snapshots(), "clicking the snapshots button did not open the list");
+}
+
+/// @brief 卡片头部那一行留痕**上屏**的那串字（与 `config_notice()` 那份模型态读数配成一对）。
+///
+/// 失败那三句走的是「只换文本、不重建浮层」的腿，故只看 `config_notice()` 的读数抓不到「改了模型态却
+/// 没写上屏」；这里读的是控件自己的 `content`，与 `font_notice_text()` 同一档。
+[[nodiscard]] auto painted_notice(const SettingsPanel &panel) -> std::string {
+    auto *text = dynamic_cast<au::Text *>(panel.config_notice_widget());
+    AURORA_TEST_REQUIRE_MSG(text != nullptr, "the notice line is not a Text on the dispatch tree");
+    return text->content.get().text;
+}
+
+/// @brief 六条接缝**成组**才画三枚动作按钮（7.38⑥ F-b：不给会失灵的按钮）。
+///
+/// 三档现场各钉一种错法：只装五条时画了两枚（少一条取路径腿就是点了没反应的那一枚）、装了六条却一枚
+/// 都不画（判据读不到按钮）、以及「按条数逐枚判空」的形态（那种实现下 `omit_a_pick_leg` 会只剩两枚，
+/// 而需求要的是整组消失）。
+AURORA_TEST_CASE(the_config_actions_are_absent_until_all_six_seams_are_installed) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+
+    StoreProbe bare;
+    std::unique_ptr<SettingsPanel> without = h.attach(bare);
+    h.open(*without);
+    AURORA_TEST_CHECK_FALSE(without->has_config_actions());
+    AURORA_TEST_CHECK(without->export_button() == nullptr);
+    AURORA_TEST_CHECK(without->import_button() == nullptr);
+    AURORA_TEST_CHECK(without->snapshots_button() == nullptr);
+    without->close();
+    h.render();
+
+    StoreProbe wired;
+    wired.with_config_actions = true;
+    std::unique_ptr<SettingsPanel> panel = h.attach(wired);
+    h.open(*panel);
+    AURORA_TEST_CHECK_TRUE(panel->has_config_actions());
+    AURORA_TEST_REQUIRE(panel->export_button() != nullptr);
+    AURORA_TEST_REQUIRE(panel->import_button() != nullptr);
+    AURORA_TEST_REQUIRE(panel->snapshots_button() != nullptr);
+    panel->close();
+    h.render();
+
+    StoreProbe half;
+    half.with_config_actions = true;
+    half.omit_a_pick_leg = true;  // 少一条取路径腿
+    std::unique_ptr<SettingsPanel> lopsided = h.attach(half);
+    h.open(*lopsided);
+    AURORA_TEST_CHECK_FALSE(lopsided->has_config_actions());
+    AURORA_TEST_CHECK(lopsided->export_button() == nullptr);
+    AURORA_TEST_CHECK(lopsided->import_button() == nullptr);
+    AURORA_TEST_CHECK(lopsided->snapshots_button() == nullptr);
+    lopsided->close();
+    h.render();
+}
+
+/// @brief 名单**逐行逐字**投影成观测量，而看名单这一步既不落盘也不广播。
+///
+/// ① 名字与字节数以**观测量**比而不是比树里的 `Text`：`SPEC.FEAT.PREF.07` 那句「至多留存 N 份、新的在
+///    前」判的是次序与条数，而观测面与绘制侧共用同一对折算函数，故这一比同时钉住「用例读的就是画出来
+///    那串字」。第二条快照没有序号后缀、第三条字节数为 0（画「0 B」而不是留空），都是命名与显示形态的
+///    现场。
+/// ② 名单每次建浮层现取（回滚与导入都会让名单本身在动作里变，裁决 7.87②）：开面板一次、进视图一次。
+/// ③ 换页即退出视图：名单是右栏的一种态而不是某一页的内容。
+AURORA_TEST_CASE(the_snapshot_view_projects_the_list_and_touches_neither_disk_nor_viewports) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+
+    StoreProbe probe;
+    probe.with_config_actions = true;
+    probe.snapshot_list = snapshot_fixture();
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    AURORA_TEST_CHECK_EQ(probe.snapshots_calls, 1U);
+    AURORA_TEST_CHECK_FALSE(panel->showing_snapshots());
+    AURORA_TEST_REQUIRE_EQ(panel->snapshot_rows().size(), 0U);  // 未进视图时一行都不投影
+
+    enter_snapshot_view(h, *panel);
+    AURORA_TEST_CHECK_EQ(probe.snapshots_calls, 2U);
+    const std::vector<SettingsPanel::SnapshotRowView> rows = panel->snapshot_rows();
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 3U);
+    AURORA_TEST_CHECK_EQ(rows[0].name, std::string{"settings.config.snapshot-1720000300-1"});
+    AURORA_TEST_CHECK_EQ(rows[1].name, std::string{"settings.config.snapshot-1720000200"});
+    AURORA_TEST_CHECK_EQ(rows[2].name, std::string{"settings.config.snapshot-1720000100"});
+    AURORA_TEST_CHECK_EQ(rows[0].size_text, std::string{"4096 B"});
+    AURORA_TEST_CHECK_EQ(rows[1].size_text, std::string{"512 B"});
+    AURORA_TEST_CHECK_EQ(rows[2].size_text, std::string{"0 B"});
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+    AURORA_TEST_REQUIRE(panel->snapshot_rollback_button(2) != nullptr);
+    AURORA_TEST_CHECK(panel->snapshot_rollback_button(3) == nullptr);
+
+    panel->select_page(SettingsPage::Terminal);
+    h.render();
+    AURORA_TEST_CHECK_FALSE(panel->showing_snapshots());
+    AURORA_TEST_REQUIRE_EQ(panel->snapshot_rows().size(), 0U);
+    AURORA_TEST_CHECK_EQ(probe.snapshots_calls, 3U);
+    panel->close();
+    h.render();
+}
+
+/// @brief 名单为空时那句「还没有落过盘」真的进了控件树，且没有任何一枚可点的「回滚」。
+///
+/// 空态的判据不能只读 `snapshot_rows()` 的长度（那是「没画行」，本来就该为空），故这里按真实派发扫那
+/// 一行说明文案：扫不到即转红。「返回」按钮仍在（空名单也得能回到设置页）。
+AURORA_TEST_CASE(an_empty_snapshot_list_says_so_and_offers_no_rollback) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+
+    StoreProbe probe;
+    probe.with_config_actions = true;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    enter_snapshot_view(h, *panel);
+
+    AURORA_TEST_REQUIRE_EQ(panel->snapshot_rows().size(), 0U);
+    AURORA_TEST_CHECK(panel->snapshot_rollback_button(0) == nullptr);
+    AURORA_TEST_REQUIRE(panel->back_button() != nullptr);
+
+    const std::string wanted = borealis::ui::settings_label("settings.snapshot.empty");
+    const HitSpot line = h.find_first("Text", 0.0F, [&wanted](au::Widget *widget) -> bool {
+        auto *text = dynamic_cast<au::Text *>(widget);
+        return text != nullptr && text->content.get().text == wanted;
+    });
+    AURORA_TEST_REQUIRE_MSG(line.widget != nullptr, "the empty-snapshot wording is not painted in the row area");
+    panel->close();
+    h.render();
+}
+
+/// @brief 真点第二行的「回滚」：交回的是**那一条**的路径，且面板整份回到那一个现场。
+///
+/// 四个量各守一条腿：① 路径逐字（取错行就是回滚到另一份现场，而界面看不出来）；② 一次动作**恰一次**
+/// 广播（`reload_from_store` 是唯一漏斗：副本重装载 + 整份广播 + 预览跟上 + 浮层重建），且**零落盘**
+/// （回滚不写盘——写盘的是存储侧那份快照复制，面板这边一个字节都不该走 `persist`）；③ 表单确实重装载
+/// （读回的是存储侧那一份 22.0，而面板自己那份 14.0 已不在）；④ 留痕是「已回滚到 <文件名>」，文件名
+/// 而非整条路径（卡片头部那一行宽度有限）。下标 1 而不是 0：0 那一档与「实现忽略下标、恒取首条」等价。
+AURORA_TEST_CASE(a_real_click_on_a_rollback_line_restores_that_snapshot_and_reloads_the_panel) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+
+    StoreProbe probe;
+    probe.with_config_actions = true;
+    probe.snapshot_list = snapshot_fixture();
+    Settings rolled{};
+    rolled.appearance.font_size_pt = 22.0;
+    probe.after_rollback = rolled;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    enter_snapshot_view(h, *panel);
+
+    au::Widget *const target = panel->snapshot_rollback_button(1);
+    AURORA_TEST_REQUIRE(target != nullptr);
+    const HitSpot spot = reveal_button(h, target);
+    AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr, "the second snapshot's rollback button is unreachable");
+    const std::filesystem::path expected_path = probe.snapshot_list[1].path;
+    const std::size_t loads_before = probe.load_calls;
+
+    h.click(spot.x, spot.y);
+    h.render();
+
+    AURORA_TEST_CHECK_EQ(probe.rollback_calls, 1U);
+    AURORA_TEST_REQUIRE_EQ(probe.rollback_targets.size(), 1U);
+    AURORA_TEST_CHECK_TRUE(probe.rollback_targets[0] == expected_path);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_REQUIRE_EQ(probe.broadcast.size(), 1U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast[0].appearance.font_size_pt, 22.0);
+    AURORA_TEST_CHECK_EQ(probe.load_calls, loads_before + 1);
+    AURORA_TEST_REQUIRE(panel->form().value("appearance.font_size_pt") != nullptr);
+    AURORA_TEST_CHECK_EQ(*panel->form().value("appearance.font_size_pt")->as_real(), 22.0);
+    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
+    const std::string wanted = borealis::ui::settings_label(
+        "settings.config.rolled_back", {aurora::LocalizedString{"settings.config.snapshot-1720000200"}});
+    AURORA_TEST_CHECK_EQ(panel->config_notice(), wanted);
+    AURORA_TEST_CHECK_EQ(painted_notice(*panel), wanted);
+    AURORA_TEST_CHECK_TRUE(panel->showing_snapshots());  // 名单是一种态，一次动作不该把它弹回设置页
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 1U);         // 重建的是同一层浮层，没有多叠一层
+    panel->close();
+    h.render();
+}
+
+/// @brief 存储侧拒绝时：界面只说那一句「当前设置未改动」，其余一切原地不动。
+///
+/// 两条口径在此分家：存储侧交回的原因是 **ASCII 诊断串**（只进日志，AGENTS.md §4.3 第 14 条），上屏的
+/// 一律是本仓词条（同降级对话框的判法，裁决 7.76⑤）。这一条同时是「留痕确实上了屏」的证人——失败腿走
+/// 的是**不重建浮层**的那条路（只换文本 + 自标两脏），故必须读控件自己的 `content`。
+AURORA_TEST_CASE(a_refused_rollback_leaves_the_panel_where_it_was_and_says_only_the_generic_line) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+
+    StoreProbe probe;
+    probe.with_config_actions = true;
+    probe.snapshot_list = snapshot_fixture();
+    probe.fail_rollback = true;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    enter_snapshot_view(h, *panel);
+    const std::size_t loads_before = probe.load_calls;
+
+    const HitSpot spot = reveal_button(h, panel->snapshot_rollback_button(0));
+    AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr, "the head snapshot's rollback button is unreachable");
+    h.click(spot.x, spot.y);
+    h.render();
+
+    AURORA_TEST_CHECK_EQ(probe.rollback_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.load_calls, loads_before);  // 没重装载：副本还是那一份
+    AURORA_TEST_REQUIRE(panel->form().value("appearance.font_size_pt") != nullptr);
+    AURORA_TEST_CHECK_EQ(*panel->form().value("appearance.font_size_pt")->as_real(), 14.0);
+    const std::string wanted = borealis::ui::settings_label("settings.config.rollback_failed");
+    AURORA_TEST_CHECK_EQ(panel->config_notice(), wanted);
+    AURORA_TEST_CHECK_EQ(painted_notice(*panel), wanted);
+    AURORA_TEST_CHECK_TRUE(panel->config_notice().find("snapshot not found") == std::string::npos);
+    AURORA_TEST_CHECK_TRUE(panel->is_open());
+    AURORA_TEST_CHECK_TRUE(panel->showing_snapshots());
+    AURORA_TEST_REQUIRE_EQ(panel->snapshot_rows().size(), 3U);
+    panel->close();
+    h.render();
+}
+
+/// @brief 取消即整条不跑，**连留痕都不写**：上一句动作的话还挂在界面上一字未动。
+///
+/// 「取消」与「失败」在界面上必须可区分（前者什么都不说，后者必须说「没改成」），而实现最容易写错的形态
+/// 正是给取消也补一句提示。故先跑一次成功的导出把留痕立起来，再取消一次并判那句话**没被换掉**。
+AURORA_TEST_CASE(a_cancelled_export_runs_nothing_and_keeps_the_previous_notice) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+
+    StoreProbe probe;
+    probe.with_config_actions = true;
+    probe.export_pick = "/borealis-test/exported-first.json";
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    const HitSpot first = reveal_button(h, panel->export_button());
+    AURORA_TEST_REQUIRE_MSG(first.widget != nullptr, "the export button is not dispatch-reachable");
+    h.click(first.x, first.y);
+    h.render();
+    AURORA_TEST_CHECK_EQ(probe.export_calls, 1U);
+    const std::string written = panel->config_notice();
+    AURORA_TEST_REQUIRE_FALSE(written.empty());
+
+    probe.export_pick.clear();  // 用户按了「取消」
+    const HitSpot again = reveal_button(h, panel->export_button());
+    AURORA_TEST_REQUIRE_MSG(again.widget != nullptr, "the export button moved away after the first action");
+    h.click(again.x, again.y);
+    h.render();
+    AURORA_TEST_CHECK_EQ(probe.export_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+    AURORA_TEST_CHECK_EQ(panel->config_notice(), written);
+    AURORA_TEST_CHECK_EQ(painted_notice(*panel), written);
+    panel->close();
+    h.render();
+}
+
+/// @brief 导出成功：把选中的路径逐字说给用户，而表单、磁盘、视口一个都没动。
+///
+/// 导出的对象是**存储侧那一份**（面板里未落盘的改动不在其中，裁决 7.87⑥），故这一腿判的恰是「它不动
+/// 表单」：既不提交也不置脏。路径是取值不是字面量，逐字上屏（同降级对话框的备份行，裁决 7.76⑤）。
+AURORA_TEST_CASE(a_successful_export_names_the_file_and_commits_no_form_value) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+
+    StoreProbe probe;
+    probe.with_config_actions = true;
+    probe.export_pick = "/borealis-test/my config.json";
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+
+    const HitSpot spot = reveal_button(h, panel->export_button());
+    AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr, "the export button is not dispatch-reachable");
+    h.click(spot.x, spot.y);
+    h.render();
+
+    AURORA_TEST_CHECK_EQ(probe.export_calls, 1U);
+    AURORA_TEST_REQUIRE_EQ(probe.export_targets.size(), 1U);
+    AURORA_TEST_CHECK_TRUE(probe.export_targets[0] == std::filesystem::path{probe.export_pick});
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
+    const std::string wanted =
+        borealis::ui::settings_label("settings.config.exported", {aurora::LocalizedString{probe.export_pick}});
+    AURORA_TEST_CHECK_EQ(panel->config_notice(), wanted);
+    AURORA_TEST_CHECK_EQ(painted_notice(*panel), wanted);
+    panel->close();
+    h.render();
+}
+
+/// @brief 导入成功走的是「回到那一份现场」那条腿：副本重装载、整份广播恰一次、留痕点名那份文件。
+///
+/// 与回滚共用同一个漏斗（`reload_from_store`），故判据同形：一次广播、零落盘、表单读回存储侧那一份、脏
+/// 标记清空。差在留痕的措辞与参数（导入报的是用户选中的**整条路径**，而回滚报的是快照文件名）。
+AURORA_TEST_CASE(a_successful_import_reloads_the_copy_and_broadcasts_the_whole_form_once) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+
+    StoreProbe probe;
+    probe.with_config_actions = true;
+    probe.import_pick = "/borealis-test/foreign.json";
+    Settings imported{};
+    imported.appearance.font_size_pt = 18.0;
+    probe.after_import = imported;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    const std::size_t loads_before = probe.load_calls;
+
+    const HitSpot spot = reveal_button(h, panel->import_button());
+    AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr, "the import button is not dispatch-reachable");
+    h.click(spot.x, spot.y);
+    h.render();
+
+    AURORA_TEST_CHECK_EQ(probe.import_calls, 1U);
+    AURORA_TEST_REQUIRE_EQ(probe.import_targets.size(), 1U);
+    AURORA_TEST_CHECK_TRUE(probe.import_targets[0] == std::filesystem::path{probe.import_pick});
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.load_calls, loads_before + 1);
+    AURORA_TEST_REQUIRE(panel->form().value("appearance.font_size_pt") != nullptr);
+    AURORA_TEST_CHECK_EQ(*panel->form().value("appearance.font_size_pt")->as_real(), 18.0);
+    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
+    const std::string wanted =
+        borealis::ui::settings_label("settings.config.imported", {aurora::LocalizedString{probe.import_pick}});
+    AURORA_TEST_CHECK_EQ(panel->config_notice(), wanted);
+    AURORA_TEST_CHECK_EQ(painted_notice(*panel), wanted);
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 1U);
+    panel->close();
+    h.render();
+}
+
+/// @brief 导入被拒（那份文件不是一份可用的配置）：当前设置一字未动，也不广播给任何视口。
+///
+/// 外部文件是**不可信输入**（信封外的键名一律整份拒绝，裁决 7.87⑥），故这一例守的是「拒了就不能有半点
+/// 现场被换掉」：不重装载、不广播、表单还是装载时那一份。存储侧的 ASCII 原因同样不上屏。
+AURORA_TEST_CASE(a_rejected_import_keeps_every_value_and_sends_no_broadcast) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+
+    StoreProbe probe;
+    probe.with_config_actions = true;
+    probe.import_pick = "/borealis-test/not-a-config.json";
+    probe.fail_import = true;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    const std::size_t loads_before = probe.load_calls;
+
+    const HitSpot spot = reveal_button(h, panel->import_button());
+    AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr, "the import button is not dispatch-reachable");
+    h.click(spot.x, spot.y);
+    h.render();
+
+    AURORA_TEST_CHECK_EQ(probe.import_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.load_calls, loads_before);
+    AURORA_TEST_REQUIRE(panel->form().value("appearance.font_size_pt") != nullptr);
+    AURORA_TEST_CHECK_EQ(*panel->form().value("appearance.font_size_pt")->as_real(), 14.0);
+    const std::string wanted = borealis::ui::settings_label("settings.config.import_failed");
+    AURORA_TEST_CHECK_EQ(panel->config_notice(), wanted);
+    AURORA_TEST_CHECK_EQ(painted_notice(*panel), wanted);
+    AURORA_TEST_CHECK_TRUE(panel->config_notice().find("envelope") == std::string::npos);
+    AURORA_TEST_CHECK_TRUE(panel->is_open());
+    panel->close();
+    h.render();
+}
+
+/// @brief `Escape` 的四层交接里，快照视图那一层在关面板**之前**（判据文 E1-a 的键盘出口）。
+///
+/// 快照名单不是浮层，故它没有「点外面即关」那条腿，`Escape` 是它唯一的键盘出口；第一次只退出视图（面板
+/// 与浮层都还在、快捷键仍绑着），第二次才关面板并解绑。少了这一层，用户按下 `Escape` 看到的是「名单和
+/// 整块面板一起消失」，而他要的只是回到刚才那一页。
+AURORA_TEST_CASE(escape_leaves_the_snapshot_view_before_it_closes_the_panel) {
+    Harness h;
+    StoreProbe probe;
+    probe.with_config_actions = true;
+    probe.snapshot_list = snapshot_fixture();
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    enter_snapshot_view(h, *panel);
+
+    auto escape = []() -> au::KeyEvent {
+        au::KeyEvent event;
+        event.key = static_cast<int>(au::KeyCode::Escape);
+        event.action = au::KeyAction::Down;
+        return event;
+    }();
+
+    AURORA_TEST_REQUIRE(h.shortcuts().handle(escape, false));
+    AURORA_TEST_CHECK_FALSE(panel->showing_snapshots());
+    AURORA_TEST_REQUIRE_EQ(panel->snapshot_rows().size(), 0U);
+    AURORA_TEST_CHECK_TRUE(panel->is_open());
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 1U);
+    AURORA_TEST_CHECK_EQ(h.shortcuts().count(), 1U);  // 解绑只发生在关面板那一刻
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
+
+    AURORA_TEST_REQUIRE(h.shortcuts().handle(escape, false));
+    AURORA_TEST_CHECK_FALSE(panel->is_open());
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 0U);
+    AURORA_TEST_CHECK_EQ(h.shortcuts().count(), 0U);
+}
+
 #else
 
 AURORA_TEST_CASE(the_scrim_covers_the_whole_window_and_a_real_click_closes_the_panel) {
@@ -3906,6 +4438,46 @@ AURORA_TEST_CASE(the_shortcut_table_lists_registry_rows_first_and_appends_only_o
 }
 
 AURORA_TEST_CASE(the_conflict_notes_come_from_key_presses_rather_than_binding_text) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_config_actions_are_absent_until_all_six_seams_are_installed) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(the_snapshot_view_projects_the_list_and_touches_neither_disk_nor_viewports) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(an_empty_snapshot_list_says_so_and_offers_no_rollback) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_real_click_on_a_rollback_line_restores_that_snapshot_and_reloads_the_panel) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_refused_rollback_leaves_the_panel_where_it_was_and_says_only_the_generic_line) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_cancelled_export_runs_nothing_and_keeps_the_previous_notice) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_successful_export_names_the_file_and_commits_no_form_value) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_successful_import_reloads_the_copy_and_broadcasts_the_whole_form_once) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(a_rejected_import_keeps_every_value_and_sends_no_broadcast) {
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+}
+
+AURORA_TEST_CASE(escape_leaves_the_snapshot_view_before_it_closes_the_panel) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 

@@ -70,6 +70,27 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"settings.shortcut.conflict_with", "与「{0}」重复"},
     {"settings.shortcut.conflict_workspace", "与分屏键位冲突"},
 
+    // ---- 配置韧性动作区（`SPEC.FEAT.PREF.07` 的 M2 腿：快照名单 + 一键回滚 + 本地导出导入）----
+    // 说明里**不写份数**：那个数字的真值源是 `config::kSnapshotRetention`，而面板不 include `config`
+    // （模块环，与 `SnapshotEntry` 同一条理由），写进模板就是在本件第二处钉一个 5。名单本身逐行摆在界面上，
+    // 用户数得到。留痕里的文件名是**取值**（同 `settings.font.fallback` 的两个参数，也同降级对话框把备份
+    // 路径逐字上屏那一档，裁决 7.76⑤），故走位置参数而不是拼进模板。
+    {"settings.config.export", "导出配置"},
+    {"settings.config.import", "导入配置"},
+    {"settings.config.snapshots", "配置快照"},
+    {"settings.config.back", "返回"},
+    {"settings.snapshot.note", "快照取在每次保存之前，回滚会让这份配置回到那一个现场；面板上尚未落盘的改动会一起丢掉"},
+    {"settings.snapshot.empty", "暂无快照：本仓还没有落过盘"},
+    {"settings.snapshot.rollback", "回滚"},
+    {"settings.config.exported", "已导出到 {0}"},
+    {"settings.config.imported", "已导入 {0}"},
+    {"settings.config.rolled_back", "已回滚到 {0}"},
+    // 三条失败留痕**不含存储侧交回的那句原因**：那是 ASCII 诊断串，上中文界面即违 AGENTS.md §4.3 第 14 条，
+    // 故它只进日志（与降级对话框把 `LoadReport::message` 只进 `AURORA_LOG_WARN` 同口径，裁决 7.76⑤）。
+    {"settings.config.export_failed", "导出失败：目标文件没能写出"},
+    {"settings.config.import_failed", "导入失败：那份文件不是一份可用的配置，当前设置未改动"},
+    {"settings.config.rollback_failed", "回滚失败：当前设置未改动"},
+
     // ---- 启动降级提示（`SPEC.FEAT.PREF.07`，判据文 §7 的 S13①）----
     // 标题按 `LoadOutcome` 两态各一条（同一句话覆盖不了「读不出」与「读得懂但不归本程序管」两件事），
     // 版本号与备份路径都是**取值**故走位置参数，与 `settings.font.fallback` 同档。

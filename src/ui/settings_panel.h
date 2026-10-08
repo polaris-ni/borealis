@@ -160,6 +160,8 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -232,6 +234,20 @@ public:
         PaletteSpec palette{};     ///< 该主题的整套色值。
     };
 
+    /// @brief 一份配置快照（`SPEC.FEAT.PREF.07` 的滚动档），面板侧形态。
+    ///
+    /// 交的是路径与本域结构而不是 `config::SnapshotInfo`：面板不 include `config`（模块环，与
+    /// `ThemeChoice` / `FontFamilyEntry` 同一条理由）。`path` 原样交回 `Hooks::rollback` 而不被本件
+    /// 解析——存储侧只接受自家快照目录里那份名单中的路径（裁决 7.87⑤），面板只是传话人。
+    /// 界面上那一行显示的是 `path.filename()` **逐字**（与降级对话框把备份路径逐字上屏同口径，
+    /// 裁决 7.76⑤）：把 epoch 折成本地时间要经 `localtime` 一族，那是平台相关分支（AGENTS.md §4.5
+    /// 第 23 条），而文件名本身已经带秒。
+    struct SnapshotEntry {
+        std::filesystem::path path{};  ///< 快照文件路径。
+        std::int64_t timestamp_epoch{};  ///< 命名里的 epoch 秒（同一秒内的多份靠序号分先后）。
+        std::uint64_t size_bytes{};    ///< 文件字节数；存储侧读不到时为 0。
+    };
+
     /// @brief 面板与存储侧、绘制侧的全部接缝（struct-of-回调，同 `WorkspaceView::Hooks` 的形态）。
     ///
     /// 前三条都按**整份表单**说话而不是按单键：落盘要的是「一次替换 + 一次 flush」，广播要的是
@@ -272,6 +288,29 @@ public:
         /// 一处（面板拿不到键位语义值就无法自己比第二次，而 D2-a 那句「标注来自实际比对」的唯一证人
         /// 就是面板只读得到纯逻辑件算好的那一列）。
         std::function<std::vector<ShortcutCommandEntry>()> commands;
+
+        /// @brief 取当前留存的配置快照，**新→旧**次序且至多 `config::kSnapshotRetention` 份。
+        ///
+        /// 六条 `SPEC.FEAT.PREF.07` 的接缝**成组**才画动作按钮（`config_actions_ready()`）：面板里不存在
+        /// 「一个点了没反应的按钮」（7.38⑥ F-b 的同一口径），故既有用例那些只装前三条的夹具天然不受影响。
+        /// 每次进快照视图现取而不缓存：回滚与导入都会顺手把当前现场复制成新一份快照（裁决 7.87②），
+        /// 名单在那一次动作里就已经变了。
+        std::function<std::vector<SnapshotEntry>()> snapshots;
+        /// @brief 回滚到名单里的那一份。
+        /// @return 成功为空；失败为 ASCII 英文原因（只进日志，上屏文案一律走词条表，S13②）。
+        std::function<std::optional<std::string>(const std::filesystem::path &)> rollback;
+        /// @brief 把当前配置导出到给定文件。
+        std::function<std::optional<std::string>(const std::filesystem::path &)> export_config;
+        /// @brief 从给定文件导入配置并生效。
+        std::function<std::optional<std::string>(const std::filesystem::path &)> import_config;
+        /// @brief 让用户给出导出的目标文件；**空串＝取消**（与「空串即该来源未设置」同一条让位口径）。
+        ///
+        /// 取文件这件事**不经**面板：装配层那条腿走平台对话框（`aurora::file_dialog`，起不来时与取消
+        /// 同一个空串），面板只判两档——「取消即整条不跑」与「给出路径就把这条路径原样交下去」。落文件
+        /// 的判据归 `export_config` 那一条，故本件对它只测接线而不测产物。
+        std::function<std::string()> pick_export_path;
+        /// @brief 让用户给出要导入的文件；空串＝取消。
+        std::function<std::string()> pick_import_path;
     };
 
     /// @brief 面板当前页上的一行（用例据此核对「面板画的键」与反向核对表一致，判据文 §8 判据①）。
@@ -475,6 +514,52 @@ public:
         return shortcuts_rows_;
     }
 
+    /// @brief 快照视图的一行投影：文件名逐字 + 字节数。
+    ///
+    /// 交出来而不让用例读浮层树里的 `Text`（与 `theme_cards()` / `chain_view()` / `family_view()` 同一
+    /// 条理由）：`SPEC.FEAT.PREF.07` 那句「至多留存 N 份、新的在前」判的是**次序与条数**，读树就得把
+    /// 排版坐标也算进判据。而 `name` 之所以是字符串而不是路径：界面上显的就是 `filename()`，用例比的
+    /// 也该是界面上那串字（路径的原样交回由 `Hooks::rollback` 那条腿判，裁决 7.87⑤）。
+    struct SnapshotRowView {
+        std::string name{};      ///< 快照文件名（`path.filename()` 逐字，已带 epoch 秒）。
+        std::string size_text{}; ///< 「N B」形态的字节数；存储侧读不到字节时为「0 B」。
+    };
+
+    /// @brief 六条 `Hooks` 接缝齐备时界面才画动作按钮（缺任一条一个都不画，7.38⑥ F-b）。
+    [[nodiscard]] auto has_config_actions() const noexcept -> bool;
+
+    /// @brief 动作按钮「配置快照」是否正处于按下态（即快照视图在显示）。
+    [[nodiscard]] auto showing_snapshots() const noexcept -> bool {
+        return showing_snapshots_;
+    }
+
+    /// @brief 快照视图当前画出的行，次序＝新→旧（该区段未画时为空表）。
+    [[nodiscard]] auto snapshot_rows() const -> std::vector<SnapshotRowView>;
+
+    /// @brief 卡片头部那一行留痕的当前文案（导出 / 导入 / 回滚三处动作各写一句，无动作时为空串）。
+    ///
+    /// 交的是**已解析的中文文案**而不是词条 key：存储侧交回的失败原因是 ASCII 诊断串，绝不能上屏
+    /// （AGENTS.md §4.3 第 14 条），故本件只把「哪一类失败」映射成词条，用例读到的必须是映射之后的产物
+    /// ——这样「把 `reason` 原样画上界面」这一类实现错误才有证人（与降级对话框同口径，裁决 7.76⑤）。
+    [[nodiscard]] auto config_notice() const -> std::string {
+        return config_notice_text_;
+    }
+
+    /// @brief 那一行留痕的 `Text` 控件本体（未画时为空）。
+    ///
+    /// 只服务一条判据：失败那三句走的是**不重建浮层**的那条腿（只换文本），故「只改了模型态、没写上
+    /// 屏」这种错在 `config_notice()` 那一份字符串读数上结构上抓不到。与 `font_notice_text()` 同一档。
+    [[nodiscard]] auto config_notice_widget() const -> aurora::Widget *;
+
+    /// @brief 头部三枚动作按钮与快照视图的「返回」（未画时为空）。
+    [[nodiscard]] auto export_button() const -> aurora::Widget *;
+    [[nodiscard]] auto import_button() const -> aurora::Widget *;
+    [[nodiscard]] auto snapshots_button() const -> aurora::Widget *;
+    [[nodiscard]] auto back_button() const -> aurora::Widget *;
+
+    /// @brief 快照视图第 index 行的「回滚」按钮（越界或该区段未画时为空）。
+    [[nodiscard]] auto snapshot_rollback_button(std::size_t index) const -> aurora::Widget *;
+
     /// @brief 预览盒的视口控件；未装 `Hooks::preview_appearance`、或面板此刻关着时为空（S7 的观测点）。
     ///
     /// 用例要靠它把「外观改动是否落进了预览那条腿」与「改动只进了表单副本」分开断言：预览的行列数、
@@ -629,6 +714,51 @@ private:
     /// @param command_id 命令 id。
     auto clear_binding_override(const std::string &command_id) -> void;
 
+    /// @brief 六条 `SPEC.FEAT.PREF.07` 接缝是否齐备（不齐即头部一个动作按钮都不画）。
+    ///
+    /// 判据是「六条都在」而不是「五条在」：`pick_*_path` 缺席时导出只剩一个点了没反应的按钮，而它在
+    /// 集成用例的无头通道里结构上抓不到平台对话框，故宁可不画（7.38⑥ F-b 的同一口径）。
+    [[nodiscard]] auto config_actions_ready() const noexcept -> bool;
+
+    /// @brief 进 / 出快照视图：先换态再重建浮层（进入时按当前名单画，回滚与导入会让名单在那一次动作里
+    ///        就变——快照取在写之前，裁决 7.87②）。
+    auto show_snapshots(bool showing) -> void;
+
+    /// @brief 建快照视图那一列：一句说明 + 逐份一行（文件名 / 字节数 / 「回滚」）；名单为空时只有说明。
+    ///
+    /// 从 `build_card()` 的行区分派处拐进来，与五个专用区段同一形态（仍复用行区的 `Scroll`，故不为五份
+    /// 快照另立一层容器）。派生态指针在本函数开头清一次——`LayoutBuilder` 的闭包每次布局都重跑。
+    [[nodiscard]] auto build_snapshot_section() -> std::vector<aurora::Node>;
+
+    /// @brief 一键回滚到名单里第 index 份；成功后重装载副本并让视口与预览跟上。
+    auto rollback_to_snapshot(std::size_t index) -> void;
+
+    /// @brief 导出：先取目标文件（取消即整条不跑、连留痕都不写），再落文件并把成败折成一句留痕。
+    auto run_export() -> void;
+
+    /// @brief 导入：与导出同一条腿，成功后另走「重装载 + 广播 + 重投」。
+    auto run_import() -> void;
+
+    /// @brief 外部改动（回滚 / 导入）之后把面板副本换成存储里那一份，并让视口与预览跟上。
+    /// @param notice_key 上屏留痕的词条 key。
+    /// @param detail 该句里的 `{0}` 取值（快照文件名或导入来源）；空串即那句没有位置参数。
+    ///
+    /// 三条腿的顺序是承重项：`form_` 先换（此后每一次落盘与广播都读它），广播交的是**整份**（这一次动的
+    /// 键就是全表），预览排在广播之后（它取的是刚生效的那一份外观），最后重建浮层——通用行的控件值是在
+    /// 建行时从表单读的，不重建就会显出「表单已是新值、开关还停在旧档」。
+    /// 面板原先未落盘的改动在这一步**丢失**，这是「回到那一份现场」的字面代价，界面上由那一行留痕说出来
+    /// （裁决 7.87⑦）。新建的表单相对它自己的基线**不脏**，故这里不需要 `note_persisted()`。
+    auto reload_from_store(std::string_view notice_key, std::string_view detail) -> void;
+
+    /// @brief 写卡片头部那一行留痕并重绘（一次动作一句话，上一句被覆盖）。
+    auto set_config_notice(std::string text) -> void;
+
+    /// @brief 清掉配置动作区的**派生控件句柄**（关面板与重建浮层两处，留着就是上一版按钮的孤儿句柄）。
+    ///
+    /// 刻意不清那一行留痕的文案与「是否在看快照名单」那两态：它们是模型状态而不是指向已析构控件的指针，
+    /// 而换页与回滚之后的重建浮层都要照旧把它们画出来。这两态只在 `close()` 里额外归零。
+    auto clear_config_state() -> void;
+
     /// @brief 画一张主题卡：底色、四格样例、分隔线、描边与选中勾（闭包在绘制时读 `form_`）。
     auto paint_theme_card(aurora::Painter &painter, const aurora::Rect &box, std::size_t index) const -> void;
 
@@ -749,6 +879,19 @@ private:
     std::string editing_command_id_{};      ///< 正在编辑的命令 id。
     std::shared_ptr<aurora::TextInput> binding_input_{};  ///< 对话框里的文本输入框。
     std::shared_ptr<aurora::Text> conflict_notice_{};     ///< 冲突提示文本。
+
+    /// `SPEC.FEAT.PREF.07` 的动作区：卡片头部三枚按钮 + 快照视图那一列。
+    /// 名单每次建浮层经 `Hooks::snapshots` 现取（与 `theme_choices_` / `family_catalog_` 同一条分工），
+    /// 回滚与导入之后不必另设刷新腿——那两条都以重建浮层收口，重建就是重取。
+    std::vector<SnapshotEntry> snapshots_{};
+    bool showing_snapshots_ = false;                      ///< 卡片右栏当前显示的是快照名单还是设置行。
+    std::string config_notice_text_{};                    ///< 头部那一行留痕的已解析文案（一次动作一句话）。
+    std::shared_ptr<aurora::Text> config_notice_{};       ///< 那一行留痕的控件（`LayoutBuilder` 闭包登记）。
+    std::shared_ptr<aurora::Button> export_button_{};
+    std::shared_ptr<aurora::Button> import_button_{};
+    std::shared_ptr<aurora::Button> snapshots_button_{};
+    std::shared_ptr<aurora::Button> back_button_{};
+    std::vector<std::shared_ptr<aurora::Button>> rollback_buttons_{};  ///< 逐份一枚，按名单序（新→旧）。
 
     /// 预览盒的本体（S7）。每次 `open()` 现建、`close()` 即销毁：浮层撤掉之后它的控件树已脱离宿主，
     /// 复用一份脱离树的控件正是最难查的那类陈旧态，重建一次的代价只是重投一次夹具。（登记时这里另写了

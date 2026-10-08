@@ -109,6 +109,10 @@ constexpr float kShortcutNoteWidthDp = 200.0F;  ///< 标注列容得下「与「
 /// 故面板必须在界面上自己判、自己说（判据文 A5-a；裁决 7.50 记的那条代价）。
 constexpr std::size_t kChainCapacity = aurora::render::AURORA_TEXT_FALLBACK_CHAIN_MAX;
 
+// ---- 快照名单（E1-a）的排版量：名单只有至多五份，故不锁高、由行区那只 `Scroll` 直接容纳 ----
+constexpr float kSnapshotRowHeightDp = 32.0F;  ///< 一行一份快照：比快捷键表高一档是因为行内有按钮。
+constexpr float kSnapshotSizeWidthDp = 96.0F;  ///< 字节数列宽：容得下六位数字加单位。
+
 /// @brief 色板格数：从 `PaletteSpec::basic` 的长度取，而不是在本件再写一遍 16。
 ///
 /// 判据 A2-a 的「16 格」与表单的 `TableSizeWrong` 都判该长度，此处硬写一个数字就是第三份真值源。
@@ -366,6 +370,40 @@ constexpr GroupNote kGroupNotes[] = {
     return note;
 }
 
+/// @brief 卡片头部那一列动作按钮的共用形态（导出 / 导入 / 快照三枚同一种描边档）。
+///
+/// 只有一枚（「配置快照」）用得上 `pressed`：它开关的是右栏，底色就是「正在看名单」的回执；另两枚是
+/// 一次性动作，没有可表达的状态。
+[[nodiscard]] auto make_action_button(std::string_view label_key, bool pressed)
+    -> std::shared_ptr<aurora::Button> {
+    return std::make_shared<aurora::Button>(aurora::ButtonProps{
+        .label = settings_text(label_key),
+        .color = pressed ? kAccent : kControlBg,
+        .on_color = pressed ? kWindowBg : kText,
+        .border_color = kCardLine,
+        .border_width = 1.0F,
+    });
+}
+
+/// @brief 快照名单那一行显示的文件名。
+///
+/// 取 `filename()` 而**不是**整条路径：卡片头部那一行宽度有限，而用户认得出的是那个带 epoch 秒的名字。
+/// 走 `u8string()` 而非 `string()`（与降级对话框把备份路径逐字上屏同一条口径，裁决 7.76⑤）：后者在
+/// Windows 按 ANSI 码页转换，非 ASCII 的目录名会碎成问号。路径是**取值**不是字面量，故不受 ASCII 规则约束。
+[[nodiscard]] auto snapshot_name_text(const std::filesystem::path &path) -> std::string {
+    const std::u8string utf8 = path.filename().u8string();
+    return std::string{reinterpret_cast<const char *>(utf8.data()), utf8.size()};
+}
+
+/// @brief 快照名单那一行的字节数。
+///
+/// 观察面 `snapshot_rows()` 与绘制侧共用本函数，于是「用例读到的」与「界面上画的」不可能各算一遍
+/// （与 `theme_samples()` 同一条理由）。存储侧读不到文件大小时交 0，这里就画「0 B」而不是留空——
+/// 空白会被读成「这一行还没画完」。
+[[nodiscard]] auto snapshot_size_text(std::uint64_t bytes) -> std::string {
+    return std::to_string(bytes) + " B";
+}
+
 }  // namespace
 
 auto settings_chrome() -> SettingsChrome {
@@ -413,7 +451,7 @@ auto SettingsPanel::open() -> void {
         // 还悬在半空。放下抓取就原地不动——这是本件与框架之间的一次交接，不是缺口（同裁决 7.58 的判法）。
         escape_binding_ = shortcuts_.add(aurora::KeyCombo(aurora::ModifierKey::None, aurora::KeyCode::Escape),
                                          [this]() -> void {
-                                             // 三层交接，从最里一层问起：候选浮层 → 链的键盘抓取 → 面板。
+                                             // 四层交接，从最里一层问起：候选浮层 → 链的键盘抓取 → 快照视图 → 面板。
                                              // 全局快捷键在任何控件之前消费（裁决 7.51③ 理由 (a)），不先问
                                              // 浮层的话，`Escape` 会把整块面板一起撤掉（判据文 A4-c 的同一条
                                              // 物理事实，只是那一句写的是遮罩那一腿）。
@@ -422,6 +460,12 @@ auto SettingsPanel::open() -> void {
                                                  return;
                                              }
                                              if (chain_list_ != nullptr && chain_list_->cancel_keyboard_grab()) {
+                                                 return;
+                                             }
+                                             // 快照名单是右栏的一种态而不是一个浮层，故它没有「点外面即关」那条腿，
+                                             // `Escape` 是它唯一的键盘出口（与「返回」按钮同一条漏斗）。
+                                             if (showing_snapshots_) {
+                                                 show_snapshots(false);
                                                  return;
                                              }
                                              close();
@@ -454,6 +498,11 @@ auto SettingsPanel::close() -> void {
     // 先摘面板会让浮层序号整体前移一格、此后那个号就指到别的节点上。故按序号降序摘，浮层在前。
     clear_family_state();
     shortcuts_rows_.clear();
+    clear_config_state();
+    // 两态随面板一起归零而不是留着：快照视图是「右栏当前在看什么」的一种态，面板关上之后再打开却直接
+    // 落在名单上，用户看到的就是上一次动作的残影而非当前页。
+    showing_snapshots_ = false;
+    config_notice_text_.clear();
 
     if (overlay_index_.has_value()) {
         host_.remove_overlay(*overlay_index_);
@@ -467,6 +516,9 @@ auto SettingsPanel::select_page(SettingsPage page) -> void {
         return;
     }
     page_ = page;
+    // 换页即退出快照视图：名单不是某一页的内容而是右栏的一种态，留在原处就会让「终端页」画出一列
+    // 外观之外的东西，而左导航高亮与右栏内容对不上。
+    showing_snapshots_ = false;
     if (open_) {
         rebuild_overlay();
     }
@@ -680,6 +732,9 @@ auto SettingsPanel::rebuild_overlay() -> void {
     // 新页可能根本没有这些区段，留着旧指针会让 `theme_cards()` 与刷新腿读到上一张卡的孤儿。
     theme_choices_ = hooks_.themes ? hooks_.themes() : std::vector<ThemeChoice>{};
     family_catalog_ = hooks_.families ? hooks_.families() : std::vector<FontFamilyEntry>{};
+    // 快照名单同样每次建浮层现取：回滚与导入都会把「当前现场」复制成新一份快照（快照取在写之前，
+    // 裁决 7.87②），于是那一次动作里名单就已经变了——留着旧名单就是让用户点到一份并不存在的现场。
+    snapshots_ = hooks_.snapshots ? hooks_.snapshots() : std::vector<SnapshotEntry>{};
     theme_canvases_.clear();
     theme_labels_.clear();
     swatch_canvases_.clear();
@@ -690,6 +745,7 @@ auto SettingsPanel::rebuild_overlay() -> void {
     // 先摘面板会让浮层序号整体前移一格、此后那个号就指到别的节点上。故按序号降序摘，浮层在前。
     clear_family_state();
     shortcuts_rows_.clear();
+    clear_config_state();
 
     if (overlay_index_.has_value()) {
         host_.remove_overlay(*overlay_index_);
@@ -752,17 +808,23 @@ auto SettingsPanel::build_card() -> aurora::Node {
             // 而外观页的四类专用区段（主题卡 / 16 格色板 / 字体族 / 回退链）各自要占多行高度。
             // 内容一次全量建好（每页 ≤30 行），换来的是可变行高与「滚动偏移折回内容坐标」的命中链
             // ——后者正是 G27 回货给 `Scroll` 补上的那条腿，故本件对它的真实点击另配一例证人。
+            // 快照名单复用**同一只** `Scroll`（判据文 E1-a 把它画在右栏而不是另起一层浮层）：五份名单
+            // 不必再多一套滚动容器与一层浮层序号，代价是它换掉的是整列行内容而非某一页的内容。
             std::vector<aurora::Node> row_nodes;
-            row_nodes.reserve(rows_.size());
             note_labels_.clear();
-            for (std::size_t ordinal = 0; ordinal < rows_.size(); ++ordinal) {
-                for (const GroupNote &note : kGroupNotes) {
-                    if (rows_[ordinal]->key == note.first_key) {
-                        note_labels_.push_back(settings_label(note.note_key));
-                        row_nodes.push_back(make_group_note(note_labels_.back()));
+            if (showing_snapshots_) {
+                row_nodes = build_snapshot_section();
+            } else {
+                row_nodes.reserve(rows_.size());
+                for (std::size_t ordinal = 0; ordinal < rows_.size(); ++ordinal) {
+                    for (const GroupNote &note : kGroupNotes) {
+                        if (rows_[ordinal]->key == note.first_key) {
+                            note_labels_.push_back(settings_label(note.note_key));
+                            row_nodes.push_back(make_group_note(note_labels_.back()));
+                        }
                     }
+                    row_nodes.push_back(build_row(ordinal));
                 }
-                row_nodes.push_back(build_row(ordinal));
             }
             auto rows_column = std::make_shared<aurora::Column>(aurora::ColumnProps{
                 .children = std::move(row_nodes),
@@ -782,6 +844,11 @@ auto SettingsPanel::build_card() -> aurora::Node {
             });
             body->modifier.set(aurora::Modifier{}.fill_max_width().expand());
 
+            auto title = make_text(settings_label("settings.title"), kText);
+            title.widget().modifier.set(aurora::Modifier{}.expand());  // 标题吃掉剩余宽度，副标题与按钮靠右
+            auto subtitle = make_text(settings_label("settings.subtitle"), kTextDim);
+            subtitle.widget().modifier.set(aurora::Modifier{}.width(kStatusWidthDp));
+
             auto close_button = std::make_shared<aurora::Button>(aurora::ButtonProps{
                 .label = settings_text("settings.close"),
                 .color = kControlBg,
@@ -791,15 +858,38 @@ auto SettingsPanel::build_card() -> aurora::Node {
             });
             close_button->set_on_click([this]() -> void { close(); });
 
-            auto title = make_text(settings_label("settings.title"), kText);
-            title.widget().modifier.set(aurora::Modifier{}.expand());  // 标题吃掉剩余宽度，副标题与按钮靠右
-            auto subtitle = make_text(settings_label("settings.subtitle"), kTextDim);
-            subtitle.widget().modifier.set(aurora::Modifier{}.width(kStatusWidthDp));
+            // `SPEC.FEAT.PREF.07` 的三枚动作按钮（判据文 E1-a 的「顶部动作」）。六条接缝**成组**才画：
+            // 缺任一条就有一个点了没反应的按钮，而按钮本身并不知道自己缺了哪一条腿（7.38⑥ F-b 同一口径）。
+            std::vector<aurora::Node> header_children;
+            if (config_actions_ready()) {
+                auto export_button = make_action_button("settings.config.export", false);
+                export_button->set_on_click([this]() -> void { run_export(); });
+                export_button_ = export_button;
+
+                auto import_button = make_action_button("settings.config.import", false);
+                import_button->set_on_click([this]() -> void { run_import(); });
+                import_button_ = import_button;
+
+                // 「配置快照」是这一列里唯一有按下态的一枚：它开关的是右栏，而按下态就是「正在看名单」
+                // 的界面回执（与左导航同一形态，本件没有别的选中态可借）。
+                auto snapshots_button = make_action_button("settings.config.snapshots", showing_snapshots_);
+                snapshots_button->set_on_click([this]() -> void { show_snapshots(!showing_snapshots_); });
+                snapshots_button_ = snapshots_button;
+
+                header_children = {std::move(title),
+                                   std::move(subtitle),
+                                   aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(export_button))},
+                                   aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(import_button))},
+                                   aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(snapshots_button))},
+                                   aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(close_button))}};
+            } else {
+                header_children = {std::move(title),
+                                   std::move(subtitle),
+                                   aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(close_button))}};
+            }
 
             auto header = std::make_shared<aurora::Row>(aurora::RowProps{
-                .children = {std::move(title),
-                             std::move(subtitle),
-                             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(close_button))}},
+                .children = std::move(header_children),
                 .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
                 .gap = 12.0F,
             });
@@ -808,6 +898,17 @@ auto SettingsPanel::build_card() -> aurora::Node {
 
             std::vector<aurora::Node> card_children;
             card_children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(header))});
+            if (config_actions_ready()) {
+                // 动作留痕那一行：**没有动作时也画**（空文本），否则每次动作都会让卡片内容整体下移一格，
+                // 而用户正要点的那一枚按钮会跑位。
+                auto notice = std::make_shared<aurora::Text>(
+                    aurora::TextProps{.content = config_notice_text_, .text_color = kTextDim});
+                notice->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+                    .left = 16.0F, .top = 0.0F, .right = 16.0F, .bottom = 4.0F}));
+                config_notice_ = notice;
+                card_children.push_back(
+                    aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(notice))});
+            }
             card_children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(body))});
             if (preview_ != nullptr) {
                 // 横条是卡片的**第三条**子节点，故它从 `body`（`expand()`）那一段里扣 140 dp，卡片总高不变
@@ -2411,6 +2512,227 @@ auto SettingsPanel::clear_binding_override(const std::string &command_id) -> voi
     
     // 提交到表单
     commit(kShortcutsKey, FormValue::overrides(overrides));
+}
+
+// ==================== SPEC.FEAT.PREF.07：快照名单与本地导出导入 ====================
+
+auto SettingsPanel::config_actions_ready() const noexcept -> bool {
+    // 判据是「六条都在」而不是「五条在」：`pick_*_path` 缺席时导出就只剩一枚点了没反应的按钮，而按钮
+    // 本身并不知道自己缺了哪一条腿（7.38⑥ F-b 的同一口径：不给会失灵的按钮）。
+    return hooks_.snapshots != nullptr && hooks_.rollback != nullptr && hooks_.export_config != nullptr &&
+           hooks_.import_config != nullptr && hooks_.pick_export_path != nullptr &&
+           hooks_.pick_import_path != nullptr;
+}
+
+auto SettingsPanel::has_config_actions() const noexcept -> bool {
+    return config_actions_ready();
+}
+
+auto SettingsPanel::snapshot_rows() const -> std::vector<SnapshotRowView> {
+    if (!showing_snapshots_) {
+        return {};
+    }
+    std::vector<SnapshotRowView> out;
+    out.reserve(snapshots_.size());
+    for (const SnapshotEntry &entry : snapshots_) {
+        // 与界面上那一行**共用**两个算式（`snapshot_name_text` / `snapshot_size_text`），故观测面与
+        // 像素不可能分叉：用例读到的就是画出来的那串字。
+        out.push_back(SnapshotRowView{.name = snapshot_name_text(entry.path),
+                                      .size_text = snapshot_size_text(entry.size_bytes)});
+    }
+    return out;
+}
+
+auto SettingsPanel::config_notice_widget() const -> aurora::Widget * {
+    return config_notice_.get();
+}
+
+auto SettingsPanel::export_button() const -> aurora::Widget * {
+    return export_button_.get();
+}
+
+auto SettingsPanel::import_button() const -> aurora::Widget * {
+    return import_button_.get();
+}
+
+auto SettingsPanel::snapshots_button() const -> aurora::Widget * {
+    return snapshots_button_.get();
+}
+
+auto SettingsPanel::back_button() const -> aurora::Widget * {
+    return back_button_.get();
+}
+
+auto SettingsPanel::snapshot_rollback_button(std::size_t index) const -> aurora::Widget * {
+    return index < rollback_buttons_.size() ? rollback_buttons_[index].get() : nullptr;
+}
+
+auto SettingsPanel::show_snapshots(bool showing) -> void {
+    if (!open_ || showing == showing_snapshots_) {
+        return;
+    }
+    // 先换态再重建：快照名单是右栏的一种**态**而不是一个浮层，而通用行的控件值是在建行时从表单读的，
+    // 只有走一次完整重建才让「名单画在行区里」与「行区仍是设置行」两种态共用同一只 `Scroll`。
+    showing_snapshots_ = showing;
+    rebuild_overlay();
+}
+
+auto SettingsPanel::build_snapshot_section() -> std::vector<aurora::Node> {
+    // 派生态指针在本函数开头清一次：卡片是 `LayoutBuilder`，本闭包在每次布局都重跑（裁决 7.61 在主题卡
+    // 那一区撞过的同一条），不清就会让观测面报出界面上并不存在的按钮句柄。
+    rollback_buttons_.clear();
+    back_button_.reset();
+
+    std::vector<aurora::Node> children;
+
+    auto note = make_text(settings_label("settings.snapshot.note"), kTextDim);
+    note.widget().modifier.set(aurora::Modifier{}.fill_max_width());
+    children.push_back(std::move(note));
+
+    if (snapshots_.empty()) {
+        auto empty = make_text(settings_label("settings.snapshot.empty"), kTextDim);
+        empty.widget().modifier.set(aurora::Modifier{}.fill_max_width());
+        children.push_back(std::move(empty));
+    }
+
+    // 逐份一行：文件名（吃掉余量）+ 字节数（定宽）+「回滚」。次序就是 `Hooks::snapshots` 交回的次序
+    // （存储侧按 (epoch, seq) 降序），本件不重排也不截断——「新的在前、至多 N 份」是存储侧的判据。
+    for (std::size_t index = 0; index < snapshots_.size(); ++index) {
+        const SnapshotEntry &entry = snapshots_[index];
+        auto name = make_text(snapshot_name_text(entry.path), kText);
+        name.widget().modifier.set(aurora::Modifier{}.expand());
+        auto size = make_text(snapshot_size_text(entry.size_bytes), kTextDim);
+        size.widget().modifier.set(aurora::Modifier{}.width(kSnapshotSizeWidthDp));
+
+        auto rollback = std::make_shared<aurora::Button>(aurora::ButtonProps{
+            .label = settings_label("settings.snapshot.rollback"),
+            .color = kControlBg,
+            .on_color = kText,
+            .border_color = kCardLine,
+            .border_width = 1.0F,
+            .min_width = 56.0F,
+        });
+        rollback->set_on_click([this, index]() -> void { rollback_to_snapshot(index); });
+        rollback_buttons_.push_back(rollback);
+
+        auto line = std::make_shared<aurora::Row>(aurora::RowProps{
+            .children = {std::move(name), std::move(size),
+                         aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(rollback))}},
+            .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
+            .gap = 12.0F,
+        });
+        line->modifier.set(aurora::Modifier{}.fill_max_width().height(kSnapshotRowHeightDp));
+        children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(line))});
+    }
+
+    auto back = std::make_shared<aurora::Button>(aurora::ButtonProps{
+        .label = settings_label("settings.config.back"),
+        .color = kControlBg,
+        .on_color = kText,
+        .border_color = kCardLine,
+        .border_width = 1.0F,
+        .min_width = 72.0F,
+    });
+    back->set_on_click([this]() -> void { show_snapshots(false); });
+    back_button_ = back;
+    auto footer_cell = aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(back))};
+    auto footer = std::make_shared<aurora::Row>(aurora::RowProps{
+        .children = {std::move(footer_cell)},
+        .gap = 0.0F,
+    });
+    footer->modifier.set(aurora::Modifier{}.fill_max_width());
+    children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(footer))});
+
+    auto section = std::make_shared<aurora::Column>(
+        aurora::ColumnProps{.children = std::move(children), .gap = kSectionGapDp});
+    section->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+        .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
+    return {aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(section))}};
+}
+
+auto SettingsPanel::rollback_to_snapshot(std::size_t index) -> void {
+    if (index >= snapshots_.size()) {
+        return;  // 名单在动作之前被重建过（回滚自身就取一份新快照）；越界下标不指到另一份文件上
+    }
+    // 快照条目按**值**取出一份：回滚成功之后名单就换了（存储侧回滚自身又取一份快照），而闭包捕获的
+    // 下标在重建之后指向另一份文件。文件名因此必须在这一刻就折成留痕里那串字。
+    const SnapshotEntry entry = snapshots_[index];
+    if (const auto reason = hooks_.rollback(entry.path); reason.has_value()) {
+        // 存储侧的原因是 ASCII 诊断串，只进日志；上屏的永远是那一句「当前设置未改动」（S13②）。
+        AURORA_LOG_WARN("settings", "snapshot rollback refused: ", *reason);
+        set_config_notice(settings_label("settings.config.rollback_failed"));
+        return;
+    }
+    reload_from_store("settings.config.rolled_back", snapshot_name_text(entry.path));
+}
+
+auto SettingsPanel::run_export() -> void {
+    // 六条接缝齐备是这三枚按钮画出来的**前提**（`config_actions_ready()`），故这里不再逐条问空。
+    const std::string picked = hooks_.pick_export_path();
+    if (picked.empty()) {
+        // 取消即整条不跑，**连留痕都不写**：上一句动作的话还在，说明这一次什么都没发生。
+        return;
+    }
+    if (const auto reason = hooks_.export_config(std::filesystem::path{picked}); reason.has_value()) {
+        AURORA_LOG_WARN("settings", "config export failed: ", *reason);
+        set_config_notice(settings_label("settings.config.export_failed"));
+        return;
+    }
+    // 路径是**取值**而不是字面量（同降级对话框的备份行，裁决 7.76⑤），故逐字上屏。
+    set_config_notice(settings_label("settings.config.exported", {aurora::LocalizedString{picked}}));
+}
+
+auto SettingsPanel::run_import() -> void {
+    const std::string picked = hooks_.pick_import_path();
+    if (picked.empty()) {
+        return;
+    }
+    if (const auto reason = hooks_.import_config(std::filesystem::path{picked}); reason.has_value()) {
+        AURORA_LOG_WARN("settings", "config import failed: ", *reason);
+        set_config_notice(settings_label("settings.config.import_failed"));
+        return;
+    }
+    // 导入成功走的是「回到那一份现场」那条腿：副本重装载、整份广播、预览跟上、浮层重建。
+    reload_from_store("settings.config.imported", picked);
+}
+
+auto SettingsPanel::reload_from_store(std::string_view notice_key, std::string_view detail) -> void {
+    if (hooks_.load) {
+        form_ = SettingsForm{hooks_.load()};
+    }
+    if (hooks_.broadcast) {
+        hooks_.broadcast(form_);
+    }
+    // 留痕排在重建**之前**落进模型态：那一行是 `LayoutBuilder` 闭包在重建时从 `config_notice_text_` 读的，
+    // 而 `clear_config_state()` 刚把上一版的控件句柄清掉——排在之后就只有上一句上屏（裁决 7.87⑦）。
+    config_notice_text_ = detail.empty()
+                              ? settings_label(notice_key)
+                              : settings_label(notice_key, {aurora::LocalizedString{std::string{detail}}});
+    refresh_preview();
+    rebuild_overlay();
+}
+
+auto SettingsPanel::set_config_notice(std::string text) -> void {
+    config_notice_text_ = std::move(text);
+    if (config_notice_ == nullptr) {
+        return;
+    }
+    // 框架的 `Text::set_content()` 只改值不带脏标记（只有 `set_enabled()` 无条件标脏），故比较后自标
+    // 两脏（与回退链提示、快捷键行表同一处卫生）。
+    if (config_notice_->content.get().text != config_notice_text_) {
+        config_notice_->content = config_notice_text_;
+        config_notice_->mark_needs_layout();
+        config_notice_->mark_needs_paint();
+    }
+}
+
+auto SettingsPanel::clear_config_state() -> void {
+    config_notice_.reset();
+    export_button_.reset();
+    import_button_.reset();
+    snapshots_button_.reset();
+    back_button_.reset();
+    rollback_buttons_.clear();
 }
 
 }  // namespace borealis::ui
