@@ -11,6 +11,18 @@
 
 enable_testing()
 
+# ---- 静态门禁脚本注册 ----
+# 根入口 AGENTS.md 的注入预算门禁：该文件是每次协作会话原样注入的单一入口，超出注入上限会被
+# **静默截断**，被丢掉的必然是文档导航与硬规则两节——恰是它唯一的职责。本仓实测曾达 325571
+# 字节（约 40 倍预算），故设 8 KiB 上限，超限即失败：细节下沉 codespec/，入口只留路由与硬约束。
+# 跨平台 Python 解释器探测；找不到则不注册（不阻断 C++ 测试）。
+find_program(PYTHON3_EXE NAMES python3 python)
+if (PYTHON3_EXE)
+    add_test(NAME check_agents_size
+            COMMAND ${PYTHON3_EXE} "${CMAKE_CURRENT_SOURCE_DIR}/tools/check/check_agents_size.py"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+endif ()
+
 option(BOREALIS_BUILD_E2E "Build end-to-end tests that need a real window backend" ON)
 
 file(GLOB BOREALIS_TEST_FRAMEWORK_SOURCES CONFIGURE_DEPENDS
