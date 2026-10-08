@@ -4,6 +4,26 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.85（2026-10-08）**`SPEC.NF.PKG.01` 打包分发**：人已裁决本轮延后（判据入册为裁决 **7.85**）
+
+**动机**：M2 出口判据含「产出可分发安装包」一档，但开工该件需要人拍三件本仓**不能自行择一**的事——打包器选型（NSIS / MSIX / 便携 zip，三条路的用户体验、签名与更新模型各不相同而需求原文未指名）、CI 基建（本仓 §6 已在册「无工作流」，`tools/check/*` 门禁脚本已落但无可跑它的流水线，而需求原文把「进 CI」写成验收判据）、`assets/` 下的 LICENSE 与三方许可文本汇编（目录尚未创建）。按 AGENTS.md §4.1 第 2 条「等开工指令」，本轮不进入。
+
+**决定形态的口径**：⑴ **裁决 7.12 那条 vcpkg 前置不撤销**——三方依赖经 `find_package` + vcpkg、Aurora 经 `add_subdirectory` 走源码树，是 PKG.01 开工时的技术前提，本轮只是把「产出可双击安装的包」这一交付档从 M2 移出。⑵ **M2 出口判据「可分发安装包」本轮不满足**——PLAN.md §8 的 M2 行把该件从「未交付」改标「本轮延后」，其余 M2 交付档（多标签、命令面板、三条资源门禁、调试面板、快捷键重绑、WS.01 关闭确认）不受影响。⑶ **无代码改动、无测试、无回读**——按裁决 7.49⑥ 的等价注入口径如实登记而不伪造绿灯。
+
+**落点**：`SPECIFICATIONS.md` §4.3 的 `SPEC.NF.PKG.01` 那句落地现状、§7 裁决 **7.85**、`codespec/PLAN.md` 的 PKG.01 行与 §8 M2 段、本文件 v0.85、`AGENTS.md` §6。
+
+## v0.84（2026-10-08）**`SPEC.FEAT.PREF.04` 的装配层启动重放腿按实测判为框架缺口 G40 阻塞**（`src/main.cpp` 留 `TODO`、判据入册为裁决 **7.84**，附录 A.2 开放缺口 2 → 3）
+
+**动机**：v0.82 交付 PREF.04 时把「装配层启动重放覆盖表」明列为未落项，本轮按人 2026-10-08 在 AskUserQuestion 上的拍板「装配层 `bind_shortcuts` 之前一次重放」开工，却在读源阶段撞到一条框架侧公共 API 形态缺口。
+
+**决定形态的口径**：⑴ **两条实现路径都被否证**：路径 A 是把覆盖表文本反解成 `KeyCombo` 再重写 `Command::default_binding` 或调注册表 setter——`include/aurora/commands.h` 十五条入口（`add` / `remove` / `clear` / `count` / `contains` / `find` / `all` / `is_enabled` / `set_enabled` / `invoke` / `search` / `to_json` / `bind_shortcuts` / `to_menu_items` / `shortcuts`）中「改绑定」只能靠**重注册完整 `Command`**，等于本仓再抄一份元数据。路径 B 是绕开 `CommandRegistry` 直接把覆盖挂到 `ShortcutRegistry`——`include/aurora/app/shortcuts.h:70` 只有 `KeyCombo::to_string()` 而无 `from_string` / `parse`，`key_name` 单向表藏在实现文件；本仓自造文本→键位的反向解析就是**第二真值源**（裁决 7.72 立身之本正是「比对吃 `term::KeyPress` 而**不**自造键名反查表」）。⑵ **按 AGENTS.md §5 第 2 条「不长期持有框架分叉」+ 第 5 条「不凭训练记忆假设 API 存在」**，缺口类别属「渲染与事件链路上的公共 API 形态」（裁决 7.13①），按**不等不绕**派发 Aurora 侧补而不绕。⑶ **代码处只留一行 `TODO(SPEC.FEAT.PREF.04)` 而不写占位实现**（§4.1 第 3、7 条）；装配层不编入测试 runner，本轮无测试也无变异自证，按 7.49⑥ 如实登记。⑷ **两条可接受的回货形态**（详见 `codespec/FRAMEWORK_TASK_PREF04.md`）：**甲**＝公共头补 `KeyCombo::from(std::string_view) -> std::optional<KeyCombo>` 且与 `to_string()` 逐字节往返等值；**乙**＝`CommandRegistry` 补只换绑定的入口 `set_binding(command_id, KeyCombo)`。本仓接货复验形态在裁决 7.84⑤ 里写死。
+
+**代价**：面板改一次组合键 → 落盘成功、当次会话内以表单值为准显示与比对，但**实际生效**要等到下一次重启（装配层重挂在回货前结构上做不到）；该代价与 v0.82「重启后生效需装配层按 `shortcuts.overrides` 重挂绑定」的欠账是同一件事，本轮只是把「欠一腿」升级为「欠一腿且已登记阻塞缺口」。真机走查照旧未做（会话锁屏下 `SendInput` 静默失效，裁决 7.31①）。
+
+**验收**：构建通过；非 e2e 通道 `ctest -E etest_` 维持 **47 项全绿**（本条只新增一行 `TODO` 与文档，无代码逻辑改动）。
+
+**落点**：`src/main.cpp` 的一行 `TODO(SPEC.FEAT.PREF.04)`、`SPECIFICATIONS.md` §4.3 该需求句的落地现状指针与 §7 裁决 **7.84**、附录 A.2 的 **G40** 行、`codespec/FRAMEWORK_TASK_PREF04.md`（新）、`codespec/PLAN.md` 的 `SPEC.FEAT.PREF.04` 行与 §8 M2 段、本文件 v0.84、`AGENTS.md` §6。
+
 ## v0.83（2026-10-08）**`SPEC.FEAT.WS.01` 的关闭前确认（有运行中进程时）已落：装配层按 7.47⑧ 判据呼一次确认框、答 Yes 才关整张标签**（`src/main.cpp`、判据入册为裁决 **7.83**）
 
 **动机**：v0.82 交付多标签批次时把「关闭前确认（有运行中进程时）」明列为未落项——标签条的 close 钮当时无条件走「摘标签 → 记闭包栈 → 销毁工作区与会话」，于是用户在 vim / build / ssh 还在跑的时候点一下 × 就把进程静默杀掉了。判据早在裁决 7.47⑧ 拍死，本条只是把它接上装配层。

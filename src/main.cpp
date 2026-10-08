@@ -700,6 +700,10 @@ auto main() -> int {
     open_diagnostics.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(open_diagnostics));
 
+    // TODO(SPEC.FEAT.PREF.04): 装配层启动重放 `shortcuts.overrides` 的一腿待 G40 回货
+    //   （`CommandRegistry` 无「改绑定而不动元数据」入口、`KeyCombo` 无 `from_string`；
+    //   本仓若自造文本 → 键位的反向解析就是第二真值源，违 AGENTS.md §5 第 2 条与裁决 7.72。
+    //   回货判据与接货形态见 `codespec/FRAMEWORK_TASK_PREF04.md`；代价登记于裁决 7.84。）
     app.commands().bind_shortcuts(app.shortcuts());
 
     // 启动降级提示（`SPEC.FEAT.PREF.07`，裁决 7.76⑤）：`LoadOutcome` 四态里只有两条降级态会弹，弹一次即止。
