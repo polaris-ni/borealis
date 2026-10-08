@@ -105,6 +105,11 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// @brief 非法字节序列计数（`SPEC.NF.RELI.01`：与背压水位同面板）。
     [[nodiscard]] auto decode_stats() const -> term::DecodeStats;
 
+    /// @brief VT 解析器未知序列计数（`SPEC.NF.RELI.01` 调试面板）。
+    ///
+    /// 与 `decode_stats` 同走一次短临界区：计数在读线程喂入时推进，主线程只在面板打开那一刻取。
+    [[nodiscard]] auto parse_stats() const -> vt::ParseStats;
+
     /// @brief OSC 消费留下的状态快照：标题、工作目录、命令块边界（`SPEC.FEAT.TERM.07`）。
     ///
     /// 标签名与窗口标题的优先级（OSC 标题覆盖标签名、手动重命名优先）归工作区层判定，会话只给来源。
@@ -141,6 +146,13 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// 应答缓冲的加锁前提。
     /// @param response 应答文本，仅在本调用期间有效。
     auto on_response(std::u32string_view response) -> void override;
+
+    /// @brief 取走并重置 BEL 触发标记（帧边界调用）。
+    ///
+    /// 取走语义与剪贴板同构：状态机在锁内只留存，UI 是主线程的 IO，由装配层在帧边界取走并落地
+    /// （架构 §3.2、§3.4）。
+    /// @return 自上次调用以来是否触发过 BEL。
+    auto take_bell_triggered() -> bool;
 
   private:
     /// @brief 连接读线程回调：解码 → 喂状态机 → 产出脏行提交。

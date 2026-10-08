@@ -242,6 +242,17 @@ AURORA_TEST_CASE(illegal_bytes_are_replaced_without_stalling_output) {
     AURORA_TEST_CHECK_EQ(fixture.session->decode_stats().replaced, 1U);
 }
 
+AURORA_TEST_CASE(parse_stats_travel_the_chain_for_the_debug_panel) {
+    // `SPEC.NF.RELI.01`：调试面板经 `Session::parse_stats()` 取解析期降级计数，
+    // 断的是「读线程喂入 → 状态机 → 主线程取值」这条透传，而非计数算式本身（那在 utest_vt_parser）。
+    auto fixture = make_session();
+    fixture.connection->deliver("\x1B[1?m\x1B[2J\x1B[12\x18");
+    static_cast<void>(drain_all(*fixture.session));
+    const auto stats = fixture.session->parse_stats();
+    AURORA_TEST_CHECK_EQ(stats.ignored, std::uint64_t{2});
+    AURORA_TEST_CHECK_EQ(stats.cancelled, std::uint64_t{1});
+}
+
 AURORA_TEST_CASE(alive_tracks_the_connection) {
     auto fixture = make_session();
     AURORA_TEST_CHECK_TRUE(fixture.session->alive());
@@ -345,6 +356,22 @@ AURORA_TEST_CASE(replacing_the_wake_handle_takes_effect_immediately) {
     fixture.connection->deliver("ab");
     AURORA_TEST_CHECK_EQ(first, 0);
     AURORA_TEST_CHECK_EQ(second, 1);  // 注入式接缝：装配换句柄不需要重启会话
+}
+
+AURORA_TEST_CASE(bell_flag_survives_the_drain_and_is_taken_once) {
+    // `SPEC.FEAT.WS.04` 的会话侧：BEL 标记与脏行队列**分账**——装配层每帧先排脏行、后取标记，
+    // 若排帧把标记一起消费掉，角标就永远亮不起来（取走语义的载体只有那一个 bool）。
+    auto fixture = make_session();
+    fixture.connection->deliver("\x07");
+    static_cast<void>(drain_all(*fixture.session));
+    AURORA_TEST_CHECK_FALSE(fixture.session->has_damage());
+
+    AURORA_TEST_CHECK_TRUE(fixture.session->take_bell_triggered());
+    AURORA_TEST_CHECK_FALSE(fixture.session->take_bell_triggered());
+
+    fixture.connection->deliver("abc");
+    static_cast<void>(drain_all(*fixture.session));
+    AURORA_TEST_CHECK_FALSE(fixture.session->take_bell_triggered());  // 普通输出不点亮
 }
 
 }  // namespace borealis::test_cases::utest_session

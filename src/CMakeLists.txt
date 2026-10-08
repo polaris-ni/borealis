@@ -25,6 +25,7 @@ add_library(borealis_core STATIC
         session/screen_mirror.cpp
         session/session.cpp
         ui/cell_layout.cpp
+        ui/closed_tab_stack.cpp
         ui/color_text.cpp
         ui/font_choice.cpp
         ui/grid_size_debounce.cpp
@@ -41,6 +42,7 @@ add_library(borealis_core STATIC
         ui/settings_preview.cpp
         ui/shortcuts_table.cpp
         ui/startup_notice.cpp
+        ui/tab_bar.cpp
         ui/tab_strip.cpp
         ui/terminal_view.cpp
         ui/workspace_keys.cpp

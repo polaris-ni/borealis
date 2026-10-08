@@ -32,6 +32,10 @@ Session::Session(std::unique_ptr<Connection> connection, Size size, std::size_t 
     : connection_{std::move(connection)},
       terminal_{size.columns, size.rows, scrollback_limit, width_policy, defaults} {
     terminal_.set_response_sink(this);
+    // BEL 回调在锁内只登记事件，不 IO（架构 §3.4）；具体落地由装配层每帧取走标记。
+    terminal_.set_bell_callback([this]() -> void {
+        // 空实现：BEL 触发时不需要在锁内做任何事，主线程会每帧调用 take_bell_triggered() 查询。
+    });
 }
 
 Session::~Session() {
@@ -85,6 +89,11 @@ auto Session::decode_stats() const -> term::DecodeStats {
     return decoder_.stats();
 }
 
+auto Session::parse_stats() const -> vt::ParseStats {
+    const std::lock_guard lock{mutex_};
+    return terminal_.parse_stats();
+}
+
 auto Session::osc_state() const -> term::OscState {
     const std::lock_guard lock{mutex_};
     return terminal_.osc_state();
@@ -99,6 +108,11 @@ auto Session::take_clipboard_write() -> std::optional<std::u32string> {
     // 与查询应答同一套「锁内留存、锁外 IO」：这里取出的是状态机在 feed 期间攒下的待写文本。
     const std::lock_guard lock{mutex_};
     return terminal_.take_clipboard_write();
+}
+
+auto Session::take_bell_triggered() -> bool {
+    const std::lock_guard lock{mutex_};
+    return terminal_.take_bell_triggered();
 }
 
 auto Session::on_bytes(std::span<const std::byte> bytes) -> void { ingest(bytes, false); }

@@ -104,12 +104,28 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"search.next", "下一个"},
     {"search.close", "关闭"},
 
+    // ---- 工作区操作（`SPEC.FEAT.WS.06` 全屏切换的命令标题）----
+    {"workspace.action.toggle_fullscreen", "切换全屏"},
+
+    // ---- 撤销关闭标签（`SPEC.FEAT.WS.10` 的命令标题，待 WS.01 多标签落地后启用）----
+    {"tab.action.undo_close", "重开最近关闭的标签"},
+
     // ---- 命令面板（`SPEC.FEAT.WS.07`，判据文 `codespec/UI_WORKSPACE.draft.md` §4）----
     // 占位符与空态两条文案等框架 G38/G39 回货后走 i18n 路径（当前仍硬编码英文，见裁决 7.81②）。
     {"command_palette.title", "命令面板"},
     {"command_palette.placeholder", "输入命令..."},
     {"command_palette.empty", "没有匹配的命令"},
     {"command_palette.action.open", "打开命令面板"},
+
+    // ---- 调试面板（`SPEC.NF.RELI.01`：解析降级 / 非法字节 / 背压水位三族计数器的上屏形态）----
+    // 模板里的 {n} 一律是**取值**（计数值与行标题的已解析串），措辞不含 ASCII 诊断通道。
+    {"diagnostics.title", "诊断"},
+    {"diagnostics.action.open", "打开诊断面板"},
+    {"diagnostics.empty", "没有活动的会话"},
+    {"diagnostics.session", "标签 {0} · 分屏 {1}"},
+    {"diagnostics.parse", "未知序列 {0}，被打断 {1}"},
+    {"diagnostics.decode", "非法字节 {0}，码点 {1}"},
+    {"diagnostics.queue", "水位 {0}（峰值 {1}），过载 {2}，合并 {3}，让出 {4}"},
 
     // ---- 外观域 ----
     {"appearance.theme", "主题"},
@@ -176,6 +192,17 @@ const std::map<std::string, std::string, std::less<>> kStrings{
 
     // ---- 快捷键域 ----
     {"shortcuts.overrides", "键位覆盖表"},
+    {"settings.shortcut.column.title", "动作名"},
+    {"settings.shortcut.column.category", "分组"},
+    {"settings.shortcut.column.binding", "当前组合键"},
+    {"settings.shortcut.column.note", "标注"},
+    {"settings.shortcut.unbound", "未绑定"},
+    {"settings.shortcut.edit_title", "编辑键位绑定"},
+    {"settings.shortcut.conflict_warning", "与以下命令冲突"},
+    {"settings.action.edit", "编辑"},
+    {"settings.action.restore_defaults", "恢复默认"},
+    {"settings.action.confirm", "确定"},
+    {"settings.action.cancel", "取消"},
 
     // ---- 提交未通过的原因（`ui::CommitIssue` 的十三个非 `None` 值）----
     {"settings.issue.unknown_key", "这个键不在当前版本的设置表里"},

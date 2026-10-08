@@ -19,6 +19,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <span>
@@ -140,6 +141,9 @@ class Terminal final : public vt::SequenceSink {
     /// @brief 终端模式取值。
     [[nodiscard]] auto modes() const noexcept -> const TermModes & { return modes_; }
 
+    /// @brief 解析期诊断计数（`SPEC.NF.RELI.01`：与非法字节计数、背压水位同面板）。
+    [[nodiscard]] auto parse_stats() const noexcept -> const vt::ParseStats & { return parser_.stats(); }
+
     /// @brief 滚动区域。
     [[nodiscard]] auto scroll_region() const noexcept -> ScrollRegion { return {region_top_, region_bottom_}; }
 
@@ -162,6 +166,21 @@ class Terminal final : public vt::SequenceSink {
     /// @brief 挂上响应回写接缝（会话层在构造后接线；查询应答在挂上之前一律丢弃）。
     /// @param sink 应答接收端，生命周期由调用方保证，且不短于本终端；传 nullptr 即摘除。
     auto set_response_sink(ResponseSink *sink) noexcept -> void { response_sink_ = sink; }
+
+    /// @brief 挂上 BEL 事件回调（会话层在构造后接线；未接线时 BEL 只记状态不通知）。
+    ///
+    /// 回调发生在 `Terminal::feed` 期间，也就是会话持有网格锁的临界区内——实现方**只能登记**
+    /// 事件，不得在此直接写连接或触达 UI（架构 §3.4「临界区内不做阻塞 IO」）。
+    /// @param callback BEL 触发时的回调，生命周期由调用方保证；传 nullptr 即摘除。
+    auto set_bell_callback(std::function<void()> callback) noexcept -> void { bell_callback_ = std::move(callback); }
+
+    /// @brief 消费并重置 BEL 触发标记（帧边界调用）。
+    /// @return 自上次调用以来是否触发过 BEL。
+    auto take_bell_triggered() noexcept -> bool {
+        bool was = bell_triggered_;
+        bell_triggered_ = false;
+        return was;
+    }
 
     /// @brief OSC 消费留下的状态快照（标题、工作目录、命令块边界）。
     [[nodiscard]] auto osc_state() const noexcept -> const OscState & { return osc_state_; }
@@ -259,6 +278,9 @@ class Terminal final : public vt::SequenceSink {
     /// @brief 把一段应答交给回写接缝；未接线时丢弃（单测可只喂序列不接 sink）。
     auto emit_response(std::u32string_view response) -> void;
 
+    /// @brief 触发 BEL 事件：设置标记并调用回调（若已接线）。
+    auto trigger_bell() -> void;
+
     auto set_tab_stops_default() noexcept -> void;
 
     std::array<Charset, 4> designated_{Charset::Ascii, Charset::Ascii, Charset::Ascii, Charset::Ascii};
@@ -285,6 +307,8 @@ class Terminal final : public vt::SequenceSink {
     std::optional<std::u32string> clipboard_write_;  ///< 待写剪贴板文本：锁内留存、主线程取走落地。
     bool pending_wrap_ = false;  ///< 已在行末落字、下一个可打印字符须先换行（DECAWM 的延迟换行）。
     bool full_screen_dirty_ = false;
+    bool bell_triggered_ = false;  ///< BEL 触发标记：主线程每帧取走后清零。
+    std::function<void()> bell_callback_;  ///< BEL 事件回调：会话层注入，锁内只登记不 IO。
 };
 
 }  // namespace borealis::term

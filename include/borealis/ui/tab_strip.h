@@ -65,6 +65,8 @@ struct TabNames {
 struct Tab {
     TabId id = 0;
     TabNames names{};
+    bool bell_triggered = false;   ///< BEL 触发标记（`SPEC.FEAT.WS.04`）：主线程每帧取走后清零。
+    bool has_activity = false;     ///< 是否有新活动（输出更新）：用于活动高亮指示。
 
     /// @brief 逐字段全等比较（顺序断言用）。
     [[nodiscard]] auto operator==(const Tab &other) const noexcept -> bool = default;
@@ -109,6 +111,15 @@ class TabStrip final {
     /// @return 是否完成追加。
     auto add(TabId id, std::u32string default_name) -> bool;
 
+    /// @brief 在指定位置插入一个标签并**立即选中**它（WS.10 撤销关闭用）。
+    ///
+    /// 与 `add()` 的唯一差别是位置可控：重开的标签应插在关闭前的位置，而不是追加到末尾。
+    /// @param index 目标位置（`[0, count()]`，等于 `count()` 时等价于追加）。
+    /// @param id 标签身份。
+    /// @param default_name 连接档案的显示名。
+    /// @return 是否完成插入；`id` 已存在或越界时返回 false。
+    auto insert_at(std::size_t index, TabId id, std::u32string default_name) -> bool;
+
     /// @brief 关闭一个标签；关掉的是选中的那格时，选中交给次序上的下一格（末位则交给上一格）。
     ///
     /// 交接下标在**移除前**算，与 `PaneTree::close`（7.42⑥）同一条理由：移除后次序会变，而用户
@@ -116,6 +127,16 @@ class TabStrip final {
     /// @param id 待关闭的标签。
     /// @return 是否完成关闭；表里只剩这一个时返回 false（那是关窗口，属 `SPEC.FEAT.WS.03`）。
     auto close(TabId id) -> bool;
+
+    /// @brief 最近一次关闭的标签信息（供 WS.10 撤销关闭用）。
+    ///
+    /// 只含名称与位置，不含连接规格——后者由装配层从会话侧取并压入闭包栈。
+    /// @return 若有关闭记录则返回 {name, index_in_strip}，否则 nullopt。
+    struct LastClosedInfo {
+        std::u32string name;
+        std::size_t index_in_strip = 0;
+    };
+    [[nodiscard]] auto last_closed() const -> std::optional<LastClosedInfo>;
 
     /// @brief 当前选中的标签；空表回空值。
     [[nodiscard]] auto selected() const -> std::optional<TabId>;
@@ -153,9 +174,30 @@ class TabStrip final {
     /// @return 该标签是否存在；不存在时名字不变。
     auto set_osc_title(TabId id, std::u32string title) -> bool;
 
+    /// @brief 标记该标签触发了 BEL（`SPEC.FEAT.WS.04`）。
+    /// @param id 目标标签。
+    /// @return 该标签是否存在；不存在时状态不变。
+    auto mark_bell_triggered(TabId id) -> bool;
+
+    /// @brief 消费并重置该标签的 BEL 触发标记（帧边界调用）。
+    /// @param id 目标标签。
+    /// @return 自上次调用以来是否触发过 BEL。
+    auto take_bell_triggered(TabId id) -> bool;
+
+    /// @brief 标记该标签有新活动（输出更新），用于活动高亮指示（`SPEC.FEAT.WS.04`）。
+    /// @param id 目标标签。
+    /// @return 该标签是否存在；不存在时状态不变。
+    auto mark_activity(TabId id) -> bool;
+
+    /// @brief 消费并重置该标签的活动标记（焦点切换到该标签时调用）。
+    /// @param id 目标标签。
+    /// @return 自上次调用以来是否有活动。
+    auto take_activity(TabId id) -> bool;
+
   private:
     std::vector<Tab> tabs_;
     std::size_t selected_index_ = 0;  ///< 选中位在表内的下标；`tabs_` 非空时恒合法，空表时不生效。
+    std::optional<LastClosedInfo> last_closed_;  ///< 最近一次关闭的标签信息（WS.10 撤销用）。
 };
 
 }  // namespace borealis::ui

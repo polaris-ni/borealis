@@ -59,6 +59,19 @@ auto TabStrip::add(TabId id, std::u32string default_name) -> bool {
     return true;
 }
 
+auto TabStrip::insert_at(std::size_t index, TabId id, std::u32string default_name) -> bool {
+    if (has_tab(id)) {
+        return false;
+    }
+    if (index > tabs_.size()) {
+        return false;  // 越界：合法范围 [0, count()]，等于 count() 时等价于追加。
+    }
+    tabs_.insert(tabs_.begin() + static_cast<std::ptrdiff_t>(index),
+                 Tab{.id = id, .names = TabNames{.default_name = std::move(default_name)}});
+    selected_index_ = index;  // 插入即选中。
+    return true;
+}
+
 auto TabStrip::close(TabId id) -> bool {
     const auto at = index_of(id);
     if (!at.has_value()) {
@@ -71,6 +84,12 @@ auto TabStrip::close(TabId id) -> bool {
     // 交接要在移除**之前**的次序里定：关掉的是中间格时下一格顶上来（下标不变），关掉末位时退一格。
     const std::size_t from = *at;
     const bool was_selected = from == selected_index_;
+    // 记录关闭信息供 WS.10 撤销用：名称与位置都在移除前取，否则次序会变。
+    last_closed_ = LastClosedInfo{tabs_[from].names.manual_name.empty()
+                                      ? (tabs_[from].names.osc_title.empty() ? tabs_[from].names.default_name
+                                                                             : tabs_[from].names.osc_title)
+                                      : tabs_[from].names.manual_name,
+                                  from};
     tabs_.erase(tabs_.begin() + static_cast<std::ptrdiff_t>(from));
     if (was_selected) {
         selected_index_ = std::min(from, tabs_.size() - 1);  // 移除后至少还剩一格，故 `- 1` 不空转。
@@ -162,6 +181,48 @@ auto TabStrip::set_osc_title(TabId id, std::u32string title) -> bool {
     }
     tabs_[*at].names.osc_title = std::move(title);
     return true;
+}
+
+auto TabStrip::last_closed() const -> std::optional<LastClosedInfo> {
+    return last_closed_;
+}
+
+auto TabStrip::mark_bell_triggered(TabId id) -> bool {
+    auto at = index_of(id);
+    if (!at.has_value()) {
+        return false;
+    }
+    tabs_[*at].bell_triggered = true;
+    return true;
+}
+
+auto TabStrip::take_bell_triggered(TabId id) -> bool {
+    auto at = index_of(id);
+    if (!at.has_value()) {
+        return false;
+    }
+    bool was = tabs_[*at].bell_triggered;
+    tabs_[*at].bell_triggered = false;
+    return was;
+}
+
+auto TabStrip::mark_activity(TabId id) -> bool {
+    auto at = index_of(id);
+    if (!at.has_value()) {
+        return false;
+    }
+    tabs_[*at].has_activity = true;
+    return true;
+}
+
+auto TabStrip::take_activity(TabId id) -> bool {
+    auto at = index_of(id);
+    if (!at.has_value()) {
+        return false;
+    }
+    bool was = tabs_[*at].has_activity;
+    tabs_[*at].has_activity = false;
+    return was;
 }
 
 }  // namespace borealis::ui

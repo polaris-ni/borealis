@@ -266,4 +266,56 @@ AURORA_TEST_CASE(config_field_is_an_alias_of_the_priority_enum_not_a_second_tabl
     AURORA_TEST_CHECK((std::is_same_v<decltype(appearance.tab_name_priority), borealis::ui::TabNamePriority>));
 }
 
+AURORA_TEST_CASE(insert_at_puts_the_tab_back_where_it_was) {
+    // `SPEC.FEAT.WS.10`：重开的标签要回它关闭前的格子，而不是追加到末尾（裁决 7.43② 的下标基准）。
+    auto strip = make_three(kC);
+    AURORA_TEST_REQUIRE_TRUE(strip.close(kA));
+    AURORA_TEST_REQUIRE_TRUE(strip.insert_at(0, 40, U"a"));
+    AURORA_TEST_CHECK(ids(strip) == std::vector<borealis::ui::TabId>{40, kB, kC});
+    AURORA_TEST_CHECK_TRUE(strip.selected() == std::optional<borealis::ui::TabId>{40});  // 插入即选中
+
+    AURORA_TEST_CHECK_FALSE(strip.insert_at(4, 50, U"x"));  // 上界是 count()，越界拒绝且表不变
+    AURORA_TEST_CHECK_FALSE(strip.insert_at(1, 40, U"x"));  // 身份重复即拒，不覆盖原有名字
+    AURORA_TEST_CHECK(ids(strip) == std::vector<borealis::ui::TabId>{40, kB, kC});
+    AURORA_TEST_REQUIRE_TRUE(strip.insert_at(strip.count(), 50, U"tail"));  // 等于 count() 即追加
+    AURORA_TEST_CHECK(ids(strip) == std::vector<borealis::ui::TabId>{40, kB, kC, 50});
+}
+
+AURORA_TEST_CASE(close_records_the_name_and_slot_being_given_up) {
+    // 名称与位置都在**移除前**取：装配层在 `close()` 之后回查表就再也找不到那个身份，
+    // 于是重开回来的标签变成一个无名格（`SPEC.FEAT.WS.10` 的「名字仍要带回」）。
+    auto strip = make_three(kB);
+    AURORA_TEST_REQUIRE_TRUE(strip.rename(kB, U"mine"));
+    AURORA_TEST_REQUIRE_TRUE(strip.close(kB));
+    const auto info = strip.last_closed();
+    AURORA_TEST_REQUIRE_TRUE(info.has_value());
+    AURORA_TEST_CHECK(info->name == std::u32string{U"mine"});  // 手动名按缺省优先级胜出
+    AURORA_TEST_CHECK_EQ(info->index_in_strip, std::size_t{1});
+
+    // 空串是「该来源未设置」而不是名字（裁决 7.43③）：撤销重命名后记录让位给下一级来源。
+    AURORA_TEST_REQUIRE_TRUE(strip.close(kC));
+    const auto tail = strip.last_closed();
+    AURORA_TEST_REQUIRE_TRUE(tail.has_value());
+    AURORA_TEST_CHECK(tail->name == std::u32string{U"c"});  // 末位让位给连接默认名
+    AURORA_TEST_CHECK_EQ(tail->index_in_strip, std::size_t{1});
+}
+
+AURORA_TEST_CASE(bell_and_activity_marks_are_taken_not_read) {
+    // `SPEC.FEAT.WS.04`：主线程每帧**取走**标记，取走即清零；未标记与不存在都回假而不改表。
+    auto strip = make_three(kA);
+    AURORA_TEST_CHECK_FALSE(strip.take_bell_triggered(kA));
+    AURORA_TEST_CHECK_TRUE(strip.mark_bell_triggered(kA));
+    AURORA_TEST_CHECK_TRUE(strip.take_bell_triggered(kA));
+    AURORA_TEST_CHECK_FALSE(strip.take_bell_triggered(kA));
+
+    AURORA_TEST_CHECK_TRUE(strip.mark_activity(kB));
+    AURORA_TEST_CHECK_TRUE(strip.take_activity(kB));
+    AURORA_TEST_CHECK_FALSE(strip.take_activity(kB));
+
+    AURORA_TEST_CHECK_FALSE(strip.mark_bell_triggered(999));
+    AURORA_TEST_CHECK_FALSE(strip.mark_activity(999));
+    AURORA_TEST_CHECK_FALSE(strip.take_bell_triggered(999));
+    AURORA_TEST_CHECK_FALSE(strip.take_activity(999));
+}
+
 }  // namespace borealis::test_cases::utest_tab_strip

@@ -1,4 +1,5 @@
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -18,14 +19,19 @@
 #include "borealis/session/clipboard_outbox.h"
 #include "borealis/session/session.h"
 #include "borealis/term/keymap.h"
+#include "borealis/term/utf8.h"
 #include "borealis/term/width.h"
 #include "borealis/ui/font_choice.h"
 #include "borealis/ui/shortcuts_table.h"
 #include "borealis/ui/settings_form.h"
+#include "borealis/ui/tab_strip.h"
+#include "borealis/ui/closed_tab_stack.h"
 #include "ui/settings_i18n.h"
 #include "ui/settings_panel.h"
 #include "ui/startup_notice.h"
+#include "ui/tab_bar.h"
 #include "ui/terminal_view.h"
+#include "ui/workspace_view.h"
 #include <aurora/widget/command_palette.h>
 
 namespace {
@@ -128,6 +134,14 @@ constexpr borealis::session::Size kNominalViewport{80U, 24U};
     };
 }
 
+/// @brief 定长 UTF-8 串的码点收集器（与 `session.cpp` 的 `BufferSink` 同一形态，装配侧另有一份）。
+class DecodeCollector final : public borealis::term::CodePointSink {
+  public:
+    auto on_code_point(char32_t cp) -> void override { out.push_back(cp); }
+
+    std::u32string out;
+};
+
 }  // namespace
 
 auto main() -> int {
@@ -149,18 +163,6 @@ auto main() -> int {
     std::unique_ptr<au::Window> window = std::move(created.value());
     au::Surface &surface = window->surface();
 
-    borealis::conn::LocalTerminalSpec spec;
-    spec.command_line = settings.connection.local_shell;
-    spec.working_directory = settings.connection.startup_directory;
-
-    borealis::term::UnicodeWidthPolicy width_policy;
-    borealis::session::Session session{borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
-                                       kNominalViewport, settings.terminal.scrollback_limit, width_policy,
-                                       make_terminal_defaults(settings)};
-    // 后台读线程产出提交后叫醒主循环排帧（架构 §3.2）：`request_wake` 是线程安全的跨线程唤醒。
-    session.set_frame_wake([&surface]() -> void { surface.request_wake(); });
-    session.start();
-
     // 字体族目录只在装配阶段取一次：框架的首次调用要递归扫系统字体目录并逐个开 face 才能判定
     // 等宽性，属同步 IO，不得进事件回调或绘制路径（AGENTS.md §4.5 第 25 条）。取全量而非
     // `monospace_only` 的那个子集，是为了让「装了但非等宽」与「压根没这个族」两档降级可分别留痕。
@@ -173,12 +175,196 @@ auto main() -> int {
         return out;
     }();
 
-    auto view = std::make_shared<borealis::ui::TerminalView>(
-        session, make_appearance(settings, catalog), make_interaction(settings));
+    // WS.01 多标签真值源 + 闭包栈（WS.10 撤销用）
+    borealis::ui::TabStrip tab_strip;
+    borealis::ui::ClosedTabStack closed_tab_stack;
+
+    // 标识只增不复用（与 PaneTree 的容器标识同一条理由，裁决 7.42⑩）：新建与撤销重开**共用**这一支
+    // 计数器，否则「关一个再重开」造出的新身份会撞进仍存活的标签里，`add`/`insert_at` 的重复即静默失败。
+    borealis::ui::TabId next_tab_id = 1;
+
+    // 每个标签对应一个 WorkspaceView（支持该标签内的分屏）
+    struct TabWorkspace {
+        std::shared_ptr<borealis::ui::WorkspaceView> workspace;
+        std::vector<std::shared_ptr<borealis::session::Session>> sessions;  // 该标签的所有会话（目前单 pane 只有一个）
+    };
+    std::map<borealis::ui::TabId, TabWorkspace> tab_workspaces;
+
+    // 当前显示的标签 ID（用于场景根切换）
+    std::optional<borealis::ui::TabId> current_tab_id;
+
+    // 每只视口的浮层与搜索依赖接线（宿主与注册表须待 `host` / `app` 建成才取得到，故首标签建得早的
+    // 那几只在建成之后统一补挂，见下面赋值处）。缺这两条挂接，右键菜单、多行粘贴确认与搜索浮层
+    // **结构上弹不起来**（裁决 7.41③ / 7.81），而集成用例经替身宿主测的是接线而非这里。
+    std::function<void(borealis::ui::TerminalView &)> wire_view;
+
+    /// 上一次写到窗口标题栏的串：逐帧都调 `set_title` 就是每帧一次 `WM_SETTEXT`，而这个量在
+    /// 用户不换标签、对端不改 OSC 标题时根本不动。
+    std::string last_window_title;
+
+    // 创建首个本地终端标签
+    auto create_new_tab = [&]() -> void {
+        const borealis::ui::TabId id = next_tab_id++;
+
+        // 建会话
+        borealis::conn::LocalTerminalSpec spec;
+        spec.command_line = settings.connection.local_shell;
+        spec.working_directory = settings.connection.startup_directory;
+        borealis::term::UnicodeWidthPolicy width_policy;
+        auto session = std::make_shared<borealis::session::Session>(
+            borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
+            kNominalViewport, settings.terminal.scrollback_limit, width_policy,
+            make_terminal_defaults(settings));
+        session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
+        session->start();
+
+        // 建视口
+        auto view = std::make_shared<borealis::ui::TerminalView>(
+            *session, make_appearance(settings, catalog), make_interaction(settings));
+        // 浮层宿主与搜索依赖在创建那一刻一并挂上（`host` / `app` 已就绪时；首标签由后面统一补挂）。
+        if (wire_view) {
+            wire_view(*view);
+        }
+
+        // 建工作区分屏容器（单 pane 起步）
+        borealis::ui::WorkspaceView::Hooks ws_hooks;
+        ws_hooks.make_pane = [session, view](borealis::ui::PaneId /*pane*/) -> std::shared_ptr<borealis::ui::TerminalView> {
+            // 首 pane 复用传入的 view，后续 pane 需要新建会话（暂不支持，返回空）
+            return view;
+        };
+        ws_hooks.dispatch_grid = [session](borealis::ui::PaneId /*pane*/, borealis::ui::GridSize size) -> void {
+            session->resize({size.columns, size.rows});
+        };
+        ws_hooks.teardown_pane = [](borealis::ui::PaneId /*pane*/) -> void {
+            // 单会话架构下不回收
+        };
+
+        auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
+        tab_workspaces[id] = TabWorkspace{.workspace = std::move(workspace), .sessions = {session}};
+
+        // 加入标签条
+        // TODO(SPEC.FEAT.CONN.02): 档案名待连接档案落地后从档案取，首版先给本地终端的固定措辞。
+        const std::u32string default_name = U"本地终端";
+        tab_strip.add(id, default_name);
+        current_tab_id = id;
+    };
+
+    create_new_tab();
+
+    // 辅助函数：重建根 Stack 的子节点列表（标签栏 + 当前工作区）
+    auto rebuild_root_children = [](std::shared_ptr<au::Stack> &stack,
+                                     const std::map<borealis::ui::TabId, TabWorkspace> &workspaces,
+                                     std::optional<borealis::ui::TabId> current_id) -> void {
+        // 保留第一个子节点（标签栏），替换第二个（工作区）
+        auto &nodes = stack->child_nodes_mut();
+        if (nodes.size() < 2) {
+            return;  // 还没初始化完
+        }
+        nodes.resize(1);  // 只留标签栏
+        if (current_id.has_value()) {
+            auto it = workspaces.find(current_id.value());
+            if (it != workspaces.end()) {
+                nodes.push_back(aurora::Node{it->second.workspace});
+            }
+        }
+        stack->mark_needs_layout();
+        stack->mark_needs_paint();
+    };
+
+    // 标签栏界面腿已在上面 root_stack 创建时内联定义，此处不再重复
+
     // 右键菜单与多行粘贴确认都是浮层，故场景根是浮层宿主而非视口本身（裁决 7.41③）：宿主的子节点
-    // [0] 是撑满窗口的视口，[1..] 是视口与设置面板按需追加的 Popup / Dialog / 面板浮层。
-    auto host = std::make_shared<au::OverlayHost>(au::Node{std::static_pointer_cast<au::Widget>(view)});
-    view->set_overlay_host(*host);
+    // [0] 是撑满窗口的标签栏，[1] 是当前工作区，[2..] 是按需追加的 Popup / Dialog / 面板浮层。
+    auto host = std::make_shared<au::OverlayHost>();
+    
+    // 添加标签栏（用 Stack 承载，因为 OverlayHost 只管理浮层，常规内容须走普通容器）
+    auto root_stack = std::make_shared<au::Stack>();
+    root_stack->modifier.set(au::Modifier{}.fill_max_size());
+    
+    // 标签栏需要 shared_ptr 才能加入场景树
+    auto tab_bar_ptr = std::make_shared<borealis::ui::TabBarWidget>(borealis::ui::TabBarHooks{
+        .tabs = [&]() -> std::vector<borealis::ui::TabVisual> {
+            std::vector<borealis::ui::TabVisual> out;
+            const auto tabs = tab_strip.tabs();
+            const auto selected = tab_strip.selected();
+            for (const auto &tab : tabs) {
+                out.push_back(borealis::ui::TabVisual{
+                    .id = tab.id,
+                    .display_name = borealis::ui::resolve_tab_name(tab.names, settings.appearance.tab_name_priority),
+                    .is_selected = (selected.has_value() && selected.value() == tab.id),
+                    .has_close_button = (tab_strip.count() > 1),  // 末位不给关
+                    .bell_triggered = tab.bell_triggered,
+                    .has_activity = tab.has_activity,
+                });
+            }
+            return out;
+        },
+        .select = [&](std::uint64_t id) -> void {
+            tab_strip.select(static_cast<borealis::ui::TabId>(id));
+            current_tab_id = static_cast<borealis::ui::TabId>(id);
+            // 切换当前显示的工作区视图
+            rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
+            // 切换到该标签时清除活动标记（`SPEC.FEAT.WS.04`）
+            tab_strip.take_activity(static_cast<borealis::ui::TabId>(id));
+        },
+        .close = [&](std::uint64_t id) -> void {
+            const bool removed = tab_strip.close(static_cast<borealis::ui::TabId>(id));
+            if (removed) {
+                // 关闭前记录到闭包栈（`SPEC.FEAT.WS.10`）
+                auto it = tab_workspaces.find(static_cast<borealis::ui::TabId>(id));
+                if (it != tab_workspaces.end()) {
+                    borealis::ui::ClosedTabSpec spec;
+                    // 名称与位置都取 `close()` 记下的那份：此刻该标签已不在表里，回查只会拿到空名，
+                    // 于是重开回来的标签变成一个无名格——那正是本件要避免的「内容不可恢复」被扩大成
+                    // 「名字也丢了」。
+                    if (const auto closed = tab_strip.last_closed(); closed.has_value()) {
+                        static_cast<void>(borealis::term::encode_utf8(closed->name, spec.name));
+                        spec.index_in_strip = closed->index_in_strip;
+                    }
+                    // 本地终端的连接规格从配置取（目前只支持本地终端，SSH 腿到货后追加）
+                    spec.local_shell = settings.connection.local_shell;
+                    spec.startup_directory = settings.connection.startup_directory;
+                    closed_tab_stack.push(std::move(spec));
+                    // 销毁对应的 WorkspaceView 和会话
+                    tab_workspaces.erase(it);
+                }
+                if (current_tab_id.has_value() && current_tab_id.value() == static_cast<borealis::ui::TabId>(id)) {
+                    // 选下一个或上一个
+                    const auto next = tab_strip.selected();
+                    if (next.has_value()) {
+                        current_tab_id = next.value();
+                    } else {
+                        current_tab_id.reset();
+                    }
+                    // 更新显示的工作区
+                    rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
+                }
+            }
+        },
+        .rename = [&](std::uint64_t id, std::u32string name) -> void {
+            tab_strip.rename(static_cast<borealis::ui::TabId>(id), std::move(name));
+        },
+        .move = [&](std::uint64_t id, std::size_t to_index) -> void {
+            tab_strip.move(static_cast<borealis::ui::TabId>(id), to_index);
+        },
+        .add_new = [&]() -> void {
+            create_new_tab();
+            // 新标签创建后重建根节点子节点以包含新工作区
+            rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
+        },
+    });
+    root_stack->child_nodes_mut().push_back(aurora::Node{tab_bar_ptr});
+    
+    // 添加当前工作区
+    if (current_tab_id.has_value()) {
+        auto it = tab_workspaces.find(current_tab_id.value());
+        if (it != tab_workspaces.end()) {
+            root_stack->child_nodes_mut().push_back(aurora::Node{it->second.workspace});
+        }
+    }
+    
+    host->child_nodes_mut().push_back(aurora::Node{root_stack});
+
     // chrome 主题挂场景根：面板与后续界面件读同一份 `Theme`，而它**刻意不随终端主题联动**
     //（裁决 7.52 的 S5① / N6：切配色主题时整窗跟着变会让用户以为丢了设置）。
     auto chrome = std::make_shared<au::ThemeScope>(borealis::ui::settings_chrome_theme(),
@@ -187,12 +373,21 @@ auto main() -> int {
     borealis::session::ClipboardOutbox outbox;
 
     au::Application app{std::move(scene), std::move(window), opts};
-    // 框架不在启动时给焦点序里的首个控件派焦点（只有模态 `push_scope` 会这么做），不设这一步则
-    // 按键与滚轮都路由不到视口，光标也永远停在失焦的空心描边形态。
-    app.focus().set_focus(view.get());
-    // 搜索浮层的两条框架依赖：`Escape` 的登记表与焦点管理器。与上面的 `set_overlay_host` 分开挂，
-    // 且必须在建 `app` 之后——宿主是场景根的成员而快捷键层与焦点序归 `Application` 持有（判据文 §4 第 5 条）。
-    view->set_search_dependencies(app.shortcuts(), app.focus());
+    
+    // 视口的两条浮层依赖此刻才取得到，先给已存在的全部视图（首标签那一只）补挂，再交给
+    // `create_new_tab` 与撤销重开在创建那一刻调用——两条建视图路径共用同一处接线，结构上不可能分叉。
+    wire_view = [&host, &app](borealis::ui::TerminalView &view) -> void {
+        view.set_overlay_host(*host);
+        view.set_search_dependencies(app.shortcuts(), app.focus());
+    };
+    for (auto &[tab_id, workspace] : tab_workspaces) {
+        static_cast<void>(tab_id);
+        for (borealis::ui::PaneId pane = 1; pane <= workspace.workspace->pane_count(); ++pane) {
+            if (auto *v = workspace.workspace->view_of(pane)) {
+                wire_view(*v);
+            }
+        }
+    }
 
     // 面板的三条接缝都在装配层兑现：装载取 `Store` 的当前配置，落盘走 `apply_form` + `replace()`，
     // 广播把刚落盘的配置重新折算成外观包与交互项交回视口（`SPEC.FEAT.PREF.02` 的「即时生效」腿）。
@@ -203,10 +398,22 @@ auto main() -> int {
     hooks.persist = [&store](const borealis::ui::SettingsForm &form) -> std::optional<std::string> {
         return store.replace(borealis::config::apply_form(form, store.settings()));
     };
-    hooks.broadcast = [&view, &store, &catalog](const borealis::ui::SettingsForm &form) -> void {
+    hooks.broadcast = [&tab_workspaces, &current_tab_id, &store, &catalog](const borealis::ui::SettingsForm &form) -> void {
         const borealis::config::Settings next = borealis::config::apply_form(form, store.settings());
-        view->apply_appearance(make_appearance(next, catalog));
-        view->apply_interaction_options(make_interaction(next));
+        // 广播到当前标签的所有视口（目前每个标签只有一个工作区，但工作区内可能有多个 pane）
+        if (current_tab_id.has_value()) {
+            auto it = tab_workspaces.find(current_tab_id.value());
+            if (it != tab_workspaces.end()) {
+                // 遍历该工作区的所有 pane 视图并应用新外观
+                for (borealis::ui::PaneId pane = 1; pane <= it->second.workspace->pane_count(); ++pane) {
+                    auto *v = it->second.workspace->view_of(pane);
+                    if (v) {
+                        v->apply_appearance(make_appearance(next, catalog));
+                        v->apply_interaction_options(make_interaction(next));
+                    }
+                }
+            }
+        }
     };
     // 主题候选表交进面板（裁决 7.61①）：`BuiltinTheme` 只带存储键名，卡面就逐字显示那串字，
     // 于是「卡片次序与名字」的唯一真源仍是 `config::builtin_themes()`，面板侧不另立一份显示名表。
@@ -276,7 +483,18 @@ auto main() -> int {
     open_search.id = "search.open";
     open_search.title = borealis::ui::settings_label("search.action.open");
     open_search.category = "terminal";
-    open_search.action = [&view]() -> void { view->open_search(); };
+    open_search.action = [&tab_workspaces, &current_tab_id]() -> void {
+        if (current_tab_id.has_value()) {
+            auto it = tab_workspaces.find(current_tab_id.value());
+            if (it != tab_workspaces.end()) {
+                // 取第一个 pane 的视图来打开搜索
+                auto *first_view = it->second.workspace->view_of(1);
+                if (first_view) {
+                    first_view->open_search();
+                }
+            }
+        }
+    };
     open_search.default_binding = au::KeyCombo{au::ModifierKey::Control, au::KeyCode::F};
     open_search.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(open_search));
@@ -307,6 +525,94 @@ auto main() -> int {
     open_command_palette.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(open_command_palette));
 
+    // 全屏切换（`SPEC.FEAT.WS.06`，判据文 §3 D1）：F11 在普通与全屏之间切换，ESC 不退出（避免与会话内 ESC 冲突）。
+    au::Command toggle_fullscreen;
+    toggle_fullscreen.id = "workspace.toggle_fullscreen";
+    toggle_fullscreen.title = borealis::ui::settings_label("workspace.action.toggle_fullscreen");
+    toggle_fullscreen.category = "workspace";
+    toggle_fullscreen.action = [&app]() -> void {
+        auto *win = app.window();
+        if (!win) return;
+        auto mode = win->window_mode();
+        win->set_fullscreen(mode != au::WindowMode::FullScreen);
+    };
+    toggle_fullscreen.default_binding = au::KeyCombo{au::KeyCode::F11};
+    toggle_fullscreen.scope = au::ShortcutScope::Global;
+    app.commands().add(std::move(toggle_fullscreen));
+
+    // 撤销关闭标签（`SPEC.FEAT.WS.10`）：从闭包栈弹出最近关闭的标签规格，重建会话并插入到原位置。
+    au::Command undo_close_tab;
+    undo_close_tab.id = "tab.undo_close";
+    undo_close_tab.title = borealis::ui::settings_label("tab.action.undo_close");
+    undo_close_tab.category = "workspace";
+    undo_close_tab.action = [&]() -> void {
+        auto spec_opt = closed_tab_stack.pop();
+        if (!spec_opt.has_value()) {
+            AURORA_LOG_INFO("main", "undo close tab: stack is empty");
+            return;
+        }
+        const borealis::ui::ClosedTabSpec &spec = spec_opt.value();
+        
+        // 重建会话（目前只支持本地终端，SSH 腿到货后追加分支）
+        borealis::conn::LocalTerminalSpec conn_spec;
+        conn_spec.command_line = spec.local_shell.empty() ? settings.connection.local_shell : spec.local_shell;
+        conn_spec.working_directory = spec.startup_directory.empty() ? settings.connection.startup_directory : spec.startup_directory;
+        borealis::term::UnicodeWidthPolicy width_policy;
+        auto session = std::make_shared<borealis::session::Session>(
+            borealis::conn::make_local_terminal_connection(conn_spec, kNominalViewport),
+            kNominalViewport, settings.terminal.scrollback_limit, width_policy,
+            make_terminal_defaults(settings));
+        session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
+        session->start();
+        
+        // 建视口
+        auto view = std::make_shared<borealis::ui::TerminalView>(
+            *session, make_appearance(settings, catalog), make_interaction(settings));
+        if (wire_view) {
+            wire_view(*view);
+        }
+        
+        // 建工作区分屏容器（单 pane 起步）
+        borealis::ui::WorkspaceView::Hooks ws_hooks;
+        ws_hooks.make_pane = [session, view](borealis::ui::PaneId /*pane*/) -> std::shared_ptr<borealis::ui::TerminalView> {
+            return view;
+        };
+        ws_hooks.dispatch_grid = [session](borealis::ui::PaneId /*pane*/, borealis::ui::GridSize size) -> void {
+            session->resize({size.columns, size.rows});
+        };
+        ws_hooks.teardown_pane = [](borealis::ui::PaneId /*pane*/) -> void {};
+        
+        auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
+        
+        // 生成新标签 ID：走共享的那支只增计数器，不复用已发过的身份。
+        const borealis::ui::TabId id = next_tab_id++;
+
+        // 标签名按 UTF-8 解回码点：闭包栈存的是 `encode_utf8` 的产物，逐字节折成码点会把
+        // CJK 名拆成 Latin-1 乱码，重开回来的标签就成了一串问号。
+        borealis::term::Utf8Decoder decoder;
+        DecodeCollector collector;
+        const auto *bytes = reinterpret_cast<const std::byte *>(spec.name.data());
+        decoder.feed(std::span<const std::byte>(bytes, spec.name.size()), collector);
+        decoder.finish(collector);
+        const bool inserted = tab_strip.insert_at(spec.index_in_strip, id, collector.out);
+        if (!inserted) {
+            AURORA_LOG_WARN("main", "undo close tab: insert_at failed at index ", spec.index_in_strip);
+            return;
+        }
+        
+        tab_workspaces[id] = TabWorkspace{.workspace = std::move(workspace), .sessions = {session}};
+        current_tab_id = id;
+        
+        // 选中恢复的标签并重建根节点子节点
+        tab_strip.select(id);
+        rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
+        
+        AURORA_LOG_INFO("main", "restored closed tab: '", spec.name, "' at index ", spec.index_in_strip);
+    };
+    undo_close_tab.default_binding = au::KeyCombo{au::ModifierKey::Control | au::ModifierKey::Shift, au::KeyCode::T};
+    undo_close_tab.scope = au::ShortcutScope::Global;
+    app.commands().add(std::move(undo_close_tab));
+
     app.commands().bind_shortcuts(app.shortcuts());
 
     // 启动降级提示（`SPEC.FEAT.PREF.07`，裁决 7.76⑤）：`LoadOutcome` 四态里只有两条降级态会弹，弹一次即止。
@@ -317,14 +623,69 @@ auto main() -> int {
         AURORA_LOG_WARN("main", "config load degraded: ", store.report().message);
     }
 
-    app.set_on_frame([&view, &outbox, &session, &panel]() -> void {
-        view->on_frame();  // 先取脏行提交、再在临界区并入本地副本（顺序不可颠倒，见 session.h）
-        static_cast<void>(outbox.drain(session));
+    app.set_on_frame([&tab_workspaces, &current_tab_id, &outbox, &panel, &tab_strip, &app, &settings,
+                      &last_window_title]() -> void {
+        // 排帧范围是**全部标签**每帧都排（含隐藏标签，裁决 7.47⑩）：可见性只影响绘制不影响数据。
+        // 只排当前标签的后果是三处静默失灵——别的标签的 `OSC 52` 永远留在队列里（取走语义按会话
+        // 记账，裁决 7.21③）、BEL 与活动角标要等用户切过去才补亮、OSC 标题不落进标签名。
+        for (auto &[tab_id, workspace] : tab_workspaces) {
+            for (borealis::ui::PaneId pane = 1; pane <= workspace.workspace->pane_count(); ++pane) {
+                auto *v = workspace.workspace->view_of(pane);
+                if (v) {
+                    v->on_frame();
+                }
+            }
+            for (auto &tag_session : workspace.sessions) {
+                static_cast<void>(outbox.drain(*tag_session));
+
+                // BEL 事件传给 TabStrip（`SPEC.FEAT.WS.04`）：取走即清零，不会被下一帧重复点亮
+                if (tag_session->take_bell_triggered()) {
+                    tab_strip.mark_bell_triggered(tab_id);
+                }
+
+                // 有新的网格更新（damage）即标记活动（`SPEC.FEAT.WS.04`）
+                if (tag_session->has_damage()) {
+                    tab_strip.mark_activity(tab_id);
+                }
+
+                // 消费 OSC 标题并更新到标签名（`SPEC.FEAT.TERM.07` UI 消费链路）
+                const borealis::term::OscState osc = tag_session->osc_state();
+                if (!osc.title.empty()) {
+                    tab_strip.set_osc_title(tab_id, osc.title);
+                }
+            }
+        }
+        
+        // 窗口标题＝**选中标签的显示名**（`SPEC.FEAT.WS.06`）：名只经 `resolve_tab_name` 这一个判定处
+        //（裁决 7.43③），窗口侧再读一次 OSC 就是第二套优先级，标签条与标题栏会在手动重命名那一刻分叉。
+        if (current_tab_id.has_value()) {
+            std::u32string display_name;
+            for (const auto &tab : tab_strip.tabs()) {
+                if (tab.id == current_tab_id.value()) {
+                    display_name = borealis::ui::resolve_tab_name(
+                        tab.names, settings.appearance.tab_name_priority);
+                    break;
+                }
+            }
+            std::string title_utf8;
+            static_cast<void>(borealis::term::encode_utf8(display_name, title_utf8));
+            if (title_utf8 != last_window_title) {
+                last_window_title = title_utf8;
+                if (auto *win = app.window()) {
+                    win->set_title(title_utf8);
+                }
+            }
+        }
+        
         panel.pump_preview();  // 预览盒是第二个会话，脏行同样按帧排（面板关着即空操作）
     });
     app.run();
 
-    // 关停在读线程仍可能唤醒 surface 之前：`close()` 会 join 读线程，之后不再有帧唤醒。
-    session.close();
+    // 关停在读线程仍可能唤醒 surface 之前：需要关闭所有标签的所有会话
+    for (auto &[tab_id, workspace] : tab_workspaces) {
+        for (auto &session : workspace.sessions) {
+            session->close();
+        }
+    }
     return 0;
 }

@@ -209,8 +209,11 @@ auto Terminal::do_execute(const vt::Sequence &seq) -> void {
         case U'\x0F':  // SI
             // TODO(SPEC.FEAT.TERM.01): SO/SI 切换 GL 用 G1/G0，本模块只消费 G0 槽位。
             break;
+        case U'\x07':  // BEL：响铃（`SPEC.FEAT.WS.04`）
+            trigger_bell();
+            break;
         default:
-            break;  // 含 BEL：其视觉与可听提示归 SPEC.FEAT.WS.04，此处不产副作用
+            break;
     }
 }
 
@@ -1108,6 +1111,13 @@ auto Terminal::resize(std::size_t columns, std::size_t rows) -> void {
     region_bottom_ = rows - 1;  // DECSTBM 的带随尺寸失效（xterm 同口径）
     pending_wrap_ = false;
     full_screen_dirty_ = true;
+}
+
+auto Terminal::trigger_bell() -> void {
+    bell_triggered_ = true;
+    if (bell_callback_) {
+        bell_callback_();
+    }
 }
 
 }  // namespace borealis::term

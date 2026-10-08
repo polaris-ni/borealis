@@ -694,4 +694,39 @@ AURORA_TEST_CASE(resize_to_same_size_leaves_no_damage) {
     AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string("x"));
 }
 
+AURORA_TEST_CASE(bel_marks_the_flag_and_fires_the_callback) {
+    // `SPEC.FEAT.WS.04`：BEL 只留一个标记，主线程在帧边界经 `Session::take_bell_triggered()` 取走——
+    // 状态机里既没有界面也不该有。
+    auto term = make_terminal(narrow_only);
+    int fired = 0;
+    term.set_bell_callback([&fired]() -> void { ++fired; });
+
+    AURORA_TEST_CHECK_FALSE(term.take_bell_triggered());
+    // 用 `\u0007` 而不是 `\x07`：后随字符 c/d 属十六进制数字，会被吞进转义序列。
+    term.feed(U"ab\u0007cd");
+    AURORA_TEST_CHECK_EQ(fired, 1);
+    AURORA_TEST_CHECK_TRUE(term.take_bell_triggered());
+    AURORA_TEST_CHECK_FALSE(term.take_bell_triggered());  // 取走即清零，不会被下一帧重复点亮
+
+    term.feed(U"xy\u0007z\u0007");
+    AURORA_TEST_CHECK_EQ(fired, 3);      // 两个 BEL 各通知一次（可听提示归装配层落地）
+    AURORA_TEST_CHECK_TRUE(term.take_bell_triggered());
+}
+
+AURORA_TEST_CASE(an_unwired_bell_still_marks_and_unwiring_stops_notifying) {
+    // 未接线时 BEL 只记状态不通知（装配层可在建会话之后再挂回调）；挂上之后摘除即回到那一档。
+    auto term = make_terminal(narrow_only);
+    AURORA_TEST_CHECK_FALSE(term.take_bell_triggered());
+    term.feed(U"\x07");
+    AURORA_TEST_CHECK_TRUE(term.take_bell_triggered());  // 没有回调也照样置位，标记才是取走语义的载体
+
+    int fired = 0;
+    term.set_bell_callback([&fired]() -> void { ++fired; });
+    term.feed(U"\x07");
+    term.set_bell_callback({});
+    term.feed(U"\x07");
+    AURORA_TEST_CHECK_EQ(fired, 1);      // 摘除之后不再通知
+    AURORA_TEST_CHECK_TRUE(term.take_bell_triggered());
+}
+
 }  // namespace borealis::test_cases::utest_terminal
