@@ -3,7 +3,8 @@
 /// 测试说明: `SPEC.FEAT.WS.01` 的「新建 / 关闭 / 切换 / 重排 / 重命名」里与绘制无关的那半
 ///           （裁决 7.43）：空表与选中位、末位不可关、选中交接按**移除前**的次序、
 ///           循环切换在两端都绕、重排的下标基准是「其余标签」（往上拖与往下拖差一格的那处
-///           经典错位）、三个名字来源按优先级折且**空串即让位**，以及配置侧的枚举别名同型。
+///           经典错位）、三个名字来源按优先级折且**空串即让位**，以及配置侧的枚举别名同型；
+///           裁决 7.91 补的退出投影位与「只在真实转移上触发」的变更钩子同在本件。
 
 #include <cstddef>
 #include <optional>
@@ -316,6 +317,89 @@ AURORA_TEST_CASE(bell_and_activity_marks_are_taken_not_read) {
     AURORA_TEST_CHECK_FALSE(strip.mark_activity(999));
     AURORA_TEST_CHECK_FALSE(strip.take_bell_triggered(999));
     AURORA_TEST_CHECK_FALSE(strip.take_activity(999));
+}
+
+AURORA_TEST_CASE(the_exit_flag_is_a_pushed_projection_with_no_clear_entry) {
+    // 裁决 7.91②：本件存的是投影而不是判据，故只有 `set_exited` 一个入口——会话重启后下一帧推来的
+    // 就是 `false`，角标自行熄灭。留一个清除入口就是两处各清一次。
+    auto strip = make_three(kA);
+    AURORA_TEST_CHECK_FALSE(strip.tabs()[0].exited);  // 新建格默认未退出（撤销重开同理）
+
+    AURORA_TEST_REQUIRE_TRUE(strip.set_exited(kB, true));
+    AURORA_TEST_CHECK_TRUE(strip.tabs()[1].exited);
+    AURORA_TEST_CHECK_FALSE(strip.tabs()[0].exited);  // 逐格独立，不因邻格而亮
+
+    AURORA_TEST_CHECK_TRUE(strip.set_exited(kB, true));  // 同值重推仍回「该格存在」
+    AURORA_TEST_REQUIRE_TRUE(strip.set_exited(kB, false));
+    AURORA_TEST_CHECK_FALSE(strip.tabs()[1].exited);
+
+    AURORA_TEST_CHECK_FALSE(strip.set_exited(999, true));
+    AURORA_TEST_CHECK_EQ(strip.count(), std::size_t{3});
+}
+
+AURORA_TEST_CASE(the_change_hook_fires_only_on_a_real_transition) {
+    // 裁决 7.91④：这个钩子是标签栏标脏的**唯一**来源（框架的布局缓存会因约束未变而跳过 `on_layout`），
+    // 而「每帧都推同一个值」的路径必须一次都不触发，否则后台标签的输出洪流就是每帧一次整栏重排。
+    auto strip = make_three(kB);
+    int calls = 0;
+    strip.set_changed_hook([&calls]() -> void { ++calls; });
+
+    // 真转移：顺序 / 选中 / 三名 / 四枚状态位各有独立一格，逐句核对计数（不是「总共响了几次」那种
+    // 抓不到漏哪一格的断言）。
+    AURORA_TEST_REQUIRE_TRUE(strip.select(kC));
+    AURORA_TEST_CHECK_EQ(calls, 1);
+    AURORA_TEST_REQUIRE_TRUE(strip.select_relative(1));  // C(2) → A(0)，首尾相连也是转移
+    AURORA_TEST_CHECK_EQ(calls, 2);
+    AURORA_TEST_REQUIRE_TRUE(strip.rename(kA, U"renamed"));
+    AURORA_TEST_CHECK_EQ(calls, 3);
+    AURORA_TEST_REQUIRE_TRUE(strip.rename(kA, U""));  // 撤销重命名同样是一次转移
+    AURORA_TEST_CHECK_EQ(calls, 4);
+    AURORA_TEST_REQUIRE_TRUE(strip.set_osc_title(kB, U"title"));
+    AURORA_TEST_CHECK_EQ(calls, 5);
+    AURORA_TEST_REQUIRE_TRUE(strip.mark_bell_triggered(kA));
+    AURORA_TEST_CHECK_EQ(calls, 6);
+    AURORA_TEST_CHECK_TRUE(strip.take_bell_triggered(kA));  // 熄灭也是，角标得从屏上撤掉
+    AURORA_TEST_CHECK_EQ(calls, 7);
+    AURORA_TEST_REQUIRE_TRUE(strip.mark_activity(kA));
+    AURORA_TEST_CHECK_EQ(calls, 8);
+    AURORA_TEST_CHECK_TRUE(strip.take_activity(kA));
+    AURORA_TEST_CHECK_EQ(calls, 9);
+    AURORA_TEST_REQUIRE_TRUE(strip.set_exited(kC, true));
+    AURORA_TEST_CHECK_EQ(calls, 10);
+    AURORA_TEST_REQUIRE_TRUE(strip.set_exited(kC, false));  // 会话重启后的熄灭
+    AURORA_TEST_CHECK_EQ(calls, 11);
+    AURORA_TEST_REQUIRE_TRUE(strip.move(kA, 2));
+    AURORA_TEST_CHECK_EQ(calls, 12);
+    AURORA_TEST_REQUIRE_TRUE(strip.close(kB));
+    AURORA_TEST_CHECK_EQ(calls, 13);
+    AURORA_TEST_REQUIRE_TRUE(strip.add(40, U"d"));
+    AURORA_TEST_CHECK_EQ(calls, 14);
+
+    // 以下每一条都没动状态，一次都不许触发（后台标签的输出洪流就靠这一档不刷整条栏）。
+    strip.select(40);  // 点已经选中的那一格是常见的确认手势
+    strip.select_relative(0);
+    strip.select_relative(-3);  // 三格表上的整圈回来＝原地
+    strip.rename(40, U"");  // 手动名本来就是空（就地重命名后原样回车）
+    strip.set_osc_title(40, U"");
+    strip.set_exited(40, false);  // 活着时每帧都推这同一个值
+    strip.move(40, strip.index_of(40).value());  // 原地落点：回「完成」而表不变
+    strip.add(kA, U"dup");  // 身份重复被拒
+    strip.close(999);  // 不存在的身份
+    strip.mark_bell_triggered(999);
+    strip.take_activity(40);  // 没亮过就没得取
+    strip.take_bell_triggered(40);
+    AURORA_TEST_CHECK_EQ(calls, 14);
+
+    // 重复点亮一枚已经亮着的角标不算第二次转移。
+    AURORA_TEST_REQUIRE_TRUE(strip.mark_activity(40));
+    AURORA_TEST_CHECK_EQ(calls, 15);
+    AURORA_TEST_CHECK_TRUE(strip.mark_activity(40));
+    AURORA_TEST_CHECK_EQ(calls, 15);
+
+    // 撤销钩子后不再打扰。
+    strip.set_changed_hook({});
+    AURORA_TEST_REQUIRE_TRUE(strip.mark_activity(kC));
+    AURORA_TEST_CHECK_EQ(calls, 15);
 }
 
 }  // namespace borealis::test_cases::utest_tab_strip
