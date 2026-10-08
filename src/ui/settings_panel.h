@@ -685,8 +685,14 @@ private:
     /// @param row_index 该行在 shortcuts_rows_ 里的索引。
     auto open_binding_dialog(const std::string &command_id, std::size_t row_index) -> void;
 
-    /// @brief 关闭键位绑定对话框。
+    /// @brief 关闭键位绑定对话框：只 `Dialog::close()` 而不摘浮层（派发栈内销毁正在派发的按钮，同 `choose_family()`）。
     auto close_binding_dialog() -> void;
+
+    /// @brief 清掉键位绑定对话框的一切句柄与浮层序号（关面板与重建浮层两处）。
+    ///
+    /// 对话框必须随那一次浮层重建一起消失：它的输入框与冲突提示里装着**上一版**行投影的现场，而重建之后的
+    /// 卡片里那一行可能已经不是同一条命令。序号留在手里还会让下一次 `remove_overlay` 摘到别的节点上。
+    auto clear_binding_state() -> void;
 
     /// @brief 更新冲突提示文本（输入框内容变化时调用）。
     /// @param combo_text 当前输入的组合键文本。
@@ -875,6 +881,7 @@ private:
 
     /// 键位绑定对话框：点击某行的编辑按钮时弹出，让用户输入新的组合键。
     std::shared_ptr<aurora::Dialog> binding_dialog_{};
+    std::optional<std::size_t> binding_overlay_index_{};  ///< 它在宿主子节点里的序号（降序摘除用）。
     std::size_t editing_row_index_{};       ///< 正在编辑的行索引。
     std::string editing_command_id_{};      ///< 正在编辑的命令 id。
     std::shared_ptr<aurora::TextInput> binding_input_{};  ///< 对话框里的文本输入框。

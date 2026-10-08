@@ -451,10 +451,17 @@ auto SettingsPanel::open() -> void {
         // 还悬在半空。放下抓取就原地不动——这是本件与框架之间的一次交接，不是缺口（同裁决 7.58 的判法）。
         escape_binding_ = shortcuts_.add(aurora::KeyCombo(aurora::ModifierKey::None, aurora::KeyCode::Escape),
                                          [this]() -> void {
-                                             // 四层交接，从最里一层问起：候选浮层 → 链的键盘抓取 → 快照视图 → 面板。
+                                             // 五层交接，从最里一层问起：键位绑定对话框 → 候选浮层 → 链的键盘抓取 → 快照视图 → 面板。
                                              // 全局快捷键在任何控件之前消费（裁决 7.51③ 理由 (a)），不先问
                                              // 浮层的话，`Escape` 会把整块面板一起撤掉（判据文 A4-c 的同一条
                                              // 物理事实，只是那一句写的是遮罩那一腿）。
+                                             // 对话框排在最里：它挂在候选浮层之后，且它自己那层遮罩会吸收点击而
+                                             // **不**代劳关闭（`set_on_close` 只在按钮那一路触发），于是键盘是
+                                             // 它唯一的出口——与快照视图那一档同形。
+                                             if (binding_dialog_ != nullptr && binding_dialog_->is_open()) {
+                                                 close_binding_dialog();
+                                                 return;
+                                             }
                                              if (font_popup_ != nullptr && font_popup_->is_open()) {
                                                  close_family_popup();
                                                  return;
@@ -494,10 +501,16 @@ auto SettingsPanel::close() -> void {
     swatch_editor_.reset();
     swatch_reset_button_.reset();
     clear_chain_state();
+    // 键位绑定对话框比候选浮层**更内层**（它只在编辑按钮之后才挂进宿主，序号因此更大），故摘除排在浮层
+    // 之前；顺序颠倒会让浮层那个序号前移一格、此后摘到的是别的节点。
+    clear_binding_state();
     // 候选浮层比面板浮层**后**加进宿主（序号更大），而 `remove_overlay` 是按当前子节点表 erase 的：
     // 先摘面板会让浮层序号整体前移一格、此后那个号就指到别的节点上。故按序号降序摘，浮层在前。
     clear_family_state();
     shortcuts_rows_.clear();
+    // 编辑按钮与行投影同生同灭：留着句柄就在摘浮层那一刻落进 G34 那条「活在容器之外被摘走」的告警档
+    // （实测 `itest_settings_panel` 全套该告警 45 → 18 行，余量逐条归因见裁决 7.67 那一段的同一族形态）。
+    shortcut_edit_buttons_.clear();
     clear_config_state();
     // 两态随面板一起归零而不是留着：快照视图是「右栏当前在看什么」的一种态，面板关上之后再打开却直接
     // 落在名单上，用户看到的就是上一次动作的残影而非当前页。
@@ -741,10 +754,16 @@ auto SettingsPanel::rebuild_overlay() -> void {
     swatch_editor_.reset();
     swatch_reset_button_.reset();
     clear_chain_state();
+    // 键位绑定对话框比候选浮层**更内层**（它只在编辑按钮之后才挂进宿主，序号因此更大），故摘除排在浮层
+    // 之前；顺序颠倒会让浮层那个序号前移一格、此后摘到的是别的节点。
+    clear_binding_state();
     // 候选浮层比面板浮层**后**加进宿主（序号更大），而 `remove_overlay` 是按当前子节点表 erase 的：
     // 先摘面板会让浮层序号整体前移一格、此后那个号就指到别的节点上。故按序号降序摘，浮层在前。
     clear_family_state();
     shortcuts_rows_.clear();
+    // 编辑按钮与行投影同生同灭：留着句柄就在摘浮层那一刻落进 G34 那条「活在容器之外被摘走」的告警档
+    // （实测 `itest_settings_panel` 全套该告警 45 → 18 行，余量逐条归因见裁决 7.67 那一段的同一族形态）。
+    shortcut_edit_buttons_.clear();
     clear_config_state();
 
     if (overlay_index_.has_value()) {
@@ -2336,9 +2355,23 @@ auto SettingsPanel::open_binding_dialog(const std::string &command_id, std::size
             },
             .gap = 8.0F,
         });
-        content->modifier.set(aurora::Modifier{}.padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F}));
+        // 底色 + 一次空点击吸收：`Dialog` 只在**内容盒之外**吸收（其 `on_hit_test_chain` 在内容盒内
+        // 原样交回内容的子树链），而 `Column` 无自身可点语义时那条链是**空表**——空表让
+        // `OverlayHost` 继续往下问，于是落在卡片留白处的那一击穿透模态层、打到面板的行区上（实测
+        // 读数：卡片内一处留白 → 链尾是行区 `Scroll` 而非本对话框）。按裁决 7.61③ 的口径，可点语义
+        // 必须落在绘制者身上，故吸收与底色都挂在画这张卡片的那一位自己身上，而不另铺一层透明板。
+        content->modifier.set(aurora::Modifier{}.padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
+                                             .background(kCardBg, 8.0F)
+                                             .border(1.0F, kCardLine)
+                                             .clickable([]() -> void {}));
         
         binding_dialog_ = std::make_shared<aurora::Dialog>(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(content))});
+        // **必须挂进场景根**：`Dialog::show()` 只置 `open_` 并标脏，一棵不在树上的子树既不参与绘制
+        // 也不进命中链，于是编辑按钮就是一只点了没反应的按钮（违「不给会失灵的按钮」那条口径，
+        // 裁决 7.38⑥ F-b）。挂在宿主上而非卡片里：卡片每次重建都会换掉，而浮层序号因此只与「本层
+        // 比卡片后加」这一条有关（见 `clear_binding_state()` 的降序注）。
+        binding_overlay_index_ =
+            host_.add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(binding_dialog_)});
     }
     
     // 初始化输入框为当前绑定值
@@ -2362,6 +2395,20 @@ auto SettingsPanel::close_binding_dialog() -> void {
     if (binding_dialog_ != nullptr) {
         binding_dialog_->close();
     }
+    editing_command_id_.clear();
+    editing_row_index_ = 0;
+}
+
+auto SettingsPanel::clear_binding_state() -> void {
+    // 先放本件自持的派生控件句柄，再摘浮层：与 `clear_family_state()` 同一条口径（G34 回货后那条
+    // 「活在容器之外被摘走」的告警逐子刷屏正是这一形）。
+    binding_input_.reset();
+    conflict_notice_.reset();
+    if (binding_overlay_index_.has_value()) {
+        host_.remove_overlay(*binding_overlay_index_);
+    }
+    binding_dialog_.reset();
+    binding_overlay_index_.reset();
     editing_command_id_.clear();
     editing_row_index_ = 0;
 }

@@ -326,9 +326,9 @@ auto SettingsForm::store(std::string_view key, FormValue next) -> CommitOutcome 
     if (row == nullptr) {
         return CommitOutcome{CommitIssue::NotLoaded, ApplyScope::PersistOnly};
     }
-    if (control->kind == ControlKind::ReadOnlyTable) {
-        return CommitOutcome{CommitIssue::ReadOnly, ApplyScope::PersistOnly};
-    }
+    // `ReadOnlyTable` 的「只读」是**入口形态**而不是「这个键不可写」：`accepts_text()` 不收它、色槽与
+    // 未配两条按域挡下，于是唯一能改动它的值是控件自己给出的 `OverrideMap`（即 `commit_value`）。
+    // 这里曾整行拒改，于是 `SPEC.FEAT.PREF.04` 的编辑对话框里那枚「确定」成了死按钮。
     const auto issue = validate(*control, next);
     if (issue != CommitIssue::None) {
         return CommitOutcome{issue, ApplyScope::PersistOnly};

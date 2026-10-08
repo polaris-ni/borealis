@@ -230,10 +230,9 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"settings.action.confirm", "确定"},
     {"settings.action.cancel", "取消"},
 
-    // ---- 提交未通过的原因（`ui::CommitIssue` 的十三个非 `None` 值）----
+    // ---- 提交未通过的原因（`ui::CommitIssue` 的十二个非 `None` 值）----
     {"settings.issue.unknown_key", "这个键不在当前版本的设置表里"},
     {"settings.issue.not_loaded", "这个键没有装载到面板上"},
-    {"settings.issue.read_only", "这一项暂不支持在面板里修改"},
     {"settings.issue.domain_mismatch", "这个值的类型与该项不符"},
     {"settings.issue.text_not_accepted", "这一项不能直接输入文本"},
     {"settings.issue.malformed_number", "请输入一个数字"},
@@ -253,8 +252,6 @@ const std::map<std::string, std::string, std::less<>> kStrings{
         return "settings.issue.unknown_key";
     case CommitIssue::NotLoaded:
         return "settings.issue.not_loaded";
-    case CommitIssue::ReadOnly:
-        return "settings.issue.read_only";
     case CommitIssue::DomainMismatch:
         return "settings.issue.domain_mismatch";
     case CommitIssue::TextNotAccepted:

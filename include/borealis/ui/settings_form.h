@@ -43,7 +43,7 @@
 
 namespace borealis::ui {
 
-/// @brief 快捷键覆盖表的一条（该稿 S9：快捷键页首版只读，故本件只展示不编辑）。
+/// @brief 快捷键覆盖表的一条（`SPEC.FEAT.PREF.04`：逐条改由该行的编辑对话框给，表体自己没有文本入口）。
 ///
 /// 用结构而不是映射：落盘形态是 `[{command, combo}, ...]` 数组（裁决 7.27②），本件照其形态承载，
 /// 顺序即落盘顺序，不在这里按命令重新排序。
@@ -135,7 +135,6 @@ enum class CommitIssue : std::uint8_t {
     None,             ///< 通过。
     UnknownKey,       ///< 路径不在反向核对表里（面板画了 schema 外的控件）。
     NotLoaded,        ///< 路径在表里但表单没装载它的值（装载名单与表分叉）。
-    ReadOnly,         ///< 该行是只读形态（快捷键页首版，S9 / D3-a：不给会失灵的按钮）。
     DomainMismatch,   ///< 值的形态族与该行声明的域不符；`Integral` 行收到实数也落在这里。
     TextNotAccepted,  ///< 该行的控件形态不收文本提交（开关、下拉、色板整表、族名链、只读表）。
     MalformedNumber,  ///< 文本不是良构数字。
@@ -263,7 +262,7 @@ public:
     [[nodiscard]] auto commit_unset_color(std::string_view key) -> CommitOutcome;
 
 private:
-    /// @brief 四个提交入口的公共腿：查行、判只读、判形态、按域校验，通过后落值并给出传导范围。
+    /// @brief 四个提交入口的公共腿：查行、判形态、按域校验，通过后落值并给出传导范围。
     /// @param key 落盘点号路径。
     /// @param next 候选值（文本入口已把文本折算成值）。
     [[nodiscard]] auto store(std::string_view key, FormValue next) -> CommitOutcome;

@@ -55,7 +55,7 @@ enum class ControlKind : std::uint8_t {
     FontDropdown,     ///< 等宽字体族下拉：候选来自装配阶段那一份目录，不在本表里（S16）。
     FamilyList,       ///< 有序族名重排列表 + 末尾「添加族」下拉（S8）。
     TextInput,        ///< 自由文本输入（含原样收字符、不做转义的断点集，B2-b）。
-    ReadOnlyTable,    ///< 只读表（S9：快捷键页首版不给会失灵的按钮）。
+    ReadOnlyTable,    ///< 表体不收文本与色槽，值只能由该行自己的编辑控件给出（`SPEC.FEAT.PREF.04`）。
 };
 
 /// @brief 取值域的类型。**这一列的实质是「装载侧把不把守」**：`Choice` 与两档数值由装载侧判域，
