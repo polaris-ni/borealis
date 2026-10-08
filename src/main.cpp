@@ -634,8 +634,11 @@ auto main() -> int {
         // 内部关闭，故只需记录日志（若需要）。
         AURORA_LOG_INFO("main", "command palette executed: ", id);
     });
-    // 面板的中文占位符与空态文案等框架 G38/G39 回货后再走 i18n（当前仍硬编码英文）。
-    // TODO(SPEC.FEAT.WS.07): 框架回货后调用 set_placeholder() / set_empty_state() 交中文词条。
+    // 占位符与空态文案**不在这里交**：框架按 `AURORA_DEFAULT_PLACEHOLDER_KEY` /
+    // `AURORA_DEFAULT_EMPTY_MESSAGE_KEY` 两条 key 现查 `default_string_table()`（G38 / G39 回货形态），
+    // 而本仓的中文词条已由 `install_settings_strings()` 装进那张表并把缺省档设成 `zh`。
+    // 刻意不调 `set_placeholder()` / `set_empty_message()`：那两枚是**文本覆盖**，置位即不再走 i18n，
+    // 运行期切 locale 就再也翻不动这两句（裁决 **7.92**①）。
 
     // 把命令面板挂进场景根（`OverlayHost` 的子节点 [1..] 是按需追加的浮层）：初始不打开，故只建不弹。
     // 面板的 `open()` / `close()` 会自动管理焦点作用域（push_scope / pop_scope），与设置面板同口径。

@@ -137,10 +137,11 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"session.restart.button", "重启"},
 
     // ---- 命令面板（`SPEC.FEAT.WS.07`，判据文 `codespec/UI_WORKSPACE.draft.md` §4）----
-    // 占位符与空态两条文案等框架 G38/G39 回货后走 i18n 路径（当前仍硬编码英文，见裁决 7.81②）。
+    // 占位符与空态两条的 **key 由框架命名**（`CommandPalette::AURORA_DEFAULT_*_KEY`，G38 / G39 回货形
+    // 态），本件只登记取值，故这两串 key 不得自创——key 一漂移，面板就静默回落英文（裁决 **7.92**②）。
     {"command_palette.title", "命令面板"},
     {"command_palette.placeholder", "输入命令..."},
-    {"command_palette.empty", "没有匹配的命令"},
+    {"command_palette.no_results", "没有匹配的命令"},
     {"command_palette.action.open", "打开命令面板"},
 
     // ---- 调试面板（`SPEC.NF.RELI.01`：解析降级 / 非法字节 / 背压水位三族计数器的上屏形态）----
