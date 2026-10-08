@@ -27,6 +27,7 @@ add_library(borealis_core STATIC
         ui/cell_layout.cpp
         ui/closed_tab_stack.cpp
         ui/color_text.cpp
+        ui/debug_panel.cpp
         ui/font_choice.cpp
         ui/grid_size_debounce.cpp
         ui/palette.cpp

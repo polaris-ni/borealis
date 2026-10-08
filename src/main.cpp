@@ -26,6 +26,7 @@
 #include "borealis/ui/settings_form.h"
 #include "borealis/ui/tab_strip.h"
 #include "borealis/ui/closed_tab_stack.h"
+#include "ui/debug_panel.h"
 #include "ui/settings_i18n.h"
 #include "ui/settings_panel.h"
 #include "ui/startup_notice.h"
@@ -612,6 +613,46 @@ auto main() -> int {
     undo_close_tab.default_binding = au::KeyCombo{au::ModifierKey::Control | au::ModifierKey::Shift, au::KeyCode::T};
     undo_close_tab.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(undo_close_tab));
+
+    // 调试面板（`SPEC.NF.RELI.01`）：F12 开合，打开那一刻对**全部标签的每个会话**取一次计数器快照
+    // （解析降级 / 非法字节 / 背压水位三族）。快照而非活读：面板只在打开时被填一次，之后不再触碰会话，
+    // 于是 `Session` 的三个 stats 访问器只在主线程这一次调用点上发生锁竞争。
+    // TODO(SPEC.NF.RELI.01): 崩溃留存腿（信号钩子、dump 还是自写诊断文件、Windows/POSIX 分平台形态）
+    // 与既有文档无出处可依，待人裁决后再开工，本棒不自行择一实现。
+    borealis::ui::DebugPanel debug_panel{*host, app.focus()};
+    au::Command open_diagnostics;
+    open_diagnostics.id = "diagnostics.open";
+    open_diagnostics.title = borealis::ui::settings_label("diagnostics.action.open");
+    open_diagnostics.category = "workspace";
+    open_diagnostics.action = [&debug_panel, &tab_workspaces]() -> void {
+        std::vector<borealis::ui::DebugSessionSnapshot> snapshots;
+        for (const auto &[tab_id, workspace] : tab_workspaces) {
+            for (std::size_t pane = 0; pane < workspace.sessions.size(); ++pane) {
+                borealis::session::Session &session = *workspace.sessions[pane];
+                const auto parse = session.parse_stats();
+                const auto decode = session.decode_stats();
+                const auto queue = session.queue_stats();
+                snapshots.push_back(borealis::ui::DebugSessionSnapshot{
+                    .title = borealis::ui::settings_label(
+                        "diagnostics.session",
+                        {au::LocalizedString{std::to_string(tab_id)}, au::LocalizedString{std::to_string(pane + 1)}}),
+                    .parse_ignored = parse.ignored,
+                    .parse_cancelled = parse.cancelled,
+                    .decode_replaced = decode.replaced,
+                    .decode_code_points = decode.code_points,
+                    .queue_pending = queue.pending,
+                    .queue_peak_pending = queue.peak_pending,
+                    .queue_overloads = queue.overloads,
+                    .queue_merges = queue.merges,
+                    .queue_yields = queue.yields,
+                });
+            }
+        }
+        debug_panel.toggle(snapshots);
+    };
+    open_diagnostics.default_binding = au::KeyCombo{au::KeyCode::F12};
+    open_diagnostics.scope = au::ShortcutScope::Global;
+    app.commands().add(std::move(open_diagnostics));
 
     app.commands().bind_shortcuts(app.shortcuts());
 
