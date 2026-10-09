@@ -16,6 +16,8 @@ add_library(borealis_core STATIC
         conn/sftp_model.cpp
         conn/ssh_connection.cpp
         conn/ssh_dial.cpp
+        conn/tunnel_model.cpp
+        conn/tunnel_socks.cpp
         ui/connection_sidebar.cpp
         ui/connection_wizard.cpp
         ui/credential_prompt.cpp
