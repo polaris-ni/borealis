@@ -68,16 +68,23 @@ if (WIN32)
     target_sources(borealis_core PRIVATE
             platform/win/conpty_connection.cpp
             platform/win/local_terminal.cpp
+            platform/win/tcp.cpp
             platform/win/win_text.cpp)
 elseif (UNIX)
     target_sources(borealis_core PRIVATE
             platform/posix/forkpty_connection.cpp
-            platform/posix/local_terminal.cpp)
+            platform/posix/local_terminal.cpp
+            platform/posix/tcp.cpp)
     # forkpty 需要链接 libutil（某些发行版如 Debian/Ubuntu 需要显式指定）。
     find_library(UTIL_LIBRARY util)
     if (UTIL_LIBRARY)
         target_link_libraries(borealis_core PRIVATE ${UTIL_LIBRARY})
     endif ()
+endif ()
+
+# Win32 腿的 TCP 转发（platform/win/tcp.cpp，SPEC.FEAT.CONN.08）需要 Winsock2 库。
+if (WIN32)
+    target_link_libraries(borealis_core PRIVATE ws2_32)
 endif ()
 
 # SSH 传输腿（`SPEC.FEAT.CONN.02`）：libssh 经 vcpkg 获取，vcpkg 给出的 CMake 目标名是 `ssh`
