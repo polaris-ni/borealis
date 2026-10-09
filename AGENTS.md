@@ -93,7 +93,7 @@ UI 件节奏：UI 编写前先出设计图评审（稿入 `codespec/`），实�
 逐项现状以 `SPECIFICATIONS.md` §7 / 附录 A.2 与 `CHANGELOG.md`、`PLAN.md` 为准。长期成立两条：
 
 - **无 CI 工作流**：门禁已落、无流水线（`SPEC.NF.PERF.02` 的「进 CI」未闭环）。
-- 本机 vcpkg 未接（`VCPKG_ROOT` 未设）。
+- 本机 vcpkg 已接（2026-10-09，`VCPKG_ROOT=/home/polaris/Projects/demo/vcpkg`，manifest 模式锁 `libssh` 0.12.0；未设 `VCPKG_ROOT` 时按无 vcpkg 构建，仅 SSH 腿受影响）。
 
 ## 7 构建 · 测试
 
