@@ -370,6 +370,15 @@ auto make_session_decoder(std::string_view encoding) -> std::unique_ptr<SessionD
     return std::make_unique<IconvDecoder>(std::move(cd));
 }
 
+auto resolve_encoding_name(std::string_view encoding) -> std::string_view {
+    for (const auto &alias : kAliases) {
+        if (same_name(encoding, alias.config_name)) {
+            return alias.config_name;
+        }
+    }
+    return "UTF-8";
+}
+
 auto encode_for_encoding(std::u32string_view text, std::string_view encoding,
                          UnrepresentablePolicy policy) -> EncodeResult {
     const auto name = iconv_name_for(encoding);

@@ -559,4 +559,55 @@ AURORA_TEST_CASE(unknown_encoding_session_survives_on_utf8_leg) {
     AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\xE4\xB8\xAD", 3));
 }
 
+AURORA_TEST_CASE(first_unrepresentable_batch_latches_the_notice) {
+    // 裁决 7.104 的 D1①/D5①：需求那句「一次性提示」在会话侧的形状——上弦一次、取走即空。
+    auto fixture = make_encoded_session(borealis::term::SessionEncoding{.name = "Big5"});
+    AURORA_TEST_CHECK(!fixture.session->take_unrepresentable_notice().has_value());
+
+    fixture.session->send_text(U"A\x00E9" U"B");
+    const auto notice = fixture.session->take_unrepresentable_notice();
+    AURORA_TEST_REQUIRE(notice.has_value());
+    AURORA_TEST_CHECK_EQ(notice->count, std::size_t{1});
+    AURORA_TEST_CHECK_EQ(notice->leg, "Big5");
+
+    // 取走即空：第二次取没有内容，卡片因此不会在同一会话上重弹。
+    AURORA_TEST_CHECK(!fixture.session->take_unrepresentable_notice().has_value());
+}
+
+AURORA_TEST_CASE(the_notice_never_latches_again_after_one_take) {
+    // D1 的「每会话对象只上弦一次」：取走之后的批次只累计数、不再上弦。粘贴分块一次产出若干批，
+    // 每批都上弦就退化成刷屏（判据文 §1 事实 9）。
+    auto fixture = make_encoded_session(borealis::term::SessionEncoding{.name = "Big5"});
+    fixture.session->send_text(U"A\x00E9" U"B");
+    AURORA_TEST_REQUIRE(fixture.session->take_unrepresentable_notice().has_value());
+
+    fixture.session->send_text(U"C\x00E9" U"D");
+    AURORA_TEST_CHECK(!fixture.session->take_unrepresentable_notice().has_value());
+    AURORA_TEST_CHECK_EQ(fixture.session->unrepresentable_count(), std::size_t{2});
+}
+
+AURORA_TEST_CASE(a_pending_notice_is_not_overwritten_by_later_batches) {
+    // 视图还没取走时，第二批次不改写已在弦上的那份：卡片报的是「第一次触发的那一批」，
+    // 与「本对象只提示一次」同一条口径；全部代价另有面板第四行读累计数。
+    auto fixture = make_encoded_session(borealis::term::SessionEncoding{.name = "Big5"});
+    fixture.session->send_text(U"A\x00E9" U"B");
+    fixture.session->send_text(U"C\x00E9\x00E9" U"D");
+
+    const auto notice = fixture.session->take_unrepresentable_notice();
+    AURORA_TEST_REQUIRE(notice.has_value());
+    AURORA_TEST_CHECK_EQ(notice->count, std::size_t{1});
+    AURORA_TEST_CHECK_EQ(fixture.session->unrepresentable_count(), std::size_t{3});
+}
+
+AURORA_TEST_CASE(the_notice_carries_the_effective_leg_not_the_configured_name) {
+    // 裁决 7.104 的 D6②：填 GB2312 的会话实际跑的是 UTF-8 腿，卡片若照抄配置名就改了个不相干的字段。
+    auto fixture = make_encoded_session(borealis::term::SessionEncoding{.name = "GB2312"});
+    // 未配对代理在**所有**腿上都失败（判据文 §1 事实 10），它是 UTF-8 腿上也能触发提示的输入形态。
+    fixture.session->send_text(std::u32string{static_cast<char32_t>(0xD800)});
+
+    const auto notice = fixture.session->take_unrepresentable_notice();
+    AURORA_TEST_REQUIRE(notice.has_value());
+    AURORA_TEST_CHECK_EQ(notice->leg, "UTF-8");
+}
+
 }  // namespace borealis::test_cases::utest_session

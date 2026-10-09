@@ -34,6 +34,9 @@ Session::Session(std::unique_ptr<Connection> connection, Size size, std::size_t 
       terminal_{size.columns, size.rows, scrollback_limit, std::move(width_policy), defaults},
       encoding_{std::move(encoding)} {
     decoder_ = term::make_session_decoder(encoding_.name);
+    // 提示卡片的名字口径在构造期折一次（裁决 7.104 的 D6②）：与上一行的解码器同源，
+    // 故「卡片报的腿」与「真正在跑的腿」不可能分叉，填 GB2312 的会话报的是 UTF-8。
+    encoding_leg_ = term::resolve_encoding_name(encoding_.name);
     terminal_.set_response_sink(this);
     // 能力接口在构造期认一次（架构 §7.2）：会话层自此只知道「这条腿有没有重连控制面」，
     // 不知道它是 SSH 还是别的——每次取用再 cast 既无必要也要把类型知识留在热路径上。
@@ -114,6 +117,14 @@ auto Session::decode_stats() const -> term::DecodeStats {
 auto Session::unrepresentable_count() const -> std::size_t {
     const std::lock_guard lock{mutex_};
     return unrepresentable_total_;
+}
+
+auto Session::take_unrepresentable_notice() -> std::optional<UnrepresentableNotice> {
+    // 取走语义与 BEL / 剪贴板同构（架构 §3.2）：锁内只留存，视图在帧边界取走后进绘制。
+    const std::lock_guard lock{mutex_};
+    auto notice = std::move(notice_);
+    notice_.reset();
+    return notice;
 }
 
 auto Session::parse_stats() const -> vt::ParseStats {
@@ -229,10 +240,15 @@ auto Session::flush(std::u32string_view text) -> void {
     if (encoded.unrepresentable == 0U) {
         return;
     }
-    // TODO(SPEC.FEAT.TERM.09): 「一次性提示」的形态待人裁决（推荐：视口内非模态卡），见
-    // codespec/UI_ENCODING.draft.md 的 D1..D6；本棒只把代价记进计数，出账口在调试面板。
     const std::lock_guard lock{mutex_};
     unrepresentable_total_ += encoded.unrepresentable;
+    // 一次性提示上弦（裁决 7.104 的 D1①）：本会话对象只上弦一次，取走后也不再上——粘贴分块会让
+    // 一次键入产出若干批，每批都上弦就退化成刷屏。累计代价另有一条账（面板第四行读 count）。
+    if (!notice_armed_) {
+        notice_armed_ = true;
+        notice_ = UnrepresentableNotice{
+            .count = encoded.unrepresentable, .leg = std::string{encoding_leg_}};
+    }
 }
 
 }  // namespace borealis::session

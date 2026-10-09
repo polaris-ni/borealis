@@ -35,6 +35,15 @@
 
 namespace borealis::session {
 
+/// @brief 发送侧「不可表示字符」一次性提示的载荷（`SPEC.FEAT.TERM.09` 的提示腿，裁决 7.104）。
+///
+/// 一份**合成后的值聚合体**而不是事件流水（AGENTS 第 25 条）：跨线程只交换「这一批几个码点、
+/// 实际跑的哪条腿」，视图侧拿到就能把两行文案填满。
+struct UnrepresentableNotice {
+    std::size_t count{};  ///< 上弦那一批被处置掉的码点数（D1：每会话对象只在首次一批上弦）。
+    std::string leg;      ///< 实际生效腿的展示名（D6②，`term::resolve_encoding_name` 的折算结果）。
+};
+
 /// @brief 一个终端会话：连接字节流与权威网格之间的全部跨线程协调点。
 ///
 /// 自身不加线程：读线程由连接实现持有（架构 §3.1「每会话一个读线程」），本对象只保证
@@ -130,9 +139,17 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// @brief 发送方向被策略处置掉的码点累计数（`SPEC.FEAT.TERM.09` 判据 3 的「可统计」）。
     ///
     /// 与 `decode_stats` 同一取数节奏：计数在发送调用点推进，主线程只在面板打开那一刻取一次。
-    /// 「一次性提示」那一半的形态待人裁决（见 `codespec/UI_ENCODING.draft.md`），本棒只留存计数。
-    /// TODO(SPEC.FEAT.TERM.09): 提示落地时在本计数上挂取走语义（口径同 `take_bell_triggered`）。
+    /// 与下面的 `take_unrepresentable_notice()` 是**两条独立账**——本条单调累计（调试面板第四行读
+    /// 它），那条一次消费（视口卡片读它），互不影响。
     [[nodiscard]] auto unrepresentable_count() const -> std::size_t;
+
+    /// @brief 取走发送侧一次性提示（裁决 7.104 的 D1①/D5①，帧边界调用）。
+    ///
+    /// 取走即空，且**每个会话对象只上弦一次**：首次有码点被处置时在锁内上一份 latch，此后再有
+    /// 处置只累计数、不再上弦（需求那句「一次性提示」的落点）。会话重启＝新对象，latch 从零开始，
+    /// 与「新会话再提示一次」的语义一致。
+    /// @return 待提示的那一批（个数 + 实际生效腿名）；无待提示内容时为 `std::nullopt`。
+    auto take_unrepresentable_notice() -> std::optional<UnrepresentableNotice>;
 
     /// @brief VT 解析器未知序列计数（`SPEC.NF.RELI.01` 调试面板）。
     ///
@@ -220,8 +237,19 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// 不认识 UTF-8 还是 GB18030。`mutex_` 护住——读线程喂入与主线程取统计都走它。
     std::unique_ptr<term::SessionDecoder> decoder_;
     term::SessionEncoding encoding_;  ///< 发送方向的编码名与策略档，与 `decoder_` 同世代。
+    /// 构造期折一次的**实际生效腿**名（裁决 7.104 的 D6②）：提示卡片报的就是它，故与 `decoder_`
+    /// 走的是同一张别名表、不会与真正跑的解码器分叉。指向 `codec.cpp` 里的表项与字面量，静态
+    /// 存储期，不随 `encoding_.name` 生死。
+    std::string_view encoding_leg_;
     /// 发送侧被策略处置掉的码点累计数（`encoding_` 的代价账目），随 `flush` 在锁外累加。
     std::size_t unrepresentable_total_ = 0;
+    /// 一次性提示的 latch（D1①）：首次有码点被处置时上弦，`take_unrepresentable_notice()` 取走即空。
+    /// 与 `unrepresentable_total_` 同由 `mutex_` 护住，二者在同一次锁内一起推进。
+    std::optional<UnrepresentableNotice> notice_;
+    /// 本会话对象**是否已上过一次弦**（D1 的「一次性」落点）：置起后永不再上，故「取走之后又来了
+    /// 一批」不会重弹。不复用 `notice_.has_value()`——取走会把 latch 清空，那判据就退化成「每批次
+    /// 都上弦」，而粘贴分块一次就产出若干批。
+    bool notice_armed_ = false;
     DamageQueue damage_queue_;
     std::u32string pending_responses_;
     std::u32string decode_buffer_;  ///< 解码产物缓冲：只由读线程触达，留容量免得逐块重新分配。

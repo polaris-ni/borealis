@@ -30,7 +30,8 @@ namespace borealis::term {
 /// @brief 目标编码不可表示某码点时的发送处置（`SPEC.FEAT.TERM.09` 的「可配策略」三档）。
 ///
 /// 三档的共同底线是「不得静默发送乱码字节」：每档都计数，计数进可观测面板
-/// （`SPEC.NF.RELI.01`），非缺省档另由一次性提示告知（提示形态待设计稿裁决）。
+/// （`SPEC.NF.RELI.01`），并另由一次性提示告知（裁决 **7.104** 收口的 `SPEC.FEAT.TERM.09`
+/// 提示腿，形态＝视口内非模态卡）。
 enum class UnrepresentablePolicy : std::uint8_t {
     Replace,         ///< 缺省：写目标编码里替换字符的形态；该编码连替换字符都没有则写 `?`。
     DropWithNotice,  ///< 跳过该码点，一个字节都不发。
@@ -79,6 +80,17 @@ class SessionDecoder {
 /// @return 非空解码器，其状态从零开始。
 [[nodiscard]] auto make_session_decoder(std::string_view encoding)
     -> std::unique_ptr<SessionDecoder>;
+
+/// @brief 把配置里的编码名折成**实际生效腿**的名字（裁决 7.104 的 D6②）。
+///
+/// 与 `make_session_decoder` 同一张别名表，故「名字」与「真正跑的解码器」不会分叉；映射
+/// 不到的名字回 `"UTF-8"`（那条腿实际在跑的就是 UTF-8）。发送侧一次性提示报的是这个名字而不是
+/// 配置原样串：填 `GB2312` 的会话若显示 `GB2312`，用户按名字去改档就改了个不相干的字段。
+/// 本地档位不可用（iconv 句柄开不出来）的那条回落不在本函数射程内——它要开句柄才有读数，
+/// 而本函数是纯表查询、逐次调用零成本。
+/// @param encoding 配置里的编码名（ASCII 大小写不敏感，口径同 `make_session_decoder`）。
+/// @return 六条腿之一的展示名；映射不到为 `"UTF-8"`。
+[[nodiscard]] auto resolve_encoding_name(std::string_view encoding) -> std::string_view;
 
 /// @brief 发送方向的产物。
 struct EncodeResult {

@@ -433,4 +433,21 @@ AURORA_TEST_CASE(decoder_factory_defaults_and_never_null) {
     AURORA_TEST_CHECK(defaults.unrepresentable == UnrepresentablePolicy::Replace);
 }
 
+AURORA_TEST_CASE(resolve_encoding_name_reports_the_effective_leg) {
+    // 裁决 7.104 的 D6②：提示卡片报的是实际生效腿，取的是与 make_session_decoder 同一张别名表
+    // 的**配置名**一侧——设置页那枚下拉显示的就是这六个名字，报 iconv 线名（ISO-8859-1 一类）
+    // 会和它对不上。
+    for (const std::string_view name : {"UTF-8", "GB18030", "GBK", "Big5", "Latin-1", "CP437"}) {
+        AURORA_TEST_CHECK_MSG(borealis::term::resolve_encoding_name(name) == name,
+                              std::string{name} + " folded to a different leg name");
+    }
+    // ASCII 大小写不敏感，口径与工厂一致。
+    AURORA_TEST_CHECK_EQ(borealis::term::resolve_encoding_name("big5"), "Big5");
+    AURORA_TEST_CHECK_EQ(borealis::term::resolve_encoding_name("gb18030"), "GB18030");
+    // 认不到的名字实际跑的是 UTF-8 腿，卡片不能说谎（填 GB2312 的会话报 UTF-8）。
+    for (const std::string_view name : {"GB2312", "NOT-A-CODEC", ""}) {
+        AURORA_TEST_CHECK_EQ(borealis::term::resolve_encoding_name(name), "UTF-8");
+    }
+}
+
 }  // namespace borealis::test_cases::utest_codec
