@@ -4,6 +4,14 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.102（2026-10-09）**Wayland 标题区遮挡双根因修复：场景根容器 `au::Stack` 改 `au::Column`（本仓），CSD 安全区随 Aurora 改「框架自动下沉」（跨仓，本仓零代码消费改动）**（`src/main.cpp` + `codespec/SPECIFICATIONS.md` §7（裁决 **7.101** / **7.102**），Aurora 侧改动见其仓 `CHANGELOG.md` Unreleased，判据入册为裁决 7.101②）
+
+**动机**：用户报告 Wayland（GNOME）下标题区遮挡并附截图。逐像素实测（1440×964 @1.5×）定性为**两个叠在一起的缺陷**：① 自绘标题栏占 y∈[0,54]px（=36 dp，`TitleBarStyle::height` 默认值），终端首行文字带 44..69 被整条切去上半——CSD 安全区（`content_inset()` → `MediaQuery.padding`）全仓引用数为 0、从未被消费，内容从 y=0 起排（该腿只在 Wayland 显形，Win32/X11 走原生非客户区恒零）；② 全窗采样不到标签栏底色——10-08 `ae45559` 多标签腿把根容器写成 `au::Stack`，其 z 轴层叠语义让 42 dp 标签栏与撑满窗口的工作区同原点、后者后画整条盖掉前者（跨平台缺陷）。
+
+**决定形态的口径**：⑴ **安全区走「框架自动下沉」**（用户在「应用侧根壳消费 / Aurora 补 SafeArea 原语 / 框架自动下沉」三案中裁决后者）：Aurora `present_root` 以 `detail::ContentInsetRoot` 壳 + `PaddingEdges(content_inset)` 修饰自动下沉，根注入 `MediaQuery` 改内容区口径（padding 归零、size 扣除内缩）；本仓**不写任何消费代码**——旧契约要求的「应用布局期手动消费」在新契约下反而构成双重内缩，故「零引用」从缺陷变为恰好合规。⑵ **根容器改纵向**：`au::Stack` → `au::Column`（`fill_max_size` + 交叉轴 `Stretch`），工作区分支挂 `expand(1)` 占满标签栏以下余高；`rebuild_root_children` 与初始装配两处同口径，避免「重建后退化回盖住」。⑶ **不在本仓登记 Aurora 缺口**：方案在 Aurora 仓内闭合（其仓规格 `07-environment-modifier.md` §3.1/§4.1 与 Unreleased 迁移说明已回写），本仓裁决 7.101 只记契约与本仓验收。
+
+**代价**：⑴ **UI 未真机走查不得称「可用」**（AGENTS 第 33 条）：Wayland 首行完整可见与标签栏可见两条判据欠真机读数；Windows 腿（MSVC）未构建验证（Stack→Column 理论上同样修好 Win32 的标签栏遮挡，待复看）。⑵ `expand(1)` 挂在 Node 的 modifier 上而非 WorkspaceView 自身：工作区换签重建路径（`rebuild_root_children`）每次重挂，若未来有人绕过该函数直接 push 工作区会静默退化，已用两处同口径注释对冲。⑶ 根容器更名 `root_stack` → `root_column` 系同一意图内的诚实性更名（10 处引用全量替换）。**验收**：linux 腿构建绿；非 e2e 通道 `ctest -E etest_` **63 项全绿**；Aurora 侧新增 `itest_content_inset_sink` 三例（下沉几何 / 归零恢复 / 零 inset 逐位一致）且其全量 350 项绿。
+
 ## v0.101（2026-10-09）**`AGENTS.md` 体积回落到注入预算内并把本机依赖细节迁进架构文档：`check_agents_size` 门禁由红转绿**（`AGENTS.md` + `codespec/ARCHITECTURE.md` §1.2 + `codespec/SPECIFICATIONS.md` 的 `SPEC.FEAT.WS.05` 现状句与裁决 7.100⑦，本条零代码改动、不新增判据，执行的是裁决 **7.92** 立下的体积契约）
 
 **动机**：`de92606` 往 §5 加了 118 B 的一行，使 `AGENTS.md` 达 8295 B、超 8 KiB 预算 103 B，门禁 `check_agents_size` 自此红。根因不在那一行——裁决 7.92 当初把该文件压到 **8177 B，即预算的 99%、只留 15 B 余量**，任何后续新增都必然撞线，而超预算的部分被静默从**尾部**截断，丢掉的正是文档导航与硬规则这两项它唯一存在的理由。人裁决「看看还有没有可以压缩的地方」后逐条按 UTF-8 字节实测，取**不动任何一条硬规则语义**的一组落刀。
