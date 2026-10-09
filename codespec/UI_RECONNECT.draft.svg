@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1180" viewBox="0 0 1560 1180" font-family="'Noto Sans CJK SC',sans-serif">
-<rect x="0" y="0" width="1560" height="1180" fill="#eef0f5"/>
-<text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">SSH 断线自动重连：重连中浮层 + 终态三分 + 退避档位（`SPEC.FEAT.WS.05` 的 SSH 腿）</text>
-<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_RECONNECT.draft.svg · 高保真草图（待评审） · 窗口 880×520 dp @100% DPI · 底部 1–6 标号判据对应本稿 §2 · 待决 D1–D6 见 UI_RECONNECT.draft.md §3</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1430" viewBox="0 0 1560 1430" font-family="'Noto Sans CJK SC',sans-serif">
+<rect x="0" y="0" width="1560" height="1430" fill="#eef0f5"/>
+<text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">SSH 断线自动重连：重连中浮层 + 终态三分 + 退避档位 + SFTP 掉线重拨（`SPEC.FEAT.WS.05` 的 SSH 腿）</text>
+<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_RECONNECT.draft.svg · 高保真草图（待评审） · 窗口 880×520 dp @100% DPI · 底部 1–7 标号判据对应本稿 §2 · D1–D7 已于 2026-10-09 逐条裁决，见 UI_RECONNECT.draft.md §3</text>
 
 <!-- ============================ 屏 A：重连中 ============================ -->
 <g transform="translate(30,80)">
@@ -177,6 +177,45 @@
     <text x="8" y="170" font-size="11" fill="#ffffff" font-weight="700" text-anchor="middle">6</text>
     <text x="24" y="170">边界一条：没有 keepalive（CONN.02 延后子项），空闲会话被中间设备静默掐断时读循环不报错 ⇒ 掉线不可知、重连也不触发。「自动重连」不等于「永不掉线」，本稿如实登记。</text>
   </g>
-  <text x="0" y="206" font-size="12" fill="#5a6070">沙箱无 sshd：本期可自动化的判据是「替身连接注入掉线 → 退避档位与重拨次数可观测 → 终态分档」，真网络掉线与重拨成功待 sshd 环境补 etest（同裁决 7.96 代价①）；浮层观感与两枚按钮落点属真机走查（AGENTS 第 33 条）。</text>
+    <circle cx="8" cy="194" r="9" fill="#1b1f28"/>
+    <text x="8" y="198" font-size="11" fill="#ffffff" font-weight="700" text-anchor="middle">7</text>
+    <text x="24" y="198" font-size="12" fill="#1b1f28">SFTP 面板的掉线重拨（D7④ 改判本期做，见屏 C）：操作期返回 Network / NotConnected 即自动重拨一回并复列断线前那个目录，重拨失败落既有 ConnState::Failed 与「重试」按钮；一次掉线只重拨一回，凭据经 resolve_secret 现取、零新增驻留。</text>
+  <text x="0" y="224" font-size="12" fill="#5a6070">沙箱无 sshd：本期可自动化的判据是「替身连接注入掉线 → 退避档位与重拨次数可观测 → 终态分档」，真网络掉线与重拨成功待 sshd 环境补 etest（同裁决 7.96 代价①）；浮层观感与两枚按钮落点属真机走查（AGENTS 第 33 条）。</text>
+</g>
+
+<!-- ============================ 屏 C：SFTP 面板掉线重拨（D7④ 改判：本期做） ============================ -->
+<g transform="translate(30,1152)">
+  <text x="0" y="0" font-size="15" font-weight="700" fill="#1b1f28">屏 C · SFTP 面板的掉线重拨（D7④ 改判：本期一并做）</text>
+  <text x="0" y="22" font-size="11.5" fill="#5a6070">与终端腿不同轴：SFTP 没有持续读循环，掉线只能在下一次操作返回 Network / NotConnected 时被发现，故这里是一回自动重拨而不是退避环。</text>
+  <g>
+    <rect x="0" y="40" width="470" height="150" fill="#1E1F29" stroke="#4D4F63" stroke-width="1"/>
+    <text x="14" y="64" font-size="12" fill="#8B93A7" font-weight="600">步骤 1 · 操作期发现掉线</text>
+    <text x="14" y="88" font-size="11.5" fill="#F8F8F2">列目录 / 增删改 / 传输返回 SftpError::Network</text>
+    <text x="14" y="107" font-size="11.5" fill="#F8F8F2">或 NotConnected（分类表＝纯逻辑件出证）</text>
+    <text x="14" y="130" font-size="11.5" fill="#FFB86C">状态行：连接已断开 · 正在自动重拨</text>
+    <text x="14" y="150" font-size="11.5" fill="#62728A">面板自动投一条 Connect（同档案，secret 现取）</text>
+    <text x="14" y="170" font-size="11.5" fill="#62728A">一次掉线只重拨一回（旗标随连接成功复位）</text>
+  </g>
+  <g transform="translate(490,40)">
+    <rect x="0" y="0" width="470" height="150" fill="#1E1F29" stroke="#4D4F63" stroke-width="1"/>
+    <text x="14" y="24" font-size="12" fill="#8B93A7" font-weight="600">步骤 2 · 重拨成功</text>
+    <text x="14" y="48" font-size="11.5" fill="#50FA7B">复列断线前那个目录（remote_path_ 不换）</text>
+    <text x="14" y="67" font-size="11.5" fill="#F8F8F2">浏览继续，用户不需要重新进入路径</text>
+    <text x="14" y="90" font-size="11.5" fill="#62728A">断线那一单传输按失败收尾：半成品清理腿已有，</text>
+    <text x="14" y="109" font-size="11.5" fill="#62728A">本期不做续传（需求未提，登记 §7）</text>
+    <text x="14" y="132" font-size="11.5" fill="#62728A">SFTP 会话仍随标签生灭（7.95 D8 不改）</text>
+  </g>
+  <g transform="translate(980,40)">
+    <rect x="0" y="0" width="470" height="150" fill="#1E1F29" stroke="#4D4F63" stroke-width="1"/>
+    <text x="14" y="24" font-size="12" fill="#8B93A7" font-weight="600">步骤 3 · 重拨失败</text>
+    <text x="14" y="48" font-size="11.5" fill="#FF5555">state_ = ConnState::Failed（既有档位，不新增）</text>
+    <rect x="14" y="62" width="96" height="26" rx="5" fill="#BD93F9"/>
+    <text x="62" y="80" font-size="12" fill="#1E1F29" font-weight="600" text-anchor="middle">重试</text>
+    <text x="124" y="80" font-size="11.5" fill="#62728A">＝ 既有 sftp.action.retry → connect_now() 那条腿</text>
+    <text x="14" y="108" font-size="11.5" fill="#62728A">今天缺的正是这一档：操作期失败从不写 state_，</text>
+    <text x="14" y="127" font-size="11.5" fill="#62728A">「重试」按钮只在初次连接失败时出现过</text>
+  </g>
+  <text x="0" y="216" font-size="11.5" fill="#5a6070">凭据面零外扩（与 D1 代价 (a) 不同）：装配层已按标签驻留 ssh_secret_by_tab，SftpPanel 每次经 resolve_secret 现取（7.95 D8 既定形态），故本条不新增明文驻留、不破 CONN.09。</text>
+  <text x="0" y="236" font-size="11.5" fill="#5a6070">可测面：分类表进 utest_reconnect（SftpError → 是否掉线类）；面板侧那一行 state_ 迁移无头不可测（client_ 非注入点，SFTP 面板今天无 itest 覆盖），判据归真机走查。</text>
 </g>
 </svg>
