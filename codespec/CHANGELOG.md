@@ -4,6 +4,14 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.97（2026-10-09）**`SPEC.FEAT.CONN.08` SSH 隧道管理 UI 设计稿收口：D1–D9 逐条裁决，D8/D9 改判入本期**（`codespec/UI_TUNNEL.draft.{md,svg,png}`（新），判据入册为裁决 **7.97**）
+
+**动机**：7.96 代价③ 登记「UI 未落，CONN.08 在 UI 切片前不得称交付完成」、代价④「隧道定义持久化形态归 UI 切片裁决」。按 AGENTS UI 节奏（第 22 条）先出设计稿：三件套（md 判据文 + SVG 高保真草图 + PNG 渲染）于 2026-10-09 提交评审（`d8f1be4`），经用户**逐条**裁决 D1–D9 后收口——D1–D7 按推荐，D8 改判「本期做 autostart」，D9 改判「逐条可配重试」。本版本零代码改动，实现批按稿 §4 落 `src/ui/`。
+
+**决定形态的口径**：⑴ **形态与行**（D1①/D2①）：独立左侧停靠卡片 520 dp、`tunnels.open` 命令呼出（与 `connections.toggle`/`sftp.toggle` 同族），不挂任何标签——「隧道独立于终端会话」以与 SFTP 面板（随标签生灭，7.95 D8）相反的生命周期形态表达；行两行堆叠（名称＋形态徽标＋五态徽标＋启停 / 监听点→目标＋承载档案）。⑵ **持久化**（D3①）：config 第六域 `tunnels`，`TunnelSpec` 全字段纯值、凭据只经 `profile_id` 引用，天然过 CONN.09 明文审计。⑶ **归属与泵**（D5①/D6①）：装配层持有 `map<id, conn::Tunnel>`＋每隧道原子快照（state/error/bound_port/attempt），面板 `on_frame` 读快照合成行表——关面板不停隧道，AGENTS §25「交换合成后的最终值」天然成立。⑷ **改判两条**：**D8** autostart 本期做——`TunnelSpec` 增 `autostart`，细则＝仅凭据可静默解析者自启、询问型保持 Stopped 并行内提示、启动序零模态框零阻塞 IO（生效面待真实 OS 凭据后端到货，字段/启动序/UI 提示本期全落）；**D9** 重试逐条可配——`TunnelSpec` 增 `RetryPolicy retry{}`（缺省 `{1000, 30000, 0}` 即原全局档），对话框暴露「首次退避/上限/次数（空＝不限）」三字段，`max_attempts` 用尽进 Failed 的模型行为不变。⑸ **凭据链**（D7）：档案句柄解析＋`ask_every_time` 弹 `credential_prompt`，明文副本随隧道存活至 stop（承 7.96⑥）。
+
+**代价**：⑴ 实现批另棒交付（`tunnel_panel`/`tunnel_format`/装配接线/第六域往返/`TunnelSpec` 字段扩展及其新旧键往返例）；⑵ autostart 在 OS 凭据后端落地前句柄型实为空集；⑶ UI 未真机走查不得称「可用」（AGENTS 第 33 条）；⑷ 流量统计、并发多连接受理、真转发 etest 仍延后（7.96 在册）。**验收**：设计稿三件套入 `codespec/`（SVG 为事实来源），裁决 7.97 入 `SPECIFICATIONS.md` §7，`PLAN.md` CONN.08 行回写「设计稿收口，转实现」。
+
 ## v0.96（2026-10-09）**`SPEC.FEAT.CONN.08` SSH 隧道模型与三式传输腿交付：纯逻辑裁决、SOCKS5 握手解析、平台 TCP 腿、隧道工作线程**（`src/conn/tunnel_model.{h,cpp}` + `src/conn/tunnel_socks.{h,cpp}` + `src/conn/tunnel_client.{h,cpp}` + `src/platform/tcp.h` + `src/platform/{posix,win}/tcp.cpp` + `tests/unit/utest_tunnel_model.cpp` + `tests/unit/utest_tunnel_socks.cpp` + `tests/unit/utest_tcp_loopback.cpp` + `tests/integration/itest_tunnel_failure.cpp` + `src/CMakeLists.txt`，判据入册为裁决 **7.96**）
 
 **动机**：M3 余下切片中 CONN.08 与已落腿复用面最大——建连/认证直接吃 `conn/ssh_dial` 共用腿（v0.95 抽出），「隧道独立于终端会话」的需求语义在「每隧道自开会话」下不需要碰 `SshConnection` 读线程。开工前经用户两问定形：会话归属取每隧道自开（SFTP「打开即连」同款），本期射程取「模型+三式传输腿」，隧道管理 UI（列表启停、状态提示）按 AGENTS UI 节奏留待设计稿评审后另棒交付。
