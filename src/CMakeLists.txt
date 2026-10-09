@@ -11,6 +11,7 @@ add_library(borealis_core STATIC
         config/store.cpp
         config/themes.cpp
         conn/profile.cpp
+        conn/ssh_connection.cpp
         vt/parser.cpp
         term/utf8.cpp
         term/charset.cpp

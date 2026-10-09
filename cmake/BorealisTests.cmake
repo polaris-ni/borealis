@@ -58,6 +58,9 @@ aurora_setup_consumer_target(borealis_test_runner
 
 # 纯逻辑模块：用例直接链接被测实现，不经应用可执行文件（§4.4 第 20 条）。
 target_link_libraries(borealis_test_runner PRIVATE borealis_core)
+# 私有头单测腿：个别纯逻辑函数住在 src/ 私有头里（如 ssh_connection.h 的裁决矩阵），
+# 用例须能按 "conn/ssh_connection.h" 解析；私有头本身仍是私有头，公共头不因此扩面。
+target_include_directories(borealis_test_runner PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 foreach (tst ${BOREALIS_TEST_CASE_SOURCES})
     get_filename_component(tname ${tst} NAME_WE)
