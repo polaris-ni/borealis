@@ -1,9 +1,10 @@
 # 发送侧「不可表示字符」一次性提示设计稿（`SPEC.FEAT.TERM.09` 的提示腿）
 
-> **状态**：**待评审**（2026-10-10 出稿）——§3 的 D1–D6 逐条待人裁决，收口前不落代码。
+> **状态**：**评审已收口（2026-10-10）**——§3 的 D1–D6 经人逐条裁决，**全按推荐档**：D1 每会话首次一批一次、D2 视口内新增一层非模态卡、D3 5 s 超时自收、D4 两行纯文案无按钮、D5 会话 latch ＋ 视图 `on_frame()` 取走、D6 报实际生效腿。并入 `codespec/SPECIFICATIONS.md` §7 裁决 **7.104**，据此转实现（§4 布局落 `src/`）。
 > **配套高保真草图**：`codespec/UI_ENCODING.draft.svg`（§2 的 1–6 标号判据对应其底部标注；SVG 为事实来源，改图直接改 SVG）。
-> **已落地的前置**：iconv 单腿的双向编解码件 `term::SessionDecoder` / `term::encode_for_encoding`（`include/borealis/term/codec.h` + `src/term/codec.cpp`，裁决待记 7.103）、会话接线（`Session` 构造期吃 `term::SessionEncoding`，解码走会话自己的解码器、发送走三档策略）、设置键位 `terminal.encoding` / `terminal.unrepresentable`（含 store 往返、表单搬运、目录行「生效＝下一将会话」）、调试面板第四行「发送侧不可表示 {0}」（`SPEC.NF.RELI.01` 的第四族计数）。
-> **本稿只补最后一条**：需求那句「默认替换并给出**一次性提示**，不得静默发送乱码字节」里的提示。代码里它以两处 `TODO(SPEC.FEAT.TERM.09)` 挂在 `src/session/session.cpp` 的 `flush()` 与 `include/borealis/session/session.h` 的 `unrepresentable_count()` 上，本稿收口即撤。
+> **已落地的前置**：iconv 单腿的双向编解码件 `term::SessionDecoder` / `term::encode_for_encoding`（`include/borealis/term/codec.h` + `src/term/codec.cpp`，裁决 **7.103**）、会话接线（`Session` 构造期吃 `term::SessionEncoding`，解码走会话自己的解码器、发送走三档策略）、设置键位 `terminal.encoding` / `terminal.unrepresentable`（含 store 往返、表单搬运、目录行「生效＝下一将会话」）、调试面板第四行「发送侧不可表示 {0}」（`SPEC.NF.RELI.01` 的第四族计数）。
+> **本稿补的是最后一条**：需求那句「默认替换并给出**一次性提示**，不得静默发送乱码字节」里的提示。收口前它以两处 `TODO(SPEC.FEAT.TERM.09)` 挂在 `src/session/session.cpp` 的 `flush()` 与 `include/borealis/session/session.h` 的 `unrepresentable_count()` 上，随本稿实现批撤除。
+> **本稿不落代码**：收口后才落 `src/`。
 
 ## 1 范围与边界
 
@@ -52,9 +53,9 @@
 
 屏 B 的对照档只为说明 D2 为什么选「新增一层非模态卡」而不是「复用既有那层」：那一层的整区半透明带会把回看内容压成背景，而它只在 `!session_->alive()` 时落帧——一个活着的会话按定义走不到那一层。
 
-## 3 裁决（D1–D6，待人逐条拍板）
+## 3 裁决（D1–D6，2026-10-10 收口：全按推荐档）
 
-| # | 待决 | 选项 | 结论（推荐） | 理由 |
+| # | 待决 | 选项 | 结论（已裁＝推荐档） | 理由 |
 |---|---|---|---|---|
 | **D1** | 触发粒度 | ① **每会话首次一批一次**：latch 只在「该 `Session` 对象从未提示过」时上弦，取走后不再上弦；② 每批次都弹（同一会话多次）；③ 进程级全局一次（所有标签共享一份账） | **①** | ② 在粘贴分块场景是刷屏（事实 9：一次粘贴若干批），且需求原句就是「一次性」；③ 让多标签用户看不到自己正在敲的那一格出了问题，提示的对象错了。① 的连带口径如实登记：**会话重启/换血＝新 `Session` 对象 ⇒ 会再提示一次**，这与「新会话」语义一致；累计代价另有条（调试面板），两条不互相替代 |
 | **D2** | 呈现落点 | ① **视口内新增一层非模态卡**（底部居中，复用 `settings_chrome()` 四色与卡片常量，不铺带、无按钮、零命中盒）；② 模态 `au::Dialog`（与启动提示/调试面板同一条 `OverlayHost` 路）；③ 状态栏角标；④ 只在调试面板里可见；⑤ 复用 dead-session 那一层 | **①** | ③ 结构上不可选：状态栏本体未落（`appearance.status_bar.*` 空挂，同 7.99 §1 第 7 条）。④ 违反需求那句「给出一次性提示」——F12 面板是开发者面，普通用户不会去开。② 会为一条「你这一批字符被替换了」的告知抢走焦点、打断键入，代价与后果不成比例。⑤ 见事实 3：那一层既铺整区带（吞掉内容）又只在会话已退时落帧，而本件的触发前提是会话**活着** |
@@ -134,6 +135,8 @@ Scheduler（主线程，tick 内）
 
 ## 8 收口说明
 
-本稿只裁「提示」这一条腿，双向编解码与三档策略已落并已在上一棒的实现提交里。收口动作＝`SPECIFICATIONS.md` §7 新裁决 7.103（含 iconv 单腿、配置名→iconv 名映射、`Latin-1` 在 glibc 需写作 `ISO-8859-1`、`GB2312` 一类认不到者落 UTF-8 腿 + WARN 这几条实测口径，以及 TERM.09 现状句与「Windows 腿未实测」标注）+ `CHANGELOG.md` v0.103 + `PLAN.md` 的 TERM.09 行回写，然后按 §4 布局转实现（两批：会话侧 latch 与 codec 出口 → 视图卡片、词条与用例）。
+本稿只裁「提示」这一条腿，双向编解码与三档策略已随裁决 **7.103** 落地。
 
-若 D1–D6 全按推荐收口，改动集中在**四处**：`codec.h` 加一个折算出口、`Session` 加一份 latch、`TerminalView` 加一层卡与一枚定时器、`settings_i18n.cpp` 加两条词条；不动既有 dead-session 档、不动调试面板、不加配置键。
+**收口读数（2026-10-10）**：D1–D6 **全部按推荐档**收口，无一处改判。其中 D4 与 D6 未单列问项，按「无异议随批」入账——D4 取两行纯文案无按钮（第二行只指路径、**不**报当前档位名，以免与设置页那枚下拉的 ASCII 档名 `replace`/`drop`/`pass_through_utf8` 不同源），D6 取实际生效腿（`term::resolve_encoding_name()` 折算结果）。
+
+收口动作＝`SPECIFICATIONS.md` §7 新裁决 **7.104**（含 TERM.09 现状句的提示那一半改口）+ `CHANGELOG.md` **v0.104** + `PLAN.md` 的 TERM.09 行回写，然后按 §4 布局转实现（两批：会话侧 latch 与 codec 折算出口 → 视图卡片、两条词条与用例）。改动集中在**四处**：`codec.h` 加一个折算出口、`Session` 加一份 latch、`TerminalView` 加一层卡与一枚定时器、`settings_i18n.cpp` 加两条词条；不动既有 dead-session 档、不动调试面板、不加配置键。

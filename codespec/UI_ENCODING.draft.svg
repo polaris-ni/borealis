@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1180" viewBox="0 0 1560 1180" font-family="'Noto Sans CJK SC',sans-serif">
 <rect x="0" y="0" width="1560" height="1180" fill="#eef0f5"/>
 <text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">发送侧「不可表示字符」一次性提示：视口内非模态卡（`SPEC.FEAT.TERM.09` 的提示腿）</text>
-<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_ENCODING.draft.svg · 高保真草图（待评审，2026-10-10） · 窗口 880×520 dp @100% DPI · 底部 1–6 标号判据对应 UI_ENCODING.draft.md §2 · D1–D6 待人逐条裁决，见该稿 §3</text>
+<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_ENCODING.draft.svg · 高保真草图（评审已收口，2026-10-10） · 窗口 880×520 dp @100% DPI · 底部 1–6 标号判据对应 UI_ENCODING.draft.md §2 · D1–D6 经人逐条裁决：全按推荐档（裁决 7.104），见该稿 §3</text>
 
 <!-- ============================ 屏 A：非模态卡 ============================ -->
 <g transform="translate(30,80)">
@@ -156,7 +156,7 @@
     <text x="40" y="164">卡名＝实际生效腿（D6②，走 term::resolve_encoding_name() 折算结果）：填 GB2312 而实跑 UTF-8 时报 UTF-8，把回落显形。</text>
     <circle cx="22" cy="190" r="9" fill="#BD93F9"/><text x="22" y="194" text-anchor="middle" font-weight="700" fill="#1E1F29">6</text>
     <text x="40" y="194">裸键与 ESC 一律照旧归会话（INTERACT.01）；视口高不足「卡高 + 上下内缩」时本卡让位不画（窄 pane 下文案截断，与既有卡同档，不折行）。</text>
-    <text x="40" y="230" fill="#5a6070">D1–D6 全部待裁，推荐档见 §3 的「结论（推荐）」列；收口后按 §4 布局转实现，本稿不动代码。</text>
+    <text x="40" y="230" fill="#5a6070">D1–D6 已于 2026-10-10 逐条裁决：全按推荐档（裁决 7.104），据此按 §4 布局转实现。</text>
     <text x="40" y="250" fill="#5a6070">已落的双向编解码与三档策略、设置两键、面板第四行不在本稿射程内（见 UI_ENCODING.draft.md 的「已落地的前置」）。</text>
   </g>
 </g>

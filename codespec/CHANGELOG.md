@@ -4,6 +4,14 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.104（2026-10-10）**`SPEC.FEAT.TERM.09` 发送侧「一次性提示」设计稿收口：D1–D6 逐条裁决，全按推荐档、无一处改判**（`codespec/UI_ENCODING.draft.{md,svg,png}` 状态改口，判据入册为裁决 **7.104**，本条零代码改动）
+
+**动机**：需求那句「默认替换并给出**一次性提示**，不得静默发送乱码字节」是 TERM.09 里唯一还挂着 `TODO` 的半条。按 AGENTS 的 UI 节奏（第 22 条：UI 件先出稿评审）于同日出三件套（md 判据文 + SVG 高保真草图 + PNG 渲染）送评审，经人**逐条**裁决收口。本条不落 `src/`，实现批按稿 §4 走。
+
+**决定形态的口径**：⑴ **触发粒度 D1①**：每会话首次一批一次——否掉「每批次都弹」（粘贴分块会刷屏）与「进程级全局一次」（提示的对象错了，多标签用户看不到自己正在敲的那一格）；会话重启＝新对象 ⇒ 会再弹一次，这条连带口径如实登记。⑵ **呈现落点 D2①**：视口内**新增一层非模态卡**（底部居中，复用 `settings_chrome()` 四色与既有卡片常量档，不铺带、不吃焦点、无按钮、不写命中盒）。四条反面各自成立：状态栏结构上不可选（控件本体未落）、只进调试面板违反「给出提示」、模态 `Dialog` 为轻提示抢焦点、**复用 dead-session 那一层**会吞掉回看内容且只在 `!alive()` 落帧而本件的前提是会话活着。⑶ **撤除 D3①**：5 s `set_timeout` 自收 ＋ 换绑会话/会话退出清卡；**明确否决「任意键入即刻收」**——触发者就是键入，下一字符即抹掉＝几乎不可见；否决卡上放关闭按钮（有按钮就要写命中盒、进命中序，D2 的「零命中改动」作废）。⑷ **文案 D4①**：两行纯文案，第二行只指路径、**不报当前档位名**（设置页下拉今天显示 ASCII 档名本身，报中文会对不上、报 ASCII 违界面语言；档位名中文化属设置面板本体，不顺手改）。⑸ **取走落点 D5①**：会话侧 latch ＋ `TerminalView::on_frame()` 现取——不选 BEL 那条装配层路的理由是 `main.cpp` 不编入 CTest runner，判据会全部退回真机走查（7.83④／7.99 D6 两次前例）。⑹ **名字口径 D6②**：报**实际生效腿**（`term::resolve_encoding_name()` 折算结果），因为报配置原样串会在回落场景说谎——填 `GB2312` 的会话实跑 UTF-8，用户按名字改档会改错字段。
+
+**代价**：⑴ 本条零代码改动，稿里三条地基性事实全部来自本轮实测与读源（提示只能是**事后告知**：`flush()` 先写连接后计数；键序列走 `send_bytes` 不经编码策略，**结构上不可能触发**；实测触发面是 GBK/Big5/Latin-1/CP437 与所有腿上的未配对代理，**需求举的 GB18030 输入 Emoji 不触发**）；⑵ 无头帧没有调度器 ⇒ 「5 s 自收」这条要播种调度器才有证人（打法同 `itest_render_viewport` 的光标闪烁例）；⑶ 实现批不加配置键 ⇒ `utest_settings_catalog` 白名单不动，但 `Session` 与 `codec.h` 各多一处公共面（latch 与折算出口），均以稿 §4 为限不扩。**验收**：`SPECIFICATIONS.md` §7 裁决 7.104 在册、`SPEC.FEAT.TERM.09` 现状句的提示那一半改口为「稿已收口、实现未落」、`PLAN.md` 的 TERM.09 行回写；构建与测试面零改动。
+
 ## v0.103（2026-10-10）**`SPEC.FEAT.TERM.09` 会话编码可配双向落地（iconv 单腿）＋`SPEC.NF.RELI.01` 第四族计数＋发送侧提示出稿待评审**（`include/borealis/term/codec.h`（新）+ `src/term/codec.cpp`（新）+ `vcpkg.json` + `src/CMakeLists.txt` + `include/borealis/session/session.h` + `src/session/session.cpp` + `include/borealis/config/settings.h` + `src/config/{store,form_transfer}.cpp` + `src/config/schema_names.h` + `src/ui/{settings_catalog,settings_i18n,debug_panel}.{cpp,h}` + `src/main.cpp` + `tests/unit/utest_codec.cpp`（新）+ `tests/fixtures/term/encoding_cases.tsv`（新）+ `tests/unit/utest_session.cpp` + `tests/unit/utest_settings_catalog.cpp` + `tests/integration/itest_debug_panel.cpp` + `tests/integration/itest_settings_panel.cpp` + `codespec/UI_ENCODING.draft.{md,svg,png}`（新），判据入册为裁决 **7.103**）
 
 **动机**：TERM.09 在 M3 的出口判据里对应「非 UTF-8 输出正确显示」，此前只有 UTF-8 基线腿（M1），`terminal.encoding` 是**有键无消费**的 `Absent` 行。按人裁决取**全量双向 + 提示 UI 先出设计稿**的射程：解码与发送两条方向本期落完，「不可表示字符一次性提示」按 AGENTS 的 UI 节奏先出三件套送评审（`codespec/UI_ENCODING.draft.md` 的 D1–D6，**待裁**），代码里以两处 `TODO(SPEC.FEAT.TERM.09)` 挂账。
