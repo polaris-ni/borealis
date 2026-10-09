@@ -35,9 +35,12 @@ struct TunnelRuntime {
 };
 
 /// @brief 隧道行表的一行：定义 + 运行态（面板只消费算好的行）。
+///        相等判据供面板逐帧 diff（D6①「行表有变才重建」）。
 struct TunnelRow {
     conn::TunnelSpec spec;
     TunnelRuntime runtime{};
+
+    [[nodiscard]] auto operator==(const TunnelRow &) const noexcept -> bool = default;
 };
 
 /// @brief 行模型：按落盘次序逐条配快照；没有快照的定义按缺省 Stopped 行呈现。
