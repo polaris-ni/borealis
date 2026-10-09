@@ -85,7 +85,7 @@ auto append_decimal(std::u32string &out, std::size_t value) -> void {
 }  // namespace
 
 Terminal::Terminal(std::size_t columns, std::size_t rows, std::size_t scrollback_limit,
-                   const WidthPolicy &width_policy, TerminalDefaults defaults)
+                   std::shared_ptr<const WidthPolicy> width_policy, TerminalDefaults defaults)
     : main_{columns, rows, scrollback_limit},
       alt_{columns, rows, 0},
       width_policy_{width_policy},
@@ -146,7 +146,7 @@ auto Terminal::do_print(const vt::Sequence &seq) -> void {
     // 宽度按**字符集映射前**的码点判定：框线表把 0x5F–0x7E 重映射成 U+2500 一类箱线字符，
     // 那些码点在 East Asian Width 里属 Ambiguous，Ambiguous=Wide 的 profile 会把边框画成
     // 半格错位——线条字符恒单宽才是既有终端的既成事实（裁决 7.15 的场景分工）。
-    const std::uint8_t width = width_policy_.width_of(code_point, ambiguous_);
+    const std::uint8_t width = width_policy_->width_of(code_point, ambiguous_);
     if (width == 0U) {
         // 零宽码点不占格也不推进光标，更不得触发换行——它并进光标左侧的基础格（SPEC.FEAT.TERM.08）。
         // 不经字符集映射：DEC 表只重定义 0x5F–0x7E，其中无零宽码点。

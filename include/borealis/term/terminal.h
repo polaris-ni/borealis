@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -116,10 +117,11 @@ class Terminal final : public vt::SequenceSink {
     /// @param columns 列数。
     /// @param rows 视口行数。
     /// @param scrollback_limit 主屏 scrollback 容量；备屏恒为 0（架构 §4.4）。
-    /// @param width_policy 宽度判定接缝，生命周期由调用方保证（架构 §6.3）。
+    /// @param width_policy 宽度判定接缝：本对象持有其 shared_ptr 副本，调用方无需再担保其生命周期
+    ///                     （架构 §6.3）；运行期改配置不重放既有会话的判定（判据文 §0 边界②）。
     /// @param defaults 会话初始档；缺省即库自己的缺省档，故既有构造点一字不改。
     Terminal(std::size_t columns, std::size_t rows, std::size_t scrollback_limit,
-             const WidthPolicy &width_policy, TerminalDefaults defaults = {});
+             std::shared_ptr<const WidthPolicy> width_policy, TerminalDefaults defaults = {});
 
     /// @brief 喂入一段已解码的码点流：内部解析并立即执行其语义。
     /// @param text 码点流（可跨调用任意分片）。
@@ -289,7 +291,7 @@ class Terminal final : public vt::SequenceSink {
     grid::Cell pen_{};  ///< SGR 模板：下一次写入携带的属性。
     vt::Parser parser_;
     std::vector<bool> tab_stops_;
-    const WidthPolicy &width_policy_;
+    std::shared_ptr<const WidthPolicy> width_policy_;
     Cursor cursor_{};
     Cursor saved_main_{};
     Cursor saved_alt_{};

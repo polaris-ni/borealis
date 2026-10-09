@@ -28,9 +28,9 @@ class BufferSink final : public term::CodePointSink {
 }  // namespace
 
 Session::Session(std::unique_ptr<Connection> connection, Size size, std::size_t scrollback_limit,
-                 const term::WidthPolicy &width_policy, term::TerminalDefaults defaults)
+                 std::shared_ptr<const term::WidthPolicy> width_policy, term::TerminalDefaults defaults)
     : connection_{std::move(connection)},
-      terminal_{size.columns, size.rows, scrollback_limit, width_policy, defaults} {
+      terminal_{size.columns, size.rows, scrollback_limit, std::move(width_policy), defaults} {
     terminal_.set_response_sink(this);
     // BEL 回调在锁内只登记事件，不 IO（架构 §3.4）；具体落地由装配层每帧取走标记。
     terminal_.set_bell_callback([this]() -> void {
