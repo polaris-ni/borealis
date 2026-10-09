@@ -1,8 +1,11 @@
 #include <chrono>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -30,6 +33,7 @@
 #include "borealis/ui/closed_tab_stack.h"
 #include "conn/profile_views.h"
 #include "conn/ssh_connection.h"
+#include "conn/tunnel_client.h"
 #include "ui/connection_sidebar.h"
 #include "ui/connection_wizard.h"
 #include "ui/credential_prompt.h"
@@ -40,6 +44,7 @@
 #include "ui/startup_notice.h"
 #include "ui/tab_bar.h"
 #include "ui/terminal_view.h"
+#include "ui/tunnel_panel.h"
 #include "ui/workspace_view.h"
 #include <aurora/widget/command_palette.h>
 
@@ -48,6 +53,36 @@ namespace {
 /// @brief 会话的名义初始尺寸：真实行列由控件首次布局按自身尺寸派生并下发
 ///        （`SPEC.FEAT.XFER.01` 的 UI 取值腿），这里只要保证状态机与连接一起来有个可用的格。
 constexpr borealis::session::Size kNominalViewport{80U, 24U};
+
+/// @brief 隧道状态事件汇（裁决 7.97 D6①）：工作线程上只写「最新值」快照，
+///        UI 线程经 snapshot Hook 逐帧合并——不排队、不积压（AGENTS §25 的
+///        合成后最终值形态）。attempt 由本汇在 Backoff 事件上自增（D6①）。
+struct TunnelSink final : borealis::conn::TunnelEvents {
+    std::shared_ptr<std::mutex> mutex;
+    std::shared_ptr<std::map<std::string, borealis::ui::TunnelRuntime>> runtimes;
+    std::string id;
+
+    auto on_tunnel_state(borealis::conn::TunnelState state, borealis::conn::TunnelError error,
+                         int bound_port) -> void override {
+        const std::lock_guard lock{*mutex};
+        auto &cell = (*runtimes)[id];
+        cell.state = state;
+        cell.error = error;
+        if (bound_port > 0) {
+            cell.bound_port = bound_port;  // -R 0 端口择定回报（判据 4）。
+        }
+        if (state == borealis::conn::TunnelState::Backoff) {
+            ++cell.attempt;
+        }
+    }
+};
+
+/// @brief 装配层持有的一条隧道：传输腿对象 + 它的事件汇（sink 先声明、后销毁——
+///        Tunnel 持其引用，析构次序上必须先走 tunnel）。
+struct TunnelEntry {
+    std::unique_ptr<TunnelSink> sink;
+    std::unique_ptr<borealis::conn::Tunnel> tunnel;
+};
 
 /// @brief 降级留痕的 ASCII 取值名（日志字面量须是英文，AGENTS.md §4.3 第 14 条）。
 [[nodiscard]] auto verdict_name(borealis::ui::FontFamilyVerdict verdict) -> std::string_view {
@@ -674,15 +709,34 @@ auto main() -> int {
     // 凭据询问件（CONN.09 降级腿）：本期无 OS 凭据库后端，要材料的认证一律走这里；
     // 明文只经 on_secret 交给**本次**装配，不落盘不进日志（裁决 7.93）。
     auto pending_profile = std::optional<borealis::conn::Profile>{};
+    // 隧道启动的异步凭据腿（D7）：询问型档案的隧道把「档案副本+定义」留在这里，
+    // 明文回到 on_secret 后才真正拉起 Tunnel（同 pending_profile 的先例形态）。
+    auto pending_tunnel =
+        std::optional<std::pair<borealis::conn::SshProfile, borealis::conn::TunnelSpec>>{};
+    // 拉起隧道主体的装配点（下方隧道段赋值；询问回-call 与自启扫描共用）。
+    auto launch_tunnel =
+        std::function<void(const borealis::conn::SshProfile &, std::optional<std::string>,
+                           const borealis::conn::TunnelSpec &)>{};
     borealis::ui::CredentialPrompt::Hooks prompt_hooks;
-    prompt_hooks.on_secret = [&open_ssh_tab, &pending_profile](const std::string &secret) -> void {
+    prompt_hooks.on_secret =
+        [&open_ssh_tab, &pending_profile, &pending_tunnel,
+         &launch_tunnel](const std::string &secret) -> void {
         if (pending_profile.has_value()) {
             auto profile = std::move(*pending_profile);
             pending_profile.reset();
             open_ssh_tab(profile, secret);
+            return;
+        }
+        if (pending_tunnel.has_value()) {
+            auto [ssh_profile, spec] = std::move(*pending_tunnel);
+            pending_tunnel.reset();
+            launch_tunnel(ssh_profile, secret, spec);
         }
     };
-    prompt_hooks.on_cancel = [&pending_profile]() -> void { pending_profile.reset(); };
+    prompt_hooks.on_cancel = [&pending_profile, &pending_tunnel]() -> void {
+        pending_profile.reset();
+        pending_tunnel.reset();
+    };
     auto credential_prompt =
         std::make_shared<borealis::ui::CredentialPrompt>(*host, std::move(prompt_hooks));
 
@@ -786,6 +840,139 @@ auto main() -> int {
     toggle_connections.action = [&sidebar]() -> void { sidebar->toggle(); };
     toggle_connections.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(toggle_connections));
+
+    // ---- SSH 隧道装配（SPEC.FEAT.CONN.08，裁决 7.97 D5–D8）----
+    // 隧道对象与运行态快照都握在本装配层（D5①）：面板关着隧道照跑，进程退出
+    // 时 tunnel_entries 析构逐个 stop()（传输腿既定 join 纪律）。快照经
+    // mutex+map 的最新值形态交换（D6①；与 AGENTS §25「合成后的最终值」同义，
+    // 状态是可覆盖的量，不需要事件队列）。
+    auto tunnel_mutex = std::make_shared<std::mutex>();
+    auto tunnel_runtimes =
+        std::make_shared<std::map<std::string, borealis::ui::TunnelRuntime>>();
+    auto tunnel_skipped = std::make_shared<std::set<std::string>>();
+    std::map<std::string, TunnelEntry> tunnel_entries{};
+
+    launch_tunnel = [&store, &tunnel_entries, tunnel_mutex, tunnel_runtimes, tunnel_skipped](
+                        const borealis::conn::SshProfile &ssh_profile,
+                        std::optional<std::string> secret,
+                        const borealis::conn::TunnelSpec &spec) -> void {
+        auto sink = std::make_unique<TunnelSink>();
+        sink->mutex = tunnel_mutex;
+        sink->runtimes = tunnel_runtimes;
+        sink->id = spec.id;
+        // 快照先归零再起线程：start() 之后的第一个事件（Dialing）不能被这次清零盖掉。
+        {
+            const std::lock_guard lock{*tunnel_mutex};
+            (*tunnel_runtimes)[spec.id] = borealis::ui::TunnelRuntime{};  // 新一轮从空白起。
+            tunnel_skipped->erase(spec.id);
+        }
+        // 逐条重试档直接取自定义（D9②），不再吃全局缺省。
+        auto tunnel = std::make_unique<borealis::conn::Tunnel>(ssh_profile, std::move(secret),
+                                                               spec, spec.retry);
+        tunnel->start(*sink);
+        tunnel_entries[spec.id] = TunnelEntry{std::move(sink), std::move(tunnel)};
+    };
+
+    borealis::ui::TunnelPanel::Hooks tunnel_hooks;
+    tunnel_hooks.load = [&store]() -> std::vector<borealis::conn::TunnelSpec> {
+        return store.settings().tunnels;
+    };
+    tunnel_hooks.persist = [&store](const std::vector<borealis::conn::TunnelSpec> &table) -> bool {
+        auto next = store.settings();
+        next.tunnels = table;
+        return !store.replace(std::move(next)).has_value();
+    };
+    tunnel_hooks.profiles = [&store]() -> std::vector<borealis::conn::Profile> {
+        return store.settings().profiles;
+    };
+    // D7 凭据链：agent 型（SecretAsk::None）静默拉起；询问型经 credential_prompt
+    // 异步回-call（启动序绝不弹模态框——自启路径根本不走这里）。
+    tunnel_hooks.start =
+        [&store, &credential_prompt, &pending_tunnel, &launch_tunnel, tunnel_mutex,
+         tunnel_runtimes](const borealis::conn::TunnelSpec &spec) -> void {
+        const auto settings = store.settings();
+        const borealis::conn::Profile *target = nullptr;
+        for (const auto &profile : settings.profiles) {
+            if (profile.id == spec.profile_id &&
+                profile.type == borealis::conn::ConnectionType::Ssh) {
+                target = &profile;
+                break;
+            }
+        }
+        if (target == nullptr) {
+            const std::lock_guard lock{*tunnel_mutex};
+            auto &cell = (*tunnel_runtimes)[spec.id];
+            cell.state = borealis::conn::TunnelState::Failed;
+            cell.error = borealis::conn::TunnelError::DialFailed;  // 承载档案已不存在。
+            return;
+        }
+        const auto ask =
+            borealis::conn::secret_ask_for(borealis::conn::normalized_auth_method(target->ssh));
+        if (ask == borealis::conn::SecretAsk::None) {
+            launch_tunnel(target->ssh, std::nullopt, spec);
+            return;
+        }
+        pending_tunnel = std::pair{target->ssh, spec};
+        credential_prompt->ask(ask, target->name);
+    };
+    tunnel_hooks.stop = [&tunnel_entries, tunnel_mutex,
+                         tunnel_runtimes](const std::string &id) -> void {
+        const auto it = tunnel_entries.find(id);
+        if (it != tunnel_entries.end()) {
+            it->second.tunnel->stop();  // join 上界＝一个轮询拍 + 一次建连超时（既定纪律）。
+            tunnel_entries.erase(it);   // 析构即清 secret_（CONN.09）。
+        }
+        const std::lock_guard lock{*tunnel_mutex};
+        (*tunnel_runtimes)[id] = borealis::ui::TunnelRuntime{};
+    };
+    tunnel_hooks.snapshot = [tunnel_mutex, tunnel_runtimes,
+                             tunnel_skipped]() -> std::map<std::string, borealis::ui::TunnelRuntime> {
+        const std::lock_guard lock{*tunnel_mutex};
+        auto out = *tunnel_runtimes;
+        for (const auto &id : *tunnel_skipped) {
+            out[id].autostart_skipped = true;  // D8 细则：行内提示「需先存凭据」。
+        }
+        return out;
+    };
+    borealis::ui::TunnelPanel tunnel_panel{*host, std::move(tunnel_hooks)};
+
+    // 启动序自启扫描（D8②细则）：只拉起「autostart ∧ 凭据可静默解析」的隧道；
+    // 询问型记入 skipped 集供行内提示——本路径零模态框、零阻塞等待。
+    {
+        const auto settings = store.settings();
+        for (const auto &spec : settings.tunnels) {
+            if (!spec.autostart) {
+                continue;
+            }
+            const borealis::conn::Profile *target = nullptr;
+            for (const auto &profile : settings.profiles) {
+                if (profile.id == spec.profile_id &&
+                    profile.type == borealis::conn::ConnectionType::Ssh) {
+                    target = &profile;
+                    break;
+                }
+            }
+            const bool silent =
+                target != nullptr &&
+                borealis::conn::secret_ask_for(
+                    borealis::conn::normalized_auth_method(target->ssh)) ==
+                    borealis::conn::SecretAsk::None;
+            if (silent) {
+                launch_tunnel(target->ssh, std::nullopt, spec);
+            } else {
+                const std::lock_guard lock{*tunnel_mutex};
+                tunnel_skipped->insert(spec.id);
+            }
+        }
+    }
+
+    au::Command open_tunnels;
+    open_tunnels.id = "tunnels.open";
+    open_tunnels.title = borealis::ui::settings_label("tunnel.title");
+    open_tunnels.category = "terminal";
+    open_tunnels.action = [&tunnel_panel]() -> void { tunnel_panel.toggle(); };
+    open_tunnels.scope = au::ShortcutScope::Global;
+    app.commands().add(std::move(open_tunnels));
 
     // SFTP 浏览器面板（SPEC.FEAT.CONN.04）：右停靠浮层，与侧栏同族。三条 Hooks 全部
     // 指回上面的标签接线数据，不新造状态：活动 SSH 档案、CONN.09 凭据链的句柄解析、
@@ -1102,7 +1289,7 @@ auto main() -> int {
     }
 
     app.set_on_frame([&tab_workspaces, &current_tab_id, &outbox, &panel, &tab_strip, &app, &settings,
-                      &last_window_title, &has_live_session, &sftp_panel]() -> void {
+                      &last_window_title, &has_live_session, &sftp_panel, &tunnel_panel]() -> void {
         // 排帧范围是**全部标签**每帧都排（含隐藏标签，裁决 7.47⑩）：可见性只影响绘制不影响数据。
         // 只排当前标签的后果是三处静默失灵——别的标签的 `OSC 52` 永远留在队列里（取走语义按会话
         // 记账，裁决 7.21③）、BEL 与活动角标要等用户切过去才补亮、OSC 标题不落进标签名。
@@ -1160,6 +1347,7 @@ auto main() -> int {
         
         panel.pump_preview();  // 预览盒是第二个会话，脏行同样按帧排（面板关着即空操作）
         sftp_panel.tick();     // SFTP 面板取件与判活（D8①/D9①；面板关着即空操作）
+        tunnel_panel.tick();   // 隧道行表随快照刷新（D6①；面板关着即空操作）
     });
     app.run();
 
