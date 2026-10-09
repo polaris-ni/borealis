@@ -74,6 +74,13 @@ constexpr double kRestartCardPaddingDp = 14.0;    ///< 卡片文字距卡片边�
 constexpr double kRestartHintLineHeightDp = 20.0; ///< 提示行行高，配合按钮档使卡片总高 == 88 dp。
 constexpr double kRestartStrokeDp = 1.0;          ///< 卡片描边宽（与搜索浮层条体同档）。
 
+/// @brief 重连中态的卡片高（`SPEC.FEAT.WS.05` 的 SSH 腿，裁决 7.99 D5）：多一行倒计时
+///        （14 + 20 × 2 + 8 + 32 + 14）。草图给的 380 × 132 卡片按既有 320 dp 上限收拢——
+///        固定 380 在最小合法 pane 上就伸出可视区，而宽了并不会让文案少截一次。
+constexpr double kReconnectCardHeightDp = 108.0;
+/// @brief 终态那枚按钮的宽：标签「重启（按档案）」是七个全角位，96 dp 档装不下（14 pt 下约 131 dp）。
+constexpr double kWideRestartButtonWidthDp = 150.0;
+
 /// @brief 把滚轮增量折成「档」：一 notch 即一档（Win32 与 X11 给 ±1，高分屏与 GLFW 可给小数）。
 ///        非零增量至少算一档——发零条上报等于吞掉这一事件而不告诉任何人。
 [[nodiscard]] auto wheel_notches(float delta_rows) -> int {
@@ -547,18 +554,40 @@ auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
         e.is_handled = true;
         return;
     }
-    // dead-session 浮层的重启按钮（`SPEC.FEAT.WS.05`）在上报档之前判定：会话已经退出，上报模式是
-    // 陈旧的远端状态、不再有任何进程会读到它；而落点若是按钮就是本层自己的一次动作，与选区无关。
-    // 命中按钮之外仍照旧落到选区分支——需求那句「保留终端内容供回看」正要求内容仍可选可复制。
-    if (e.action == aurora::MouseAction::Press && !session_->alive() && restart_hook_ &&
-        restart_button_box_.has_value()) {
-        const Rect &box = *restart_button_box_;
-        const double x = static_cast<double>(e.local_position.x);
-        const double y = static_cast<double>(e.local_position.y);
-        if (x >= box.x && x < box.x + box.width && y >= box.y && y < box.y + box.height) {
+    // dead-session 浮层的按钮（`SPEC.FEAT.WS.05`：本地腿一枚「重启」、SSH 腿重连中两枚「立即重试」
+    // 「停止重连」）在上报档之前判定：会话已经退出，上报模式是陈旧的远端状态、不再有任何进程会读到
+    // 它；而落点若是按钮就是本层自己的一次动作，与选区无关。命中按钮之外仍照旧落到选区分支——需求
+    // 那句「保留终端内容供回看」正要求内容仍可选可复制（草图判据 4，命中序沿用裁决 7.86②）。
+    if (e.action == aurora::MouseAction::Press && !session_->alive()) {
+        const auto hits = [&](const std::optional<Rect> &box) -> bool {
+            if (!box.has_value()) {
+                return false;
+            }
+            const double x = static_cast<double>(e.local_position.x);
+            const double y = static_cast<double>(e.local_position.y);
+            return x >= box->x && x < box->x + box->width && y >= box->y && y < box->y + box->height;
+        };
+        // 三个盒一帧只有一档有值（`paint_restart_overlay` 每帧先全清再按档位填），故这里的先后只是
+        // 可读次序，不是优先级：不存在两档同帧落笔，也就没有「抢同一击」。
+        if (restart_hook_ && hits(restart_button_box_)) {
             restart_hook_();
             e.is_handled = true;
             return;
+        }
+        // 两枚重连按钮直达连接对象的控制位（裁决 7.99 D5）：截断当前退避与让环落终态都不重建会话，
+        // 装配层没有需要它代劳的动作，故这里不穿一层闭包。控制位在则这一击必被收下，免得点按钮
+        // 顺带在浮层底下推出一段选区。
+        if (auto *control = session_->reconnect_control(); control != nullptr) {
+            if (hits(retry_now_button_box_)) {
+                control->retry_now();
+                e.is_handled = true;
+                return;
+            }
+            if (hits(stop_reconnect_button_box_)) {
+                control->stop_reconnect();
+                e.is_handled = true;
+                return;
+            }
         }
     }
     // 上报档优先于本地选区（`SPEC.FEAT.TERM.06`，裁决 7.77①②）：分流判据在选区之前，故一次
@@ -963,13 +992,31 @@ auto TerminalView::paint_scroll_indicator(aurora::Painter &p, const aurora::Rect
 }
 
 auto TerminalView::paint_restart_overlay(aurora::Painter &p, const aurora::Rect &bounds) -> void {
-    // 会话进程已退出且装配层装了重启钩子，才画这一层。`session_->alive()` 每帧现取，而不是缓一份
+    // 三枚按钮盒每帧先清再按当帧档位填：读取者拿到的永远是当前帧的形态，而不是上一帧的陈旧矩形
+    //（本件把观测点从一枚扩到三枚，「哪一档落帧就只交出哪一档的盒」这条不变量由这里守住）。
+    restart_button_box_.reset();
+    retry_now_button_box_.reset();
+    stop_reconnect_button_box_.reset();
+    // 会话进程已退出才画这一层。`session_->alive()` 每帧现取，而不是缓一份
     // 标志——`Session::on_closed` 那一次唤醒与最后一批 damage 同帧抵达，缓存标志就要在事件回调里
-    // 翻，而那是 IO 边界之外的一条通道（AGENTS.md §4.5 第 25 条）。
-    if (session_->alive() || !restart_hook_) {
-        restart_button_box_.reset();
+    // 翻，而那是 IO 边界之外的一条通道（AGENTS.md §4.5 第 25 条）。重拨期间它恒为 false（裁决
+    // 7.99 D7③：远端确实没有活进程，浮层的可见性只走状态快照这一条 latest-value 通道）。
+    if (session_->alive()) {
         return;
     }
+    const auto progress = session_->reconnect_progress();
+    auto *control = session_->reconnect_control();
+    // 「重连中」＝退避环里还挂着下一回：档位为 None 且仍有等待毫秒数。腿在重拨成功后擦回的那份全零
+    // 快照就靠延迟位与这一档分开。两枚按钮直达连接对象的控制位，故这一档不看重启钩子——那是
+    // 「重建会话」那条腿的出口，与「截断这次等待」是两件事。
+    const bool redialing = control != nullptr && progress.has_value() &&
+                           progress->stop == session::ReconnectStop::None && progress->delay_ms > 0;
+    // 「有终态档位」＝环已收口并留下了档位：首行文案与那枚按钮的标签都按档位分档（草图屏 B 三档）。
+    const bool terminal = progress.has_value() && progress->stop != session::ReconnectStop::None;
+    if (!redialing && !terminal && !restart_hook_) {
+        return;  // 装配层没接重启这条腿，会话又没有重连状态：无可画的出口
+    }
+
     const double box_w = static_cast<double>(bounds.size.width);
     const double box_h = static_cast<double>(bounds.size.height);
     // 覆盖整可见区的半透明带：向纯黑各半混合。固定 alpha 在浅色主题上会把提示吞掉，而「哪一档主题」
@@ -979,7 +1026,7 @@ auto TerminalView::paint_restart_overlay(aurora::Painter &p, const aurora::Rect 
 
     const auto chrome = settings_chrome();
     const double card_w = std::min(kRestartCardWidthDp, box_w - 2.0 * kRestartCardHorizontalInsetDp);
-    const double card_h = kRestartCardHeightDp;
+    const double card_h = redialing ? kReconnectCardHeightDp : kRestartCardHeightDp;
     const double card_x = (box_w - card_w) / 2.0;
     const double card_y = (box_h - card_h) / 2.0;
     const Rect card{card_x, card_y, card_w, card_h};
@@ -997,17 +1044,84 @@ auto TerminalView::paint_restart_overlay(aurora::Painter &p, const aurora::Rect 
                 chrome.card_line);
 
     const double text_x = card_x + kRestartCardPaddingDp;
-    const double text_top = card_y + kRestartCardPaddingDp;
+    double text_top = card_y + kRestartCardPaddingDp;
     const double text_w = card_w - 2.0 * kRestartCardPaddingDp;
-    p.draw_text(to_rect(Rect{text_x, text_top, text_w, kRestartHintLineHeightDp}, bounds.origin),
-                settings_label("session.restart.hint"), ref_font_, chrome.text);
+    if (redialing) {
+        p.draw_text(to_rect(Rect{text_x, text_top, text_w, kRestartHintLineHeightDp}, bounds.origin),
+                    settings_label("session.reconnect.line",
+                                   {aurora::LocalizedString{std::to_string(progress->attempt)},
+                                    aurora::LocalizedString{std::to_string(progress->total)}}),
+                    ref_font_, chrome.text);
+        text_top += kRestartHintLineHeightDp;
+        // 第二行只报当下这一档还要等多久：草图那句括注（首次 1 s、逐次翻倍、钳上限）说的是退避**算式**，
+        // 而快照里没有 base/cap 两个参数（D3 只外传档位与这一次的量），故此处不抄那句。秒数向上取整，
+        // 于是 1000 ms 报「1 秒」而不是「0 秒」。
+        p.draw_text(to_rect(Rect{text_x, text_top, text_w, kRestartHintLineHeightDp}, bounds.origin),
+                    settings_label("session.reconnect.countdown",
+                                   {aurora::LocalizedString{std::to_string((progress->delay_ms + 999) / 1000)}}),
+                    ref_font_, chrome.text);
+        text_top += kRestartHintLineHeightDp;
+    } else {
+        std::string hint = settings_label("session.restart.hint");
+        if (terminal) {
+            switch (progress->stop) {
+            case session::ReconnectStop::AttemptsExhausted:
+                hint = settings_label("session.reconnect.exhausted",
+                                      {aurora::LocalizedString{std::to_string(progress->attempt)}});
+                break;
+            case session::ReconnectStop::NotReconnectable:
+                hint = settings_label("session.reconnect.not_reconnectable");
+                break;
+            case session::ReconnectStop::UserStopped:
+                hint = settings_label("session.reconnect.user_stopped");
+                break;
+            case session::ReconnectStop::RemoteExit:
+            case session::ReconnectStop::None:
+                // 远端 shell 正常退出与「快照里没有档位」（本地 PTY / ConPTY 两腿）同形：那句「会话已退出」。
+                break;
+            }
+        }
+        p.draw_text(to_rect(Rect{text_x, text_top, text_w, kRestartHintLineHeightDp}, bounds.origin), hint,
+                    ref_font_, chrome.text);
+        text_top += kRestartHintLineHeightDp;
+    }
 
-    const double button_top = text_top + kRestartHintLineHeightDp + kRestartButtonGapDp;
-    const double button_left = card_x + (card_w - kRestartButtonWidthDp) / 2.0;
-    const Rect button_box{button_left, button_top, kRestartButtonWidthDp, kRestartButtonHeightDp};
+    const double button_top = text_top + kRestartButtonGapDp;
+    if (redialing) {
+        const double pair_w = 2.0 * kRestartButtonWidthDp + kRestartButtonGapDp;
+        const double pair_left = card_x + (card_w - pair_w) / 2.0;
+        const Rect retry_box{pair_left, button_top, kRestartButtonWidthDp, kRestartButtonHeightDp};
+        const Rect stop_box{pair_left + kRestartButtonWidthDp + kRestartButtonGapDp, button_top,
+                            kRestartButtonWidthDp, kRestartButtonHeightDp};
+        // 「立即重试」取 accent 档、「停止重连」取描边线档的中性底：两枚同色就分不出哪一枚是就此收手，
+        // 而这两枚的后果正好相反（前者多拨一回，后者落到终态）。
+        p.fill_rect(to_rect(retry_box, bounds.origin), chrome.accent);
+        p.draw_text(to_rect(retry_box, bounds.origin), settings_label("session.reconnect.retry_now"), ref_font_,
+                    chrome.window_bg);
+        p.fill_rect(to_rect(stop_box, bounds.origin), chrome.card_line);
+        p.draw_text(to_rect(stop_box, bounds.origin), settings_label("session.reconnect.stop"), ref_font_,
+                    chrome.text);
+        retry_now_button_box_ = retry_box;
+        stop_reconnect_button_box_ = stop_box;
+        return;
+    }
+    if (!restart_hook_) {
+        return;  // 终态但没有重启腿：只报这一句状态，不画一个不响的按钮
+    }
+    // 按钮标签按档位分：有终态档位的都是 SSH 腿，那里的重启动作由装配层按档案重开（裁决 7.99 D6），
+    // 标签要说清「按档案」；认证类那一档额外说明这一回会重新问凭据。无快照的本地腿保持 7.86 那句「重启」。
+    std::string_view button_key = "session.restart.button";
+    double button_w = kRestartButtonWidthDp;
+    if (terminal) {
+        button_key =
+            progress->stop == session::ReconnectStop::NotReconnectable ? "session.restart.retry_credential"
+                                                                       : "session.restart.by_profile";
+        button_w = kWideRestartButtonWidthDp;
+    }
+    const double button_left = card_x + (card_w - button_w) / 2.0;
+    const Rect button_box{button_left, button_top, button_w, kRestartButtonHeightDp};
     p.fill_rect(to_rect(button_box, bounds.origin), chrome.accent);
-    p.draw_text(to_rect(button_box, bounds.origin), settings_label("session.restart.button"), ref_font_,
-                chrome.window_bg);
+    p.draw_text(to_rect(button_box, bounds.origin), settings_label(button_key), ref_font_, chrome.window_bg);
     // 交进 `restart_button_box_` 的是**控件本地 dp**，与 `e.local_position` 同一坐标空间，
     // 于是指针入口不需要再补 `bounds.origin`（框架派发那条原点已在 G31 回货里对齐到本控件的绘制盒）。
     restart_button_box_ = button_box;

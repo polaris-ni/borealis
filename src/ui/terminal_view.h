@@ -330,6 +330,16 @@ class TerminalView final : public aurora::LeafWidget {
         return restart_button_box_;
     }
 
+    /// @brief 本帧「立即重试」按钮盒（`SPEC.FEAT.WS.05` 的 SSH 腿，裁决 7.99 D5）；非重连中态即空。
+    [[nodiscard]] auto retry_now_button_box() const noexcept -> const std::optional<Rect> & {
+        return retry_now_button_box_;
+    }
+
+    /// @brief 本帧「停止重连」按钮盒；非重连中态即空。与上一枚同进同退：那一档只有两枚按钮一起画。
+    [[nodiscard]] auto stop_reconnect_button_box() const noexcept -> const std::optional<Rect> & {
+        return stop_reconnect_button_box_;
+    }
+
   protected:
     /// @brief 撑满父级，并在此重取整格几何与下发行列尺寸（`SPEC.FEAT.XFER.01` 的 UI 取值腿）。
     [[nodiscard]] auto on_layout(const aurora::Constraints &c, const aurora::BuildContext &ctx)
@@ -506,12 +516,15 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 画回看位置的指示条（视觉稿 U1）：贴底时不画。
     auto paint_scroll_indicator(aurora::Painter &p, const aurora::Rect &bounds, std::size_t rows) -> void;
 
-    /// @brief 画 dead-session 浮层（`SPEC.FEAT.WS.05`）：会话进程已退出且装了重启钩子时才落笔。
+    /// @brief 画 dead-session 浮层（`SPEC.FEAT.WS.05`）：会话进程已退出且有出口可画时才落笔。
     ///
-    /// 形态是一条覆盖整可视区的半透明带 + 居中一枚「重启」按钮。带用 `ui::mix_half` 而不是硬编码
-    /// alpha：主视口底色随主题而变，固定 alpha 在浅色主题上会把提示吞掉。按钮位置与尺寸本帧写进
-    /// `restart_button_box_`，供指针入口判命中；没装钩子时那个成员就回空，指针因此**不会**命中重启
-    /// 按钮而照旧落到选区分支——「装配层没接好这条腿」和「接好了但这一格不是按钮」是两句不同的话。
+    /// 形态是一条覆盖整可视区的半透明带 + 居中一张卡片，卡片按会话的**重连状态快照**分三档：
+    /// 重连中（两行文案 +「立即重试」「停止重连」）、有终态档位（一行分档文案 + 一枚按档案重启）、
+    /// 无快照的腿（7.86 那句「会话已退出」+ 一枚重启）。带用 `ui::mix_half` 而不是硬编码 alpha：
+    /// 主视口底色随主题而变，固定 alpha 在浅色主题上会把提示吞掉。按钮位置与尺寸本帧写进三个
+    /// `*_button_box_` 成员，供指针入口判命中；**每帧先全部清空再按当帧档位填**，于是读取者拿到的
+    /// 永远是当前帧的形态，而没装钩子时那一枚重启按钮根本不落笔——「装配层没接好这条腿」和
+    /// 「接好了但这一格不是按钮」是两句不同的话，两者都不该画出一个不响的按钮。
     auto paint_restart_overlay(aurora::Painter &p, const aurora::Rect &bounds) -> void;
 
     /// @brief 取某存储行在当前可见窗里的那一行；已滚出可见窗（含被 scrollback 挤出顶端）时回空。
@@ -681,6 +694,9 @@ class TerminalView final : public aurora::LeafWidget {
     /// 只在 `paint_restart_overlay` 里写、且**每次画都写**（会话已退但无钩子时写空），故读取者
     /// 拿到的永远是当前帧的形态而不是上一帧的陈旧矩形。
     std::optional<Rect> restart_button_box_;
+    /// @brief 重连中态那两枚按钮的盒（裁决 7.99 D5）：与 `restart_button_box_` 互斥，一帧只交一档。
+    std::optional<Rect> retry_now_button_box_;
+    std::optional<Rect> stop_reconnect_button_box_;
 };
 
 }  // namespace borealis::ui

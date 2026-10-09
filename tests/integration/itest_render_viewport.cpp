@@ -20,7 +20,10 @@
 ///           下发腿重取行列数、换链后字距与格推进仍同源、闪烁周期改动按新周期重注册（每 tick 恰翻
 ///           一次），以及换交互口径后「下一次读」用新变换而存下的选区端点未被回头改写；另有 dead-session
 ///           浮层（`SPEC.FEAT.WS.05`）的四例：会话活着时浮层不现身、干净退出那一刻浮层落地并把重启按钮
-///           交进窗口 dp 盒、真点按钮只唤一次钩子、点按钮之外仍走选区（「保留终端内容供回看」那一半）。
+///           交进窗口 dp 盒、真点按钮只唤一次钩子、点按钮之外仍走选区；另有该条 SSH 腿的自动重连浮层两态
+///           （裁决 7.99 D5）五例：重连中交出「立即重试」「停止重连」两枚盒而不带重启盒、落终态档位时回落
+///           到一枚加宽的按档案重启盒、两枚按钮各只直达自己的控制位一次（三条通道互不串门）、卡片之外
+///           仍是选区（需求那句「保留终端内容供回看」在重连中也成立）。
 ///           像素一律比 RGBA 四通道含 alpha：Headless 帧底色是全透明黑 (0,0,0,0)，只比 RGB 会让
 ///           「画了个纯黑」与「什么都没画」混为一谈。
 ///
@@ -68,6 +71,9 @@ using borealis::grid::Row;
 using borealis::grid::Storage;
 using borealis::session::Connection;
 using borealis::session::ConnectionEvents;
+using borealis::session::ReconnectControl;
+using borealis::session::ReconnectProgress;
+using borealis::session::ReconnectStop;
 using borealis::session::Session;
 using borealis::session::Size;
 using borealis::term::Cursor;
@@ -94,7 +100,11 @@ constexpr Size kNominalSize{80U, 24U};
 auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
 
 /// @brief 传输连接替身：记录会话下发的尺寸，并可主动投递字节（测试里投递线程即读线程）。
-class FakeConnection final : public Connection {
+///
+/// 另接一枚 `ReconnectControl`（`SPEC.FEAT.WS.05` 的 SSH 腿）：视口的「立即重试」「停止重连」两枚
+/// 按钮经 `Session::reconnect_control()` 直达这里，于是那两击的计数是无头可断的观测点，
+/// 不需要一条真的退避线程。
+class FakeConnection final : public Connection, public ReconnectControl {
   public:
     auto start(ConnectionEvents &events) -> void override {
         events_ = &events;
@@ -111,6 +121,16 @@ class FakeConnection final : public Connection {
 
     [[nodiscard]] auto alive() const noexcept -> bool override { return alive_; }
 
+    auto retry_now() -> void override { ++retry_now_calls_; }
+
+    auto stop_reconnect() -> void override { ++stop_reconnect_calls_; }
+
+    [[nodiscard]] auto retry_now_calls() const noexcept -> std::size_t { return retry_now_calls_; }
+
+    [[nodiscard]] auto stop_reconnect_calls() const noexcept -> std::size_t {
+        return stop_reconnect_calls_;
+    }
+
     /// @brief 关掉进程并**发出 `on_closed` 事件**（`SPEC.FEAT.WS.05` 判据的触发腿）。
     ///
     /// 只翻 `alive_` 而不发事件是「假死」：视口的浮层与 `Session::on_closed` 里那一次唤醒都不成立，
@@ -120,6 +140,13 @@ class FakeConnection final : public Connection {
         alive_ = false;
         if (events_ != nullptr) {
             events_->on_closed();
+        }
+    }
+
+    /// @brief 投一份重连进度快照（腿→会话那条 latest-value 通道的替身入口，裁决 7.99 D5）。
+    auto post_progress(const ReconnectProgress &progress) -> void {
+        if (events_ != nullptr) {
+            events_->on_reconnect_progress(progress);
         }
     }
 
@@ -138,6 +165,8 @@ class FakeConnection final : public Connection {
   private:
     ConnectionEvents *events_ = nullptr;
     bool alive_ = false;
+    std::size_t retry_now_calls_ = 0U;
+    std::size_t stop_reconnect_calls_ = 0U;
 };
 
 /// @brief 手工搭一份调色板：16 基本色两两互异，且都不同于默认前景/底色与光标色。
@@ -369,6 +398,45 @@ class Harness {
     auto kill_session_and_render() -> void {
         connection_->close_and_notify();
         render();
+    }
+
+    /// @brief 造「重连中」现场：会话已死 ∧ 快照里还挂着下一回（延迟为正）。
+    ///
+    /// 生产里这一份快照由读线程的退避环投出（裁决 7.99 D5）；沙箱无 sshd，故由替身直投——
+    /// 浮层的两态判据吃的是 `Session` 的那份 latest-value，与投它的线程无关。
+    auto enter_redialing_and_render(int attempt = 2, int total = 3, int delay_ms = 4000) -> void {
+        connection_->close_and_notify();
+        connection_->post_progress(ReconnectProgress{.attempt = attempt,
+                                                     .total = total,
+                                                     .delay_ms = delay_ms,
+                                                     .stop = ReconnectStop::None});
+        render();
+    }
+
+    /// @brief 造「终态」现场：环已收口并留下档位（草图屏 B 的三档由参数选）。
+    auto enter_reconnect_stop_and_render(ReconnectStop stop, int attempt = 3, int total = 3) -> void {
+        connection_->close_and_notify();
+        connection_->post_progress(ReconnectProgress{.attempt = attempt,
+                                                     .total = total,
+                                                     .delay_ms = 0,
+                                                     .stop = stop});
+        render();
+    }
+
+    /// @brief 本帧「立即重试」/「停止重连」的窗口 dp 盒（非重连中态即空）。
+    [[nodiscard]] auto retry_now_button_box() const -> std::optional<Rect> {
+        return view_->retry_now_button_box();
+    }
+    [[nodiscard]] auto stop_reconnect_button_box() const -> std::optional<Rect> {
+        return view_->stop_reconnect_button_box();
+    }
+
+    /// @brief 两枚重连按钮各自的调用计数（直达替身连接的控制位，与重启钩子互不相干）。
+    [[nodiscard]] auto retry_now_calls() const noexcept -> std::size_t {
+        return connection_->retry_now_calls();
+    }
+    [[nodiscard]] auto stop_reconnect_calls() const noexcept -> std::size_t {
+        return connection_->stop_reconnect_calls();
     }
 
     /// @brief 选区文本（复制腿的产物，不经系统剪贴板）。
@@ -2061,6 +2129,125 @@ AURORA_TEST_CASE(click_outside_restart_button_still_selects_dead_pane) {
     h.pointer(au::MouseAction::Move, 2U, 3U);
     h.pointer(au::MouseAction::Release, 2U, 3U);
     h.render();
+    AURORA_TEST_CHECK_EQ(h.restart_hook_calls(), 0U);
+    AURORA_TEST_CHECK_FALSE(h.selected_text().empty());
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+// 自动重连浮层的两态（`SPEC.FEAT.WS.05` 的 SSH 腿，裁决 7.99 D5；草图 `UI_RECONNECT.draft.svg` 屏 A/B
+// 的判据 2 与判据 4）。替身连接兼任 `ReconnectControl`，故两枚按钮那一下直达的是本驱动台数得清的
+// 控制位，而不是一条真的退避线程——沙箱无 sshd，重拨本身在 `etest_` 那一侧。
+
+AURORA_TEST_CASE(redialing_overlay_lands_two_buttons_and_no_restart) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.feed("\x1b[?25l\x1b[3;1HBYE");
+    h.install_restart_counter();
+    h.enter_redialing_and_render();
+
+    // 判据 2：重连中态交出的是「立即重试」「停止重连」两枚盒，而**没有**重启盒——那一档的出口
+    // 只有两枚按钮（终态才回落单按钮），两档同帧落笔就是浮层在自相矛盾。
+    const auto retry = h.retry_now_button_box();
+    const auto stop = h.stop_reconnect_button_box();
+    AURORA_TEST_REQUIRE_MSG(retry.has_value() && stop.has_value(),
+                            "reconnecting overlay never reached the frame");
+    AURORA_TEST_CHECK_FALSE(h.restart_button_box().has_value());
+    AURORA_TEST_CHECK_EQ(retry->width, 96.0);
+    AURORA_TEST_CHECK_EQ(retry->height, 32.0);
+    AURORA_TEST_CHECK_EQ(stop->width, 96.0);
+    // 两枚同高、左右并排且互不重叠（第二枚的左沿在第一枚右沿之外）。
+    AURORA_TEST_CHECK_EQ(stop->height, 32.0);
+    AURORA_TEST_CHECK_GE(stop->x, retry->x + retry->width);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(reconnect_stop_overlay_falls_back_to_single_wide_button) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.feed("\x1b[?25l\x1b[3;1HBYE");
+    h.install_restart_counter();
+    h.enter_reconnect_stop_and_render(ReconnectStop::AttemptsExhausted);
+
+    // 判据 2 的另一半：环落终态 ⇒ 两枚重连按钮消散、只剩一枚重启出口。宽度取 150 那一档而不是
+    // 无快照腿的 96——分档标签「重启（按档案）」是七个全角位，这一格宽度差正是「按档位换了文案」
+    // 的像素可观测形态。
+    AURORA_TEST_CHECK_FALSE(h.retry_now_button_box().has_value());
+    AURORA_TEST_CHECK_FALSE(h.stop_reconnect_button_box().has_value());
+    const auto box = h.restart_button_box();
+    AURORA_TEST_REQUIRE_MSG(box.has_value(), "terminal-state overlay lost its only exit");
+    AURORA_TEST_CHECK_EQ(box->width, 150.0);
+    AURORA_TEST_CHECK_EQ(box->height, 32.0);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(click_on_retry_now_button_reaches_control_once) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.install_restart_counter();
+    h.enter_redialing_and_render();
+    const auto box = h.retry_now_button_box();
+    AURORA_TEST_REQUIRE(box.has_value());
+
+    const double cx = box->x + box->width / 2.0;
+    const double cy = box->y + box->height / 2.0;
+    h.pointer_at(au::MouseAction::Press, cx, cy);
+    h.pointer_at(au::MouseAction::Release, cx, cy);
+    // 判据 2 的动作面：这一击只截断退避（`retry_now`），既不多拨一回也不换会话——两枚按钮与重启钩子
+    // 三条通道各自计数，任何一条串了门都会在这里露出来。
+    AURORA_TEST_CHECK_EQ(h.retry_now_calls(), 1U);
+    AURORA_TEST_CHECK_EQ(h.stop_reconnect_calls(), 0U);
+    AURORA_TEST_CHECK_EQ(h.restart_hook_calls(), 0U);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(click_on_stop_reconnect_button_reaches_control_once) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.install_restart_counter();
+    h.enter_redialing_and_render();
+    const auto box = h.stop_reconnect_button_box();
+    AURORA_TEST_REQUIRE(box.has_value());
+
+    const double cx = box->x + box->width / 2.0;
+    const double cy = box->y + box->height / 2.0;
+    h.pointer_at(au::MouseAction::Press, cx, cy);
+    h.pointer_at(au::MouseAction::Release, cx, cy);
+    AURORA_TEST_CHECK_EQ(h.stop_reconnect_calls(), 1U);
+    AURORA_TEST_CHECK_EQ(h.retry_now_calls(), 0U);
+    AURORA_TEST_CHECK_EQ(h.restart_hook_calls(), 0U);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(click_outside_reconnecting_card_still_selects) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.feed("\x1b[?25l\x1b[3;1HELKJ");
+    h.install_restart_counter();
+    h.enter_redialing_and_render();
+    AURORA_TEST_REQUIRE(h.retry_now_button_box().has_value());
+
+    // 判据 4：卡片之外的落点仍归选区——重连中不遮蔽回看内容，断线那一段照样可选可复制。
+    h.pointer(au::MouseAction::Press, 2U, 1U);
+    h.pointer(au::MouseAction::Move, 2U, 3U);
+    h.pointer(au::MouseAction::Release, 2U, 3U);
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.retry_now_calls(), 0U);
+    AURORA_TEST_CHECK_EQ(h.stop_reconnect_calls(), 0U);
     AURORA_TEST_CHECK_EQ(h.restart_hook_calls(), 0U);
     AURORA_TEST_CHECK_FALSE(h.selected_text().empty());
 #else

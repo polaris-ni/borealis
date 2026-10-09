@@ -671,6 +671,72 @@ auto main() -> int {
     };
 
     // SSH 会话装配（CONN.02）：SshConnection + 与本地腿同一套视口参数。
+    // 自动重连档（WS.05，裁决 7.99 D4①）在这里折算：三键在**建会话那一刻**折成 `conn::RetryPolicy`
+    // 交进构造参数，故设置面板把这三行登记为「下次会话生效」。不让传输腿回头读 store——配置的宿主在
+    // 装配层，且跨线程现读会撞上架构 §3.4（锁内不做 IO）那条纪律。
+    auto reconnect_policy = [&settings]() -> borealis::conn::RetryPolicy {
+        return borealis::conn::RetryPolicy{
+            .base_ms = settings.connection.ssh.reconnect_base_delay_ms,
+            .cap_ms = settings.connection.ssh.reconnect_max_delay_ms,
+            .max_attempts = settings.connection.ssh.reconnect_attempts,
+        };
+    };
+
+    // 就地换掉某一格的会话（`SPEC.FEAT.WS.05` 的重启腿共有的一段）：关旧会话 → 建视口 → 建工作区 →
+    // **同 TabId 覆盖**。本地档与按档案档（裁决 7.99 D6）都走它，差别只在交进来的是哪一条传输腿。
+    auto replace_tab_session = [&](borealis::ui::TabId id,
+                                   std::shared_ptr<borealis::session::Session> session) -> void {
+        auto it = tab_workspaces.find(id);
+        if (it == tab_workspaces.end() || session == nullptr) {
+            AURORA_LOG_WARN("main", "restart: tab id not present in workspace map");
+            return;
+        }
+        // 关掉旧会话（返回后不再回调 `ConnectionEvents`，架构 §7.3 的旧内容保留到这一步为止）。
+        for (auto &old : it->second.sessions) {
+            old->close();
+        }
+        it->second.sessions.clear();
+
+        session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
+        session->start();
+
+        auto view = std::make_shared<borealis::ui::TerminalView>(
+            *session, make_appearance(settings, catalog), make_interaction(settings));
+        if (wire_view) {
+            wire_view(*view);
+        }
+
+        borealis::ui::WorkspaceView::Hooks ws_hooks;
+        ws_hooks.make_pane = [session, view](borealis::ui::PaneId) -> std::shared_ptr<borealis::ui::TerminalView> {
+            return view;
+        };
+        ws_hooks.dispatch_grid = [session](borealis::ui::PaneId, borealis::ui::GridSize size) -> void {
+            session->resize({size.columns, size.rows});
+        };
+        ws_hooks.teardown_pane = [](borealis::ui::PaneId) -> void {};
+
+        auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
+        // **同 TabId 覆盖**：`tab_strip` 一格不动，`current_tab_id` 一格不动，仅 `tab_workspaces[id]` 换一份。
+        it->second = TabWorkspace{.workspace = std::move(workspace), .sessions = {std::move(session)}};
+        rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
+    };
+
+    // 按档案重开一格 SSH 会话（裁决 7.99 D6）：新开一格是另一个意图，故这里只覆盖既有那一格。
+    // 标签身份**不清账**——这一格仍是那张档案的会话，SFTP 面板与「重启」的分流判据都按它取料。
+    auto restart_ssh_tab = [&](borealis::ui::TabId id, const borealis::conn::SshProfile &ssh,
+                               std::optional<std::string> secret) -> void {
+        std::optional<std::string> sftp_secret = secret;  // 留档副本先取，形参那份随后移交。
+        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
+        auto connection = std::make_unique<borealis::conn::SshConnection>(
+            ssh, std::move(secret), kNominalViewport, reconnect_policy());
+        auto session = std::make_shared<borealis::session::Session>(
+            std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
+            width_policy, make_terminal_defaults(settings));
+        ssh_secret_by_tab[id] = std::move(sftp_secret);
+        replace_tab_session(id, std::move(session));
+        AURORA_LOG_INFO("main", "restart: tab ", id, " re-dialled by profile");
+    };
+
     auto open_ssh_tab = [&](const borealis::conn::Profile &profile,
                             std::optional<std::string> secret) -> void {
         // SFTP 面板接线：留档副本先取，secret 随后照旧移交给 SshConnection。
@@ -678,7 +744,7 @@ auto main() -> int {
         const borealis::conn::SshProfile sftp_profile = profile.ssh;
         auto connection =
             std::make_unique<borealis::conn::SshConnection>(profile.ssh, std::move(secret),
-                                                            kNominalViewport);
+                                                            kNominalViewport, reconnect_policy());
         auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
         auto session = std::make_shared<borealis::session::Session>(
             std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
@@ -713,14 +779,25 @@ auto main() -> int {
     // 明文回到 on_secret 后才真正拉起 Tunnel（同 pending_profile 的先例形态）。
     auto pending_tunnel =
         std::optional<std::pair<borealis::conn::SshProfile, borealis::conn::TunnelSpec>>{};
+    // 重启时的凭据询问（裁决 7.99 D6）：形态同 `pending_profile`，差别在回来的材料喂给**已存在的
+    // 那一格**（`restart_ssh_tab`）而不是新开一格。询问型档案断线后手上没有材料，这一支就是它的出口。
+    auto pending_restart =
+        std::optional<std::pair<borealis::ui::TabId, borealis::conn::SshProfile>>{};
     // 拉起隧道主体的装配点（下方隧道段赋值；询问回-call 与自启扫描共用）。
     auto launch_tunnel =
         std::function<void(const borealis::conn::SshProfile &, std::optional<std::string>,
                            const borealis::conn::TunnelSpec &)>{};
     borealis::ui::CredentialPrompt::Hooks prompt_hooks;
     prompt_hooks.on_secret =
-        [&open_ssh_tab, &pending_profile, &pending_tunnel,
+        [&open_ssh_tab, &restart_ssh_tab, &pending_profile, &pending_restart,
+         &pending_tunnel,
          &launch_tunnel](const std::string &secret) -> void {
+        if (pending_restart.has_value()) {
+            const auto [id, ssh] = std::move(*pending_restart);
+            pending_restart.reset();
+            restart_ssh_tab(id, ssh, secret);
+            return;
+        }
         if (pending_profile.has_value()) {
             auto profile = std::move(*pending_profile);
             pending_profile.reset();
@@ -733,8 +810,9 @@ auto main() -> int {
             launch_tunnel(ssh_profile, secret, spec);
         }
     };
-    prompt_hooks.on_cancel = [&pending_profile, &pending_tunnel]() -> void {
+    prompt_hooks.on_cancel = [&pending_profile, &pending_restart, &pending_tunnel]() -> void {
         pending_profile.reset();
+        pending_restart.reset();
         pending_tunnel.reset();
     };
     auto credential_prompt =
@@ -1168,54 +1246,41 @@ auto main() -> int {
             return;
         }
         const borealis::ui::TabId id = *current_tab_id;
-        auto it = tab_workspaces.find(id);
-        if (it == tab_workspaces.end()) {
-            AURORA_LOG_WARN("main", "restart: tab id not present in workspace map");
+        // 分流判据（裁决 7.99 D6）：这一格在 `ssh_profile_by_tab` 里有没有档案身份。有就是 SSH 标签，
+        // 「重启」必须重开 SSH——此前这里固定起本地 shell，标签名却还是档案名，那是已落的生产语义错误。
+        const auto owned = ssh_profile_by_tab.find(id);
+        if (owned == ssh_profile_by_tab.end()) {
+            // 本地腿：命令与目录一律从**当前**配置读，与「本会话最初那一格用的那份」脱钩，
+            // 因为用户在面板里可能已经改过 `connection.local_shell` 或 `connection.startup_directory`。
+            borealis::conn::LocalTerminalSpec spec;
+            spec.command_line = settings.connection.local_shell;
+            spec.working_directory = settings.connection.startup_directory;
+            auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
+            auto session = std::make_shared<borealis::session::Session>(
+                borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
+                kNominalViewport, settings.terminal.scrollback_limit, width_policy,
+                make_terminal_defaults(settings));
+            replace_tab_session(id, std::move(session));
+            AURORA_LOG_INFO("main", "restart: tab ", id, " local session replaced");
             return;
         }
-        // 关掉旧会话（返回后不再回调 `ConnectionEvents`，架构 §7.3 的旧内容保留到这一步为止）。
-        for (auto &old : it->second.sessions) {
-            old->close();
+
+        const borealis::conn::SshProfile ssh = owned->second;
+        const auto ask = borealis::conn::secret_ask_for(borealis::conn::normalized_auth_method(ssh));
+        std::optional<std::string> material{};
+        if (const auto held = ssh_secret_by_tab.find(id); held != ssh_secret_by_tab.end()) {
+            material = held->second;
         }
-        it->second.sessions.clear();
-
-        // 起新会话：命令与目录一律从**当前**配置读，与「本会话最初那一格用的那份」脱钩，
-        // 因为用户在面板里可能已经改过 `connection.local_shell` 或 `connection.startup_directory`。
-        borealis::conn::LocalTerminalSpec spec;
-        spec.command_line = settings.connection.local_shell;
-        spec.working_directory = settings.connection.startup_directory;
-        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
-        auto session = std::make_shared<borealis::session::Session>(
-            borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
-            kNominalViewport, settings.terminal.scrollback_limit, width_policy,
-            make_terminal_defaults(settings));
-        session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
-        session->start();
-
-        auto view = std::make_shared<borealis::ui::TerminalView>(
-            *session, make_appearance(settings, catalog), make_interaction(settings));
-        if (wire_view) {
-            wire_view(*view);
+        if (ask == borealis::conn::SecretAsk::None || material.has_value()) {
+            // agent 认证没有材料可要；句柄型/询问型只要这一格此前问出来过材料就静默重拨
+            //（CONN.09 的降级语义：材料在内存里活到连接关闭，不二次弹窗）。
+            restart_ssh_tab(id, ssh, std::move(material));
+            return;
         }
-
-        borealis::ui::WorkspaceView::Hooks ws_hooks;
-        ws_hooks.make_pane = [session, view](borealis::ui::PaneId) -> std::shared_ptr<borealis::ui::TerminalView> {
-            return view;
-        };
-        ws_hooks.dispatch_grid = [session](borealis::ui::PaneId, borealis::ui::GridSize size) -> void {
-            session->resize({size.columns, size.rows});
-        };
-        ws_hooks.teardown_pane = [](borealis::ui::PaneId) -> void {};
-
-        auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
-        // **同 TabId 覆盖**：`tab_strip` 一格不动，`current_tab_id` 一格不动，仅 `tab_workspaces[id]` 换一份。
-        it->second = TabWorkspace{.workspace = std::move(workspace), .sessions = {std::move(session)}};
-        // 重启腿固定走本地 shell（上面 spec 即本地规格），标签的 SSH 身份就此清账，
-        // 免得 SFTP 面板还把这张标签当 SSH 会话（D8① 判活的另一处来源）。
-        ssh_profile_by_tab.erase(id);
-        ssh_secret_by_tab.erase(id);
-        rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
-        AURORA_LOG_INFO("main", "restart: tab ", id, " session replaced");
+        // 询问型且手上没材料：弹询问，明文回到 `on_secret` 的 `pending_restart` 那一支才真正重开。
+        // 标题给的是主机而不是档案名——本表只留 `SshProfile`，档案展示名不在这一层的料里。
+        pending_restart = std::make_pair(id, ssh);
+        credential_prompt->ask(ask, ssh.host);
     };
 
     // `session.restart` 命令（`SPEC.FEAT.WS.05`）：与浮层按钮同源，判据是「同一份闭包、两处入口」。

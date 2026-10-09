@@ -236,6 +236,19 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"session.restart.hint", "会话已退出"},
     {"session.restart.button", "重启"},
 
+    // ---- SSH 自动重连浮层两态（`SPEC.FEAT.WS.05` 的 SSH 腿，裁决 7.99 D5；草图屏 A/B）----
+    // 终态三档的措辞只以快照里的**档位**分档：关闭原因本身不外传（D3 只交档位），故「不自动重试」
+    // 那一档的文案必须同时罩得住认证失败与主机密钥拒绝两种原因。
+    {"session.reconnect.line", "连接已断开 · 第 {0} / {1} 次自动重连"},
+    {"session.reconnect.countdown", "{0} 秒后自动重试"},
+    {"session.reconnect.retry_now", "立即重试"},
+    {"session.reconnect.stop", "停止重连"},
+    {"session.reconnect.exhausted", "重试 {0} 次仍失败 · 已停止"},
+    {"session.reconnect.not_reconnectable", "认证被拒 · 不自动重试"},
+    {"session.reconnect.user_stopped", "自动重连已停止"},
+    {"session.restart.by_profile", "重启（按档案）"},
+    {"session.restart.retry_credential", "重试并换凭据"},
+
     // ---- 命令面板（`SPEC.FEAT.WS.07`，判据文 `codespec/UI_WORKSPACE.draft.md` §4）----
     // 占位符与空态两条的 **key 由框架命名**（`CommandPalette::AURORA_DEFAULT_*_KEY`，G38 / G39 回货形
     // 态），本件只登记取值，故这两串 key 不得自创——key 一漂移，面板就静默回落英文（裁决 **7.92**②）。

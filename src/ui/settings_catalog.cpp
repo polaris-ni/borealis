@@ -274,26 +274,27 @@ namespace {
                                    600.0,
                                    ConsumerStatus::Absent,
                                    EffectLevel::NextSession));
-    // 自动重连三键（WS.05，裁决 7.99 D4①）：区间照抄装载侧把守的那三条。生效档取 Immediate 是
-    // 按消费方的实际读法登记的——重拨环每回拨前现读现算，故改档位不等下一次建会话（批 2 接线）。
+    // 自动重连三键（WS.05，裁决 7.99 D4①）：区间照抄装载侧把守的那三条。消费方是装配层在建会话
+    // 那一刻把三键折成 `conn::RetryPolicy` 交进 `SshConnection` 的构造参数（批 3 接线），故生效档取
+    // NextSession 而不是 Immediate：在途连接的重拨环读的是那份快照，改档位要等下一格 SSH 会话。
     catalog.push_back(integer_step("connection.ssh.reconnect_base_delay_ms",
                                    SettingsPage::Connection,
                                    100.0,
                                    60000.0,
-                                   ConsumerStatus::Absent,
-                                   EffectLevel::Immediate));
+                                   ConsumerStatus::Wired,
+                                   EffectLevel::NextSession));
     catalog.push_back(integer_step("connection.ssh.reconnect_max_delay_ms",
                                    SettingsPage::Connection,
                                    1000.0,
                                    600000.0,
-                                   ConsumerStatus::Absent,
-                                   EffectLevel::Immediate));
+                                   ConsumerStatus::Wired,
+                                   EffectLevel::NextSession));
     catalog.push_back(integer_step("connection.ssh.reconnect_attempts",
                                    SettingsPage::Connection,
                                    0.0,
                                    100.0,
-                                   ConsumerStatus::Absent,
-                                   EffectLevel::Immediate));
+                                   ConsumerStatus::Wired,
+                                   EffectLevel::NextSession));
     catalog.push_back(integer_step("connection.serial.baud",
                                    SettingsPage::Connection,
                                    1.0,
