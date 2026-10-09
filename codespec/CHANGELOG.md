@@ -4,6 +4,14 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.96（2026-10-09）**`SPEC.FEAT.CONN.08` SSH 隧道模型与三式传输腿交付：纯逻辑裁决、SOCKS5 握手解析、平台 TCP 腿、隧道工作线程**（`src/conn/tunnel_model.{h,cpp}` + `src/conn/tunnel_socks.{h,cpp}` + `src/conn/tunnel_client.{h,cpp}` + `src/platform/tcp.h` + `src/platform/{posix,win}/tcp.cpp` + `tests/unit/utest_tunnel_model.cpp` + `tests/unit/utest_tunnel_socks.cpp` + `tests/unit/utest_tcp_loopback.cpp` + `tests/integration/itest_tunnel_failure.cpp` + `src/CMakeLists.txt`，判据入册为裁决 **7.96**）
+
+**动机**：M3 余下切片中 CONN.08 与已落腿复用面最大——建连/认证直接吃 `conn/ssh_dial` 共用腿（v0.95 抽出），「隧道独立于终端会话」的需求语义在「每隧道自开会话」下不需要碰 `SshConnection` 读线程。开工前经用户两问定形：会话归属取每隧道自开（SFTP「打开即连」同款），本期射程取「模型+三式传输腿」，隧道管理 UI（列表启停、状态提示）按 AGENTS UI 节奏留待设计稿评审后另棒交付。
+
+**决定形态的口径**：⑴ **三层分层**：`tunnel_model` 纯逻辑（形态校验、同侧监听点冲突、状态机迁移表、指数退避与重试穷尽裁决）→ `tunnel_socks` 字节级 SOCKS5 状态机（仅 CONNECT、仅无认证，IPv4/域名/IPv6 全收）→ `tunnel_client` 工作线程主循环（拨号→监听→串行受理→退避重连），层间只以标准类型交接，前两层全部无头单测（`utest_tunnel_model` 六例 + `utest_tunnel_socks` 五例）。⑵ **平台纪律**：裸 socket 属平台假设，按 AGENTS 第 23 条收进 `src/platform/`——`tcp.h` 只暴露监听点/字节流两抽象类与两工厂函数，读分档 Data/Timeout/Closed/Error 让转发泵能区分「对端收摊」与「真错」；本期收窄 IPv4（`utest_tcp_loopback` 纯环回四例守语义）。⑶ **-R 走 libssh 现存接口**：`ssh_channel_listen_forward`/`ssh_channel_open_forward_port` 族带弃用标注（替代的 `ssh_connector` 族与串行受理形态不合），定点抑制告警消费并登记观察（裁决 7.96④）。⑷ **可测性兜底**：沙箱无 sshd，真转发不可判——失败路径可判的部分以 `itest_tunnel_failure` 锁死（TCP 拒→退避计数→Failed、非法定义不起线程），泵与受理循环待 sshd 环境补 etest。
+
+**代价**：⑴ UI 未落，列表启停与状态提示属需求本体，CONN.08 在 UI 切片前不得称「交付完成」（裁决 7.96 代价③）；⑵ 并发多连接受理延后（本期每隧道串行一条）；⑶ 真连成功腿未验证（无 sshd）+ Windows/MSVC 腿未验证（与既有口径一致）；⑷ secret 明文副本随隧道存活至 stop——自动重试的必然代价，口径同 `SshConnection::secret_`；⑸ 隧道定义暂无持久化形态（归 UI 切片裁决）。
+
 ## v0.95（2026-10-09）**`SPEC.FEAT.CONN.04` SFTP 浏览器交付：纯逻辑模型、libssh 传输腿、右停靠双栏面板**（`src/conn/ssh_dial.{h,cpp}` + `src/conn/sftp_model.{h,cpp}` + `src/conn/sftp_client.{h,cpp}` + `src/ui/sftp_format.{h,cpp}` + `src/ui/sftp_panel.{h,cpp}` + `src/ui/settings_i18n.cpp` + `src/main.cpp` + `src/CMakeLists.txt` + `tests/unit/utest_sftp_model.cpp` + `tests/unit/utest_sftp_format.cpp` + `codespec/UI_SFTP.draft.{md,svg,png}`，判据入册为裁决 **7.95**）
 
 **动机**：M3 主干（v0.94）落定后，`SPEC.FEAT.CONN.04` 是该里程碑余下唯一有真实消费场景的条目（CONN.08 隧道 / CONN.10 密钥管理器依赖更远）。SFTP 建连/认证与 `SshConnection` 完全同口径，故先抽出共用腿再落第二消费方；UI 按仓库节奏先出设计稿（`codespec/UI_SFTP.draft.md`），D1–D9 经用户批准收口（裁决 7.95）后转实现。
