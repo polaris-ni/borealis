@@ -174,6 +174,17 @@ private:
     auto rebuild_overlay() -> void;
     auto clear_state() -> void;
     auto apply_message(const InboxMessage &msg) -> bool;
+    /// @brief 操作期掉线类失败的一回自动重拨（`SPEC.FEAT.CONN.04`，裁决 7.99 D7④）。
+    ///
+    /// 命中判据是 `conn::sftp_error_drops_link`：列目录 / 增删改 / 传输任一回 Network 或
+    /// NotConnected，都说明手上这条会话已经死了——今天不重拨，此后每次操作都对着死会话再发一遍、
+    /// 逐条回同一个错，而「重试」按钮永远不出现（设计稿 §1 第 8 条）。本件自己爬一回：投一条
+    /// Connect（同档案、`resolve_secret()` 现取），成功即由既有的 ConnectDone 腿复列断线前那个
+    /// `remote_path_`。一回掉线只重拨一回（旗标随连接成功复位），重拨再失败落既有 Failed 与
+    /// 那枚「重试」——这里没有持续读循环，退避环无对象可退。
+    /// @param error 那一手操作返回的错误（判据 `conn::sftp_error_drops_link` 吃它）。
+    /// @return 是否已投出那一回 Connect（调用方据此不再重复重建浮层）。
+    auto redial_once(conn::SftpError error) -> bool;
     auto refresh_progress_in_place() -> void;
 
     auto on_remote_clicked(const std::string &name, conn::SftpEntryKind kind) -> void;
@@ -224,6 +235,8 @@ private:
     bool transfer_is_download_{false};
     int transfers_posted_{0};         // 本次打开累计投递的传输数（排队计数＝posted−done）。
     int transfers_done_{0};
+    /// @brief 掉线自动重拨的一回旗标（裁决 7.99 D7④）：连接成功与重新打开各复位一次。
+    bool redial_armed_{true};
 
     // 双击模拟：框架按钮只有单击回调，500 ms 内同条目二击按 D3① 的「双击进入」。
     std::string last_click_pane_{};

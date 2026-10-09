@@ -24,6 +24,7 @@
 #include "aurora/widget/stack.h"
 #include "aurora/widget/text.h"
 
+#include "conn/reconnect.h"  // sftp_error_drops_link（裁决 7.99 D7④ 的掉线类判据）
 #include "sftp_format.h"
 #include "settings_i18n.h"
 #include "settings_panel.h"
@@ -175,6 +176,8 @@ auto SftpPanel::clear_state() -> void {
     remote_entries_.clear();
     local_entries_.clear();
     transfer_label_.clear();
+    // 重新打开＝新的一条会话生命周期：一回重拨的旗标随之复位（裁决 7.99 D7④ 细则 (ii)）。
+    redial_armed_ = true;
     open_ = false;
 }
 
@@ -422,6 +425,9 @@ auto SftpPanel::apply_message(const InboxMessage &msg) -> bool {
         state_ = msg.ok ? ConnState::Connected : ConnState::Failed;
         last_error_ = msg.error;
         if (msg.ok) {
+            // 一回掉线只重拨一回：新的活会话到手，旗标就此重新武装（裁决 7.99 D7④ 细则 (ii)）。
+            // 复列断线前那个目录不需要额外的腿——下面这两条 List 用的就是原样的 `remote_path_`。
+            redial_armed_ = true;
             Request remote{.kind = Request::Kind::ListRemote, .a = remote_path_};
             post(std::move(remote));
             Request local{.kind = Request::Kind::ListLocal, .a = local_path_};
@@ -443,6 +449,11 @@ auto SftpPanel::apply_message(const InboxMessage &msg) -> bool {
             }
         } else {
             last_error_ = msg.error;
+            // 掉线类（Network / NotConnected）⇒ 这条会话其实已经死了，本件自己爬一回（D7④）；
+            // 本地侧那一支不在此列：本地列目录失败只会回 LocalIo，不属掉线类。
+            if (redial_once(msg.error)) {
+                return false;  // `connect_now()` 已经重建过浮层，本帧不再重复一次
+            }
         }
         return true;
     case InboxMessage::Kind::LocalListing:
@@ -470,6 +481,9 @@ auto SftpPanel::apply_message(const InboxMessage &msg) -> bool {
             progress_active_ = false;
             progress_ = conn::SftpProgress{};
         }
+        if (redial_once(msg.error)) {
+            return false;
+        }
         return true;
     case InboxMessage::Kind::TransferBegin:
         transfer_label_ = msg.path;
@@ -484,9 +498,26 @@ auto SftpPanel::apply_message(const InboxMessage &msg) -> bool {
             progress_active_ = false;
             progress_ = conn::SftpProgress{};
         }
+        // 断线时那一单按失败收尾（细则 (v)）：进度已清、计数已加，重拨只负责把下一条操作接上，
+        // **不做续传**——半成品由既有的取消清理腿负责。
+        if (redial_once(msg.error)) {
+            return false;
+        }
         return true;
     }
     return false;
+}
+
+auto SftpPanel::redial_once(conn::SftpError error) -> bool {
+    // 三道闸各自守一件事：错误不属掉线类（权限 / 不存在 / 取消 / 本地 IO）就绝不是会话死了；
+    // 旗标已花完就是「一回掉线只重拨一回」；状态不是 Connected 就是重拨已在途，再投一条 Connect
+    // 只会让同一份档案在队列里排两遍。
+    if (!conn::sftp_error_drops_link(error) || !redial_armed_ || state_ != ConnState::Connected) {
+        return false;
+    }
+    redial_armed_ = false;
+    connect_now();  // 同档案、`resolve_secret()` 现取：凭据面零新增驻留（§1 第 9 条）。
+    return true;
 }
 
 auto SftpPanel::refresh_progress_in_place() -> void {
