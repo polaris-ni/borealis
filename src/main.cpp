@@ -36,6 +36,7 @@
 #include "ui/debug_panel.h"
 #include "ui/settings_i18n.h"
 #include "ui/settings_panel.h"
+#include "ui/sftp_panel.h"
 #include "ui/startup_notice.h"
 #include "ui/tab_bar.h"
 #include "ui/terminal_view.h"
@@ -225,6 +226,13 @@ auto main() -> int {
     // 当前显示的标签 ID（用于场景根切换）
     std::optional<borealis::ui::TabId> current_tab_id;
 
+    // SFTP 面板（SPEC.FEAT.CONN.04）的标签接线数据：活动标签的 SSH 档案，与该标签
+    // 拨号那次凭据询问得到的秘密材料。材料是**内存副本**，存活期口径同
+    // `SshConnection::secret_`（连接关闭即清）——不落盘、不进日志；CONN.09 本期
+    // 降级为「每次询问」，SFTP 面板的独立会话复用同一次询问的材料，不再二次弹窗。
+    std::map<borealis::ui::TabId, borealis::conn::SshProfile> ssh_profile_by_tab;
+    std::map<borealis::ui::TabId, std::optional<std::string>> ssh_secret_by_tab;
+
     // 每只视口的浮层与搜索依赖接线（宿主与注册表须待 `host` / `app` 建成才取得到，故首标签建得早的
     // 那几只在建成之后统一补挂，见下面赋值处）。缺这两条挂接，右键菜单、多行粘贴确认与搜索浮层
     // **结构上弹不起来**（裁决 7.41③ / 7.81），而集成用例经替身宿主测的是接线而非这里。
@@ -363,6 +371,9 @@ auto main() -> int {
             closed_tab_stack.push(std::move(spec));
             // 销毁对应的 WorkspaceView 和会话
             tab_workspaces.erase(it);
+            // SFTP 面板接线数据随标签同撤（面板的 ssh_tab_alive 即以此判活，D8①）。
+            ssh_profile_by_tab.erase(id);
+            ssh_secret_by_tab.erase(id);
         }
         if (current_tab_id.has_value() && current_tab_id.value() == id) {
             // 选下一个或上一个
@@ -627,6 +638,9 @@ auto main() -> int {
     // SSH 会话装配（CONN.02）：SshConnection + 与本地腿同一套视口参数。
     auto open_ssh_tab = [&](const borealis::conn::Profile &profile,
                             std::optional<std::string> secret) -> void {
+        // SFTP 面板接线：留档副本先取，secret 随后照旧移交给 SshConnection。
+        std::optional<std::string> sftp_secret = secret;
+        const borealis::conn::SshProfile sftp_profile = profile.ssh;
         auto connection =
             std::make_unique<borealis::conn::SshConnection>(profile.ssh, std::move(secret),
                                                             kNominalViewport);
@@ -635,6 +649,10 @@ auto main() -> int {
             std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
             width_policy, make_terminal_defaults(settings));
         create_new_tab_with(std::move(session), decode_tab_name(profile.name));
+        if (current_tab_id.has_value()) {
+            ssh_profile_by_tab[current_tab_id.value()] = sftp_profile;
+            ssh_secret_by_tab[current_tab_id.value()] = std::move(sftp_secret);
+        }
         record_recent(profile.id);
     };
 
@@ -768,6 +786,39 @@ auto main() -> int {
     toggle_connections.action = [&sidebar]() -> void { sidebar->toggle(); };
     toggle_connections.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(toggle_connections));
+
+    // SFTP 浏览器面板（SPEC.FEAT.CONN.04）：右停靠浮层，与侧栏同族。三条 Hooks 全部
+    // 指回上面的标签接线数据，不新造状态：活动 SSH 档案、CONN.09 凭据链的句柄解析、
+    // 标签判活。stack 对象即可——命令与帧回调都只捕获引用，析构顺序上它晚于浮层宿主
+    // 的使用期（main 末尾），析构里 join worker 与断链。
+    borealis::ui::SftpPanel::Hooks sftp_hooks;
+    sftp_hooks.current_ssh_profile = [&ssh_profile_by_tab, &current_tab_id]()
+        -> std::optional<borealis::conn::SshProfile> {
+        if (!current_tab_id.has_value()) {
+            return std::nullopt;
+        }
+        const auto it = ssh_profile_by_tab.find(current_tab_id.value());
+        return it != ssh_profile_by_tab.end() ? std::optional{it->second} : std::nullopt;
+    };
+    sftp_hooks.resolve_secret = [&ssh_secret_by_tab, &current_tab_id]() -> std::optional<std::string> {
+        if (!current_tab_id.has_value()) {
+            return std::nullopt;
+        }
+        const auto it = ssh_secret_by_tab.find(current_tab_id.value());
+        return (it != ssh_secret_by_tab.end() && it->second.has_value()) ? it->second : std::nullopt;
+    };
+    sftp_hooks.ssh_tab_alive = [&ssh_profile_by_tab, &current_tab_id]() -> bool {
+        return current_tab_id.has_value() && ssh_profile_by_tab.count(current_tab_id.value()) > 0;
+    };
+    borealis::ui::SftpPanel sftp_panel{*host, std::move(sftp_hooks)};
+
+    au::Command toggle_sftp;
+    toggle_sftp.id = "sftp.toggle";
+    toggle_sftp.title = borealis::ui::settings_label("sftp.title");
+    toggle_sftp.category = "terminal";
+    toggle_sftp.action = [&sftp_panel]() -> void { sftp_panel.toggle(); };
+    toggle_sftp.scope = au::ShortcutScope::Global;
+    app.commands().add(std::move(toggle_sftp));
 
     // 打开入口按 `SPEC.FEAT.PREF.02` 走命令层：命令是快捷键、菜单与命令面板的共同真源（架构 §11.2），
     // 在此登记一次即同时得到 `Ctrl+,` 与将来面板/命令面板里的同一条目。
@@ -972,6 +1023,10 @@ auto main() -> int {
         auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
         // **同 TabId 覆盖**：`tab_strip` 一格不动，`current_tab_id` 一格不动，仅 `tab_workspaces[id]` 换一份。
         it->second = TabWorkspace{.workspace = std::move(workspace), .sessions = {std::move(session)}};
+        // 重启腿固定走本地 shell（上面 spec 即本地规格），标签的 SSH 身份就此清账，
+        // 免得 SFTP 面板还把这张标签当 SSH 会话（D8① 判活的另一处来源）。
+        ssh_profile_by_tab.erase(id);
+        ssh_secret_by_tab.erase(id);
         rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
         AURORA_LOG_INFO("main", "restart: tab ", id, " session replaced");
     };
@@ -1047,7 +1102,7 @@ auto main() -> int {
     }
 
     app.set_on_frame([&tab_workspaces, &current_tab_id, &outbox, &panel, &tab_strip, &app, &settings,
-                      &last_window_title, &has_live_session]() -> void {
+                      &last_window_title, &has_live_session, &sftp_panel]() -> void {
         // 排帧范围是**全部标签**每帧都排（含隐藏标签，裁决 7.47⑩）：可见性只影响绘制不影响数据。
         // 只排当前标签的后果是三处静默失灵——别的标签的 `OSC 52` 永远留在队列里（取走语义按会话
         // 记账，裁决 7.21③）、BEL 与活动角标要等用户切过去才补亮、OSC 标题不落进标签名。
@@ -1104,6 +1159,7 @@ auto main() -> int {
         }
         
         panel.pump_preview();  // 预览盒是第二个会话，脏行同样按帧排（面板关着即空操作）
+        sftp_panel.tick();     // SFTP 面板取件与判活（D8①/D9①；面板关着即空操作）
     });
     app.run();
 
