@@ -337,12 +337,12 @@ auto main() -> int {
 
     create_new_tab();
 
-    // 辅助函数：重建根 Stack 的子节点列表（标签栏 + 当前工作区）
-    auto rebuild_root_children = [](std::shared_ptr<au::Stack> &stack,
+    // 辅助函数：重建根 Column 的子节点列表（标签栏 + 当前工作区）
+    auto rebuild_root_children = [](std::shared_ptr<au::Column> &column,
                                      const std::map<borealis::ui::TabId, TabWorkspace> &workspaces,
                                      std::optional<borealis::ui::TabId> current_id) -> void {
         // 保留第一个子节点（标签栏），替换第二个（工作区）
-        auto &nodes = stack->child_nodes_mut();
+        auto &nodes = column->child_nodes_mut();
         if (nodes.size() < 2) {
             return;  // 还没初始化完
         }
@@ -350,20 +350,25 @@ auto main() -> int {
         if (current_id.has_value()) {
             auto it = workspaces.find(current_id.value());
             if (it != workspaces.end()) {
-                nodes.push_back(aurora::Node{it->second.workspace});
+                // 工作区占满标签栏以下的全部剩余高度（expand 权重交 FlexLayouter 分配）。
+                aurora::Node ws{it->second.workspace};
+                ws.widget().modifier.set(au::Modifier{}.expand(1.0F));
+                nodes.push_back(std::move(ws));
             }
         }
-        stack->mark_needs_layout();
-        stack->mark_needs_paint();
+        column->mark_needs_layout();
+        column->mark_needs_paint();
     };
 
     // 右键菜单与多行粘贴确认都是浮层，故场景根是浮层宿主而非视口本身（裁决 7.41③）：宿主的子节点
     // [0] 是撑满窗口的标签栏，[1] 是当前工作区，[2..] 是按需追加的 Popup / Dialog / 面板浮层。
     auto host = std::make_shared<au::OverlayHost>();
 
-    // 添加标签栏（用 Stack 承载，因为 OverlayHost 只管理浮层，常规内容须走普通容器）
-    auto root_stack = std::make_shared<au::Stack>();
-    root_stack->modifier.set(au::Modifier{}.fill_max_size());
+    // 添加标签栏（纵向容器承载：OverlayHost 只管理浮层，常规内容须走普通容器；
+    // 交叉轴 Stretch 使标签栏与工作区均撑满窗宽）
+    auto root_column = std::make_shared<au::Column>();
+    root_column->modifier.set(au::Modifier{}.fill_max_size());
+    root_column->set_cross_axis_alignment(au::CrossAxisAlignment::Stretch);
 
     // 「该标签还有活着的会话吗」的**唯一**判定点：关闭确认（`SPEC.FEAT.WS.01`，裁决 7.47⑧）与退出角标
     //（`SPEC.FEAT.WS.04`）吃的是同一个量，两处各写一遍就会出现「画着角标的格子关掉时却弹『还有进程在
@@ -419,7 +424,7 @@ auto main() -> int {
                 current_tab_id.reset();
             }
             // 更新显示的工作区
-            rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
+            rebuild_root_children(root_column, tab_workspaces, current_tab_id);
         }
     };
 
@@ -447,7 +452,7 @@ auto main() -> int {
         close_confirm->show();
     };
 
-    // 标签栏界面腿已在上面 root_stack 创建时内联定义，此处不再重复
+    // 标签栏界面腿已在上面 root_column 创建时内联定义，此处不再重复
     auto tab_bar_ptr = std::make_shared<borealis::ui::TabBarWidget>(borealis::ui::TabBarHooks{
         .tabs = [&]() -> std::vector<borealis::ui::TabVisual> {
             std::vector<borealis::ui::TabVisual> out;
@@ -470,7 +475,7 @@ auto main() -> int {
             tab_strip.select(static_cast<borealis::ui::TabId>(id));
             current_tab_id = static_cast<borealis::ui::TabId>(id);
             // 切换当前显示的工作区视图
-            rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
+            rebuild_root_children(root_column, tab_workspaces, current_tab_id);
             // 切到该标签即把两枚**事件**角标取走（`SPEC.FEAT.WS.04`）：BEL 与活动同一口径，只清活动
             // 会让铃铛在用户已经站在那一格之后还亮着且再也没有取走的入口。
             tab_strip.take_activity(static_cast<borealis::ui::TabId>(id));
@@ -494,10 +499,10 @@ auto main() -> int {
         .add_new = [&]() -> void {
             create_new_tab();
             // 新标签创建后重建根节点子节点以包含新工作区
-            rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
+            rebuild_root_children(root_column, tab_workspaces, current_tab_id);
         },
     });
-    root_stack->child_nodes_mut().push_back(aurora::Node{tab_bar_ptr});
+    root_column->child_nodes_mut().push_back(aurora::Node{tab_bar_ptr});
 
     // 标签真值源有任何一次**实际转移**就把标签栏标脏（裁决 **7.91**④）。不装这一钩子，三枚角标与显示名
     // 都落不了屏：`TabBarWidget` 的输入全在 `on_layout` 里经 hooks 现取，而框架的布局缓存在「约束没变
@@ -508,15 +513,17 @@ auto main() -> int {
         bar->mark_needs_paint();
     });
     
-    // 添加当前工作区
+    // 添加当前工作区（expand(1)：占满标签栏以下全部剩余高度，与 rebuild_root_children 同口径）
     if (current_tab_id.has_value()) {
         auto it = tab_workspaces.find(current_tab_id.value());
         if (it != tab_workspaces.end()) {
-            root_stack->child_nodes_mut().push_back(aurora::Node{it->second.workspace});
+            aurora::Node ws{it->second.workspace};
+            ws.widget().modifier.set(au::Modifier{}.expand(1.0F));
+            root_column->child_nodes_mut().push_back(std::move(ws));
         }
     }
     
-    host->child_nodes_mut().push_back(aurora::Node{root_stack});
+    host->child_nodes_mut().push_back(aurora::Node{root_column});
 
     // chrome 主题挂场景根：面板与后续界面件读同一份 `Theme`，而它**刻意不随终端主题联动**
     //（裁决 7.52 的 S5① / N6：切配色主题时整窗跟着变会让用户以为丢了设置）。
@@ -718,7 +725,7 @@ auto main() -> int {
         auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
         // **同 TabId 覆盖**：`tab_strip` 一格不动，`current_tab_id` 一格不动，仅 `tab_workspaces[id]` 换一份。
         it->second = TabWorkspace{.workspace = std::move(workspace), .sessions = {std::move(session)}};
-        rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
+        rebuild_root_children(root_column, tab_workspaces, current_tab_id);
     };
 
     // 按档案重开一格 SSH 会话（裁决 7.99 D6）：新开一格是另一个意图，故这里只覆盖既有那一格。
@@ -1227,7 +1234,7 @@ auto main() -> int {
         
         // 选中恢复的标签并重建根节点子节点
         tab_strip.select(id);
-        rebuild_root_children(root_stack, tab_workspaces, current_tab_id);
+        rebuild_root_children(root_column, tab_workspaces, current_tab_id);
         
         AURORA_LOG_INFO("main", "restored closed tab: '", spec.name, "' at index ", spec.index_in_strip);
     };
