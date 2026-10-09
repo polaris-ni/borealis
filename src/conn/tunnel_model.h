@@ -22,29 +22,9 @@
 #include <string>
 #include <vector>
 
+#include "borealis/conn/tunnel.h"
+
 namespace borealis::conn {
-
-/// @brief 隧道形态（需求口径的「三式」）。
-enum class TunnelKind : std::uint8_t {
-    Local,    ///< -L：本地监听，转发到远端 target。
-    Remote,   ///< -R：远端监听，转发回本地 target。
-    Dynamic,  ///< -D：本地监听 SOCKS5，目标逐请求决定。
-};
-
-/// @brief 一条隧道的定义。listen/target 的「哪端在监听」由 kind 决定：
-///        Local/Dynamic 是本机，Remote 是 SSH 服务器。
-struct TunnelSpec {
-    std::string id;                    ///< 稳定唯一 id（与 Profile.id 同款纪律）。
-    std::string name;                  ///< 展示名。
-    TunnelKind kind{TunnelKind::Local};
-    std::string listen_address;        ///< 空＝effective_listen_address() 的缺省。
-    int listen_port{0};                ///< Remote 允许 0＝服务器择定端口。
-    std::string target_host;           ///< Dynamic 不用（目标在 SOCKS 请求里）。
-    int target_port{0};                ///< Dynamic 不用。
-    std::string profile_id;            ///< 承载隧道拨号的 SSH 档案 id（装配层解析）。
-
-    [[nodiscard]] auto operator==(const TunnelSpec &) const noexcept -> bool = default;
-};
 
 /// @brief 校验结论（None＝合法）。
 enum class TunnelSpecIssue : std::uint8_t {
@@ -94,14 +74,6 @@ enum class TunnelSignal : std::uint8_t {
 
 /// @brief 状态是否意味着「还活着、还在干活」（UI 状态提示用，纯查询）。
 [[nodiscard]] auto state_is_running(TunnelState state) -> bool;
-
-/// @brief 重试策略（指数退避）。max_attempts==0 表示不限次数——需求只说
-///        「失败自动重试」，未给穷尽上限；给 0 让人可随时 stop()。
-struct RetryPolicy {
-    int base_ms{1000};     ///< 首次退避。
-    int cap_ms{30000};     ///< 退避上限（翻倍越过即钳住）。
-    int max_attempts{0};   ///< 0＝不限；>0＝第 N 次失败后进 Failed。
-};
 
 /// @brief 第 attempt 次失败（自 1 起）后的退避毫秒数：base * 2^(attempt-1)，
 ///        钳到 cap；指数位移钳制在 30 内防溢出。attempt<1 按 1 处理。

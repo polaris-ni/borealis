@@ -169,6 +169,25 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     gateway.ssh.credential = conn::SecretHandle::reference("vault://demo-gateway");
     next.profiles.push_back(std::move(gateway));
 
+    // M3 隧道定义域（裁决 7.97 D3①）：一条非缺省 -R 隧道 + 改判字段（autostart/逐条重试），
+    // 覆盖 tunnels 域的往返等值守卫。凭据只经 profile_id 引用（CONN.09 审计天然过）。
+    conn::TunnelSpec mirror;
+    mirror.id = "tun-mirror";
+    mirror.name = "rsync-mirror";
+    mirror.kind = conn::TunnelKind::Remote;
+    mirror.listen_port = 0;  // 服务器择定
+    mirror.target_host = "127.0.0.1";
+    mirror.target_port = 873;
+    mirror.profile_id = "demo-gateway";
+    mirror.autostart = true;
+    mirror.retry = conn::RetryPolicy{500, 15000, 7};
+    next.tunnels.push_back(std::move(mirror));
+    // 第二条取全缺省字段：守卫「旧配置（无 autostart/retry 键）读回＝新建缺省」等价腿。
+    conn::TunnelSpec legacy;
+    legacy.id = "tun-legacy";
+    legacy.name = "dev-db";
+    next.tunnels.push_back(std::move(legacy));
+
     // 最近连接（`SPEC.FEAT.CONN.07`）：两条非缺省条目，覆盖 connection 域新增表的往返等值。
     next.connection.recent.push_back(config::RecentConnection{"ssh-import:gateway", 1700000000});
     next.connection.recent.push_back(config::RecentConnection{"local:default", 1699999999});
@@ -703,8 +722,9 @@ AURORA_TEST_CASE(missing_domains_are_reported_once_each) {
     AURORA_TEST_CHECK_TRUE(store.report().outcome == LoadOutcome::Loaded);
     AURORA_TEST_CHECK_TRUE(store.settings() == Settings{});
     // 父作用域整体缺失只留痕父键一次：逐子键刷屏会让截断文件报出几十条噪声。
-    AURORA_TEST_CHECK_EQ(store.report().rejected_keys.size(), 5U);
-    for (std::string_view domain : {"appearance", "terminal", "connection", "shortcuts", "profiles"}) {
+    // 六域（裁决 7.97 D3① 起）：缺省文件形态只带 schema_version，六域全落空。
+    AURORA_TEST_CHECK_EQ(store.report().rejected_keys.size(), 6U);
+    for (std::string_view domain : {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels"}) {
         AURORA_TEST_CHECK_MSG(holds(store.report().rejected_keys, domain), std::string{domain});
     }
     AURORA_TEST_CHECK_TRUE(store.report().unknown_keys.empty());
@@ -829,9 +849,10 @@ AURORA_TEST_CASE(stored_file_is_a_single_json_with_all_schema_domains) {
     std::erase(domains, "__aurora_preference_meta__");
     std::ranges::sort(domains);
     AURORA_TEST_CHECK_TRUE((domains == std::vector<std::string>{"appearance", "connection", "profiles",
-                                                                "schema_version", "shortcuts", "terminal"}));
+                                                                "schema_version", "shortcuts", "terminal",
+                                                                "tunnels"}));
     for (std::string_view domain :
-         {"appearance", "terminal", "connection", "shortcuts", "profiles"}) {
+         {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels"}) {
         const au::json::Value *node = root.at(domain);
         AURORA_TEST_REQUIRE(node != nullptr);
         AURORA_TEST_CHECK_MSG(node->is_object(), std::string{domain});

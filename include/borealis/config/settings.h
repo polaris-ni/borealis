@@ -24,6 +24,7 @@
 
 #include "borealis/config/themes.h"
 #include "borealis/conn/profile.h"
+#include "borealis/conn/tunnel.h"
 #include "borealis/grid/storage.h"
 #include "borealis/term/paste.h"
 #include "borealis/term/terminal.h"
@@ -238,7 +239,8 @@ struct ShortcutsSettings {
     [[nodiscard]] auto operator==(const ShortcutsSettings &other) const noexcept -> bool = default;
 };
 
-/// @brief 一份完整配置：四分类各一域 + 连接档案域（M3 的 `SPEC.FEAT.CONN.03`），
+/// @brief 一份完整配置：四分类各一域 + 连接档案域（M3 的 `SPEC.FEAT.CONN.03`）
+///        + 隧道定义域（M3 的 `SPEC.FEAT.CONN.08`，裁决 7.97 D3①），
 ///        `Settings{}` 即 `SPEC.FEAT.PREF.06` 的首次启动形态。
 struct Settings {
     AppearanceSettings appearance{};
@@ -248,6 +250,9 @@ struct Settings {
     /// @brief 连接档案（SSH/本地终端的分组、收藏、搜索、quick connect、ssh config 导入）。
     ///        凭据按 `SPEC.FEAT.CONN.09` 只以 `SecretHandle` 引用/哨兵形态落盘，绝不存明文。
     std::vector<conn::Profile> profiles{};
+    /// @brief 隧道定义（`SPEC.FEAT.CONN.08`）：列表启停的管理对象，重启不丢（D3①）。
+    ///        全字段纯值、凭据只经 `profile_id` 引用（CONN.09 审计天然过闸）。
+    std::vector<conn::TunnelSpec> tunnels{};
 
     /// @brief 逐域全等比较：配置往返（写盘再读回）的判据就是它。
     [[nodiscard]] auto operator==(const Settings &other) const noexcept -> bool = default;

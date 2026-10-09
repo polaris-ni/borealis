@@ -170,6 +170,24 @@ AURORA_TEST_CASE(retry_backoff_doubles_and_clamps) {
     AURORA_TEST_CHECK_FALSE(conn::should_retry(3, policy));
 }
 
+AURORA_TEST_CASE(spec_default_fields_reproduce_the_pre_ruling_behavior) {
+    // 裁决 7.97 D8②/D9 的两枚新成员：缺省值必须逐位复现改判前的旧行为，
+    // 否则旧配置文件（无这两键）读回就与「新建一条」不相等。
+    auto spec = local_spec();
+    AURORA_TEST_CHECK_FALSE(spec.autostart);
+    AURORA_TEST_CHECK_TRUE(spec.retry == conn::RetryPolicy{});
+    AURORA_TEST_CHECK_EQ(conn::retry_delay_ms(3, spec.retry), 4000);
+    AURORA_TEST_CHECK_TRUE(conn::should_retry(9999, spec.retry));  // 旧全局档＝不限次
+
+    // operator== 覆盖新字段：行表判「这条定义改没改」靠它。
+    auto autostarted = local_spec();
+    autostarted.autostart = true;
+    AURORA_TEST_CHECK_FALSE(spec == autostarted);
+    auto capped = local_spec();
+    capped.retry.max_attempts = 5;
+    AURORA_TEST_CHECK_FALSE(spec == capped);
+}
+
 AURORA_TEST_CASE(signal_for_error_splits_fatal_from_recoverable) {
     using conn::TunnelError;
     using conn::TunnelSignal;

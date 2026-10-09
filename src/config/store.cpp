@@ -54,9 +54,10 @@ using au::json::Value;
 
 /// @brief 顶层版本键。
 constexpr std::string_view kVersionKey = "schema_version";
-/// @brief 域键名（裁决 7.26① 的四分类 + M3 的连接档案域 `profiles`）。
-constexpr std::array<std::string_view, 5> kDomainKeys{
-    {"appearance", "terminal", "connection", "shortcuts", "profiles"}};
+/// @brief 域键名（裁决 7.26① 的四分类 + M3 的连接档案域 `profiles` + 隧道定义域 `tunnels`，
+///        后者形态见裁决 7.97 D3①）。
+constexpr std::array<std::string_view, 6> kDomainKeys{
+    {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels"}};
 
 constexpr std::array<std::string_view, 4> kSshAuthMethods{"password", "privatekey", "agent", "keyboard-interactive"};
 
@@ -76,6 +77,12 @@ constexpr std::array<EnumName, 4> kKnownHostsPolicyNames{
 constexpr std::array<EnumName, 2> kSecretKindNames{
     EnumName{"reference", static_cast<std::int64_t>(conn::SecretKind::Reference)},
     EnumName{"ask", static_cast<std::int64_t>(conn::SecretKind::AskEveryTime)}};
+
+/// @brief 隧道形态 ↔ JSON 名（`SPEC.FEAT.CONN.08`，语义对齐 OpenSSH -L/-R/-D）。
+constexpr std::array<EnumName, 3> kTunnelKindNames{
+    EnumName{"local", static_cast<std::int64_t>(conn::TunnelKind::Local)},
+    EnumName{"remote", static_cast<std::int64_t>(conn::TunnelKind::Remote)},
+    EnumName{"dynamic", static_cast<std::int64_t>(conn::TunnelKind::Dynamic)}};
 
 constexpr std::array<std::string_view, 3> kSerialParities{"none", "even", "odd"};
 
@@ -604,6 +611,39 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return node;
 }
 
+/// @brief 写一条隧道定义（`SPEC.FEAT.CONN.08`，裁决 7.97 D3①/D8②/D9②）。
+///
+/// 全字段无条件写：`autostart`/`retry` 的缺省值就是旧行为，写全使读侧无需版本分叉。
+[[nodiscard]] auto tunnel_to_json(const conn::TunnelSpec &spec) -> Value {
+    auto node = Value::object();
+    put(node, "id", spec.id);
+    put(node, "name", spec.name);
+    put_enum(node, "kind", kTunnelKindNames, static_cast<std::int64_t>(spec.kind));
+    put(node, "listen_address", spec.listen_address);
+    put(node, "listen_port", static_cast<std::int64_t>(spec.listen_port));
+    put(node, "target_host", spec.target_host);
+    put(node, "target_port", static_cast<std::int64_t>(spec.target_port));
+    put(node, "profile_id", spec.profile_id);
+    put(node, "autostart", spec.autostart);
+    auto retry = Value::object();
+    put(retry, "base_ms", static_cast<std::int64_t>(spec.retry.base_ms));
+    put(retry, "cap_ms", static_cast<std::int64_t>(spec.retry.cap_ms));
+    put(retry, "max_attempts", static_cast<std::int64_t>(spec.retry.max_attempts));
+    node.set("retry", std::move(retry));
+    return node;
+}
+
+/// @brief 写隧道定义域：顶层 `{ "items": [...] }`，与 profiles 域同形态。
+[[nodiscard]] auto tunnels_to_json(const std::vector<conn::TunnelSpec> &tunnels) -> Value {
+    auto node = Value::object();
+    auto items = Value::array();
+    for (const auto &spec : tunnels) {
+        items.push_back(tunnel_to_json(spec));
+    }
+    node.set("items", std::move(items));
+    return node;
+}
+
 /// @brief 读外观域。
 [[nodiscard]] auto read_appearance(ScopeReader &scope, const Settings &defaults) -> AppearanceSettings {
     AppearanceSettings appearance{};
@@ -919,6 +959,73 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return out;
 }
 
+/// @brief 读隧道定义域（`SPEC.FEAT.CONN.08`）：顶层 `{ "items": [...] }`。
+///
+/// 逐条读入、不做冲突裁决——`has_conflict` 是编辑/启动时的闸，装载侧把外部文件里的
+/// 冲突对原样带回去，由 UI 行内提示（裁决 7.97 D4），静默丢条目会让用户看不见丢的是什么。
+[[nodiscard]] auto read_tunnels(const Value *domain, LoadReport &report) -> std::vector<conn::TunnelSpec> {
+    std::vector<conn::TunnelSpec> out;
+    if ((domain == nullptr) || !domain->is_object()) {
+        return out;
+    }
+    const Value *items = domain->at("items");
+    if ((items == nullptr) || !items->is_array()) {
+        report.rejected_keys.push_back("tunnels");
+        return out;
+    }
+    const auto text_member = [](const Value *node, std::string_view key) -> std::string {
+        const auto text = text_of(node == nullptr ? nullptr : node->at(key));
+        return text ? std::string{*text} : std::string{};
+    };
+    const auto int_member = [](const Value *node, std::string_view key, int fallback) -> int {
+        const Value *value = node == nullptr ? nullptr : node->at(key);
+        if (value == nullptr) {
+            return fallback;
+        }
+        const auto parsed = value->as_int();
+        return parsed ? static_cast<int>(*parsed) : fallback;
+    };
+    for (std::size_t index = 0; index < items->size(); ++index) {
+        const Value *item = items->at(index);
+        if ((item == nullptr) || !item->is_object()) {
+            report.rejected_keys.push_back("tunnels.items[" + std::to_string(index) + "]");
+            continue;
+        }
+        conn::TunnelSpec spec;
+        spec.id = text_member(item, "id");
+        spec.name = text_member(item, "name");
+        const auto kind_text = text_of(item->at("kind"));
+        if (kind_text) {
+            const auto value = value_of(kTunnelKindNames, *kind_text);
+            if (!value) {
+                report.rejected_keys.push_back("tunnels.items[" + std::to_string(index) + "].kind");
+            }
+            spec.kind = value ? static_cast<conn::TunnelKind>(*value) : conn::TunnelKind::Local;
+        }
+        spec.listen_address = text_member(item, "listen_address");
+        spec.listen_port = int_member(item, "listen_port", 0);
+        spec.target_host = text_member(item, "target_host");
+        spec.target_port = int_member(item, "target_port", 0);
+        spec.profile_id = text_member(item, "profile_id");
+        const Value *autostart = item->at("autostart");
+        if (autostart != nullptr) {
+            const auto flag = autostart->as_bool();
+            if (flag) {
+                spec.autostart = *flag;
+            }
+        }
+        const Value *retry = item->at("retry");
+        if ((retry != nullptr) && retry->is_object()) {
+            // 缺省值即 RetryPolicy 的类内初始（旧全局档）：缺哪个键回落哪个，不整块作废。
+            spec.retry.base_ms = int_member(retry, "base_ms", spec.retry.base_ms);
+            spec.retry.cap_ms = int_member(retry, "cap_ms", spec.retry.cap_ms);
+            spec.retry.max_attempts = int_member(retry, "max_attempts", spec.retry.max_attempts);
+        }
+        out.push_back(std::move(spec));
+    }
+    return out;
+}
+
 /// @brief 把一份顶层 JSON 对象读成 `Settings`，并把校验留痕写进报告。
 ///
 /// 装载、回滚与导入三条路都走这里（裁决 7.87③）：快照与导出件本来就是同一个 schema 的文档，
@@ -942,6 +1049,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
             settings.connection = read_connection(scope, defaults);
         } else if (domain == "profiles") {
             settings.profiles = read_profiles(is_domain ? node : nullptr, report);
+        } else if (domain == "tunnels") {
+            settings.tunnels = read_tunnels(is_domain ? node : nullptr, report);
         } else {
             settings.shortcuts = read_shortcuts(scope, defaults);
         }
@@ -981,6 +1090,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     root.set("connection", connection_to_json(settings.connection));
     root.set("shortcuts", shortcuts_to_json(settings.shortcuts));
     root.set("profiles", profiles_to_json(settings.profiles));
+    root.set("tunnels", tunnels_to_json(settings.tunnels));
     return root;
 }
 
@@ -1337,6 +1447,7 @@ struct Store::Impl {
         prefs.set("connection", connection_to_json(next.connection));
         prefs.set("shortcuts", shortcuts_to_json(next.shortcuts));
         prefs.set("profiles", profiles_to_json(next.profiles));
+        prefs.set("tunnels", tunnels_to_json(next.tunnels));
         if (const auto flushed = prefs.flush(); !flushed.ok()) {
             return flushed.error().message;
         }
