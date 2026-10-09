@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1180" viewBox="0 0 1560 1180" font-family="'Noto Sans CJK SC',sans-serif">
+<rect x="0" y="0" width="1560" height="1180" fill="#eef0f5"/>
+<text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">发送侧「不可表示字符」一次性提示：视口内非模态卡（`SPEC.FEAT.TERM.09` 的提示腿）</text>
+<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_ENCODING.draft.svg · 高保真草图（待评审，2026-10-10） · 窗口 880×520 dp @100% DPI · 底部 1–6 标号判据对应 UI_ENCODING.draft.md §2 · D1–D6 待人逐条裁决，见该稿 §3</text>
+
+<!-- ============================ 屏 A：非模态卡 ============================ -->
+<g transform="translate(30,80)">
+  <rect x="-1" y="0" width="882" height="522" fill="#1E1F29" stroke="#4D4F63" stroke-width="1"/>
+  <!-- 标题栏 -->
+  <rect x="0" y="0" width="880" height="34" fill="#21222C"/>
+  <circle cx="20" cy="17" r="7" fill="#BD93F9"/>
+  <text x="20" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="38" y="22" font-size="13" fill="#F8F8F2" font-weight="600">tty0 (serial, GBK) - Borealis</text>
+  <line x1="849" y1="13" x2="857" y2="21" stroke="#8B93A7" stroke-width="1.6"/>
+  <line x1="857" y1="13" x2="849" y2="21" stroke="#8B93A7" stroke-width="1.6"/>
+  <line x1="0" y1="34" x2="880" y2="34" stroke="#3A3C4C" stroke-width="1"/>
+  <!-- 标签条 -->
+  <rect x="0" y="34" width="880" height="40" fill="#21222C"/>
+  <rect x="14" y="38" width="190" height="36" rx="6" fill="#282A36"/>
+  <text x="28" y="61" font-size="12.5" fill="#F8F8F2" font-weight="600">tty0 · 串口</text>
+  <line x1="16" y1="74" x2="202" y2="74" stroke="#BD93F9" stroke-width="3"/>
+  <text x="222" y="61" font-size="14" fill="#62728A">＋</text>
+  <line x1="0" y1="74" x2="880" y2="74" stroke="#3A3C4C" stroke-width="1"/>
+  <!-- 视口（会话活着：dead-session 那一层按定义不落帧） -->
+  <rect x="0" y="74" width="880" height="446" fill="#282A36"/>
+  <rect x="1" y="75" width="878" height="444" fill="none" stroke="#BD93F9" stroke-width="2"/>
+  <g font-size="12.5">
+    <text x="16" y="100" fill="#F8F8F2" font-family="'DejaVu Sans Mono',monospace">[root@dev ~]#</text>
+    <text x="132" y="100" fill="#F8F8F2">cat 现场记录.txt</text>
+    <text x="16" y="122" fill="#F8F8F2">1. 3 号线温循通过，无告警。</text>
+    <text x="16" y="144" fill="#F8F8F2">2. 探头回读 21.7 度，与设定一致。</text>
+    <text x="16" y="166" fill="#50FA7B">3. 部署完成</text>
+    <rect x="92" y="153" width="78" height="17" rx="3" fill="none" stroke="#FFB86C" stroke-width="1.4" stroke-dasharray="3 2"/>
+    <text x="98" y="166" font-size="11.5" fill="#FFB86C" font-family="'DejaVu Sans Mono',monospace">U+1F600</text>
+    <text x="182" y="166" fill="#50FA7B">见工单</text>
+    <text x="16" y="190" font-size="11.5" fill="#62728A">（上面这一行由用户键入，经 send_text 交会话）</text>
+    <text x="16" y="216" fill="#F8F8F2" font-family="'DejaVu Sans Mono',monospace">[root@dev ~]#</text>
+  </g>
+  <!-- 事后告知 / 名字口径两条注 -->
+  <text x="16" y="244" font-size="11.5" fill="#8B93A7">字节在提示之前就已出账（发出去的是 GBK 的合法替换序列，不是乱码）</text>
+  <text x="16" y="262" font-size="11.5" fill="#8B93A7">⇒ 提示＝事后告知（判据 4）</text>
+  <text x="16" y="286" font-size="11.5" fill="#8B93A7">卡名取「实际生效腿」：设置填 GB2312 而会话实跑 UTF-8 时，这里报 UTF-8</text>
+  <text x="16" y="304" font-size="11.5" fill="#8B93A7">（判据 5 / D6）</text>
+  <!-- 卡片（底部居中：卡宽 320、高 68、下内缩 12；卡下无遮罩带） -->
+  <g>
+    <rect x="280" y="440" width="320" height="68" fill="#21222C" stroke="#4D4F63" stroke-width="1"/>
+    <rect x="280" y="440" width="320" height="1" fill="#62728A"/>
+    <rect x="280" y="507" width="320" height="1" fill="#62728A"/>
+    <rect x="280" y="441" width="1" height="66" fill="#62728A"/>
+    <rect x="599" y="441" width="1" height="66" fill="#62728A"/>
+    <text x="294" y="468" font-size="12.5" fill="#F8F8F2" font-weight="600">GBK 发不出这一段里的 2 个字符</text>
+    <text x="294" y="488" font-size="10.5" fill="#BFC7D5">已按当前处置档发送 · 改档见 设置 › 终端 › 不可表示字符处置</text>
+  </g>
+  <!-- 判据标号 -->
+  <circle cx="266" cy="474" r="9" fill="#BD93F9"/>
+  <text x="266" y="478" font-size="11.5" font-weight="700" fill="#1E1F29" text-anchor="middle">1</text>
+  <text x="612" y="470" font-size="11.5" fill="#8B93A7">← 无遮罩带：卡下仍可读、仍可选</text>
+  <circle cx="292" cy="436" r="9" fill="#BD93F9"/>
+  <text x="292" y="440" font-size="11.5" font-weight="700" fill="#1E1F29" text-anchor="middle">3</text>
+  <text x="238" y="428" font-size="11.5" fill="#8B93A7" text-anchor="middle">5 s 自收</text>
+  <circle cx="248" cy="146" r="9" fill="#BD93F9"/>
+  <text x="248" y="150" font-size="11.5" font-weight="700" fill="#1E1F29" text-anchor="middle">4</text>
+  <circle cx="212" y="282" r="9" fill="#BD93F9"/>
+  <text x="212" y="286" font-size="11.5" font-weight="700" fill="#1E1F29" text-anchor="middle">5</text>
+  <!-- 卡片几何标注 -->
+  <g stroke="#7A82A0" stroke-width="1" fill="none">
+    <line x1="280" y1="530" x2="600" y2="530"/>
+    <line x1="280" y1="526" x2="280" y2="534"/>
+    <line x1="600" y1="526" x2="600" y2="534"/>
+    <line x1="596" y1="508" x2="596" y2="520"/>
+    <line x1="588" y1="520" x2="612" y2="520"/>
+  </g>
+  <text x="440" y="546" font-size="11" fill="#5a6070" text-anchor="middle">卡宽 min(320 dp, 视口宽 − 2×12)（与 dead-session 卡同档，不新增常量族）</text>
+  <text x="640" y="516" font-size="11" fill="#5a6070">下内缩 12</text>
+</g>
+<text x="30" y="648" font-size="14" font-weight="700" fill="#1b1f28">屏 A · 触发后（GBK 会话键入含 Emoji 的一行）</text>
+<text x="30" y="668" font-size="11.5" fill="#5a6070">两行文案＝两条词条（键名 ASCII、词条中文，AGENTS 第 14 条中文例外口径同各件前例）。无按钮、无图标、不吃焦点：ESC 与所有裸键照旧发往会话（判据 6）。</text>
+
+<!-- ============================ 屏 B-1：模态对照 ============================ -->
+<g transform="translate(940,80)">
+  <text x="0" y="-6" font-size="15" font-weight="700" fill="#1b1f28">屏 B-1 · 为什么不复用既有那一层（D2 的反面）</text>
+  <rect x="0" y="8" width="590" height="250" fill="#1E1F29" stroke="#4D4F63" stroke-width="1"/>
+  <rect x="1" y="9" width="588" height="248" fill="#282A36"/>
+  <text x="16" y="34" font-size="12.5" fill="#62728A" opacity="0.35" font-family="'DejaVu Sans Mono',monospace">[root@dev ~]# exit</text>
+  <text x="16" y="56" font-size="12.5" fill="#62728A" opacity="0.35">会话已退出，内容留存供回看</text>
+  <rect x="1" y="9" width="588" height="248" fill="#000000" opacity="0.5"/>
+  <rect x="135" y="104" width="320" height="68" fill="#21222C" stroke="#62728A" stroke-width="1"/>
+  <text x="149" y="130" font-size="12.5" fill="#F8F8F2">会话已退出</text>
+  <rect x="247" y="140" width="96" height="24" rx="3" fill="#BD93F9"/>
+  <text x="295" y="156" font-size="12" fill="#1E1F29" text-anchor="middle">重启</text>
+  <text x="0" y="278" font-size="11.5" fill="#5a6070">dead-session 层：整区 mix_half(底色,黑) 带把回看内容压成背景</text>
+  <text x="0" y="294" font-size="11.5" fill="#5a6070">+ 一枚按钮的命中盒，且只在 !session_-&gt;alive() 时落帧。</text>
+  <text x="0" y="310" font-size="11.5" fill="#5a6070">本件的触发前提是会话活着 ⇒ 复用即改既有档（D2 选①新增一层）。</text>
+</g>
+
+<!-- ============================ 屏 B-2：触发面矩阵 ============================ -->
+<g transform="translate(940,420)">
+  <text x="0" y="-6" font-size="15" font-weight="700" fill="#1b1f28">屏 B-2 · 实测触发面（glibc iconv，本轮实测非记忆）</text>
+  <rect x="0" y="8" width="590" height="188" fill="#ffffff" stroke="#c7ccd8" stroke-width="1"/>
+  <g font-family="'DejaVu Sans Mono',monospace" font-size="11.5" fill="#1b1f28">
+    <text x="14" y="32" font-weight="700">腿</text>
+    <text x="120" y="32" font-weight="700">U+1F600</text>
+    <text x="222" y="32" font-weight="700">U+00E9</text>
+    <text x="322" y="32" font-weight="700">U+4E2D</text>
+    <text x="422" y="32" font-weight="700">U+D800</text>
+    <text x="500" y="32" font-weight="700">U+FFFD</text>
+    <line x1="10" y1="40" x2="580" y2="40" stroke="#c7ccd8"/>
+    <text x="14" y="60">UTF-8</text>      <text x="120" y="60" fill="#3f8f3f">F0 9F 98 80</text><text x="222" y="60" fill="#3f8f3f">C3 A9</text><text x="322" y="60" fill="#3f8f3f">E4 B8 AD</text><text x="422" y="60" fill="#c0392b">x</text><text x="500" y="60" fill="#3f8f3f">EF BF BD</text>
+    <text x="14" y="80">GB18030</text>   <text x="120" y="80" fill="#3f8f3f">94 39 FC 36</text><text x="222" y="80" fill="#3f8f3f">A8 A6</text><text x="322" y="80" fill="#3f8f3f">D6 D0</text><text x="422" y="80" fill="#c0392b">x</text><text x="500" y="80" fill="#3f8f3f">84 31 A4 37</text>
+    <text x="14" y="100">GBK</text>       <text x="120" y="100" fill="#c0392b">x 弹</text><text x="222" y="100" fill="#3f8f3f">A8 A6</text><text x="322" y="100" fill="#3f8f3f">D6 D0</text><text x="422" y="100" fill="#c0392b">x</text><text x="500" y="100" fill="#b8860b">?</text>
+    <text x="14" y="120">Big5</text>        <text x="120" y="120" fill="#c0392b">x 弹</text><text x="222" y="120" fill="#c0392b">x 弹</text><text x="322" y="120" fill="#3f8f3f">A4 A4</text><text x="422" y="120" fill="#c0392b">x</text><text x="500" y="120" fill="#b8860b">?</text>
+    <text x="14" y="140">Latin-1</text>     <text x="120" y="140" fill="#c0392b">x 弹</text><text x="222" y="140" fill="#3f8f3f">E9</text><text x="322" y="140" fill="#c0392b">x 弹</text><text x="422" y="140" fill="#c0392b">x</text><text x="500" y="140" fill="#b8860b">?</text>
+    <text x="14" y="160">CP437</text>       <text x="120" y="160" fill="#c0392b">x 弹</text><text x="222" y="160" fill="#3f8f3f">82</text><text x="322" y="160" fill="#c0392b">x 弹</text><text x="422" y="160" fill="#c0392b">x</text><text x="500" y="160" fill="#b8860b">?</text>
+    <line x1="10" y1="168" x2="580" y2="168" stroke="#c7ccd8"/>
+    <text x="14" y="186" font-family="'Noto Sans CJK SC',sans-serif" fill="#5a6070">末列＝替换档下 U+FFFD 的字节：有合法形态者照发，没有者才落 ?</text>
+  </g>
+  <text x="0" y="216" font-size="11.5" fill="#5a6070">连带三条：需求举的例子（GB18030 里输入 Emoji）不触发；未配对代理</text>
+  <text x="0" y="232" font-size="11.5" fill="#5a6070">在所有腿都失败，是 GB18030 腿上唯一的触发面；Windows 腿的 libiconv</text>
+  <text x="0" y="248" font-size="11.5" fill="#5a6070">同名表未实测（属推断/未验证，待真机复测并回写）。</text>
+</g>
+
+<!-- ============================ 屏 B-3：时间线 ============================ -->
+<g transform="translate(940,700)">
+  <text x="0" y="-6" font-size="15" font-weight="700" fill="#1b1f28">屏 B-3 · 一次批次的时间线（D3＝只靠 5 s 超时自收）</text>
+  <line x1="10" y1="60" x2="580" y2="60" stroke="#8B93A7" stroke-width="1.6"/>
+  <g font-size="11.5" fill="#1b1f28">
+    <circle cx="60" cy="60" r="5" fill="#BD93F9"/><text x="60" y="44" text-anchor="middle">键入末字符</text>
+    <circle cx="170" cy="60" r="5" fill="#FF5555"/><text x="170" y="44" text-anchor="middle">编码：2 个不可</text>
+    <circle cx="270" cy="60" r="5" fill="#FFB86C"/><text x="270" y="84" text-anchor="middle">write()：字节已出</text>
+    <circle cx="360" cy="60" r="5" fill="#50FA7B"/><text x="360" y="44" text-anchor="middle">下一帧取走 latch</text>
+    <circle cx="430" cy="60" r="5" fill="#8BE9FD"/><text x="430" y="84" text-anchor="middle">卡片落帧</text>
+    <circle cx="550" cy="60" r="5" fill="#62728A"/><text x="550" y="44" text-anchor="middle">5 s 到期：自收</text>
+    <text x="10" y="112" fill="#5a6070">其间用户继续键入 ⇒ 卡片不因按键而撤（触发者就是键入，「按键即</text>
+    <text x="10" y="128" fill="#5a6070">刻撤」＝几乎不可见，D3② 已否决）；第二批次的代价只进累计计数。</text>
+  </g>
+  <text x="0" y="158" font-size="11.5" fill="#5a6070">清除时机只有三个：5 s 到期、本 view 换绑会话、会话退出。</text>
+  <text x="0" y="174" font-size="11.5" fill="#5a6070">不等定时器的兜底＝换绑即清 + cancel()。</text>
+  <text x="0" y="190" font-size="11.5" fill="#5a6070">无头帧没有调度器 ⇒ 用例里卡片会常驻（同光标闪烁那条口径），</text>
+  <text x="0" y="206" font-size="11.5" fill="#5a6070">自收那条要播种调度器才测得到。</text>
+</g>
+
+<!-- ============================ 底部判据 ============================ -->
+<g transform="translate(30,880)">
+  <text x="0" y="0" font-size="15" font-weight="700" fill="#1b1f28">标号判据（对应 UI_ENCODING.draft.md §2）</text>
+  <rect x="0" y="12" width="1500" height="250" fill="#ffffff" stroke="#c7ccd8" stroke-width="1"/>
+  <g font-size="12" fill="#1b1f28">
+    <circle cx="22" cy="40" r="9" fill="#BD93F9"/><text x="22" y="44" text-anchor="middle" font-weight="700" fill="#1E1F29">1</text>
+    <text x="40" y="44">非模态：不铺半透明带、不吃焦点、无按钮、不写任何命中盒 ⇒ 卡下内容仍可读，选区与命中序一字不改（对照屏 B-1 的既有那层）。</text>
+    <circle cx="22" cy="70" r="9" fill="#BD93F9"/><text x="22" y="74" text-anchor="middle" font-weight="700" fill="#1E1F29">2</text>
+    <text x="40" y="74">一个会话对象只弹一次（D1①）：同会话第二、第三批次不再弹，累计代价全在调试面板第四行；会话重启＝新对象 ⇒ 会再弹一次。</text>
+    <circle cx="22" cy="100" r="9" fill="#BD93F9"/><text x="22" y="104" text-anchor="middle" font-weight="700" fill="#1E1F29">3</text>
+    <text x="40" y="104">5 s 超时自收（Scheduler::set_timeout，重排前先 cancel），不做「任意键入即刻收」（D3；理由见屏 B-3）。</text>
+    <circle cx="22" cy="130" r="9" fill="#BD93F9"/><text x="22" y="134" text-anchor="middle" font-weight="700" fill="#1E1F29">4</text>
+    <text x="40" y="134">事后告知如实登记：卡片出现时字节已出账，且出去的必是目标编码的合法字节（三档皆然）⇒ 满足需求「不得静默发送乱码字节」。</text>
+    <circle cx="22" cy="160" r="9" fill="#BD93F9"/><text x="22" y="164" text-anchor="middle" font-weight="700" fill="#1E1F29">5</text>
+    <text x="40" y="164">卡名＝实际生效腿（D6②，走 term::resolve_encoding_name() 折算结果）：填 GB2312 而实跑 UTF-8 时报 UTF-8，把回落显形。</text>
+    <circle cx="22" cy="190" r="9" fill="#BD93F9"/><text x="22" y="194" text-anchor="middle" font-weight="700" fill="#1E1F29">6</text>
+    <text x="40" y="194">裸键与 ESC 一律照旧归会话（INTERACT.01）；视口高不足「卡高 + 上下内缩」时本卡让位不画（窄 pane 下文案截断，与既有卡同档，不折行）。</text>
+    <text x="40" y="230" fill="#5a6070">D1–D6 全部待裁，推荐档见 §3 的「结论（推荐）」列；收口后按 §4 布局转实现，本稿不动代码。</text>
+    <text x="40" y="250" fill="#5a6070">已落的双向编解码与三档策略、设置两键、面板第四行不在本稿射程内（见 UI_ENCODING.draft.md 的「已落地的前置」）。</text>
+  </g>
+</g>
+</svg>
