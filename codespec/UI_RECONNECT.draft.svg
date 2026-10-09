@@ -1,0 +1,182 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1180" viewBox="0 0 1560 1180" font-family="'Noto Sans CJK SC',sans-serif">
+<rect x="0" y="0" width="1560" height="1180" fill="#eef0f5"/>
+<text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">SSH 断线自动重连：重连中浮层 + 终态三分 + 退避档位（`SPEC.FEAT.WS.05` 的 SSH 腿）</text>
+<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_RECONNECT.draft.svg · 高保真草图（待评审） · 窗口 880×520 dp @100% DPI · 底部 1–6 标号判据对应本稿 §2 · 待决 D1–D6 见 UI_RECONNECT.draft.md §3</text>
+
+<!-- ============================ 屏 A：重连中 ============================ -->
+<g transform="translate(30,80)">
+  <rect x="-1" y="0" width="882" height="522" fill="#1E1F29" stroke="#4D4F63" stroke-width="1"/>
+  <!-- 标题栏 -->
+  <rect x="0" y="0" width="880" height="34" fill="#21222C"/>
+  <circle cx="20" cy="17" r="7" fill="#BD93F9"/>
+  <text x="20" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="38" y="22" font-size="13" fill="#F8F8F2" font-weight="600">srv01 — Borealis</text>
+  <line x1="849" y1="13" x2="857" y2="21" stroke="#8B93A7" stroke-width="1.6"/>
+  <line x1="857" y1="13" x2="849" y2="21" stroke="#8B93A7" stroke-width="1.6"/>
+  <line x1="0" y1="34" x2="880" y2="34" stroke="#3A3C4C" stroke-width="1"/>
+  <!-- 标签条 -->
+  <rect x="0" y="34" width="880" height="40" fill="#21222C"/>
+  <rect x="14" y="38" width="190" height="36" rx="6" fill="#282A36"/>
+  <text x="28" y="61" font-size="12.5" fill="#F8F8F2" font-weight="600">srv01 · SSH</text>
+  <line x1="16" y1="74" x2="202" y2="74" stroke="#BD93F9" stroke-width="3"/>
+  <!-- 退出角标：alive() 在重拨期间恒 false，角标与关闭前确认按今天语义走（判据 3） -->
+  <circle cx="196" cy="67" r="4" fill="none" stroke="#FFB86C" stroke-width="1.6"/>
+  <text x="222" y="61" font-size="14" fill="#62728A">＋</text>
+  <line x1="0" y1="74" x2="880" y2="74" stroke="#3A3C4C" stroke-width="1"/>
+  <!-- 视口（单会话：一标签一格） -->
+  <rect x="0" y="74" width="880" height="446" fill="#282A36"/>
+  <rect x="1" y="75" width="878" height="444" fill="none" stroke="#BD93F9" stroke-width="2"/>
+  <g font-family="'DejaVu Sans Mono',monospace" font-size="12.5">
+    <text x="16" y="100" fill="#62728A">[deploy@app01 ~]$ tail -f build.log</text>
+    <text x="16" y="122" fill="#F8F8F2">16:41:02 INFO   compile 412/980 units</text>
+    <text x="16" y="144" fill="#F1FA8C">16:41:05 WARN   cache miss ratio 0.31</text>
+    <text x="16" y="166" fill="#F8F8F2">16:41:09 INFO   link stage started</text>
+    <text x="16" y="188" fill="#FF5555">16:41:12 ERROR ld: cannot find -lborealis</text>
+    <text x="16" y="210" fill="#F8F8F2">16:41:13 INFO   writing core dump to /tmp/core.4711</text>
+    <text x="16" y="232" fill="#62728A">16:41:14 NOTICE session suspended by operator</text>
+    <text x="16" y="254" fill="#8B93A7">ssh_exchange_identification: Connection closed by remote host</text>
+  </g>
+  <!-- 断线时刻标尺 -->
+  <line x1="16" y1="264" x2="864" y2="264" stroke="#44475A" stroke-width="1" stroke-dasharray="4 4"/>
+  <text x="16" y="282" font-size="11" fill="#62728A">↑ 浮层之下这一段回看内容不重建、不擦除（判据 1）：它是断线前最后一屏，正是需求那句「保留终端内容供回看」的对象</text>
+
+  <!-- 重连中浮层卡片 -->
+  <g>
+    <rect x="254" y="341" width="380" height="132" fill="#12131C" opacity="0.55"/>
+    <rect x="250" y="336" width="380" height="132" fill="#21222C" stroke="#FFB86C" stroke-width="1.5"/>
+    <text x="266" y="362" font-size="13" fill="#F8F8F2" font-weight="700">连接已断开 · 第 2 / 3 次自动重连</text>
+    <text x="266" y="382" font-size="11.5" fill="#62728A">4 秒后重试（首次 1 s，逐次翻倍，钳到上限 30 s）</text>
+    <text x="266" y="401" font-size="11.5" fill="#FFB86C">凭据取自本会话的内存副本 · 不落盘、不进日志</text>
+    <rect x="266" y="416" width="96" height="30" rx="5" fill="#BD93F9"/>
+    <text x="314" y="435" font-size="12" fill="#1E1F29" font-weight="600" text-anchor="middle">立即重试</text>
+    <rect x="372" y="416" width="96" height="30" rx="5" fill="#282A36" stroke="#44475A" stroke-width="1"/>
+    <text x="420" y="435" font-size="12" fill="#F8F8F2" text-anchor="middle">停止重连</text>
+    <text x="640" y="356" font-size="11.5" fill="#8BE9FD">①</text>
+    <text x="640" y="435" font-size="11.5" fill="#8BE9FD">②</text>
+  </g>
+  <!-- 卡片之外的区域仍归选区 -->
+  <text x="640" y="400" font-size="11.5" fill="#50FA7B">④</text>
+  <rect x="16" y="470" width="200" height="22" fill="#44475A" opacity="0.7"/>
+  <text x="222" y="486" font-size="11.5" fill="#62728A">卡片之外仍可拖选复制（命序沿用裁决 7.86②）</text>
+  <text x="0" y="540" font-size="12.5" fill="#1b1f28" font-weight="600">屏 A · 自动重连进行中（第 2/3 次，本次退避 4 秒；视口是单会话的一格）</text>
+</g>
+
+<!-- ============================ 屏 B：终态三分 ============================ -->
+<g transform="translate(950,80)">
+  <text x="0" y="-6" font-size="15" font-weight="700" fill="#1b1f28">终态三分（不再自动重试，决定权交回用户）</text>
+  <rect x="-1" y="4" width="582" height="512" fill="#1E1F29" stroke="#4D4F63" stroke-width="1"/>
+  <text x="14" y="30" font-size="12.5" fill="#8B93A7">同一张卡片的三种内容 —— 层次、位置、尺寸与屏 A 逐字相同（判据 3）</text>
+
+  <!-- 终态 1：次数用尽 -->
+  <g transform="translate(30,48)">
+    <rect x="2" y="2" width="520" height="118" fill="#12131C" opacity="0.5"/>
+    <rect x="0" y="0" width="520" height="118" fill="#21222C" stroke="#FF5555" stroke-width="1.5"/>
+    <text x="16" y="26" font-size="13" fill="#F8F8F2" font-weight="700">已重试 3 次仍失败 · 自动重连已停止</text>
+    <text x="16" y="46" font-size="11.5" fill="#62728A">原因：连接超时（10.0.20.31:22，connect_timeout_sec=10）</text>
+    <text x="16" y="65" font-size="11.5" fill="#62728A">退避序列：1 s → 2 s → 4 s（用尽，第 4 次不再拨）</text>
+    <rect x="16" y="78" width="110" height="28" rx="5" fill="#BD93F9"/>
+    <text x="71" y="97" font-size="12" fill="#1E1F29" font-weight="600" text-anchor="middle">重启（按档案）</text>
+    <text x="140" y="97" font-size="11.5" fill="#62728A">＝ 走同一套 SSH 装配：agent/句柄静默，询问型弹凭据框（D6）</text>
+  </g>
+
+  <!-- 终态 2：不可自动重连的原因 -->
+  <g transform="translate(30,190)">
+    <rect x="2" y="2" width="520" height="118" fill="#12131C" opacity="0.5"/>
+    <rect x="0" y="0" width="520" height="118" fill="#21222C" stroke="#FF5555" stroke-width="1.5"/>
+    <text x="16" y="26" font-size="13" fill="#F8F8F2" font-weight="700">认证被服务器拒绝 · 不自动重试</text>
+    <text x="16" y="46" font-size="11.5" fill="#FF5555">分类出口＝CloseReason::AuthFailed（裁决项 D2 的不可重连集）</text>
+    <text x="16" y="65" font-size="11.5" fill="#62728A">同档：主机密钥与 known_hosts 记录不符 / 策略拒绝核对 —— 重试只会重复失败，</text>
+    <text x="16" y="82" font-size="11.5" fill="#62728A">并可能触发远端锁定；安全语义一律交回人判（不破 7.94④ 的保守取向）</text>
+    <rect x="16" y="92" width="110" height="24" rx="5" fill="#282A36" stroke="#44475A" stroke-width="1"/>
+    <text x="71" y="108" font-size="12" fill="#F8F8F2" text-anchor="middle">重试并换凭据</text>
+  </g>
+
+  <!-- 终态 3：远端正常退出（不是断线） -->
+  <g transform="translate(30,332)">
+    <rect x="2" y="2" width="520" height="118" fill="#12131C" opacity="0.5"/>
+    <rect x="0" y="0" width="520" height="118" fill="#21222C" stroke="#44475A" stroke-width="1.5"/>
+    <text x="16" y="26" font-size="13" fill="#F8F8F2" font-weight="700">会话已退出</text>
+    <text x="16" y="46" font-size="11.5" fill="#62728A">远端 shell 正常结束（EOF）—— 这不是断线，不进入自动重连</text>
+    <text x="16" y="65" font-size="11.5" fill="#62728A">本档＝已落的 7.86 本地腿形态，唯一改动是「重启」的目标由本地 shell 改成档案（D6）</text>
+    <rect x="16" y="78" width="110" height="28" rx="5" fill="#BD93F9"/>
+    <text x="71" y="97" font-size="12" fill="#1E1F29" font-weight="600" text-anchor="middle">重启（按档案）</text>
+    <text x="140" y="97" font-size="11.5" fill="#FF5555">今天此处点下去得到的是一格本地 shell —— 现状缺陷，本稿 §1 已登记</text>
+  </g>
+  <text x="0" y="540" font-size="12.5" fill="#1b1f28" font-weight="600">屏 B · 三档终态与「重启」按档案分流</text>
+</g>
+
+<!-- ============================ 退避序列 ============================ -->
+<g transform="translate(30,650)">
+  <text x="0" y="0" font-size="15" font-weight="700" fill="#1b1f28">退避序列（复用现成纯逻辑件：base ×2 逐次翻倍、钳 cap、attempts 用尽即终态）</text>
+  <line x1="0" y1="120" x2="880" y2="120" stroke="#5a6070" stroke-width="1"/>
+  <g text-anchor="middle">
+    <rect x="0" y="30" width="120" height="70" rx="6" fill="#282A36" stroke="#FFB86C" stroke-width="1.5"/>
+    <text x="60" y="58" font-size="12" fill="#F8F8F2">第 1 次失败</text>
+    <text x="60" y="80" font-size="13" fill="#FFB86C" font-weight="700">等 1 s</text>
+    <rect x="130" y="30" width="120" height="70" rx="6" fill="#282A36" stroke="#FFB86C" stroke-width="1.5"/>
+    <text x="190" y="58" font-size="12" fill="#F8F8F2">第 2 次失败</text>
+    <text x="190" y="80" font-size="13" fill="#FFB86C" font-weight="700">等 2 s</text>
+    <rect x="260" y="30" width="120" height="70" rx="6" fill="#282A36" stroke="#FFB86C" stroke-width="1.5"/>
+    <text x="320" y="58" font-size="12" fill="#F8F8F2">第 3 次失败</text>
+    <text x="320" y="80" font-size="13" fill="#FFB86C" font-weight="700">等 4 s</text>
+    <rect x="390" y="30" width="130" height="70" rx="6" fill="none" stroke="#FF5555" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="455" y="58" font-size="12" fill="#FF5555">attempts=3 用尽</text>
+    <text x="455" y="80" font-size="12" fill="#FF5555">→ 终态（屏 B 第一档）</text>
+    <rect x="540" y="30" width="120" height="70" rx="6" fill="none" stroke="#5a6070" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="600" y="58" font-size="12" fill="#5a6070">（若调大次数）</text>
+    <text x="600" y="80" font-size="12" fill="#5a6070">等 8 s / 16 s</text>
+    <rect x="670" y="30" width="120" height="70" rx="6" fill="none" stroke="#5a6070" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="730" y="58" font-size="12" fill="#5a6070">逐次翻倍</text>
+    <text x="730" y="80" font-size="12" fill="#5a6070">钳到 30 s 上限</text>
+  </g>
+  <text x="0" y="146" font-size="11.5" fill="#5a6070">退避休眠落在读线程上、且分段可中断（每片 200 ms 查 closing_）：close() 的 join 上界＝一个分段片 + 一次建连超时，</text>
+  <text x="0" y="164" font-size="11.5" fill="#5a6070">建连超时那一档是今天既有形态（connect_timeout_sec 缺省 10 s），本条不新增阻塞面。attempts 缺省取 3（裁决项 D4 的数）。</text>
+</g>
+
+<!-- ============================ 设置三行 ============================ -->
+<g transform="translate(950,650)">
+  <text x="0" y="0" font-size="15" font-weight="700" fill="#1b1f28">设置 · 连接页新增三行（键位落 connection.ssh 域）</text>
+  <rect x="0" y="14" width="580" height="160" fill="#ffffff" stroke="#c8cede" stroke-width="1"/>
+  <text x="16" y="40" font-size="12.5" fill="#5a6070">页：连接（既有页，六域之一；行控件沿用 integer_step 先例）</text>
+  <g font-size="12.5" fill="#1b1f28">
+    <text x="16" y="72">自动重连次数</text>
+    <text x="16" y="92" font-size="11" fill="#5a6070">connection.ssh.reconnect_attempts</text>
+    <rect x="440" y="62" width="120" height="26" rx="4" fill="#eef0f5" stroke="#c8cede"/>
+    <text x="500" y="80" text-anchor="middle" fill="#1b1f28" font-weight="600">3</text>
+    <text x="16" y="124">首次退避 (ms)</text>
+    <text x="16" y="144" font-size="11" fill="#5a6070">connection.ssh.reconnect_base_delay_ms</text>
+    <rect x="440" y="114" width="120" height="26" rx="4" fill="#eef0f5" stroke="#c8cede"/>
+    <text x="500" y="132" text-anchor="middle" fill="#1b1f28" font-weight="600">1000</text>
+  </g>
+  <text x="16" y="168" font-size="12.5" fill="#1b1f28">退避上限 (ms) … 30000（同族第三行，画到这里为止）</text>
+  <text x="0" y="196" font-size="11.5" fill="#5a6070">档位＝「下一次断线取最新值」：拨号那一刻现读配置，不在会话期缓存，故登记 Wired + Immediate；</text>
+  <text x="0" y="212" font-size="11.5" fill="#5a6070">状态栏那枚 appearance.status_bar.show_reconnect 的本体未落（全仓无消费点），</text>
+  <text x="0" y="228" font-size="11.5" fill="#5a6070">本条不挂它，也不在本期补状态栏本体。</text>
+</g>
+
+<!-- ============================ 标号判据 ============================ -->
+<g transform="translate(30,880)">
+  <text x="0" y="0" font-size="15" font-weight="700" fill="#1b1f28">标号判据（对应本稿 §2 与 §3 的裁决项）</text>
+  <g font-size="12" fill="#1b1f28">
+    <circle cx="8" cy="26" r="9" fill="#1b1f28"/>
+    <text x="8" y="30" font-size="11" fill="#ffffff" font-weight="700" text-anchor="middle">1</text>
+    <text x="24" y="30">内容不重建：掉线到重连成功这段路径上，Session / 网格 / 标签身份一个都不换——回看内容是「断线前最后一屏」，需求那句「保留终端内容供回看」在自动路径上不破（D1 的根据）。</text>
+    <circle cx="8" cy="54" r="9" fill="#1b1f28"/>
+    <text x="8" y="58" font-size="11" fill="#ffffff" font-weight="700" text-anchor="middle">2</text>
+    <text x="24" y="58">重连中态两枚按钮：「立即重试」跳过当前退避等待直接拨，「停止重连」把这条会话从自动环里摘出来并落到终态（此后只剩手动重启）。</text>
+    <circle cx="8" cy="82" r="9" fill="#1b1f28"/>
+    <text x="8" y="86" font-size="11" fill="#ffffff" font-weight="700" text-anchor="middle">3</text>
+    <text x="24" y="86">重拨期间 alive() 恒 false（远端确实没有活进程）：退出角标与关闭前确认按今天语义走，不撒谎；可见性只由「重连状态快照」这一条 latest-value 通道表达。</text>
+    <circle cx="8" cy="110" r="9" fill="#1b1f28"/>
+    <text x="8" y="114" font-size="11" fill="#ffffff" font-weight="700" text-anchor="middle">4</text>
+    <text x="24" y="114">卡片之外的落点仍归选区（命中序沿用 7.86②：浮层按钮排在鼠标上报分流之前，其余照旧），断线期间旧输出仍可选可复制。</text>
+    <circle cx="8" cy="138" r="9" fill="#1b1f28"/>
+    <text x="8" y="142" font-size="11" fill="#ffffff" font-weight="700" text-anchor="middle">5</text>
+    <text x="24" y="142">关闭原因有出口：今天六条停机路径全收敛成无参 on_closed()，本稿按 D3 增一条带默认实现的重载（其余连接腿与测试替身零改动），分类表按 D2，纯逻辑落 reconnect 件。</text>
+    <circle cx="8" cy="166" r="9" fill="#1b1f28"/>
+    <text x="8" y="170" font-size="11" fill="#ffffff" font-weight="700" text-anchor="middle">6</text>
+    <text x="24" y="170">边界一条：没有 keepalive（CONN.02 延后子项），空闲会话被中间设备静默掐断时读循环不报错 ⇒ 掉线不可知、重连也不触发。「自动重连」不等于「永不掉线」，本稿如实登记。</text>
+  </g>
+  <text x="0" y="206" font-size="12" fill="#5a6070">沙箱无 sshd：本期可自动化的判据是「替身连接注入掉线 → 退避档位与重拨次数可观测 → 终态分档」，真网络掉线与重拨成功待 sshd 环境补 etest（同裁决 7.96 代价①）；浮层观感与两枚按钮落点属真机走查（AGENTS 第 33 条）。</text>
+</g>
+</svg>
