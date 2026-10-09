@@ -12,6 +12,7 @@ add_library(borealis_core STATIC
         config/themes.cpp
         conn/profile.cpp
         conn/profile_views.cpp
+        conn/sftp_model.cpp
         conn/ssh_connection.cpp
         conn/ssh_dial.cpp
         ui/connection_sidebar.cpp
