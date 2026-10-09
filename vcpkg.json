@@ -1,0 +1,16 @@
+{
+  "name": "borealis",
+  "version": "0.93.0",
+  "description": "Borealis - terminal manager built on Aurora (local / SSH / serial / telnet)",
+  "license": "MIT",
+  "builtin-baseline": "2750401336fb7c95f6619657a46a7e798661341c",
+  "dependencies": [
+    "libssh"
+  ],
+  "overrides": [
+    {
+      "name": "libssh",
+      "version": "0.12.0"
+    }
+  ]
+}

@@ -68,6 +68,11 @@ elseif (UNIX)
     endif ()
 endif ()
 
+# SSH 传输腿（`SPEC.FEAT.CONN.02`）：libssh 经 vcpkg 获取，vcpkg 给出的 CMake 目标名是 `ssh`
+# （不是 `libssh::ssh`——其 port 的 usage 说明里写明 `target_link_libraries(main PRIVATE ssh)`）。
+find_package(libssh CONFIG REQUIRED)
+target_link_libraries(borealis_core PRIVATE ssh)
+
 # 消费者统一配置（链接 aurora + C++20 + 共享 PCH + 统一告警），额外私有头目录为本仓公共头根。
 aurora_setup_consumer_target(borealis_core "${CMAKE_CURRENT_SOURCE_DIR}/../include")
 

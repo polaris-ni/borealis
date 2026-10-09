@@ -1,4 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
+
+# 三方依赖经 vcpkg（AGENTS.md §1「三方依赖走 vcpkg，不复制源码」）：工具链须在 project()
+# 之前生效，故只能在这里按 VCPKG_ROOT 接。未设 VCPKG_ROOT 时按无 vcpkg 构建，届时
+# find_package(libssh) 会失败——那是 SSH 腿的硬依赖，其余腿不受影响。
+if (DEFINED ENV{VCPKG_ROOT})
+    set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        CACHE FILEPATH "vcpkg toolchain")
+endif ()
+
 project(borealis VERSION 0.1.0 LANGUAGES CXX)
 
 # ============================================================

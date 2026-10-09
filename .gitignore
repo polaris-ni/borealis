@@ -5,6 +5,9 @@
 /out/
 /dist/
 
+# vcpkg 清单模式的安装树（由 vcpkg.json 生成，不入库）
+/vcpkg_installed/
+
 # CMake 在构建目录内生成的东西（构建目录已整体忽略，此处兜住源码树内的散落产物）
 CMakeCache.txt
 CMakeFiles/
