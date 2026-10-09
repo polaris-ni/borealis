@@ -70,7 +70,7 @@ constexpr std::size_t kTotalLines = 60U;       ///< 一屏 24 行 + 可回看 36
 constexpr std::string_view kNeedle{"qz7k"};
 const std::u32string kNeedleQuery{U"qz7k"};
 
-UnicodeWidthPolicy width_policy;
+auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
 
 [[nodiscard]] auto holds(std::initializer_list<std::size_t> values, std::size_t value) -> bool {
     for (const std::size_t item : values) {

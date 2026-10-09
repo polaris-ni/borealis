@@ -17,6 +17,7 @@
 #include "borealis/term/terminal.h"
 #include "borealis/term/width.h"
 #include "framework/aurora_test.h"
+#include <memory>
 
 namespace borealis::test_cases::utest_terminal_osc {
 
@@ -32,7 +33,7 @@ using borealis::term::SingleWidthPolicy;
 using borealis::term::Terminal;
 using borealis::term::WidthPolicy;
 
-SingleWidthPolicy narrow_only;
+auto narrow_only = std::make_shared<borealis::term::SingleWidthPolicy>();
 
 /// @brief 只认单个双宽码点的桩判定：宽度语义归 `utest_terminal`，此处只服务超链接挂格。
 class StubWidePolicy final : public WidthPolicy {
@@ -44,7 +45,7 @@ class StubWidePolicy final : public WidthPolicy {
     }
 };
 
-StubWidePolicy stub_wide;
+auto stub_wide = std::make_shared<StubWidePolicy>();
 
 /// @brief 应答收集端：只登记，不断言时序（`OSC 52` 读方向用）。
 class CollectingSink final : public ResponseSink {
@@ -57,8 +58,8 @@ class CollectingSink final : public ResponseSink {
 };
 
 /// @brief 建一台 10 列 × 3 行、scrollback 5 行的终端。
-[[nodiscard]] auto make_terminal(const WidthPolicy &policy) -> Terminal {
-    return {10, 3, 5, policy};
+[[nodiscard]] auto make_terminal(std::shared_ptr<const WidthPolicy> policy) -> Terminal {
+    return {10, 3, 5, std::move(policy)};
 }
 
 /// @brief 某格当前挂着的超链接标识。

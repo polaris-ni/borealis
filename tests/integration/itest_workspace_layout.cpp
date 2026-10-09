@@ -98,7 +98,7 @@ constexpr RgbaColor kAccentInk{0xBD, 0x93, 0xF9, 255};   ///< 把手 hover / 拖
 /// @brief 帧缓冲取点越界时的返回值：一个画面里不可能出现的色，断言因此红得可读而不是踩内存。
 constexpr RgbaColor kOutsideFrame{0x11, 0x22, 0x33, 0x44};
 
-UnicodeWidthPolicy width_policy;
+auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
 
 using Pixels = std::vector<std::uint8_t>;
 

@@ -54,7 +54,7 @@ constexpr Size kNominalSize{80U, 24U};
 constexpr std::size_t kScrollback = 40;
 constexpr float kPaddingDp = 4.0F;
 
-UnicodeWidthPolicy width_policy;
+auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
 
 /// @brief 传输连接替身：记录会话写出的字节，并可主动投递字节（本用例里投递线程即读线程）。
 class FakeConnection final : public Connection {

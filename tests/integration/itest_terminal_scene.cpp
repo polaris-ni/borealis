@@ -21,6 +21,7 @@
 #include "support/fixture_text.h"
 #include "support/paths.h"
 #include "support/terminal_feed.h"
+#include <memory>
 
 namespace borealis::test_cases::itest_terminal_scene {
 
@@ -73,7 +74,7 @@ auto replay(Terminal &terminal, std::string_view scene, std::string_view stop_be
 AURORA_TEST_CASE(scene_frame_paints_box_lines_not_letters) {
     const std::string scene = load_scene();
     AURORA_TEST_REQUIRE_MSG(!scene.empty(), "fixture unreadable: tests/fixtures/vt/scene_tmux_frame.txt");
-    UnicodeWidthPolicy width_policy;
+    auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
     Terminal terminal{20, 5, 5, width_policy};
 
     // 退出备屏的那条序列之前，画面全在备屏上：先断言框线的落格码点。
@@ -101,7 +102,7 @@ AURORA_TEST_CASE(scene_frame_paints_box_lines_not_letters) {
 AURORA_TEST_CASE(scene_prompt_colors_and_osc_title_consumed_into_state) {
     const std::string scene = load_scene();
     AURORA_TEST_REQUIRE_MSG(!scene.empty(), "fixture unreadable: tests/fixtures/vt/scene_tmux_frame.txt");
-    UnicodeWidthPolicy width_policy;
+    auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
     Terminal terminal{20, 5, 5, width_policy};
     const auto replaced = replay(terminal, scene, "\x1B[?1049l");
 
@@ -135,7 +136,7 @@ AURORA_TEST_CASE(scene_prompt_colors_and_osc_title_consumed_into_state) {
 AURORA_TEST_CASE(scene_alt_screen_exit_leaves_main_untouched) {
     const std::string scene = load_scene();
     AURORA_TEST_REQUIRE_MSG(!scene.empty(), "fixture unreadable: tests/fixtures/vt/scene_tmux_frame.txt");
-    UnicodeWidthPolicy width_policy;
+    auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
     Terminal terminal{20, 5, 5, width_policy};
     replay(terminal, scene, "");  // 整帧，含进出备屏
 

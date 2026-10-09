@@ -17,6 +17,7 @@
 #include "borealis/term/width.h"
 #include "framework/aurora_test.h"
 #include "support/terminal_feed.h"
+#include <memory>
 
 namespace borealis::test_cases::itest_unicode_width {
 
@@ -35,7 +36,7 @@ constexpr char32_t kAmbiguous = U'\x00B1';
 /// 组合重音符：General_Category Mn，零宽。
 constexpr char32_t kAcute = U'\x0301';
 
-UnicodeWidthPolicy real_width;
+auto real_width = std::make_shared<borealis::term::UnicodeWidthPolicy>();
 
 /// @brief 建一台 10 列 × 3 行、scrollback 5 行的终端。
 [[nodiscard]] auto make_terminal(AmbiguousWidth ambiguous) -> Terminal {

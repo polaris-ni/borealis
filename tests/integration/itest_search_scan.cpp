@@ -69,7 +69,7 @@ constexpr std::size_t kRows = 24U;
 constexpr std::string_view kNeedle{"qz7k"};
 const std::u32string kNeedleQuery{U"qz7k"};
 
-UnicodeWidthPolicy width_policy;
+auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
 
 /// @brief 传输连接替身：只负责把字节投进会话。
 ///

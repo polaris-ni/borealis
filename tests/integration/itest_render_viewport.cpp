@@ -91,7 +91,7 @@ constexpr std::size_t kScrollback = 40;
 constexpr int kBlinkPeriodMs = 500;
 constexpr Size kNominalSize{80U, 24U};
 
-UnicodeWidthPolicy width_policy;
+auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
 
 /// @brief 传输连接替身：记录会话下发的尺寸，并可主动投递字节（测试里投递线程即读线程）。
 class FakeConnection final : public Connection {

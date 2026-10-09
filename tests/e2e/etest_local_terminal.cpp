@@ -50,7 +50,7 @@ constexpr auto kPollInterval = std::chrono::milliseconds{20};
 constexpr std::size_t kColumns = 120U;
 constexpr std::size_t kRows = 30U;
 
-SingleWidthPolicy width_policy;
+auto width_policy = std::make_shared<borealis::term::SingleWidthPolicy>();
 
 /// @brief 以自定义命令打开一个会话并启动（`SPEC.FEAT.CONN.01` 的「自定义命令」模式）。
 [[nodiscard]] auto make_session(const std::string &command_line,

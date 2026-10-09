@@ -73,7 +73,7 @@ constexpr auto kBlinkPeriod = std::chrono::milliseconds{500};
 constexpr auto kSettleTimeout = std::chrono::milliseconds{20000};
 constexpr auto kPollInterval = std::chrono::milliseconds{20};
 
-SingleWidthPolicy width_policy;
+auto width_policy = std::make_shared<borealis::term::SingleWidthPolicy>();
 
 /// @brief 网格某视口行的文本（行尾空白剥掉：右侧空格是网格填充不是内容）。
 ///

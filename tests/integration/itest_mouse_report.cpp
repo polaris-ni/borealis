@@ -68,7 +68,7 @@ constexpr float kPaddingDp = 4.0F;
 constexpr int kWindowWidth = 420;
 constexpr int kWindowHeight = 260;
 
-UnicodeWidthPolicy width_policy;
+auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
 
 /// @brief 将期望字节写成数值列表：上报协议的字节多是控制码与偏移量，字面量不可读且易错。
 ///

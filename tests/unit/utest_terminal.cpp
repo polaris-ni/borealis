@@ -19,6 +19,7 @@
 #include "borealis/term/terminal.h"
 #include "borealis/term/width.h"
 #include "framework/aurora_test.h"
+#include <memory>
 
 namespace borealis::test_cases::utest_terminal {
 
@@ -52,15 +53,16 @@ class StubWidthPolicy final : public WidthPolicy {
     }
 };
 
-SingleWidthPolicy narrow_only;
-StubWidthPolicy stub_width;
+auto narrow_only = std::make_shared<borealis::term::SingleWidthPolicy>();
+auto stub_width = std::make_shared<StubWidthPolicy>();
 
 /// @brief 建一台 10 列 × 3 行、scrollback 5 行的终端，并按调用方给的初始档播种。
 ///
 /// `defaults` 有缺省值：既有六十个构造点因此一字不改，而本会话初始档那两条用例要的正是「注入一份
 /// 与库缺省档互异的档」——取库缺省档时「装错」与「没装」在读数上无法区分。
-[[nodiscard]] auto make_terminal(const WidthPolicy &policy, TerminalDefaults defaults = {}) -> Terminal {
-    return {10, 3, 5, policy, defaults};
+[[nodiscard]] auto make_terminal(std::shared_ptr<const WidthPolicy> policy,
+                           TerminalDefaults defaults = {}) -> Terminal {
+    return {10, 3, 5, std::move(policy), defaults};
 }
 
 /// @brief 视口某行的可见文本（行尾空格剥掉，免得断言写成数列宽）。

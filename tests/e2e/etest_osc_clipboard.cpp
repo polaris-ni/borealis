@@ -55,7 +55,7 @@ constexpr std::size_t kRows = 30U;
 /// 剪贴板标记：只以 base64 形态经过会话，明文不会出现在屏幕上。
 constexpr std::string_view kMarker = "borealis-osc52-clip";
 
-SingleWidthPolicy width_policy;
+auto width_policy = std::make_shared<borealis::term::SingleWidthPolicy>();
 
 /// @brief 让子进程自己算 base64 并发出 `OSC 52 ; c ; <base64> BEL`。
 ///

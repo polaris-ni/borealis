@@ -426,7 +426,8 @@ private:
     int window_width_ = 520;
     int window_height_ = 260;
     au::Window window_ = make_window();
-    UnicodeWidthPolicy width_policy{};
+    std::shared_ptr<borealis::term::UnicodeWidthPolicy> width_policy =
+        std::make_shared<borealis::term::UnicodeWidthPolicy>();
     FakeConnection *connection_ = nullptr;  ///< 非拥有，会话持有。
     std::unique_ptr<Session> session_;
     std::shared_ptr<TerminalView> view_;

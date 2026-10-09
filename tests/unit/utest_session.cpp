@@ -39,7 +39,7 @@ using borealis::term::kReplacementCharacter;
 using borealis::term::SingleWidthPolicy;
 using borealis::term::TermModes;
 
-SingleWidthPolicy width_policy;
+auto width_policy = std::make_shared<borealis::term::SingleWidthPolicy>();
 
 /// @brief 传输连接测试替身：记录会话下发的字节与尺寸，并可主动投递读线程回调。
 ///
