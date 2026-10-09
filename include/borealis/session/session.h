@@ -92,7 +92,23 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     auto resize(Size size) -> void;
 
     /// @brief 对端进程是否仍在（`SPEC.FEAT.WS.01` 关闭前确认；退出后内容仍保留供回看）。
+    ///
+    /// 重拨期间同样回 false：那时远端确实没有活进程，退出角标与关闭前确认照今天的语义走，
+    /// 不因「正在自动重连」而撒谎（裁决 7.99 D7③）。重连的可见性只走下面那条快照。
     [[nodiscard]] auto alive() const -> bool;
+
+    /// @brief 最近一份自动重连进度快照（`SPEC.FEAT.WS.05` 判据 2 的取数入口）。
+    ///
+    /// latest-value：连接腿每档退避投一份，UI 每帧读最近一份，丢帧不影响下一帧的正确性
+    /// （AGENTS 第 25 条的「交换合成后的最终值」）。回 `std::nullopt`＝这条腿从不重连
+    /// （本地 PTY 腿、或 SSH 腿尚未掉线），视口浮层因此维持裁决 7.86 那一档形态。
+    [[nodiscard]] auto reconnect_progress() const -> std::optional<ReconnectProgress>;
+
+    /// @brief 连接腿的重连控制面（「立即重试」「停止重连」两枚动作的落点）。
+    ///
+    /// 不具该能力的腿回 `nullptr`（架构 §7.2：能力接口只由有的腿实现，会话层与 UI 都不
+    /// 认得具体连接类型）。返回值与 `alive()` 同生死，不越过本会话。
+    [[nodiscard]] auto reconnect_control() const noexcept -> ReconnectControl *;
 
     /// @brief 取走本帧要重读的提交，最多到单帧预算条数（`SPEC.NF.PERF.06`）。
     [[nodiscard]] auto drain_damage() -> std::vector<Damage> { return damage_queue_.drain(); }
@@ -162,6 +178,10 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// @brief 对端退出：把解码器挂起的半截序列收尾进网格，之后不再产内容。
     auto on_closed() -> void override;
 
+    /// @brief 重连进度：存 latest-value 快照并叫主线程看一眼（状态变更即唤醒，口径同
+    ///        `on_closed()` 那条例外——它没有网格提交，靠的正是同一次唤醒）。
+    auto on_reconnect_progress(const ReconnectProgress &progress) -> void override;
+
     /// @brief 走一轮「解码 → 状态机 → 提交交付」；两个回调的差别只在解码收尾。
     /// @param bytes 本次收到的原始字节；@c end_of_stream 为真时可空。
     /// @param end_of_stream 流是否已结束：真则按替换字符收尾挂起序列（`SPEC.FEAT.TERM.09`）。
@@ -179,6 +199,10 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     mutable std::mutex mutex_;  ///< const 取值路径（`decode_stats`）也要加锁，故可变。
     std::function<void()> frame_wake_;  ///< 装配层注入的帧唤醒句柄，与 `mutex_` 同世代护住。
     std::unique_ptr<Connection> connection_;
+    /// 构造期一次 `dynamic_cast` 取到的能力接口；与会话同生死，故用裸指针表达「不拥有」。
+    ReconnectControl *reconnect_control_ = nullptr;
+    /// 重连进度的 latest-value 快照，由 `mutex_` 护住（读线程投、主线程每帧读）。
+    std::optional<ReconnectProgress> reconnect_progress_;
     term::Terminal terminal_;
     term::Utf8Decoder decoder_;
     DamageQueue damage_queue_;

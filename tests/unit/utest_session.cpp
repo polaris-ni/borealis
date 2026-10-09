@@ -12,9 +12,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "borealis/grid/storage.h"
@@ -31,7 +33,11 @@ namespace {
 using borealis::grid::Storage;
 using borealis::session::Connection;
 using borealis::session::ConnectionEvents;
+using borealis::session::CloseReason;
 using borealis::session::Damage;
+using borealis::session::ReconnectControl;
+using borealis::session::ReconnectProgress;
+using borealis::session::ReconnectStop;
 using borealis::session::Session;
 using borealis::session::Size;
 using borealis::term::Cursor;
@@ -67,6 +73,14 @@ class FakeConnection final : public Connection {
     /// @brief 模拟对端进程退出。
     auto deliver_closed() -> void { events_->on_closed(); }
 
+    /// @brief 模拟带归因的退出（SSH 腿那条路；替身不覆写重载，走基类默认转调）。
+    auto deliver_closed(CloseReason reason) -> void { events_->on_closed(reason); }
+
+    /// @brief 模拟退避环投一份进度快照。
+    auto deliver_progress(const ReconnectProgress &progress) -> void {
+        events_->on_reconnect_progress(progress);
+    }
+
     std::vector<std::byte> written;   ///< 会话下发的字节（含状态机应答）。
     std::vector<Size> resizes;        ///< 会话下发的尺寸。
 
@@ -82,6 +96,25 @@ class FakeConnection final : public Connection {
 
     ConnectionEvents *events_ = nullptr;
     bool alive_ = false;
+};
+
+/// @brief 会自愈的连接替身：多实现一条能力接口，验证会话侧「有则交出、无则空」的分派。
+class SelfHealingConnection final : public Connection, public ReconnectControl {
+  public:
+    auto start(ConnectionEvents &events) -> void override { events_ = &events; }
+    auto write(std::span<const std::byte>) -> void override {}
+    auto resize(Size) -> void override {}
+    auto close() -> void override {}
+    [[nodiscard]] auto alive() const noexcept -> bool override { return false; }
+
+    auto retry_now() -> void override { ++retries; }
+    auto stop_reconnect() -> void override { ++stops; }
+
+    int retries = 0;   ///< 「立即重试」被按了几回。
+    int stops = 0;     ///< 「停止重连」被按了几回。
+
+  private:
+    ConnectionEvents *events_ = nullptr;
 };
 
 /// @brief 会话与其替身连接的联合 fixture（会话独占连接所有权，fixture 留裸指针驱动回调）。
@@ -108,6 +141,15 @@ struct Fixture {
     auto *connection = owned.get();
     auto session = std::make_unique<Session>(std::move(owned), size, 5, width_policy);
     session->start();
+    return {connection, std::move(session)};
+}
+
+/// @brief 起一个挂「会自愈连接」的会话，用来验能力接口的分派。
+[[nodiscard]] auto make_self_healing_session() -> std::pair<SelfHealingConnection *,
+                                                            std::unique_ptr<Session>> {
+    auto owned = std::make_unique<SelfHealingConnection>();
+    auto *connection = owned.get();
+    auto session = std::make_unique<Session>(std::move(owned), Size{10, 3}, 5, width_policy);
     return {connection, std::move(session)};
 }
 
@@ -389,6 +431,74 @@ AURORA_TEST_CASE(clean_close_wakes_the_frame_even_with_no_pending_damage) {
 
     fixture.connection->deliver_closed();
     AURORA_TEST_CHECK_EQ(wakes, 1);
+}
+
+AURORA_TEST_CASE(reconnect_snapshot_is_absent_until_the_leg_posts_one) {
+    // 本地腿从不投快照 ⇒ 浮层维持裁决 7.86 那一档形态；它也没有重连控制面。
+    auto fixture = make_session();
+    AURORA_TEST_CHECK_FALSE(fixture.session->reconnect_progress().has_value());
+    AURORA_TEST_CHECK_TRUE(fixture.session->reconnect_control() == nullptr);
+}
+
+AURORA_TEST_CASE(reconnect_snapshot_keeps_only_the_latest_value) {
+    auto fixture = make_session();
+    fixture.connection->deliver_progress(
+        ReconnectProgress{.attempt = 1, .total = 3, .delay_ms = 1000, .stop = ReconnectStop::None});
+    fixture.connection->deliver_progress(ReconnectProgress{.attempt = 2,
+                                                            .total = 3,
+                                                            .delay_ms = 2000,
+                                                            .stop = ReconnectStop::None});
+
+    const auto latest = fixture.session->reconnect_progress();
+    AURORA_TEST_REQUIRE(latest.has_value());
+    // 不是事件流水：UI 每帧只读最近一份，前一份不必排帧也不会「补放」。
+    AURORA_TEST_CHECK_EQ(latest->attempt, 2);
+    AURORA_TEST_CHECK_EQ(latest->delay_ms, 2000);
+
+    // 重拨成功那一份是全零：快照回到「不在环里」，下一次掉线才重新计数。
+    fixture.connection->deliver_progress(ReconnectProgress{});
+    const auto cleared = fixture.session->reconnect_progress();
+    AURORA_TEST_REQUIRE(cleared.has_value());
+    AURORA_TEST_CHECK_EQ(cleared->attempt, 0);
+    AURORA_TEST_CHECK_TRUE(cleared->stop == ReconnectStop::None);
+}
+
+AURORA_TEST_CASE(a_progress_event_wakes_the_frame_though_it_carries_no_damage) {
+    // 与 on_closed 同条例外口径（裁决 7.99 判据 2）：退避进度没有网格提交，
+    // 靠的正是「状态变更即唤醒」，否则「第 i 回 / X 秒后」要等下一次别的唤醒才更新。
+    auto fixture = make_session();
+    int wakes = 0;
+    fixture.session->set_frame_wake([&wakes]() { ++wakes; });
+    static_cast<void>(drain_all(*fixture.session));
+    AURORA_TEST_REQUIRE_FALSE(fixture.session->has_damage());
+
+    fixture.connection->deliver_progress(
+        ReconnectProgress{.attempt = 1, .total = 3, .delay_ms = 1000, .stop = ReconnectStop::None});
+    AURORA_TEST_CHECK_EQ(wakes, 1);
+    AURORA_TEST_CHECK_FALSE(fixture.session->has_damage());
+}
+
+AURORA_TEST_CASE(the_reason_bearing_close_finishes_the_pending_sequence) {
+    // 带归因那条重载由基类默认实现转调无参版 ⇒ 收尾路径与无归因那条完全同一条
+    //（替身零改动即成立，裁决 7.99 D3① 的 additive 纪律在这里落地）。
+    auto fixture = make_session();
+    fixture.connection->deliver("\xE4\xB8");  // 三字节序列被切断：挂起中，尚未产字符
+    AURORA_TEST_CHECK_FALSE(fixture.session->has_damage());
+    fixture.connection->deliver_closed(CloseReason::LinkLost);
+    AURORA_TEST_CHECK_EQ(drain_all(*fixture.session).size(), 1U);
+    AURORA_TEST_CHECK_EQ(code_point_at(fixture, 0, 0), kReplacementCharacter);
+}
+
+AURORA_TEST_CASE(a_self_healing_leg_hands_out_its_reconnect_control) {
+    auto [connection, session] = make_self_healing_session();
+    auto *control = session->reconnect_control();
+    AURORA_TEST_REQUIRE(control != nullptr);
+
+    // 会话层只认能力接口：两枚动作原样落到腿上，装配层不需要知道它是哪一种连接。
+    control->retry_now();
+    control->stop_reconnect();
+    AURORA_TEST_CHECK_EQ(connection->retries, 1);
+    AURORA_TEST_CHECK_EQ(connection->stops, 1);
 }
 
 }  // namespace borealis::test_cases::utest_session

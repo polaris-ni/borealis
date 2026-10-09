@@ -39,6 +39,31 @@ enum class CloseReason : std::uint8_t {
     Unknown,          ///< 归不出类的失败：保守按不可重连处理（裁决 7.99 D2①）。
 };
 
+/// @brief 自动重连停在哪儿（视口浮层的文案分档，裁决 7.99 D5① 的屏 B 三档）。
+///
+/// 定义在公共头而不是 `src/conn/reconnect.h`：它随 @p ReconnectProgress 跨过连接与会话
+/// 的接口边界，公共头不得反向依赖实现侧私有头。分档本身仍是**事实陈述**，「哪档说什么」
+/// 归 UI。
+enum class ReconnectStop : std::uint8_t {
+    None,               ///< 还在退避环里，没停。
+    AttemptsExhausted,  ///< 原因可重拨但次数用尽（退避环走完）。
+    NotReconnectable,   ///< 原因本身不值得重拨（认证失败、主机密钥不符、归因不明）。
+    RemoteExit,         ///< 远端进程正常结束——不是断线，沿用裁决 7.86 那一档形态。
+    UserStopped,        ///< 本端主动关闭，或用户点了「停止重连」。
+};
+
+/// @brief 重连进度的 latest-value 快照（裁决 7.99 判据 2：浮层要显示「第 i / M 回」与
+///        「X 秒后重试」，而这两个数只有跑退避环的读线程知道）。
+///
+/// 交换的是**合成后的最终值**而非事件流水（AGENTS 第 25 条，口径同裁决 7.97 D6 的状态泵）：
+/// 每档退避投一次，UI 每帧读最近一份，丢帧不影响下一帧的正确性。
+struct ReconnectProgress {
+    int attempt{0};     ///< 这是本次掉线以来的第几回重拨（自 1 起）；0＝不在环里。
+    int total{0};       ///< 计划总回数；0＝不限次（`RetryPolicy::max_attempts` 同口径）。
+    int delay_ms{0};    ///< 本次拨前等待的毫秒数；终态那一份恒 0。
+    ReconnectStop stop{ReconnectStop::None};  ///< 停在哪儿；`None`＝还在等下一次。
+};
+
 /// @brief 连接 → 会话的事件接收端。
 ///
 /// 回调发生在**连接的读线程**上（架构 §3.1：每会话一个读线程），实现方不得在此触达
@@ -60,6 +85,31 @@ class ConnectionEvents {
     /// forkpty 两腿、以及全部测试替身的编译面与行为都不变（裁决 7.99 D3①，additive）。
     /// @param reason 归因结果。
     virtual auto on_closed([[maybe_unused]] CloseReason reason) -> void { on_closed(); }
+
+    /// @brief 自动重连的进度快照（`SPEC.FEAT.WS.05` 判据 2 的数据源）。
+    ///
+    /// 与 @p on_closed 同款 additive 纪律：默认实现空转，只有会重拨的连接腿（本期
+    /// `SshConnection`）投它，其余腿与全部测试替身的编译面与行为都不变。投递时机有三处：
+    /// 每档退避进入前（`stop == None`）、环落下终态那一份（带终态档位）、重拨成功回到
+    /// 读循环时（全零，把快照擦干净）。
+    /// @param progress 合成后的最终值。
+    virtual auto on_reconnect_progress([[maybe_unused]] const ReconnectProgress &progress) -> void {}
+};
+
+/// @brief 会自愈的连接才实现的能力接口（架构 §7.2 的「基础接口 + 能力接口组合」）。
+///
+/// 两枚动作的落点是连接内部的退避环，不是基础接口的一部分——本地 PTY 腿没有可截断的
+/// 重拨，也不该为此背一行实现（§7.2 明写）。会话层拿到的是本接口指针，认不出也不必认出
+/// 具体是哪种连接（裁决 7.99 D3② 被否的正是「装配层必须认得具体连接类型」那条路）。
+class ReconnectControl {
+  public:
+    virtual ~ReconnectControl() = default;
+
+    /// @brief 「立即重试」：截断当前退避休眠，下一回拨不等到点。
+    virtual auto retry_now() -> void = 0;
+
+    /// @brief 「停止重连」：置终止位让环自己落终态，不硬杀读线程。
+    virtual auto stop_reconnect() -> void = 0;
 };
 
 /// @brief 所有连接类型共同实现的基础接口。

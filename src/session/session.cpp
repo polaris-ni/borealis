@@ -32,6 +32,9 @@ Session::Session(std::unique_ptr<Connection> connection, Size size, std::size_t 
     : connection_{std::move(connection)},
       terminal_{size.columns, size.rows, scrollback_limit, std::move(width_policy), defaults} {
     terminal_.set_response_sink(this);
+    // 能力接口在构造期认一次（架构 §7.2）：会话层自此只知道「这条腿有没有重连控制面」，
+    // 不知道它是 SSH 还是别的——每次取用再 cast 既无必要也要把类型知识留在热路径上。
+    reconnect_control_ = dynamic_cast<ReconnectControl *>(connection_.get());
     // BEL 回调在锁内只登记事件，不 IO（架构 §3.4）；具体落地由装配层每帧取走标记。
     terminal_.set_bell_callback([this]() -> void {
         // 空实现：BEL 触发时不需要在锁内做任何事，主线程会每帧调用 take_bell_triggered() 查询。
@@ -83,6 +86,22 @@ auto Session::resize(Size size) -> void {
 }
 
 auto Session::alive() const -> bool { return connection_->alive(); }
+
+auto Session::reconnect_progress() const -> std::optional<ReconnectProgress> {
+    const std::lock_guard lock{mutex_};
+    return reconnect_progress_;
+}
+
+auto Session::reconnect_control() const noexcept -> ReconnectControl * { return reconnect_control_; }
+
+auto Session::on_reconnect_progress(const ReconnectProgress &progress) -> void {
+    {
+        const std::lock_guard lock{mutex_};
+        reconnect_progress_ = progress;
+    }
+    // 状态变更即唤醒：本事件没有网格提交，走不成「有提交才排帧」那条路（见 on_closed 同处注释）。
+    wake_frame();
+}
 
 auto Session::decode_stats() const -> term::DecodeStats {
     const std::lock_guard lock{mutex_};

@@ -87,7 +87,7 @@ auto SftpClient::connect(const SshProfile &profile, std::optional<std::string> s
         return false;
     }
     // 秘密材料移交 dial 腿消费，无论成败返回后即清空；本类不留存（CONN.09）。
-    if (!ssh_dial_and_authenticate(profile, std::move(secret), session_)) {
+    if (ssh_dial_and_authenticate(profile, std::move(secret), session_) != DialOutcome::Ok) {
         ssh_free(session_);
         session_ = nullptr;
         last_error_ = SftpError::Network;

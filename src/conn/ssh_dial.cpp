@@ -81,10 +81,10 @@ auto auth_requires_secret(std::string_view method) -> bool {
 
 auto ssh_dial_and_authenticate(const SshProfile &profile,
                                std::optional<std::string> secret,
-                               ssh_session_struct *session) -> bool {
+                               ssh_session_struct *session) -> DialOutcome {
     if (session == nullptr) {
         AURORA_LOG_ERROR("conn", "ssh: dial: session not allocated");
-        return false;
+        return DialOutcome::Unallocated;
     }
 
     // ---- 会话选项 ----
@@ -101,7 +101,7 @@ auto ssh_dial_and_authenticate(const SshProfile &profile,
     if (ssh_connect(session) != SSH_OK) {
         AURORA_LOG_ERROR("conn", "ssh: connect to '", profile.host, ":", port, "' failed: ",
                          ssh_get_error(session));
-        return false;
+        return DialOutcome::Network;
     }
 
     // ---- 主机密钥核对（D3②：进程内核对，拒绝权在 policy_accepts）----
@@ -110,7 +110,7 @@ auto ssh_dial_and_authenticate(const SshProfile &profile,
     if (!policy_accepts(profile.known_hosts_policy, known)) {
         AURORA_LOG_ERROR("conn", "ssh: host key rejected by policy for '", profile.host,
                          "' (state=", static_cast<int>(known), ")");
-        return false;
+        return DialOutcome::HostKey;
     }
     if (known == HostKeyState::New && profile.known_hosts_policy == KnownHostsPolicy::AcceptNew) {
         // accept-new 语义的「首次接受」腿：写回 known_hosts，之后即 Known。
@@ -129,7 +129,7 @@ auto ssh_dial_and_authenticate(const SshProfile &profile,
         // password 认证必须有秘密材料；缺材料直接失败，绝不发明空口令去撞。
         if (!secret.has_value()) {
             AURORA_LOG_ERROR("conn", "ssh: password auth requested but no secret available");
-            return false;
+            return DialOutcome::Auth;
         }
         auth_rc = ssh_userauth_password(session, user, secret->c_str());
     } else if (method == "privatekey") {
@@ -166,9 +166,9 @@ auto ssh_dial_and_authenticate(const SshProfile &profile,
     if (auth_rc != SSH_AUTH_SUCCESS) {
         AURORA_LOG_ERROR("conn", "ssh: auth (", method, ") failed for '", profile.host,
                          "': ", ssh_get_error(session));
-        return false;
+        return DialOutcome::Auth;
     }
-    return true;
+    return DialOutcome::Ok;
 }
 
 }  // namespace borealis::conn

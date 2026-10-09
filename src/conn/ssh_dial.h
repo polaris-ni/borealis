@@ -52,20 +52,33 @@ enum class HostKeyState : std::uint8_t {
 ///        可选——无口令私钥为空即可；agent / keyboard-interactive 不强求，纯逻辑）。
 [[nodiscard]] auto auth_requires_secret(std::string_view method) -> bool;
 
+/// @brief 拨号一条龙的结果分档（`SPEC.FEAT.WS.05` 的关闭归因数据源，裁决 7.99 D2①/D3①）。
+///
+/// 只回答「卡在哪一步」，不回答「为什么卡」——后者要 libssh 错误文本，留在日志里。
+/// 分档的意义在自动重连的取舍：`Network` 值得按退避重拨；`HostKey` 与 `Auth` 重拨只会
+/// 重复失败（还可能触发远端账号锁定）；`Unallocated` 是本机资源问题。后三者一律不重拨。
+enum class DialOutcome : std::uint8_t {
+    Ok,          ///< 连接、核对、认证三步全过。
+    Unallocated, ///< 会话句柄未分配（调用方传了空指针）。
+    Network,     ///< `ssh_connect` 失败：不可达、超时、协议协商不上。
+    HostKey,     ///< 主机密钥与记录不符或核对出错，被档案策略拒绝。
+    Auth,        ///< 认证被服务器拒绝，或缺该方式必需的秘密材料。
+};
+
 /// @brief 在已分配的 libssh 会话上完成「连接 → 主机密钥核对 → 认证」一条龙。
 ///
 /// 阻塞语义：ssh_connect 可阻塞数秒，调用方必须在非 UI 线程上调用。不抛出：
 /// 任一步失败自行记 AURORA_LOG_ERROR（只含 libssh 错误文本，绝不回显秘密材料）
-/// 并回 false。@p secret 无论成败都在本函数返回时随形参一并消失
-/// （CONN.09：明文不比认证活得久）。
+/// 并按 `DialOutcome` 归到失败所在的那一档。@p secret 无论成败都在本函数返回时随形参一并消失
+/// （CONN.09：明文不比认证活得久；调用方要留到下一次重拨就自己保一份，见裁决 7.99 D7②）。
 ///
 /// @param profile 档案（主机/端口/用户/认证方式/known_hosts 策略）。
 /// @param secret  已解析的秘密材料：password＝口令，privatekey＝passphrase，
 ///                keyboard-interactive＝首提示答案；agent 认证传 nullopt。
 /// @param session 调用方先 ssh_new() 分配好的会话；本函数不负责 ssh_free()。
-/// @return 认证成功回 true；会话未分配、连接、核对、认证任一步失败回 false。
+/// @return 认证成功回 `Ok`；其余按失败所在的那一步回对应档位。
 [[nodiscard]] auto ssh_dial_and_authenticate(const SshProfile &profile,
                                              std::optional<std::string> secret,
-                                             ssh_session_struct *session) -> bool;
+                                             ssh_session_struct *session) -> DialOutcome;
 
 }  // namespace borealis::conn

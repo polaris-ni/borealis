@@ -344,7 +344,8 @@ auto Tunnel::run_loop() -> void {
             break;
         }
         const auto secret_copy = secret_;
-        const bool dialed = ssh_dial_and_authenticate(profile_, secret_copy, session);
+        const bool dialed =
+            ssh_dial_and_authenticate(profile_, secret_copy, session) == DialOutcome::Ok;
 
         TunnelError error{TunnelError::None};
         std::unique_ptr<platform::TcpListener> listener;

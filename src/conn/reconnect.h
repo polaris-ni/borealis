@@ -23,17 +23,8 @@
 
 namespace borealis::conn {
 
-/// @brief 自动重连停止后的终态档位（视口浮层的文案分档，裁决 7.99 D5①）。
-///
-/// 屏 B 那三档各自锁一件事：次数用尽把决定权交回人、不可重连的原因绝不静默重试、
-/// 远端正常退出根本不该被说成「掉线」。
-enum class ReconnectStop : std::uint8_t {
-    None,               ///< 还在退避环里，没停。
-    AttemptsExhausted,  ///< 原因可重拨但次数用尽（退避环走完）。
-    NotReconnectable,   ///< 原因本身不值得重拨（认证失败、主机密钥不符、归因不明）。
-    RemoteExit,         ///< 远端进程正常结束——不是断线，沿用裁决 7.86 那一档形态。
-    UserStopped,        ///< 本端主动关闭，或用户点了「停止重连」。
-};
+/// @brief 自动重连停在哪儿：类型定义在公共头（随进度快照跨连接/会话边界），本件只消费。
+using session::ReconnectStop;
 
 /// @brief 该关闭原因是否值得自动重拨（分类表见裁决 7.99 D2①）。
 ///
