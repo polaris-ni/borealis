@@ -152,4 +152,35 @@ AURORA_TEST_CASE(secret_ask_plan_follows_auth_method) {
     AURORA_TEST_CHECK_TRUE(conn::secret_ask_for("") == SecretAsk::None);
 }
 
+AURORA_TEST_CASE(quick_connect_parses_host_port_pairs) {
+    // 纯主机 → 22；host:port → 显式端口；两端空白剥掉。
+    auto parsed = conn::parse_quick_connect("gw.example.com");
+    AURORA_TEST_REQUIRE(parsed.has_value());
+    AURORA_TEST_CHECK_TRUE(parsed->first == "gw.example.com");
+    AURORA_TEST_CHECK_TRUE(parsed->second == 22);
+
+    parsed = conn::parse_quick_connect("  gw.example.com:2222\t");
+    AURORA_TEST_REQUIRE(parsed.has_value());
+    AURORA_TEST_CHECK_TRUE(parsed->first == "gw.example.com");
+    AURORA_TEST_CHECK_TRUE(parsed->second == 2222);
+
+    // 非数字端口段不猜（是主机名的一部分）；越界端口按整段主机名收。
+    parsed = conn::parse_quick_connect("host:name");
+    AURORA_TEST_REQUIRE(parsed.has_value());
+    AURORA_TEST_CHECK_TRUE(parsed->first == "host:name");
+    parsed = conn::parse_quick_connect("host:99999");
+    AURORA_TEST_REQUIRE(parsed.has_value());
+    AURORA_TEST_CHECK_TRUE(parsed->first == "host:99999" && parsed->second == 22);
+
+    // 空输入不连。
+    AURORA_TEST_CHECK_FALSE(conn::parse_quick_connect("   ").has_value());
+
+    // 临时档案：不入库的确定性 id、缺省 agent 认证（无档案即无凭据可引）。
+    const auto profile = conn::quick_connect_profile("gw.example.com", 2222);
+    AURORA_TEST_CHECK_TRUE(profile.id == "quick:gw.example.com:2222");
+    AURORA_TEST_CHECK_TRUE(profile.type == conn::ConnectionType::Ssh);
+    AURORA_TEST_CHECK_TRUE(profile.ssh.auth_method == "agent");
+    AURORA_TEST_CHECK_TRUE(profile.ssh.port == 2222);
+}
+
 }  // namespace borealis::test_cases::utest_profile_views

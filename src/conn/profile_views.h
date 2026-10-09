@@ -8,8 +8,10 @@
 // 私有头：视图模型形态随 UI 迭代，不进 include/。
 // ============================================================
 
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "borealis/conn/profile.h"
@@ -87,5 +89,15 @@ enum class SecretAsk : std::uint8_t {
 /// @brief 按认证方式算询问计划（与 SecretHandle 的 kind 正交：句柄是 Reference 时
 ///        调用方先查凭据库，查不到才落到这里要的询问）。
 [[nodiscard]] auto secret_ask_for(std::string_view auth_method) -> SecretAsk;
+
+/// @brief quick connect 输入的解析（CONN.03：`host[:port]` 临时输入即连，不生成档案）。
+///
+/// 宽容口径：两端空白剥掉；端口段非纯数字视为整体主机名的一部分（不猜）；空串/仅
+/// 空白回 nullopt。@return 主机名与端口（缺省 22）。
+[[nodiscard]] auto parse_quick_connect(std::string_view text)
+    -> std::optional<std::pair<std::string, int>>;
+
+/// @brief 一条 quick connect 的临时 SSH 档案（不入库：id 带 `quick:` 前缀，缺省 agent 认证）。
+[[nodiscard]] auto quick_connect_profile(std::string host, int port) -> Profile;
 
 }  // namespace borealis::conn

@@ -8,7 +8,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <map>
+#include <optional>
 #include <utility>
 
 namespace borealis::conn {
@@ -143,6 +145,49 @@ auto secret_ask_for(std::string_view auth_method) -> SecretAsk {
         return SecretAsk::Interactive;
     }
     return SecretAsk::None;  // agent（含未识别值归一后的回落档）。
+}
+
+auto parse_quick_connect(std::string_view text) -> std::optional<std::pair<std::string, int>> {
+    // 剥两端空白。
+    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
+        text.remove_prefix(1);
+    }
+    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) {
+        text.remove_suffix(1);
+    }
+    if (text.empty()) {
+        return std::nullopt;
+    }
+    const auto colon = text.rfind(':');
+    if (colon == std::string_view::npos) {
+        return std::make_pair(std::string{text}, 22);
+    }
+    const auto port_text = text.substr(colon + 1);
+    if (port_text.empty()) {
+        return std::make_pair(std::string{text.substr(0, colon)}, 22);
+    }
+    // 端口段须全数字才当端口（不猜：`host:名称` 是合法的主机名写法的一部分）。
+    if (!std::all_of(port_text.begin(), port_text.end(),
+                     [](char c) { return c >= '0' && c <= '9'; })) {
+        return std::make_pair(std::string{text}, 22);
+    }
+    const auto port = std::strtol(std::string{port_text}.c_str(), nullptr, 10);  // NOLINT
+    if (port < 1 || port > 65535) {
+        // 越界数字端口：整段按主机名收，绝不拆掉端口连错主机。
+        return std::make_pair(std::string{text}, 22);
+    }
+    return std::make_pair(std::string{text.substr(0, colon)}, static_cast<int>(port));
+}
+
+auto quick_connect_profile(std::string host, int port) -> Profile {
+    auto profile = Profile{};
+    profile.id = "quick:" + host + ":" + std::to_string(port);
+    profile.name = host + ":" + std::to_string(port);
+    profile.type = ConnectionType::Ssh;
+    profile.ssh.host = std::move(host);
+    profile.ssh.port = port;
+    profile.ssh.auth_method = "agent";  // 临时通道缺省 agent：无档案即无凭据可引。
+    return profile;
 }
 
 }  // namespace borealis::conn

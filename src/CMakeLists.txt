@@ -13,6 +13,9 @@ add_library(borealis_core STATIC
         conn/profile.cpp
         conn/profile_views.cpp
         conn/ssh_connection.cpp
+        ui/connection_sidebar.cpp
+        ui/connection_wizard.cpp
+        ui/credential_prompt.cpp
         vt/parser.cpp
         term/utf8.cpp
         term/charset.cpp
@@ -77,10 +80,15 @@ target_link_libraries(borealis_core PRIVATE ssh)
 
 # 消费者统一配置（链接 aurora + C++20 + 共享 PCH + 统一告警），额外私有头目录为本仓公共头根。
 aurora_setup_consumer_target(borealis_core "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+# 私有头互引路径：conn/ssh_connection.h、conn/profile_views.h 等私有头按
+# "conn/xxx.h" 相对 src/ 解析（头仍在 src/ 树内，公共面不因此扩一寸）。
+target_include_directories(borealis_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 add_executable(borealis main.cpp)
 
 aurora_setup_consumer_target(borealis "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+# 同 borealis_core：main 直引 conn/ssh_connection.h 等私有头装配 SSH 腿。
+target_include_directories(borealis PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(borealis PRIVATE borealis_core)
 
 # 产物名 Borealis（裁决 7.14：仓内可自主命名的标识统一 borealis，产物首字母大写）。

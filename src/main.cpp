@@ -28,6 +28,11 @@
 #include "borealis/ui/settings_form.h"
 #include "borealis/ui/tab_strip.h"
 #include "borealis/ui/closed_tab_stack.h"
+#include "conn/profile_views.h"
+#include "conn/ssh_connection.h"
+#include "ui/connection_sidebar.h"
+#include "ui/connection_wizard.h"
+#include "ui/credential_prompt.h"
 #include "ui/debug_panel.h"
 #include "ui/settings_i18n.h"
 #include "ui/settings_panel.h"
@@ -235,19 +240,14 @@ auto main() -> int {
     /// 用户不换标签、对端不改 OSC 标题时根本不动。
     std::string last_window_title;
 
-    // 创建首个本地终端标签
-    auto create_new_tab = [&]() -> void {
+    // 开标签的两段式：会话构造在外（本地腿 / SSH 腿各一份，SSH 腿即 CONN.02 的
+    // SshConnection），壳（视口 / 工作区 / 标签条）共用，三处开标签点不再各自复制一遍
+    // 连接装配。标签名由调用方给——档案连接取档案名，原先那句「首版先给固定措辞」的
+    // TODO(SPEC.FEAT.CONN.02) 就此闭合。
+    auto create_new_tab_with = [&](std::shared_ptr<borealis::session::Session> session,
+                                   const std::u32string &tab_name) -> void {
         const borealis::ui::TabId id = next_tab_id++;
 
-        // 建会话
-        borealis::conn::LocalTerminalSpec spec;
-        spec.command_line = settings.connection.local_shell;
-        spec.working_directory = settings.connection.startup_directory;
-        borealis::term::UnicodeWidthPolicy width_policy;
-        auto session = std::make_shared<borealis::session::Session>(
-            borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
-            kNominalViewport, settings.terminal.scrollback_limit, width_policy,
-            make_terminal_defaults(settings));
         session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
         session->start();
 
@@ -276,10 +276,20 @@ auto main() -> int {
         tab_workspaces[id] = TabWorkspace{.workspace = std::move(workspace), .sessions = {session}};
 
         // 加入标签条
-        // TODO(SPEC.FEAT.CONN.02): 档案名待连接档案落地后从档案取，首版先给本地终端的固定措辞。
-        const std::u32string default_name = U"本地终端";
-        tab_strip.add(id, default_name);
+        tab_strip.add(id, tab_name);
         current_tab_id = id;
+    };
+    auto create_new_tab = [&]() -> void {
+        // 缺省腿＝本地终端：命令与目录从**当前**配置读（与 770 附近的重连口径一致）。
+        borealis::conn::LocalTerminalSpec spec;
+        spec.command_line = settings.connection.local_shell;
+        spec.working_directory = settings.connection.startup_directory;
+        borealis::term::UnicodeWidthPolicy width_policy;
+        auto session = std::make_shared<borealis::session::Session>(
+            borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
+            kNominalViewport, settings.terminal.scrollback_limit, width_policy,
+            make_terminal_defaults(settings));
+        create_new_tab_with(std::move(session), U"本地终端");
     };
 
     create_new_tab();
@@ -592,6 +602,172 @@ auto main() -> int {
     hooks.pick_export_path = []() -> std::string { return picked_save_path(); };
     hooks.pick_import_path = []() -> std::string { return picked_open_path(); };
     borealis::ui::SettingsPanel panel{*host, app.shortcuts(), std::move(hooks)};
+
+    // ---- 连接管理器（CONN.07 / CONN.09，设计稿 D1–D8 已裁决收口）----
+    // UTF-8 档案名 → 标签名：与「撤销重开」那条腿同一解法（CJK 名逐字节折码点会成乱码）。
+    auto decode_tab_name = [](const std::string &utf8) -> std::u32string {
+        borealis::term::Utf8Decoder decoder;
+        DecodeCollector collector;
+        const auto *bytes = reinterpret_cast<const std::byte *>(utf8.data());
+        decoder.feed(std::span<const std::byte>(bytes, utf8.size()), collector);
+        decoder.finish(collector);
+        return collector.out;
+    };
+
+    // 连上即记最近（D4）：登记是纯逻辑件（去重置顶 + 截断），这里只管取时间戳与落盘。
+    auto record_recent = [&store](const std::string &profile_id) -> void {
+        const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                             std::chrono::system_clock::now().time_since_epoch())
+                             .count();
+        auto next = store.settings();
+        borealis::config::push_recent_connection(next.connection, profile_id, now);
+        static_cast<void>(store.replace(std::move(next)));
+    };
+
+    // SSH 会话装配（CONN.02）：SshConnection + 与本地腿同一套视口参数。
+    auto open_ssh_tab = [&](const borealis::conn::Profile &profile,
+                            std::optional<std::string> secret) -> void {
+        auto connection =
+            std::make_unique<borealis::conn::SshConnection>(profile.ssh, std::move(secret),
+                                                            kNominalViewport);
+        borealis::term::UnicodeWidthPolicy width_policy;
+        auto session = std::make_shared<borealis::session::Session>(
+            std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
+            width_policy, make_terminal_defaults(settings));
+        create_new_tab_with(std::move(session), decode_tab_name(profile.name));
+        record_recent(profile.id);
+    };
+
+    // 本地档案会话：LocalProfile 与 LocalTerminalSpec 同构（命令/目录/环境三件），直搬。
+    auto open_local_profile_tab = [&](const borealis::conn::Profile &profile) -> void {
+        borealis::conn::LocalTerminalSpec spec;
+        spec.command_line = profile.local.command_line;
+        spec.working_directory = profile.local.working_directory;
+        spec.environment = profile.local.environment;
+        borealis::term::UnicodeWidthPolicy width_policy;
+        auto session = std::make_shared<borealis::session::Session>(
+            borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
+            kNominalViewport, settings.terminal.scrollback_limit, width_policy,
+            make_terminal_defaults(settings));
+        create_new_tab_with(std::move(session), decode_tab_name(profile.name));
+        record_recent(profile.id);
+    };
+
+    // 凭据询问件（CONN.09 降级腿）：本期无 OS 凭据库后端，要材料的认证一律走这里；
+    // 明文只经 on_secret 交给**本次**装配，不落盘不进日志（裁决 7.93）。
+    auto pending_profile = std::optional<borealis::conn::Profile>{};
+    borealis::ui::CredentialPrompt::Hooks prompt_hooks;
+    prompt_hooks.on_secret = [&open_ssh_tab, &pending_profile](const std::string &secret) -> void {
+        if (pending_profile.has_value()) {
+            auto profile = std::move(*pending_profile);
+            pending_profile.reset();
+            open_ssh_tab(profile, secret);
+        }
+    };
+    prompt_hooks.on_cancel = [&pending_profile]() -> void { pending_profile.reset(); };
+    auto credential_prompt =
+        std::make_shared<borealis::ui::CredentialPrompt>(*host, std::move(prompt_hooks));
+
+    auto connect_profile = [&](const borealis::conn::Profile &profile) -> void {
+        if (profile.type == borealis::conn::ConnectionType::Local) {
+            open_local_profile_tab(profile);
+            return;
+        }
+        const auto ask = borealis::conn::secret_ask_for(
+            borealis::conn::normalized_auth_method(profile.ssh));
+        if (ask == borealis::conn::SecretAsk::None) {
+            open_ssh_tab(profile, std::nullopt);  // agent 认证：无材料可要。
+            return;
+        }
+        // Reference 句柄本期同样落询问：真实 OS 后端（libsecret/Keychain/CredMan）留独立
+        // 任务，这是 CONN.09 的降级语义而非捷径（设计稿 Q3）。
+        pending_profile = profile;
+        credential_prompt->ask(ask, profile.name);
+    };
+
+    borealis::ui::ConnectionWizard::Hooks wizard_hooks;
+    wizard_hooks.on_save = [&store](const borealis::conn::Profile &profile) -> void {
+        auto next = store.settings();
+        bool replaced = false;
+        for (auto &existing : next.profiles) {
+            if (existing.id == profile.id) {
+                existing = profile;
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced) {
+            next.profiles.push_back(profile);
+        }
+        static_cast<void>(store.replace(std::move(next)));
+    };
+    auto wizard = std::make_shared<borealis::ui::ConnectionWizard>(*host, std::move(wizard_hooks));
+
+    borealis::ui::ConnectionSidebar::Hooks sidebar_hooks;
+    sidebar_hooks.load = [&store]() -> std::vector<borealis::conn::Profile> {
+        return store.settings().profiles;
+    };
+    sidebar_hooks.persist = [&store](const std::vector<borealis::conn::Profile> &table) -> bool {
+        auto next = store.settings();
+        next.profiles = table;
+        return !store.replace(std::move(next)).has_value();
+    };
+    sidebar_hooks.connect = connect_profile;
+    sidebar_hooks.create_new = [&wizard]() -> void { wizard->open_new(); };
+    sidebar_hooks.edit = [&wizard](const borealis::conn::Profile &profile) -> void {
+        wizard->open_edit(profile);
+    };
+    // `~/.ssh/config` 只读导入（D5）：读盘 + parse_ssh_config + 确定性 id 去重；单向不回写。
+    sidebar_hooks.import_ssh_config = [&store]() -> std::size_t {
+        const char *home = std::getenv("HOME");
+        if (home == nullptr) {
+            return 0;
+        }
+        std::ifstream file{std::filesystem::path{home} / ".ssh" / "config"};
+        if (!file.is_open()) {
+            return 0;
+        }
+        const std::string content{std::istreambuf_iterator<char>{file},
+                                  std::istreambuf_iterator<char>{}};
+        const auto imported = borealis::conn::parse_ssh_config(content);
+        auto next = store.settings();
+        std::size_t added = 0;
+        for (const auto &profile : imported) {
+            bool exists = false;
+            for (const auto &existing : next.profiles) {
+                if (existing.id == profile.id) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                next.profiles.push_back(profile);
+                ++added;
+            }
+        }
+        if (added > 0) {
+            static_cast<void>(store.replace(std::move(next)));
+        }
+        return added;
+    };
+    sidebar_hooks.recent_ids = [&store]() -> std::vector<std::string> {
+        std::vector<std::string> ids;
+        for (const auto &entry : store.settings().connection.recent) {
+            ids.push_back(entry.profile_id);
+        }
+        return ids;
+    };
+    auto sidebar = std::make_shared<borealis::ui::ConnectionSidebar>(*host, std::move(sidebar_hooks));
+
+    // 打开入口（Q4/Q5）：走命令层（快捷键 / 命令面板 / 菜单的共同真源，同 `settings.open`）；
+    // 默认不绑死键位（进 PREF.04 体系后用户自行绑定）。
+    au::Command toggle_connections;
+    toggle_connections.id = "connections.toggle";
+    toggle_connections.title = borealis::ui::settings_label("connections.title");
+    toggle_connections.category = "terminal";
+    toggle_connections.action = [&sidebar]() -> void { sidebar->toggle(); };
+    toggle_connections.scope = au::ShortcutScope::Global;
+    app.commands().add(std::move(toggle_connections));
 
     // 打开入口按 `SPEC.FEAT.PREF.02` 走命令层：命令是快捷键、菜单与命令面板的共同真源（架构 §11.2），
     // 在此登记一次即同时得到 `Ctrl+,` 与将来面板/命令面板里的同一条目。
