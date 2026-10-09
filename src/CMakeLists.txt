@@ -13,6 +13,7 @@ add_library(borealis_core STATIC
         conn/profile.cpp
         conn/profile_views.cpp
         conn/ssh_connection.cpp
+        conn/ssh_dial.cpp
         ui/connection_sidebar.cpp
         ui/connection_wizard.cpp
         ui/credential_prompt.cpp

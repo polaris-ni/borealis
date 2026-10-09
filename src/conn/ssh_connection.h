@@ -19,7 +19,6 @@
 // ============================================================
 
 #include <atomic>
-#include <cstddef>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -28,39 +27,13 @@
 
 #include "borealis/conn/profile.h"
 #include "borealis/session/connection.h"
+#include "conn/ssh_dial.h"
 
 // libssh 前向声明：头里只出现指针，实现文件才包含 <libssh/libssh.h>。
-struct ssh_session_struct;
+// ssh_session_struct 的前向声明在 conn/ssh_dial.h。
 struct ssh_channel_struct;
 
 namespace borealis::conn {
-
-/// @brief 主机密钥核对结果（本仓自有枚举：实现文件里从 libssh 状态翻译而来，
-///        纯逻辑裁决函数不必携带 libssh 类型即可单测）。
-enum class HostKeyState : std::uint8_t {
-    Known,   ///< 与 known_hosts 记录一致。
-    New,     ///< known_hosts 没有该主机（首次连接）。
-    Changed, ///< 与记录不一致（可能中间人，最高危）。
-    Error,   ///< 核对本身失败（读不到 known_hosts 等）。
-};
-
-/// @brief 把主机密钥核对结果按档案策略裁决为「放行 / 拒绝」（纯逻辑，无头单测）。
-///
-/// - AcceptNew：Known/New 放行（New 顺手写入 known_hosts，实现侧），Changed/ Error 拒绝；
-/// - Yes：仅 Known 放行；
-/// - No：一律放行（不核对，仅旧设备兼容，模型注释已警示）；
-/// - Ask：本期按 Yes 保守处理——未知即拒绝，绝不静默放行（见头部「已知边界」）。
-[[nodiscard]] auto policy_accepts(KnownHostsPolicy policy, HostKeyState state) -> bool;
-
-/// @brief 生效端口：档案未填（≤0）时回落 22（与 OpenSSH 缺省一致，纯逻辑）。
-[[nodiscard]] auto effective_port(const SshProfile &profile) -> int;
-
-/// @brief 生效认证方式：空串或未识别值回落 "agent"（模型缺省同源，纯逻辑）。
-[[nodiscard]] auto normalized_auth_method(const SshProfile &profile) -> std::string_view;
-
-/// @brief 该认证方式是否必须有秘密材料（password 必需；privatekey 的 passphrase
-///        可选——无口令私钥为空即可；agent / keyboard-interactive 不强求，纯逻辑）。
-[[nodiscard]] auto auth_requires_secret(std::string_view method) -> bool;
 
 /// @brief SSH 传输实现：libssh 阻塞模型 + 每会话一个读线程。
 ///
