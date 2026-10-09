@@ -4,6 +4,14 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.105（2026-10-10）**`SPEC.FEAT.TERM.09` 发送侧「一次性提示」腿落地：按稿 §4 两批转实现，形态零改判**（`include/borealis/term/codec.h` + `src/term/codec.cpp` + `include/borealis/session/session.h` + `src/session/session.cpp` + `src/ui/terminal_view.{h,cpp}` + `src/ui/settings_i18n.cpp` + `tests/unit/utest_codec.cpp` + `tests/unit/utest_session.cpp` + `tests/integration/itest_render_viewport.cpp`，判据入册为裁决 **7.105**）
+
+**动机**：v0.104 把形态裁完，需求那句「给出一次性提示」自此只差实现。两批按 `codespec/UI_ENCODING.draft.md` §4 的布局走：批 A 交会话侧 latch 与 `term::resolve_encoding_name()` 折算出口，批 B 交 `TerminalView` 那层非模态卡、两条词条与五条无头像素判据。`Session::flush` 与 `unrepresentable_count()` 上的两处 `TODO(SPEC.FEAT.TERM.09)` 随本批撤除——TERM.09 自此没有挂账。
+
+**决定形态的口径**：⑴ **latch 的「一次」独立记账**：实现期转红抓到真缺陷——初版以 `!notice_.has_value()` 上弦，而取走会把 optional 清空 ⇒ 退化成「每批次都弹」，正是 D1 否掉的那一档；改为「一次」归 `notice_armed_`、「在途内容」归 `notice_`，两件事不再共用一个字段。⑵ **取走落在 `on_frame()` 而不是 `on_paint()`**：取走是消费动作，放进绘制路径就破坏「同一帧重画同一张卡」那条幂等前提（D5① 的实现含义）。⑶ **非模态以「不写成员」的方式落实**：`paint_unrepresentable_notice()` 一枚 `*_button_box_` 都不写，指针入口因此看不见这张卡，命中序一字不改；不铺半透明带 ⇒ 卡下回看内容逐位不变。层序排在 dead-session **之前**，同框时让位于「会话已退出」那句更重的状态；会话退出即清卡而不等定时器。⑷ **折算名在构造期折一次**：`resolve_encoding_name()` 是纯表查询、返回**配置名侧**而非 iconv 线上名（`ISO-8859-1` 会让卡片与设置下拉各说一种话）；本地档位不可用（开不出 iconv 句柄）那条回落要开句柄才有读数，不在纯查询函数射程内，仍只有 WARN。⑸ **矮视口让位不画**：装不下「卡高 68 dp ＋ 上下内缩」时整张不画，而不是截半或压掉回看内容。⑹ **无调度器时常驻**：`Scheduler::current()` 为空（无头帧）排不上定时器，卡就一直在——与光标闪烁在无头帧不跳同一条既定形态，如实登记而不是兜掉。
+
+**代价**：⑴ 卡片几何常量沿用既有 dead-session 那一档（`kRestartCardWidthDp` / 横向内缩 / 描边 / 行高），只有高度 68 dp 是本卡新数；五条判据的期望盒由**设计稿标注重述**而非读实现常量，改实现不会让断言跟着漂。⑵ 矮视口那一例取不到 `preflight()`——该门禁要求 `rows > 3`，而逼卡片让位的高度按当前行高构造性地放不下 4 行，故只断言缩放与 `rows >= 1`，并同帧挂正常高度正例作非空转证人。⑶ 无头调度器一 tick 只跑一条到期任务 ⇒ 5 s 自收那例须把闪烁周期推到 600 s 让本定时器独占。⑷ 不加配置键 ⇒ `utest_settings_catalog` 的键数与 NextSession 白名单台账一字未改。**验收**：`ctest --preset linux -E etest_` **64/64 全绿**（13.3 s），`utest_codec` 14→**15**、`utest_session` 32→**36**、`itest_render_viewport` 47→**52**。**仍欠真机走查**（第 33 条）：卡片观感、5 s 长短、GBK 会话键入 Emoji 的实际触发感三条要人眼（本轮实测校正：`é` 在 GBK 上可表示为 `A8 A6`、**不**触发，触发面是 Emoji 一类超出 GBK 平面的码点），本条不称「可用」；`etest_` 按通道口径排除。串口默认 GB18030 与 Windows 腿 libiconv 同名表复测照旧未落。
+
 ## v0.104（2026-10-10）**`SPEC.FEAT.TERM.09` 发送侧「一次性提示」设计稿收口：D1–D6 逐条裁决，全按推荐档、无一处改判**（`codespec/UI_ENCODING.draft.{md,svg,png}` 状态改口，判据入册为裁决 **7.104**，本条零代码改动）
 
 **动机**：需求那句「默认替换并给出**一次性提示**，不得静默发送乱码字节」是 TERM.09 里唯一还挂着 `TODO` 的半条。按 AGENTS 的 UI 节奏（第 22 条：UI 件先出稿评审）于同日出三件套（md 判据文 + SVG 高保真草图 + PNG 渲染）送评审，经人**逐条**裁决收口。本条不落 `src/`，实现批按稿 §4 走。

@@ -1,6 +1,6 @@
 # 发送侧「不可表示字符」一次性提示设计稿（`SPEC.FEAT.TERM.09` 的提示腿）
 
-> **状态**：**评审已收口（2026-10-10）**——§3 的 D1–D6 经人逐条裁决，**全按推荐档**：D1 每会话首次一批一次、D2 视口内新增一层非模态卡、D3 5 s 超时自收、D4 两行纯文案无按钮、D5 会话 latch ＋ 视图 `on_frame()` 取走、D6 报实际生效腿。并入 `codespec/SPECIFICATIONS.md` §7 裁决 **7.104**，据此转实现（§4 布局落 `src/`）。
+> **状态**：**评审已收口、实现已落（2026-10-10）**——§3 的 D1–D6 经人逐条裁决，**全按推荐档**：D1 每会话首次一批一次、D2 视口内新增一层非模态卡、D3 5 s 超时自收、D4 两行纯文案无按钮、D5 会话 latch ＋ 视图 `on_frame()` 取走、D6 报实际生效腿。并入 `codespec/SPECIFICATIONS.md` §7 裁决 **7.104**，据此按 §4 布局转实现并落完（收口读数见 §8，入册裁决 **7.105**）；**真机走查仍欠**。
 > **配套高保真草图**：`codespec/UI_ENCODING.draft.svg`（§2 的 1–6 标号判据对应其底部标注；SVG 为事实来源，改图直接改 SVG）。
 > **已落地的前置**：iconv 单腿的双向编解码件 `term::SessionDecoder` / `term::encode_for_encoding`（`include/borealis/term/codec.h` + `src/term/codec.cpp`，裁决 **7.103**）、会话接线（`Session` 构造期吃 `term::SessionEncoding`，解码走会话自己的解码器、发送走三档策略）、设置键位 `terminal.encoding` / `terminal.unrepresentable`（含 store 往返、表单搬运、目录行「生效＝下一将会话」）、调试面板第四行「发送侧不可表示 {0}」（`SPEC.NF.RELI.01` 的第四族计数）。
 > **本稿补的是最后一条**：需求那句「默认替换并给出**一次性提示**，不得静默发送乱码字节」里的提示。收口前它以两处 `TODO(SPEC.FEAT.TERM.09)` 挂在 `src/session/session.cpp` 的 `flush()` 与 `include/borealis/session/session.h` 的 `unrepresentable_count()` 上，随本稿实现批撤除。
@@ -140,3 +140,5 @@ Scheduler（主线程，tick 内）
 **收口读数（2026-10-10）**：D1–D6 **全部按推荐档**收口，无一处改判。其中 D4 与 D6 未单列问项，按「无异议随批」入账——D4 取两行纯文案无按钮（第二行只指路径、**不**报当前档位名，以免与设置页那枚下拉的 ASCII 档名 `replace`/`drop`/`pass_through_utf8` 不同源），D6 取实际生效腿（`term::resolve_encoding_name()` 折算结果）。
 
 收口动作＝`SPECIFICATIONS.md` §7 新裁决 **7.104**（含 TERM.09 现状句的提示那一半改口）+ `CHANGELOG.md` **v0.104** + `PLAN.md` 的 TERM.09 行回写，然后按 §4 布局转实现（两批：会话侧 latch 与 codec 折算出口 → 视图卡片、两条词条与用例）。改动集中在**四处**：`codec.h` 加一个折算出口、`Session` 加一份 latch、`TerminalView` 加一层卡与一枚定时器、`settings_i18n.cpp` 加两条词条；不动既有 dead-session 档、不动调试面板、不加配置键。
+
+**实现读数（2026-10-10，入册裁决 7.105）**：§4 的两批都按本稿布局落完，形态**零改判**——D1–D6 的每一档都以本稿的口径实现，唯一的实现期增补是 latch 的记账方式（「一次」用独立的 `notice_armed_` 而不是复用 `notice_.has_value()`；否则取走即重新上弦，退化成每批都弹，与本稿 D1 相悖——这条由 `utest_session` 的先红用例抓到，非纸面推演）。验收：`ctest --preset linux -E etest_` 64/64 全绿，`utest_codec` 15 例 / `utest_session` 36 例 / `itest_render_viewport` 52 例（本稿 §6 的五条各对应一例，几何期望由本稿标注重述而非读实现常量）。**仍欠真机走查**（本稿 §7 末条）：卡片观感、5 s 长短、GBK 会话键入 Emoji 的实际触发感三条要人眼（实现期实测校正：`é` 在 GBK 上可表示为 `A8 A6`、**不**触发，触发面是超出 GBK 平面的码点），本件不称「可用」。串口默认档与 Windows 腿 libiconv 同名表复测不在本稿射程内，分别随串口条落期、待真机。
