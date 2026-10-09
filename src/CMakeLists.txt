@@ -24,7 +24,9 @@ add_library(borealis_core STATIC
         ui/connection_wizard.cpp
         ui/credential_prompt.cpp
         vt/parser.cpp
+        term/codec.cpp
         term/utf8.cpp
+        term/codec.cpp
         term/charset.cpp
         term/keymap.cpp
         term/mouse.cpp
@@ -95,6 +97,13 @@ endif ()
 # （不是 `libssh::ssh`——其 port 的 usage 说明里写明 `target_link_libraries(main PRIVATE ssh)`）。
 find_package(libssh CONFIG REQUIRED)
 target_link_libraries(borealis_core PRIVATE ssh)
+
+# 会话编码族（`SPEC.FEAT.TERM.09`）：iconv 单腿。POSIX 腿取系统 libc、Windows 腿取 vcpkg
+# libiconv（其 port 的 usage 写明目标是 `Iconv::Iconv`，由 CMake 内置 FindIconv 模块给出，
+# 故两腿同一行 find_package、同一份 `<iconv.h>` API）。manifest 里那条带了 `"platform": "windows"`
+# ——Linux 上 libiconv 会盖掉系统实现而徒增一次构建。
+find_package(Iconv REQUIRED)
+target_link_libraries(borealis_core PRIVATE Iconv::Iconv)
 
 # 消费者统一配置（链接 aurora + C++20 + 共享 PCH + 统一告警），额外私有头目录为本仓公共头根。
 aurora_setup_consumer_target(borealis_core "${CMAKE_CURRENT_SOURCE_DIR}/../include")

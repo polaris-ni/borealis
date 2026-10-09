@@ -1,0 +1,44 @@
+# Borealis 会话编码回放夹具（tests/fixtures/term/encoding_cases.tsv）
+# ------------------------------------------------------------
+# `SPEC.FEAT.TERM.09` 的双向口径里，解码方向（字节流 → 码点）在此批量断言。
+# 列以制表符分隔：名称 \t 编码名 \t 输入字节（十六进制，空格分隔） \t 期望码点序列
+# 以 # 开头或空行为注释。期望列不留空格（解析器把空格当字面码点）。
+#
+# 期望写法与 utf8_cases.tsv 同：\uXXXX（BMP）/ \UXXXXXX（增补平面）/ R（替换字符 U+FFFD），
+# 其余按字面 ASCII 字符。
+#
+# 输入/期望字节事实全部取自 iconv 实测（glibc 2.x），不是文档记忆。几个反直觉的取值记录如下：
+#   - GB18030 的 `80` 是非法序列（报 EILSEQ），而 GBK 的 `80` 是 €（U+20AC，微软扩展）。
+#   - GB18030 的 `FE` 报 EINVAL（视作残缺序列的起始），故尾巴要留到收尾才判定为 R。
+#   - CP437 的 é 是 82、ü 是 81、─ 是 C4、│ 是 B3（易与 ISO-8859-1 的取值混淆）。
+#   - ISO-8859-1 与 CP437 是单字节档，任意字节都有编码，故「非法字节」这两档无从构造。
+#   - 编码名 `Latin-1` 在 glibc 的 iconv_open 里直接失败，本仓映射表把它折到 ISO-8859-1；
+#     `NOT-A-CODEC` / `GB2312` 两行证明回落腿：会话以 UTF-8 呈现，而不是断流。
+utf8_han_bmp	UTF-8	E4 B8 AD	\u4E2D
+utf8_emoji	UTF-8	F0 9F 98 80	\U01F600
+utf8_overlong_rejects	UTF-8	C0 80 41	RRA
+utf8_name_lowercase	utf-8	E4 B8 AD	\u4E2D
+gb18030_han	GB18030	D6 D0 CE C4	\u4E2D\u6587
+gb18030_ni_hao	GB18030	C4 E3 BA C3	\u4F60\u597D
+gb18030_ascii_wrapped	GB18030	41 D6 D0 42	A\u4E2DB
+gb18030_four_byte_pound	GB18030	81 30 84 35	\u00A3
+gb18030_invalid_80	GB18030	41 80 42	ARB
+gb18030_incomplete_lead_fe	GB18030	41 FE	AR
+gb18030_incomplete_four_bytes	GB18030	81 30	R
+gbk_han	GBK	D6 D0	\u4E2D
+gbk_euro	GBK	80	\u20AC
+gbk_euro_after_ascii	GBK	41 80	A\u20AC
+gbk_incomplete_lead	GBK	A1	R
+big5_han	Big5	A4 A4	\u4E2D
+big5_ni	Big5	A7 41	\u4F60
+big5_invalid_ff	Big5	41 FF 41	ARA
+big5_incomplete_lead	Big5	41 A4	AR
+latin1_accent_then_ascii	Latin-1	E9 41	\u00E9A
+latin1_full_range	Latin-1	41 80 FF	A\u0080\u00FF
+latin1_name_lowercase	latin-1	E9	\u00E9
+cp437_box_lines	CP437	C4 B3 C4	\u2500\u2502\u2500
+cp437_u_diaeresis	CP437	81	\u00FC
+cp437_mixed	CP437	41 81 C4	A\u00FC\u2500
+cp437_name_lowercase	cp437	C4	\u2500
+unknown_name_falls_back	NOT-A-CODEC	E4 B8 AD	\u4E2D
+gb2312_outside_the_six	GB2312	E4 B8 AD	\u4E2D
