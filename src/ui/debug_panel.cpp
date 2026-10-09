@@ -43,7 +43,7 @@ constexpr float kListHeightDp = 260.0F;
     return aurora::LocalizedString{std::to_string(value)};
 }
 
-/// @brief 一个会话的三行（解析 / 解码 / 队列），行标题单独一行。
+/// @brief 一个会话的四行（解析 / 解码 / 发送 / 队列），行标题单独一行。
 auto append_session_rows(const DebugSessionSnapshot &session, const aurora::Color color, std::vector<aurora::Node> &out)
     -> void {
     // 标题是装配层**已解析**的显示串（含中文措辞），这里交字面档而不再查表。
@@ -54,6 +54,9 @@ auto append_session_rows(const DebugSessionSnapshot &session, const aurora::Colo
                             kBodySizePt));
     out.push_back(make_text(settings_text("diagnostics.decode",
                                           {count_text(session.decode_replaced), count_text(session.decode_code_points)}),
+                            color,
+                            kBodySizePt));
+    out.push_back(make_text(settings_text("diagnostics.encode", {count_text(session.encode_unrepresentable)}),
                             color,
                             kBodySizePt));
     out.push_back(make_text(settings_text("diagnostics.queue",

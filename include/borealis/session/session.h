@@ -28,6 +28,7 @@
 
 #include "borealis/session/connection.h"
 #include "borealis/session/damage_queue.h"
+#include "borealis/term/codec.h"
 #include "borealis/term/terminal.h"
 #include "borealis/term/utf8.h"
 #include "borealis/term/width.h"
@@ -51,8 +52,12 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// @param defaults 状态机的初始档（`appearance.cursor_shape` / `cursor_blinking` 与
     ///                 `terminal.ambiguous_width` 三条）。缺省即库的缺省档，故既有构造点不改一字；
     ///                 取用时机是**建会话这一刻**，运行期改配置不重放既有会话（判据文 §0 边界②）。
+    /// @param encoding 会话编解码档（`terminal.encoding` 与 `terminal.unrepresentable`，
+    ///                 `SPEC.FEAT.TERM.09`）。与 `defaults` 同一条生效口径：**建会话这一刻**取一次，
+    ///                 解码器与发送策略都是构造期值；缺省即 UTF-8 + 替换，故既有构造点不改一字。
     Session(std::unique_ptr<Connection> connection, Size size, std::size_t scrollback_limit,
-            std::shared_ptr<const term::WidthPolicy> width_policy, term::TerminalDefaults defaults = {});
+            std::shared_ptr<const term::WidthPolicy> width_policy, term::TerminalDefaults defaults = {},
+            term::SessionEncoding encoding = {});
 
     Session(const Session &) = delete;
     auto operator=(const Session &) -> Session & = delete;
@@ -121,6 +126,13 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
 
     /// @brief 非法字节序列计数（`SPEC.NF.RELI.01`：与背压水位同面板）。
     [[nodiscard]] auto decode_stats() const -> term::DecodeStats;
+
+    /// @brief 发送方向被策略处置掉的码点累计数（`SPEC.FEAT.TERM.09` 判据 3 的「可统计」）。
+    ///
+    /// 与 `decode_stats` 同一取数节奏：计数在发送调用点推进，主线程只在面板打开那一刻取一次。
+    /// 「一次性提示」那一半的形态待人裁决（见 `codespec/UI_ENCODING.draft.md`），本棒只留存计数。
+    /// TODO(SPEC.FEAT.TERM.09): 提示落地时在本计数上挂取走语义（口径同 `take_bell_triggered`）。
+    [[nodiscard]] auto unrepresentable_count() const -> std::size_t;
 
     /// @brief VT 解析器未知序列计数（`SPEC.NF.RELI.01` 调试面板）。
     ///
@@ -204,7 +216,12 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// 重连进度的 latest-value 快照，由 `mutex_` 护住（读线程投、主线程每帧读）。
     std::optional<ReconnectProgress> reconnect_progress_;
     term::Terminal terminal_;
-    term::Utf8Decoder decoder_;
+    /// 构造期按编码档取一次的解码器（`SPEC.FEAT.TERM.09`）：会话只认 `SessionDecoder` 接缝，
+    /// 不认识 UTF-8 还是 GB18030。`mutex_` 护住——读线程喂入与主线程取统计都走它。
+    std::unique_ptr<term::SessionDecoder> decoder_;
+    term::SessionEncoding encoding_;  ///< 发送方向的编码名与策略档，与 `decoder_` 同世代。
+    /// 发送侧被策略处置掉的码点累计数（`encoding_` 的代价账目），随 `flush` 在锁外累加。
+    std::size_t unrepresentable_total_ = 0;
     DamageQueue damage_queue_;
     std::u32string pending_responses_;
     std::u32string decode_buffer_;  ///< 解码产物缓冲：只由读线程触达，留容量免得逐块重新分配。

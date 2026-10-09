@@ -279,6 +279,13 @@ auto assign_shortcuts(Settings &settings, const FormValue &value) -> void {
         Binding{"terminal.encoding",
                 [](const Settings &s) -> FormValue { return FormValue::text(s.terminal.encoding); },
                 [](Settings &s, const FormValue &v) { assign(s.terminal.encoding, v); }},
+        Binding{"terminal.unrepresentable",
+                [](const Settings &s) -> FormValue {
+                    return enumerated(s.terminal.unrepresentable, kUnrepresentableNames);
+                },
+                [](Settings &s, const FormValue &v) {
+                    assign_enum(s.terminal.unrepresentable, v, kUnrepresentableNames);
+                }},
         Binding{"terminal.paste_newlines",
                 [](const Settings &s) -> FormValue { return enumerated(s.terminal.paste_newlines, kPasteNewlineNames); },
                 [](Settings &s, const FormValue &v) { assign_enum(s.terminal.paste_newlines, v, kPasteNewlineNames); }},

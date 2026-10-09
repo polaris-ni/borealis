@@ -257,7 +257,7 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"command_palette.no_results", "没有匹配的命令"},
     {"command_palette.action.open", "打开命令面板"},
 
-    // ---- 调试面板（`SPEC.NF.RELI.01`：解析降级 / 非法字节 / 背压水位三族计数器的上屏形态）----
+    // ---- 调试面板（`SPEC.NF.RELI.01`：解析降级 / 非法字节 / 发送侧不可表示 / 背压水位四族计数器的上屏形态）----
     // 模板里的 {n} 一律是**取值**（计数值与行标题的已解析串），措辞不含 ASCII 诊断通道。
     {"diagnostics.title", "诊断"},
     {"diagnostics.action.open", "打开诊断面板"},
@@ -265,6 +265,7 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"diagnostics.session", "标签 {0} · 分屏 {1}"},
     {"diagnostics.parse", "未知序列 {0}，被打断 {1}"},
     {"diagnostics.decode", "非法字节 {0}，码点 {1}"},
+    {"diagnostics.encode", "发送侧不可表示 {0}"},
     {"diagnostics.queue", "水位 {0}（峰值 {1}），过载 {2}，合并 {3}，让出 {4}"},
 
     // ---- 外观域 ----
@@ -305,6 +306,7 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"terminal.long_line", "超长行处理"},
     {"terminal.bell", "铃声"},
     {"terminal.encoding", "会话编码"},
+    {"terminal.unrepresentable", "不可表示字符处置"},
     {"terminal.paste_newlines", "粘贴换行处理"},
     {"terminal.right_click", "右键行为"},
     {"terminal.copy_on_select", "选中即复制"},

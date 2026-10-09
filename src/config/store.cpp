@@ -484,6 +484,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     put_enum(node, "long_line", kLongLineNames, static_cast<std::int64_t>(terminal.long_line));
     put_enum(node, "bell", kBellNames, static_cast<std::int64_t>(terminal.bell));
     put(node, "encoding", terminal.encoding);
+    put_enum(node, "unrepresentable", kUnrepresentableNames,
+             static_cast<std::int64_t>(terminal.unrepresentable));
     put_enum(node, "paste_newlines", kPasteNewlineNames, static_cast<std::int64_t>(terminal.paste_newlines));
     put_enum(node, "right_click", kRightClickNames, static_cast<std::int64_t>(terminal.right_click));
     put(node, "copy_on_select", terminal.copy_on_select);
@@ -726,6 +728,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     terminal.bell = static_cast<BellMode>(
         scope.enumerated("bell", kBellNames, static_cast<std::int64_t>(defaults.terminal.bell)));
     terminal.encoding = scope.text("encoding", defaults.terminal.encoding);
+    terminal.unrepresentable = static_cast<term::UnrepresentablePolicy>(scope.enumerated(
+        "unrepresentable", kUnrepresentableNames, static_cast<std::int64_t>(defaults.terminal.unrepresentable)));
     terminal.paste_newlines = static_cast<PasteNewlinePolicy>(scope.enumerated(
         "paste_newlines", kPasteNewlineNames, static_cast<std::int64_t>(defaults.terminal.paste_newlines)));
     terminal.right_click = static_cast<RightClickAction>(

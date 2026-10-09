@@ -144,6 +144,17 @@ struct Fixture {
     return {connection, std::move(session)};
 }
 
+/// @brief 起一条指定编码档的会话（`SPEC.FEAT.TERM.09` 的生效现场：两个方向都过会话）。
+[[nodiscard]] auto make_encoded_session(const borealis::term::SessionEncoding &encoding,
+                                        Size size = Size{10, 3}) -> Fixture {
+    auto owned = std::make_unique<FakeConnection>();
+    auto *connection = owned.get();
+    auto session = std::make_unique<Session>(std::move(owned), size, 5, width_policy,
+                                             borealis::term::TerminalDefaults{}, encoding);
+    session->start();
+    return {connection, std::move(session)};
+}
+
 /// @brief 起一个挂「会自愈连接」的会话，用来验能力接口的分派。
 [[nodiscard]] auto make_self_healing_session() -> std::pair<SelfHealingConnection *,
                                                             std::unique_ptr<Session>> {
@@ -490,8 +501,7 @@ AURORA_TEST_CASE(the_reason_bearing_close_finishes_the_pending_sequence) {
 }
 
 AURORA_TEST_CASE(a_self_healing_leg_hands_out_its_reconnect_control) {
-    auto [connection, session] = make_self_healing_session();
-    auto *control = session->reconnect_control();
+    auto [connection, session] = make_self_healing_session();    auto *control = session->reconnect_control();
     AURORA_TEST_REQUIRE(control != nullptr);
 
     // 会话层只认能力接口：两枚动作原样落到腿上，装配层不需要知道它是哪一种连接。
@@ -499,6 +509,54 @@ AURORA_TEST_CASE(a_self_healing_leg_hands_out_its_reconnect_control) {
     control->stop_reconnect();
     AURORA_TEST_CHECK_EQ(connection->retries, 1);
     AURORA_TEST_CHECK_EQ(connection->stops, 1);
+}
+
+AURORA_TEST_CASE(session_decodes_incoming_bytes_with_its_encoding_leg) {
+    // 会话侧生效现场：同一串字节在 GB18030 档解成汉字、在 UTF-8 档解成替换字符（档由构造期定）。
+    auto gb = make_encoded_session(borealis::term::SessionEncoding{.name = "GB18030"});
+    gb.connection->deliver("\xD6\xD0");
+    static_cast<void>(drain_all(*gb.session));
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(code_point_at(gb, 0, 0)), std::uint32_t{U'\x4E2D'});
+
+    auto utf8 = make_session();
+    utf8.connection->deliver("\xD6\xD0");
+    static_cast<void>(drain_all(*utf8.session));
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(code_point_at(utf8, 0, 0)),
+                         std::uint32_t{static_cast<std::uint32_t>(kReplacementCharacter)});
+}
+
+AURORA_TEST_CASE(session_encodes_typed_text_for_target_encoding) {
+    // 发送方向同样按会话档成形：GB18030 会话发出的是 D6 D0，不是 UTF-8 的三字节。
+    auto fixture = make_encoded_session(borealis::term::SessionEncoding{.name = "GB18030"});
+    fixture.session->send_text(U"\x4E2D");
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\xD6\xD0", 2));
+    AURORA_TEST_CHECK_EQ(fixture.session->unrepresentable_count(), std::size_t{0});
+}
+
+AURORA_TEST_CASE(unrepresentable_send_is_counted_and_policy_applied) {
+    // Big5 没有 é：替换档退到 `?`、丢弃档一个字节不发，两档都留下计数（一次性提示的取数口）。
+    borealis::term::SessionEncoding big5{.name = "Big5"};
+    auto replace = make_encoded_session(big5);
+    replace.session->send_text(U"A\x00E9" U"B");
+    AURORA_TEST_CHECK_EQ(text_of(replace.connection->written), std::string("A?B"));
+    AURORA_TEST_CHECK_EQ(replace.session->unrepresentable_count(), std::size_t{1});
+
+    big5.unrepresentable = borealis::term::UnrepresentablePolicy::DropWithNotice;
+    auto drop = make_encoded_session(big5);
+    drop.session->send_text(U"A\x00E9" U"B");
+    AURORA_TEST_CHECK_EQ(text_of(drop.connection->written), std::string("AB"));
+    AURORA_TEST_CHECK_EQ(drop.session->unrepresentable_count(), std::size_t{1});
+}
+
+AURORA_TEST_CASE(unknown_encoding_session_survives_on_utf8_leg) {
+    // 配置里的编码名拼错时会话不失明：回落 UTF-8 腿，收发两侧都按 UTF-8 走（`term/codec.h` 的回落口径）。
+    auto fixture = make_encoded_session(borealis::term::SessionEncoding{.name = "NOT-A-CODEC"});
+    fixture.connection->deliver("\xE4\xB8\xAD");
+    static_cast<void>(drain_all(*fixture.session));
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(code_point_at(fixture, 0, 0)), std::uint32_t{U'\x4E2D'});
+
+    fixture.session->send_text(U"\x4E2D");
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\xE4\xB8\xAD", 3));
 }
 
 }  // namespace borealis::test_cases::utest_session

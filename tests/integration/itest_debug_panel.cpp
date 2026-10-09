@@ -57,6 +57,7 @@ namespace {
         .parse_cancelled = seed + 1U,
         .decode_replaced = seed + 2U,
         .decode_code_points = seed + 3U,
+        .encode_unrepresentable = seed + 9U,
         .queue_pending = seed + 4U,
         .queue_peak_pending = seed + 5U,
         .queue_overloads = seed + 6U,
@@ -80,6 +81,10 @@ namespace {
                                         {count(s.decode_replaced), count(s.decode_code_points)});
 }
 
+[[nodiscard]] auto expected_encode(const DebugSessionSnapshot &s) -> std::string {
+    return borealis::ui::settings_label("diagnostics.encode", {count(s.encode_unrepresentable)});
+}
+
 [[nodiscard]] auto expected_queue(const DebugSessionSnapshot &s) -> std::string {
     return borealis::ui::settings_label("diagnostics.queue",
                                         {count(s.queue_pending),
@@ -89,7 +94,7 @@ namespace {
                                          count(s.queue_yields)});
 }
 
-[[nodiscard]] auto snapshot_row_count(const DebugSessionSnapshot &) -> std::size_t { return 4U; }
+[[nodiscard]] auto snapshot_row_count(const DebugSessionSnapshot &) -> std::size_t { return 5U; }
 
 /// @brief 收集一棵子树里全部 `Text` 的显示串（按树序）。
 auto collect_labels(const au::Widget &widget, std::vector<std::string> &out) -> void {
@@ -122,7 +127,7 @@ auto collect_labels(const au::Widget &widget, std::vector<std::string> &out) -> 
 
 }  // namespace
 
-AURORA_TEST_CASE(one_snapshot_draws_its_title_and_all_three_counter_rows_with_the_given_numbers) {
+AURORA_TEST_CASE(one_snapshot_draws_its_title_and_all_counter_rows_with_the_given_numbers) {
     borealis::ui::install_settings_strings();
     std::shared_ptr<au::Text> base;
     std::shared_ptr<au::OverlayHost> host = make_host(base);
@@ -136,13 +141,14 @@ AURORA_TEST_CASE(one_snapshot_draws_its_title_and_all_three_counter_rows_with_th
     AURORA_TEST_REQUIRE(panel.dialog() != nullptr);
 
     const std::vector<std::string> labels = drawn_labels(*panel.dialog());
-    // 标题行 + 两份快照各四行（标题 + 三计数行）。
+    // 标题行 + 两份快照各五行（标题 + 四计数行）。
     AURORA_TEST_REQUIRE_EQ(labels.size(), 1U + 2U * snapshot_row_count(first));
     AURORA_TEST_CHECK_TRUE(contains(labels, borealis::ui::settings_label("diagnostics.title")));
     for (const DebugSessionSnapshot &s : {first, second}) {
         AURORA_TEST_CHECK_TRUE(contains(labels, s.title));
         AURORA_TEST_CHECK_TRUE(contains(labels, expected_parse(s)));
         AURORA_TEST_CHECK_TRUE(contains(labels, expected_decode(s)));
+        AURORA_TEST_CHECK_TRUE(contains(labels, expected_encode(s)));
         AURORA_TEST_CHECK_TRUE(contains(labels, expected_queue(s)));
     }
     // 模板参数没代进去就会留下占位符。

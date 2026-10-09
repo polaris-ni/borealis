@@ -286,7 +286,7 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // 双向：落盘里有而表里没有 = 面板漏画控件；表里有而落盘里没有 = 面板画了存不回去的控件。
     AURORA_TEST_CHECK_MSG(leaves == keys, "leaves=[" + join(leaves) + "] table=[" + join(keys) + "]");
     AURORA_TEST_CHECK_EQ(leaves.size(), keys.size());
-    AURORA_TEST_CHECK_EQ(keys.size(), 61U);
+    AURORA_TEST_CHECK_EQ(keys.size(), 62U);
 }
 
 AURORA_TEST_CASE(keys_are_unique_and_rows_are_addressable) {
@@ -516,9 +516,10 @@ AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
     // 一条无运行期接缝的键挂错档就会在这里转红，而不是静默变成「改了没反应」。
     AURORA_TEST_CHECK_MSG(rows_with_consumer(ConsumerStatus::SeamPending).empty(), "seam-pending set drifted");
 
-    // 判据文 §0 的物理边界②：已接线却「下次会话生效」的键是这九条——三条会话侧的构造期注入
+    // 判据文 §0 的物理边界②：已接线却「下次会话生效」的键是这十一条——三条会话侧的构造期注入
     // （裁决 7.76②）加三条本就取用于建会话那一刻的键，再加 WS.05 的自动重连三键（裁决 7.99 D4①：
-    // 装配层在建 SSH 会话那一刻把三键折成 `conn::RetryPolicy` 交进构造参数，在途连接读的是那份快照）。
+    // 装配层在建 SSH 会话那一刻把三键折成 `conn::RetryPolicy` 交进构造参数，在途连接读的是那份快照），
+    // 再加 TERM.09 的编码两键（`term::SessionEncoding` 是构造期值：解码器与发送策略都在建会话这一刻定）。
     // 多一条即面板谎报即时，少一条即运行期入口被判成不存在而白开一条接缝。
     const std::vector<std::string> next_session{"appearance.cursor_blinking",
                                                 "appearance.cursor_shape",
@@ -528,7 +529,9 @@ AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
                                                 "connection.ssh.reconnect_max_delay_ms",
                                                 "connection.startup_directory",
                                                 "terminal.ambiguous_width",
-                                                "terminal.scrollback_limit"};
+                                                "terminal.encoding",
+                                                "terminal.scrollback_limit",
+                                                "terminal.unrepresentable"};
     AURORA_TEST_CHECK_MSG(next_session_and_wired_keys() == next_session, "wired next-session set drifted");
 
     // 不得出现「接缝待开但即时」这种矛盾档（该档现在行集为空，故这一条守的是将来挂错档的行）。
@@ -537,9 +540,10 @@ AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
             AURORA_TEST_CHECK_MSG(control.effect == EffectLevel::NextSession, control.key);
         }
     }
-    // 含 WS.05 的自动重连三键已随实现批 3 接线（装配层搬运 + 浮层两态），故本行回到 28：
-    // 少的那三条正是它们，再往回跳就是某个消费方被摘掉了而面板还留着控件。
-    AURORA_TEST_CHECK_EQ(rows_with_consumer(ConsumerStatus::Absent).size(), 28U);
+    // 含 WS.05 的自动重连三键已随实现批 3 接线（装配层搬运 + 浮层两态），TERM.09 的
+    // `terminal.encoding` 也随编码腿接线（会话构造期按名建解码器），故本行回到 27：
+    // 少的那几条正是已接线的，再往回跳就是某个消费方被摘掉了而面板还留着控件。
+    AURORA_TEST_CHECK_EQ(rows_with_consumer(ConsumerStatus::Absent).size(), 27U);
 }
 
 }  // namespace borealis::test_cases::utest_settings_catalog

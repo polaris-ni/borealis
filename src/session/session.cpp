@@ -28,9 +28,12 @@ class BufferSink final : public term::CodePointSink {
 }  // namespace
 
 Session::Session(std::unique_ptr<Connection> connection, Size size, std::size_t scrollback_limit,
-                 std::shared_ptr<const term::WidthPolicy> width_policy, term::TerminalDefaults defaults)
+                 std::shared_ptr<const term::WidthPolicy> width_policy, term::TerminalDefaults defaults,
+                 term::SessionEncoding encoding)
     : connection_{std::move(connection)},
-      terminal_{size.columns, size.rows, scrollback_limit, std::move(width_policy), defaults} {
+      terminal_{size.columns, size.rows, scrollback_limit, std::move(width_policy), defaults},
+      encoding_{std::move(encoding)} {
+    decoder_ = term::make_session_decoder(encoding_.name);
     terminal_.set_response_sink(this);
     // 能力接口在构造期认一次（架构 §7.2）：会话层自此只知道「这条腿有没有重连控制面」，
     // 不知道它是 SSH 还是别的——每次取用再 cast 既无必要也要把类型知识留在热路径上。
@@ -105,7 +108,12 @@ auto Session::on_reconnect_progress(const ReconnectProgress &progress) -> void {
 
 auto Session::decode_stats() const -> term::DecodeStats {
     const std::lock_guard lock{mutex_};
-    return decoder_.stats();
+    return decoder_->stats();
+}
+
+auto Session::unrepresentable_count() const -> std::size_t {
+    const std::lock_guard lock{mutex_};
+    return unrepresentable_total_;
 }
 
 auto Session::parse_stats() const -> vt::ParseStats {
@@ -154,9 +162,9 @@ auto Session::ingest(std::span<const std::byte> bytes, bool end_of_stream) -> vo
         decode_buffer_.clear();
         BufferSink sink{decode_buffer_};
         if (end_of_stream) {
-            decoder_.finish(sink);  // 半截序列按替换字符收尾，会话最后一行不凭空消失
+            decoder_->finish(sink);  // 半截序列按替换字符收尾，会话最后一行不凭空消失
         } else {
-            decoder_.feed(bytes, sink);
+            decoder_->feed(bytes, sink);
         }
         terminal_.feed(decode_buffer_);
         damage = collect_damage();
@@ -213,12 +221,18 @@ auto Session::on_response(std::u32string_view response) -> void {
 }
 
 auto Session::flush(std::u32string_view text) -> void {
-    // TODO(SPEC.FEAT.TERM.09): 非 UTF-8 会话（串口 GB18030，裁决 7.6）的发送方向编码与「不可
-    // 表示字符」可配策略（默认替换 + 一次性提示）随串口族落地；当前只有本地/SSH 的默认编码。
-    std::string bytes;
-    bytes.reserve(text.size());
-    static_cast<void>(term::encode_utf8(text, bytes));  // 不可表示码点计数在发送策略落地后才有人消费（上面 TODO）
-    connection_->write({reinterpret_cast<const std::byte *>(bytes.data()), bytes.size()});
+    // 编码名与策略档都是构造期值、此后只读，故这里取 `encoding_` 不需要持锁；写连接也不在锁内
+    // （架构 §3.4：临界区内不做 IO）。
+    const auto encoded = term::encode_for_encoding(text, encoding_.name, encoding_.unrepresentable);
+    connection_->write(
+        {reinterpret_cast<const std::byte *>(encoded.bytes.data()), encoded.bytes.size()});
+    if (encoded.unrepresentable == 0U) {
+        return;
+    }
+    // TODO(SPEC.FEAT.TERM.09): 「一次性提示」的形态待人裁决（推荐：视口内非模态卡），见
+    // codespec/UI_ENCODING.draft.md 的 D1..D6；本棒只把代价记进计数，出账口在调试面板。
+    const std::lock_guard lock{mutex_};
+    unrepresentable_total_ += encoded.unrepresentable;
 }
 
 }  // namespace borealis::session

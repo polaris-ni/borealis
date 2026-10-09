@@ -26,6 +26,7 @@
 #include "borealis/conn/profile.h"
 #include "borealis/conn/tunnel.h"
 #include "borealis/grid/storage.h"
+#include "borealis/term/codec.h"
 #include "borealis/term/paste.h"
 #include "borealis/term/terminal.h"
 #include "borealis/term/width.h"
@@ -142,6 +143,9 @@ struct TerminalSettings {
     LongLinePolicy long_line{LongLinePolicy::Truncate};
     BellMode bell{BellMode::Visual};
     std::string encoding{"UTF-8"};  ///< 会话级编码（`SPEC.FEAT.TERM.09`），本地终端与 SSH / Telnet 的缺省。
+    /// 目标编码不可表示某码点时的处置档（`SPEC.FEAT.TERM.09` 的「可配策略」，取值语义见
+    /// `term::UnrepresentablePolicy`）：缺省替换，即绝不让用户以为发出去的是原字符。
+    term::UnrepresentablePolicy unrepresentable{term::UnrepresentablePolicy::Replace};
 
     PasteNewlinePolicy paste_newlines{PasteNewlinePolicy::AsIs};
     RightClickAction right_click{RightClickAction::ContextMenu};

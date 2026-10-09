@@ -162,6 +162,19 @@ struct TunnelEntry {
     };
 }
 
+/// @brief 从配置装出会话的编解码档（`SPEC.FEAT.TERM.09`）。
+///
+/// 与 `make_terminal_defaults` 同一条生效口径：**建会话那一刻**取一次，运行期改配置不重放既有会话
+/// （判据文 §0 边界②）。取的是 `terminal.encoding` 这一全局缺省档——串口自身的
+/// `connection.serial.encoding`（缺省 GB18030，裁决 7.6）要等串口连接腿落地才有人读它，本棒不预判。
+[[nodiscard]] auto make_session_encoding(const borealis::config::Settings &settings)
+    -> borealis::term::SessionEncoding {
+    return borealis::term::SessionEncoding{
+        .name = settings.terminal.encoding,
+        .unrepresentable = settings.terminal.unrepresentable,
+    };
+}
+
 /// @brief 互转点：框架 `KeyCombo` → 本仓键位语义值（`term::KeyPress`）。
 ///
 /// 与 `ui::TerminalView` 那条「`KeyEvent` → `KeyPress`」的互转点是两个**来源**而不是两条算式：命令表
@@ -331,7 +344,7 @@ auto main() -> int {
         auto session = std::make_shared<borealis::session::Session>(
             borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
             kNominalViewport, settings.terminal.scrollback_limit, width_policy,
-            make_terminal_defaults(settings));
+            make_terminal_defaults(settings), make_session_encoding(settings));
         create_new_tab_with(std::move(session), U"本地终端");
     };
 
@@ -738,7 +751,7 @@ auto main() -> int {
             ssh, std::move(secret), kNominalViewport, reconnect_policy());
         auto session = std::make_shared<borealis::session::Session>(
             std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
-            width_policy, make_terminal_defaults(settings));
+            width_policy, make_terminal_defaults(settings), make_session_encoding(settings));
         ssh_secret_by_tab[id] = std::move(sftp_secret);
         replace_tab_session(id, std::move(session));
         AURORA_LOG_INFO("main", "restart: tab ", id, " re-dialled by profile");
@@ -755,7 +768,7 @@ auto main() -> int {
         auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
         auto session = std::make_shared<borealis::session::Session>(
             std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
-            width_policy, make_terminal_defaults(settings));
+            width_policy, make_terminal_defaults(settings), make_session_encoding(settings));
         create_new_tab_with(std::move(session), decode_tab_name(profile.name));
         if (current_tab_id.has_value()) {
             ssh_profile_by_tab[current_tab_id.value()] = sftp_profile;
@@ -774,7 +787,7 @@ auto main() -> int {
         auto session = std::make_shared<borealis::session::Session>(
             borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
             kNominalViewport, settings.terminal.scrollback_limit, width_policy,
-            make_terminal_defaults(settings));
+            make_terminal_defaults(settings), make_session_encoding(settings));
         create_new_tab_with(std::move(session), decode_tab_name(profile.name));
         record_recent(profile.id);
     };
@@ -1190,7 +1203,7 @@ auto main() -> int {
         auto session = std::make_shared<borealis::session::Session>(
             borealis::conn::make_local_terminal_connection(conn_spec, kNominalViewport),
             kNominalViewport, settings.terminal.scrollback_limit, width_policy,
-            make_terminal_defaults(settings));
+            make_terminal_defaults(settings), make_session_encoding(settings));
         session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
         session->start();
         
@@ -1266,7 +1279,7 @@ auto main() -> int {
             auto session = std::make_shared<borealis::session::Session>(
                 borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
                 kNominalViewport, settings.terminal.scrollback_limit, width_policy,
-                make_terminal_defaults(settings));
+                make_terminal_defaults(settings), make_session_encoding(settings));
             replace_tab_session(id, std::move(session));
             AURORA_LOG_INFO("main", "restart: tab ", id, " local session replaced");
             return;
@@ -1307,8 +1320,8 @@ auto main() -> int {
     app.commands().add(std::move(restart_session));
 
     // 调试面板（`SPEC.NF.RELI.01`）：F12 开合，打开那一刻对**全部标签的每个会话**取一次计数器快照
-    // （解析降级 / 非法字节 / 背压水位三族）。快照而非活读：面板只在打开时被填一次，之后不再触碰会话，
-    // 于是 `Session` 的三个 stats 访问器只在主线程这一次调用点上发生锁竞争。
+    // （解析降级 / 非法字节 / 发送侧不可表示 / 背压水位四族）。快照而非活读：面板只在打开时被填一次，之后不再触碰会话，
+    // 于是 `Session` 的四个 stats 取数点只在主线程这一次调用上发生锁竞争。
     // TODO(SPEC.NF.RELI.01): 崩溃留存腿（信号钩子、dump 还是自写诊断文件、Windows/POSIX 分平台形态）
     // 与既有文档无出处可依，待人裁决后再开工，本棒不自行择一实现。
     borealis::ui::DebugPanel debug_panel{*host, app.focus()};
@@ -1332,6 +1345,7 @@ auto main() -> int {
                     .parse_cancelled = parse.cancelled,
                     .decode_replaced = decode.replaced,
                     .decode_code_points = decode.code_points,
+                    .encode_unrepresentable = session.unrepresentable_count(),
                     .queue_pending = queue.pending,
                     .queue_peak_pending = queue.peak_pending,
                     .queue_overloads = queue.overloads,

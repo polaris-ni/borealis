@@ -693,9 +693,13 @@ AURORA_TEST_CASE(deferred_and_next_session_rows_carry_their_badges) {
 
     panel.select_page(SettingsPage::Terminal);
     const auto terminal_rows = panel.visible_rows();
-    // 两枚角标并列的唯一现场：全仓无消费方 ∧ 下次会话生效。
-    AURORA_TEST_CHECK_EQ(find_row(terminal_rows, "terminal.encoding")->badge,
+    // 两枚角标并列的唯一现场：全仓无消费方 ∧ 下次会话生效（TERM.09 接线后 `terminal.encoding` 已升为
+    // 已接线，这一现场就挪到超长行处理那条上——它仍是没有消费方的一族键）。
+    AURORA_TEST_CHECK_EQ(find_row(terminal_rows, "terminal.long_line")->badge,
                          std::string{kBadgeDeferred} + " · " + std::string{kBadgeNextSession});
+    // 编码两键已接线（会话构造期按名建解码器 + 发送侧按档处置），但改的是下一将会话：只挂后一枚角标。
+    AURORA_TEST_CHECK_EQ(find_row(terminal_rows, "terminal.encoding")->badge, std::string{kBadgeNextSession});
+    AURORA_TEST_CHECK_EQ(find_row(terminal_rows, "terminal.unrepresentable")->badge, std::string{kBadgeNextSession});
     AURORA_TEST_CHECK_EQ(find_row(terminal_rows, "terminal.scrollback_limit")->badge, std::string{kBadgeNextSession});
     AURORA_TEST_CHECK_EQ(find_row(terminal_rows, "terminal.right_click")->badge, std::string{});
 }

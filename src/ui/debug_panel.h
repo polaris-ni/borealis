@@ -4,7 +4,8 @@
 // 调试面板（src/ui/debug_panel.h）
 // ------------------------------------------------------------
 // `SPEC.NF.RELI.01` 的「调试面板可查」那一半：VT 解析器未知序列计数、非法字节序列计数
-// （`SPEC.FEAT.TERM.09`）与背压水位（`SPEC.NF.PERF.06`）三族计数器一并上界面。
+// （`SPEC.FEAT.TERM.09`）、发送侧不可表示码点计数（同条）与背压水位（`SPEC.NF.PERF.06`）四族
+// 计数器一并上界面。
 // 三条决定形态的 WHY：
 //
 //   1. **本件不认识 `Session`**：交进来的是 `DebugSessionSnapshot` 值聚合体，行源折算归装配层
@@ -35,16 +36,17 @@
 
 namespace borealis::ui {
 
-/// @brief 一个会话的计数器快照（`SPEC.NF.RELI.01` 的三族读数）。
+/// @brief 一个会话的计数器快照（`SPEC.NF.RELI.01` 的四族读数）。
 ///
-/// 值聚合体：装配层从 `Session::parse_stats()` / `decode_stats()` / `queue_stats()` 逐字段搬来，
-/// 面板拿到的是不可变快照，之后不再读任何会话状态。
+/// 值聚合体：装配层从 `Session::parse_stats()` / `decode_stats()` / `unrepresentable_count()` /
+/// `queue_stats()` 逐字段搬来，面板拿到的是不可变快照，之后不再读任何会话状态。
 struct DebugSessionSnapshot {
     std::string title;               ///< 行标题（装配层折好的取值，如「标签 3 · 分屏 1」的已解析串）
     std::uint64_t parse_ignored = 0;
     std::uint64_t parse_cancelled = 0;
     std::uint64_t decode_replaced = 0;
     std::uint64_t decode_code_points = 0;
+    std::uint64_t encode_unrepresentable = 0;  ///< 发送方向被编码策略处置掉的码点数（`SPEC.FEAT.TERM.09`）。
     std::uint64_t queue_pending = 0;
     std::uint64_t queue_peak_pending = 0;
     std::uint64_t queue_overloads = 0;

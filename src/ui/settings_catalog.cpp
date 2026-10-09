@@ -193,16 +193,22 @@ namespace {
                                EffectLevel::NextSession));
     catalog.push_back(dropdown(
         "terminal.bell", SettingsPage::Terminal, {"off", "visual", "audible"}, ConsumerStatus::Absent, EffectLevel::Immediate));
-    // 装载侧对编码只判类型（会话编码腿未接），下拉里的六个名字是**建议项**：面板不得据此硬校验，
-    // 否则「先接 GB18030 串口」这类取值在面板里存不进去。
+    // 装载侧对编码只判类型（会话编码腿按名字建解码器，见 `term/codec.h`），下拉里的六个名字是
+    // **建议项**：面板不得据此硬校验，否则「先接 GB18030 串口」这类取值在面板里存不进去。
+    // 映射不到的名字回落 UTF-8 并留 WARN 痕，拼错的值不能让会话直接失明。
     catalog.push_back(row("terminal.encoding",
                           SettingsPage::Terminal,
                           ControlKind::Dropdown,
                           ValueDomain::FreeText,
                           {},
                           {"UTF-8", "GB18030", "GBK", "Big5", "Latin-1", "CP437"},
-                          ConsumerStatus::Absent,
+                          ConsumerStatus::Wired,
                           EffectLevel::NextSession));
+    catalog.push_back(dropdown("terminal.unrepresentable",
+                               SettingsPage::Terminal,
+                               {"replace", "drop", "pass_through_utf8"},
+                               ConsumerStatus::Wired,
+                               EffectLevel::NextSession));
     catalog.push_back(dropdown("terminal.paste_newlines",
                                SettingsPage::Terminal,
                                {"as_is", "filter", "convert"},

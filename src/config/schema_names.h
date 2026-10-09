@@ -66,6 +66,12 @@ inline constexpr std::array<EnumName, 2> kAmbiguousWidthNames{{
     {"wide", static_cast<std::int64_t>(term::AmbiguousWidth::Wide)},
 }};
 
+inline constexpr std::array<EnumName, 3> kUnrepresentableNames{{
+    {"replace", static_cast<std::int64_t>(term::UnrepresentablePolicy::Replace)},
+    {"drop", static_cast<std::int64_t>(term::UnrepresentablePolicy::DropWithNotice)},
+    {"pass_through_utf8", static_cast<std::int64_t>(term::UnrepresentablePolicy::PassThroughUtf8)},
+}};
+
 inline constexpr std::array<EnumName, 3> kCursorShapeNames{{
     {"block", static_cast<std::int64_t>(term::CursorShape::Block)},
     {"underline", static_cast<std::int64_t>(term::CursorShape::Underline)},
