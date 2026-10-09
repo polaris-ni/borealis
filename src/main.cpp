@@ -327,7 +327,7 @@ auto main() -> int {
         borealis::conn::LocalTerminalSpec spec;
         spec.command_line = settings.connection.local_shell;
         spec.working_directory = settings.connection.startup_directory;
-        borealis::term::UnicodeWidthPolicy width_policy;
+        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
         auto session = std::make_shared<borealis::session::Session>(
             borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
             kNominalViewport, settings.terminal.scrollback_limit, width_policy,
@@ -679,7 +679,7 @@ auto main() -> int {
         auto connection =
             std::make_unique<borealis::conn::SshConnection>(profile.ssh, std::move(secret),
                                                             kNominalViewport);
-        borealis::term::UnicodeWidthPolicy width_policy;
+        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
         auto session = std::make_shared<borealis::session::Session>(
             std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
             width_policy, make_terminal_defaults(settings));
@@ -697,7 +697,7 @@ auto main() -> int {
         spec.command_line = profile.local.command_line;
         spec.working_directory = profile.local.working_directory;
         spec.environment = profile.local.environment;
-        borealis::term::UnicodeWidthPolicy width_policy;
+        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
         auto session = std::make_shared<borealis::session::Session>(
             borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
             kNominalViewport, settings.terminal.scrollback_limit, width_policy,
@@ -1101,7 +1101,7 @@ auto main() -> int {
         borealis::conn::LocalTerminalSpec conn_spec;
         conn_spec.command_line = spec.local_shell.empty() ? settings.connection.local_shell : spec.local_shell;
         conn_spec.working_directory = spec.startup_directory.empty() ? settings.connection.startup_directory : spec.startup_directory;
-        borealis::term::UnicodeWidthPolicy width_policy;
+        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
         auto session = std::make_shared<borealis::session::Session>(
             borealis::conn::make_local_terminal_connection(conn_spec, kNominalViewport),
             kNominalViewport, settings.terminal.scrollback_limit, width_policy,
@@ -1184,7 +1184,7 @@ auto main() -> int {
         borealis::conn::LocalTerminalSpec spec;
         spec.command_line = settings.connection.local_shell;
         spec.working_directory = settings.connection.startup_directory;
-        borealis::term::UnicodeWidthPolicy width_policy;
+        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
         auto session = std::make_shared<borealis::session::Session>(
             borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
             kNominalViewport, settings.terminal.scrollback_limit, width_policy,

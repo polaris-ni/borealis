@@ -96,7 +96,8 @@ class SettingsPreview {
     auto pump() -> void;
 
   private:
-    term::UnicodeWidthPolicy width_policy_{};  ///< 必须先于会话析构：会话持它的引用。
+    std::shared_ptr<const term::WidthPolicy> width_policy_{
+        std::make_shared<term::UnicodeWidthPolicy>()};  ///< 必须先于会话析构：会话持它的引用。
     std::unique_ptr<session::Session> session_{};
     std::shared_ptr<TerminalView> view_{};  ///< 必须先于会话析构：视口持会话的裸引用。
 };

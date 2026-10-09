@@ -99,7 +99,7 @@ constexpr const char *kBuildConfig = "debug";
 constexpr const char *kBuildConfig = "optimized";
 #endif
 
-term::UnicodeWidthPolicy g_width_policy;
+auto g_width_policy = std::make_shared<term::UnicodeWidthPolicy>();
 
 /// @brief 灌注用连接替身：只把外部投来的字节转给会话，不触达任何真实传输层。
 ///
