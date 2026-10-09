@@ -87,6 +87,7 @@ UI 件节奏：UI 编写前先出设计图评审（稿入 `codespec/`），实�
 3. 不在应用侧私改渲染路径（硬禁）；按公共 API 组合的应用侧控件不算私改。
 4. 改 Aurora 前读其根 `AGENTS.md` 并遵守之；引用写「Aurora 主仓 `codespec/<文档>` §N」。
 5. `add_subdirectory` 两前提：① Aurora 默认 ON 的开关须在其前以缓存变量关掉；② Aurora 须「子项目安全」。任一不成立构建即断。
+6. 修改BUG或者增加特性时，先调查清楚是否是Aurora的BUG或者需要Aurora补全的缺口
 
 ## 6 现状快照
 

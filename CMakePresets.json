@@ -45,6 +45,18 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
+    },
+    {
+      "name": "linux-gui",
+      "displayName": "GCC + Ninja (X11 desktop GUI)",
+      "description": "POSIX desktop build with both X11 and Wayland window backends enabled so Borealis shows a real window on a Linux desktop. At runtime Aurora picks native Wayland when WAYLAND_DISPLAY is set, falls back to X11 (incl. XWayland), then HEADLESS if no display is available. HEADLESS stays ON as the headless-test fallback. Requires libX11 + Wayland libs (apt: libx11-dev libwayland-dev libxkbcommon-dev) and the vcpkg toolchain (SSH leg needs libssh, same as the 'linux' preset). The default 'linux' preset remains HEADLESS for headless test/bench runs.",
+      "inherits": "linux",
+      "binaryDir": "${sourceDir}/build-gui",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "AURORA_BACKEND_X11": "ON",
+        "AURORA_BACKEND_WAYLAND": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -67,6 +79,11 @@
       "name": "linux-bench",
       "displayName": "Build (build-bench/, optimized)",
       "configurePreset": "linux-bench"
+    },
+    {
+      "name": "linux-gui",
+      "displayName": "Build (build-gui/)",
+      "configurePreset": "linux-gui"
     }
   ],
   "testPresets": [
@@ -85,6 +102,17 @@
       "name": "linux",
       "displayName": "Test (build/, parallel)",
       "configurePreset": "linux",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 0
+      }
+    },
+    {
+      "name": "linux-gui",
+      "displayName": "Test (build-gui/, parallel)",
+      "configurePreset": "linux-gui",
       "output": {
         "outputOnFailure": true
       },
