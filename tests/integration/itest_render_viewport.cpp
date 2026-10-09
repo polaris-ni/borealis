@@ -23,7 +23,11 @@
 ///           交进窗口 dp 盒、真点按钮只唤一次钩子、点按钮之外仍走选区；另有该条 SSH 腿的自动重连浮层两态
 ///           （裁决 7.99 D5）五例：重连中交出「立即重试」「停止重连」两枚盒而不带重启盒、落终态档位时回落
 ///           到一枚加宽的按档案重启盒、两枚按钮各只直达自己的控制位一次（三条通道互不串门）、卡片之外
-///           仍是选区（需求那句「保留终端内容供回看」在重连中也成立）。
+///           仍是选区（需求那句「保留终端内容供回看」在重连中也成立）；另有发送侧「不可表示字符」一次性
+///           提示卡（`SPEC.FEAT.TERM.09` 的提示腿，裁决 7.104）五例：卡落进底部居中的期望盒而卡之上的
+///           网格逐位不变（非模态＝不铺半透明带）、未触发时连排两帧逐位相同、5 s 到期自收且同会话第二
+///           批次不再弹第二张、视口矮到装不下「卡高 + 上下内缩」时让位不画（同一条触发的正常高度正例
+///           作非空转证人）、本卡一枚命中盒都不交而被它盖住的那一行照常可选。
 ///           像素一律比 RGBA 四通道含 alpha：Headless 帧底色是全透明黑 (0,0,0,0)，只比 RGB 会让
 ///           「画了个纯黑」与「什么都没画」混为一谈。
 ///
@@ -60,6 +64,9 @@
 // 私有头（裁决 D1①：类声明刻意不进 `include/borealis/`，含它即含框架头），故按相对路径取用，
 // 而不给整个测试目标开 `src/` 含目录。
 #include "../../src/ui/terminal_view.h"
+// 提示卡的底色与描边取自面板 chrome（`SPEC.FEAT.TERM.09` 的提示腿，裁决 7.104 的 D2①「复用
+// settings_chrome() 四色」），故按同一条私有头取用口径再拿一个头。
+#include "../../src/ui/settings_panel.h"
 
 namespace borealis::test_cases::itest_render_viewport {
 
@@ -201,8 +208,10 @@ class Harness {
     explicit Harness(const PaletteSpec &palette = test_palette(),
                      const TerminalView::InteractionOptions &options = {},
                      const Typography &typography = {}, std::vector<std::string> font_fallback_chain = {},
-                     bool with_scheduler = false)
-        : appearance_(TerminalView::Appearance{.palette = palette,
+                     bool with_scheduler = false, int window_height = kWindowHeight)
+        : window_height_{window_height},
+          window_{make_window(window_height)},
+          appearance_(TerminalView::Appearance{.palette = palette,
                                                .ref_font = test_font(),
                                                .typography = typography,
                                                .padding_dp = kPaddingDp,
@@ -502,6 +511,19 @@ class Harness {
     [[nodiscard]] auto palette() const noexcept -> const PaletteSpec & { return appearance_.palette; }
     [[nodiscard]] auto scale() const noexcept -> float { return scale_; }
 
+    /// @brief 控件的绘制盒（dp）：底部居中那一类浮层的落点由整盒而非格网决定，故断言须能读到它。
+    [[nodiscard]] auto paint_box() const noexcept -> const au::Rect & { return box_; }
+
+    /// @brief 从文本通道发一段**在任何编码腿上都不可表示**的文本，触发一次性提示
+    ///        （`SPEC.FEAT.TERM.09` 的提示腿）。
+    ///
+    /// 取的是未配对代理 U+D800：它在六条腿上都失败（判据文 §1 事实 10），故缺省 UTF-8 档的驱动台
+    /// 就能触发，不必为提示卡另造一份 GBK 会话。字节照常出账（替身连接收下），提示只在下一次
+    /// `on_frame()` 被取走。
+    auto send_unrepresentable_text() -> void {
+        session_->send_text(std::u32string{static_cast<char32_t>(0xD800)});
+    }
+
     [[nodiscard]] auto last_resize() const -> std::optional<Size> {
         if (connection_->resizes.empty()) {
             return std::nullopt;
@@ -632,12 +654,13 @@ class Harness {
     }
 
     [[nodiscard]] auto buffer_height() const -> std::size_t {
-        return static_cast<std::size_t>(static_cast<float>(kWindowHeight) * scale_);
+        return static_cast<std::size_t>(static_cast<float>(window_height_) * scale_);
     }
 
-    [[nodiscard]] static auto make_window() -> au::Window {
+    /// @brief 造无头窗口；高度按用例给（`SPEC.FEAT.TERM.09` 的让位判据要一格装不下卡的矮视口）。
+    [[nodiscard]] static auto make_window(int height) -> au::Window {
         auto surface = std::make_unique<au::HeadlessSurface>();
-        (void)surface->begin_frame(kWindowWidth, kWindowHeight);
+        (void)surface->begin_frame(kWindowWidth, height);
         return au::Window{std::move(surface)};
     }
 
@@ -663,7 +686,9 @@ class Harness {
             appearance_.padding_dp);
     }
 
-    au::Window window_ = make_window();  ///< 最先声明、最后析构：帧缓冲须活到取样结束。
+    /// @brief 窗口高度（dp）：`window_` 与 `buffer_height` 的共同来源，须在窗口之前就位。
+    const int window_height_;
+    au::Window window_;  ///< 最先声明、最后析构：帧缓冲须活到取样结束。
     /// @brief 闪烁与去抖那类周期任务的驱动器；只在 `with_scheduler` 那一档用例里被播种成 current。
     au::Scheduler scheduler_;
     /// @brief 驱动台自己的外观副本（含字体、排版量、内边距、闪烁周期与回退链），须在 view_ 之前就位。
@@ -712,6 +737,21 @@ class Harness {
         span.second = y;
     }
     return span;
+}
+
+/// @brief 发送侧一次性提示卡的期望盒（dp，相对绘制盒原点，`SPEC.FEAT.TERM.09` 的提示腿）。
+///
+/// 四个数取自设计稿 `codespec/UI_ENCODING.draft.md` §2 与草图标注，而不是从实现里读回来：
+/// 卡宽 320（窄 pane 收成「盒宽 − 24」，与 dead-session 卡同一条 clamp）、卡高 68
+///（14 + 20 × 2 + 14，两行文字）、底部内缩 12、横向居中。
+[[nodiscard]] auto expected_notice_box(double box_w, double box_h) -> Rect {
+    const double card_w = std::min(320.0, box_w - 24.0);
+    return Rect{.x = (box_w - card_w) / 2.0, .y = box_h - 68.0 - 12.0, .width = card_w, .height = 68.0};
+}
+
+/// @brief 把面板 chrome 的 `aurora::Color` 折成帧缓冲取样那侧的 RGBA 读数（四通道逐位比）。
+[[nodiscard]] auto chrome_rgba(const aurora::Color &color) -> RgbaColor {
+    return RgbaColor{color.r, color.g, color.b, color.a};
 }
 
 #endif  // 无头后端缺席时上面的驱动台与替身都不参与编译
@@ -2250,6 +2290,158 @@ AURORA_TEST_CASE(click_outside_reconnecting_card_still_selects) {
     AURORA_TEST_CHECK_EQ(h.stop_reconnect_calls(), 0U);
     AURORA_TEST_CHECK_EQ(h.restart_hook_calls(), 0U);
     AURORA_TEST_CHECK_FALSE(h.selected_text().empty());
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+// ===================== 发送侧「不可表示字符」一次性提示卡（`SPEC.FEAT.TERM.09` 的提示腿）
+// =====================
+// 判据文 `codespec/UI_ENCODING.draft.md` §2 的 1 / 3 / 6 三条：非模态（不铺带、不写命中盒、卡下仍可
+// 选）、5 s 自收、矮视口让位不画。「一次性」（判据 2）与会话侧 latch 同属一条账，证人已落在
+// `utest_session`，本套件不重测（稿 §6）。
+
+AURORA_TEST_CASE(notice_card_lands_bottom_centre_without_darkening_the_grid) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.feed("\x1b[?25l\x1b[1;1HELLO");
+    const auto before = h.pixels();
+    h.send_unrepresentable_text();
+    h.render();
+    const auto after = h.pixels();
+
+    const auto box = expected_notice_box(h.paint_box().size.width, h.paint_box().size.height);
+    const auto chrome = borealis::ui::settings_chrome();
+    // 卡底落在预期盒的内缩带里（文字之外、描边之内），取的是面板 chrome 而非格网底色。
+    AURORA_TEST_CHECK(h.sample(after, Rect{box.x + 6.0, box.y + 34.0, 2.0, 2.0}, 0.5, 0.5) ==
+                      chrome_rgba(chrome.card_bg));
+    AURORA_TEST_CHECK(h.sample(after, Rect{box.x + 40.0, box.y, 1.0, 1.0}, 0.5, 0.5) ==
+                      chrome_rgba(chrome.card_line));
+    // 判据 1 的反面证人：卡之上的首行逐位不变。dead-session 那一层会铺一条覆盖整可见区的半透明带，
+    // 于是这一处也一起被改掉——本件刻意不铺。
+    AURORA_TEST_CHECK(h.cell_probe(before, 0U, 2U, 0.9) == h.cell_probe(after, 0U, 2U, 0.9));
+    AURORA_TEST_CHECK_GT(Harness::count_diff(before, after), 0U);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(no_notice_card_before_the_session_arms_the_latch) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.feed("\x1b[?25l\x1b[1;1HELLO");
+    const auto first = h.pixels();
+    // 没触发就不该有卡，而且连排两帧画面逐位相同：绘制对同一帧幂等（latch 的取走只发生在帧边界）。
+    h.render();
+    const auto second = h.pixels();
+    AURORA_TEST_CHECK_EQ(Harness::count_diff(first, second), 0U);
+
+    const auto box = expected_notice_box(h.paint_box().size.width, h.paint_box().size.height);
+    AURORA_TEST_CHECK(h.sample(second, Rect{box.x + 6.0, box.y + 34.0, 2.0, 2.0}, 0.5, 0.5) ==
+                      h.palette().default_background);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(notice_card_dismisses_after_five_seconds_and_never_returns) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 播种调度器（稿 §5 登记的无头兜底：帧里没有调度器时卡片会常驻，自收这一条就没有证人）。
+    Harness h{test_palette(), TerminalView::InteractionOptions{}, Typography{}, {}, true};
+    AURORA_TEST_REQUIRE(h.preflight());
+    // 闪烁任务与提示定时器同池，而一次 tick 至多触发一个到期任务，故把闪烁周期推远到本例的时间窗
+    // 之外——否则永远排不到那只 5 s 的定时器，测的就不是「5 s 自收」而是「谁先到期」。
+    h.appearance().blink_period = std::chrono::milliseconds{600000};
+    h.apply_appearance();
+    h.feed("\x1b[?25l\x1b[1;1HELLO");
+
+    const auto box = expected_notice_box(h.paint_box().size.width, h.paint_box().size.height);
+    const auto bg = chrome_rgba(borealis::ui::settings_chrome().card_bg);
+    const Rect probe{box.x + 6.0, box.y + 34.0, 2.0, 2.0};
+
+    h.send_unrepresentable_text();
+    h.render();
+    AURORA_TEST_REQUIRE(h.sample(h.pixels(), probe, 0.5, 0.5) == bg);
+
+    const auto shown = h.pixels();
+    h.tick(4.0);
+    h.render();
+    AURORA_TEST_CHECK_EQ(Harness::count_diff(shown, h.pixels()), 0U);  // 4 s 时还在
+
+    h.tick(1.5);
+    h.render();
+    AURORA_TEST_CHECK(h.sample(h.pixels(), probe, 0.5, 0.5) == h.palette().default_background);
+
+    // 已取走过：第二批不可表示文本不再弹第二张卡（D1① 的会话侧账在视图侧的读数）。
+    const auto dismissed = h.pixels();
+    h.send_unrepresentable_text();
+    h.render();
+    AURORA_TEST_CHECK_EQ(Harness::count_diff(dismissed, h.pixels()), 0U);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_short_viewport_yields_the_notice_card) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 判据 6：视口高不足「卡高 + 上下内缩」（68 + 24 == 92 dp）时整张让位不画，而不是压掉回看内容
+    // 或截到只剩一行。本例**不**走套件那条 `preflight()`：它要求行数 > 3，而矮到装不下这张卡的视口
+    // 按构造就矮到装不下四行（一格 21 dp 高时四行需要 92 dp，正好是卡片的让位阈值）。这里需要的
+    // 前置只有「dp 即像素」与「格网还在」两条，差分断言吃的是整帧而不是某一行。
+    Harness h{test_palette(), TerminalView::InteractionOptions{}, Typography{}, {}, false, 88};
+    AURORA_TEST_REQUIRE(h.scale() == 1.0F);
+    AURORA_TEST_REQUIRE(h.geometry().rows >= 1U);
+    h.feed("\x1b[?25l\x1b[1;1HELLO");
+    const auto before = h.pixels();
+    h.send_unrepresentable_text();
+    h.render();
+    AURORA_TEST_CHECK_EQ(Harness::count_diff(before, h.pixels()), 0U);
+
+    // 同一条触发在够高的视口里确实落帧——否则上面那句差分等于 0 就可能是「什么都没触发」的空转。
+    Harness tall;
+    AURORA_TEST_REQUIRE(tall.preflight());
+    tall.send_unrepresentable_text();
+    tall.render();
+    const auto tall_box = expected_notice_box(tall.paint_box().size.width, tall.paint_box().size.height);
+    AURORA_TEST_REQUIRE(tall.sample(tall.pixels(), Rect{tall_box.x + 6.0, tall_box.y + 34.0, 2.0, 2.0},
+                                    0.5, 0.5) ==
+                        chrome_rgba(borealis::ui::settings_chrome().card_bg));
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(content_under_the_notice_card_is_still_selectable) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto box = expected_notice_box(h.paint_box().size.width, h.paint_box().size.height);
+    // 卡片中线落在哪一行由格网独立复算：这一行的内容此刻正被卡片盖着。
+    const std::size_t covered_row = static_cast<std::size_t>(
+        (box.y + 34.0 - h.geometry().padding) / h.geometry().cell_height);
+    AURORA_TEST_REQUIRE(covered_row < h.geometry().rows);
+    h.feed(std::string("\x1b[?25l\x1b[") + std::to_string(covered_row + 1U) + ";1HBOTTOM");
+    h.send_unrepresentable_text();
+    h.render();
+
+    // 卡确实在位（否则本例就成了「什么都没画所以点得动」的空转）。
+    AURORA_TEST_REQUIRE(h.sample(h.pixels(), Rect{box.x + 6.0, box.y + 34.0, 2.0, 2.0}, 0.5, 0.5) ==
+                        chrome_rgba(borealis::ui::settings_chrome().card_bg));
+    // 不写命中盒：三枚按钮盒全空，指针入口根本看不见这一层（判据 1 的结构证人——哪天给它加按钮，
+    // 这三枚里就会多出一枚，本例即红）。
+    AURORA_TEST_CHECK(!h.restart_button_box().has_value());
+    AURORA_TEST_CHECK(!h.retry_now_button_box().has_value());
+    AURORA_TEST_CHECK(!h.stop_reconnect_button_box().has_value());
+
+    // 起笔在卡外的格子上，收笔落在卡片之下：被盖住的那一行照常可选。尾随空格按裁决 7.32 的
+    // 「行尾空白裁剪」缺省关闭而保留，故读数正是这一段。
+    h.pointer(au::MouseAction::Press, covered_row, 1U);
+    h.pointer_at(au::MouseAction::Move, box.x + 30.0, box.y + 34.0);
+    h.pointer_at(au::MouseAction::Release, box.x + 30.0, box.y + 34.0);
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.selected_text(), "OTTOM ");
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif

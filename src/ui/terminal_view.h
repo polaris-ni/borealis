@@ -527,6 +527,26 @@ class TerminalView final : public aurora::LeafWidget {
     /// 「接好了但这一格不是按钮」是两句不同的话，两者都不该画出一个不响的按钮。
     auto paint_restart_overlay(aurora::Painter &p, const aurora::Rect &bounds) -> void;
 
+    /// @brief 画发送侧一次性提示卡（`SPEC.FEAT.TERM.09` 的提示腿，判据 1、6）：底部居中一张非模态卡。
+    ///
+    /// 与 `paint_restart_overlay` 相反的三件事：**不铺半透明带**、**不吃焦点**、**不写任何命中盒**，
+    /// 于是卡下的回看内容照常可读、照常可选，命中序一字不改（裁决 7.104 的 D2①——「复用那一层」
+    /// 不是零成本，它会把回看内容压成背景）。视口高不足「卡高 + 上下内缩」时**让位不画**（判据 6）；
+    /// 窄 pane 下第二行按卡宽截断而不折行，与既有卡片同档。
+    auto paint_unrepresentable_notice(aurora::Painter &p, const aurora::Rect &bounds) -> void;
+
+    /// @brief 挂上提示卡（裁决 7.104 的 D1①/D3①/D5①）：由 `on_frame()` 在取到会话 latch 时调用。
+    ///
+    /// 记下内容、按 5 s 重排自收定时器（先 cancel 再排，故同一会话对象上不会叠两枚定时器）、标脏。
+    /// 没有活跃调度器（无头帧）时卡片常驻——与光标闪烁在无头帧不跳是同一条口径。
+    auto show_unrepresentable_notice(session::UnrepresentableNotice notice) -> void;
+
+    /// @brief 收掉提示卡并撤定时器：5 s 到期与会话退出两条路都走这里。
+    ///
+    /// 「本 view 换绑会话」不需要第三个入口：控件的会话绑定是构造期值，换绑即新建对象，卡片状态
+    /// 随对象一起是新的。
+    auto clear_unrepresentable_notice() -> void;
+
     /// @brief 取某存储行在当前可见窗里的那一行；已滚出可见窗（含被 scrollback 挤出顶端）时回空。
     [[nodiscard]] auto mirror_line_of(std::size_t storage_row) const noexcept -> const grid::Row *;
 
@@ -697,6 +717,12 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 重连中态那两枚按钮的盒（裁决 7.99 D5）：与 `restart_button_box_` 互斥，一帧只交一档。
     std::optional<Rect> retry_now_button_box_;
     std::optional<Rect> stop_reconnect_button_box_;
+
+    /// @brief 提示卡的当帧内容（`SPEC.FEAT.TERM.09`，裁决 7.104 的 D5①）：由 `on_frame()` 从会话
+    ///        latch 取走，绘制路径**只读不消费**——取走是消费动作，画在绘制里就会破坏同帧幂等。
+    std::optional<session::UnrepresentableNotice> unrepresentable_notice_;
+    /// 5 s 自收定时器（D3①）：重排前 cancel，析构时随本控件一起取消。
+    aurora::TimerHandle notice_timer_;
 };
 
 }  // namespace borealis::ui

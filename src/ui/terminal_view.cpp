@@ -81,6 +81,14 @@ constexpr double kReconnectCardHeightDp = 108.0;
 /// @brief 终态那枚按钮的宽：标签「重启（按档案）」是七个全角位，96 dp 档装不下（14 pt 下约 131 dp）。
 constexpr double kWideRestartButtonWidthDp = 150.0;
 
+/// @brief 发送侧一次性提示卡的几何（`SPEC.FEAT.TERM.09` 的提示腿，裁决 7.104 的 D2①）：卡宽、横向
+///        内缩、描边、留白与行高**全部沿用上面那一档**，本卡只有两行文字，故总高
+///        14 + 20 × 2 + 14 == 68 dp。贴视口底、纵向内缩取同一枚 12 dp。
+constexpr double kNoticeCardHeightDp = 68.0;
+/// @brief 卡片常驻时长（裁决 7.104 的 D3①）：5 s 后自收，此外只有会话退出清卡。
+///        明确不是「任意键入即刻收」——触发者就是键入，下一个字符即抹掉＝几乎不可见。
+constexpr std::chrono::milliseconds kNoticeVisibleFor{5000};
+
 /// @brief 把滚轮增量折成「档」：一 notch 即一档（Win32 与 X11 给 ±1，高分屏与 GLFW 可给小数）。
 ///        非零增量至少算一档——发零条上报等于吞掉这一事件而不告诉任何人。
 [[nodiscard]] auto wheel_notches(float delta_rows) -> int {
@@ -221,6 +229,7 @@ auto TerminalView::install_fallback_chain(std::vector<std::string> chain) -> voi
 
 TerminalView::~TerminalView() {
     blink_timer_.cancel();
+    notice_timer_.cancel();  // 那条 5 s 自收的回调捕获了 `this`。
     // 在途的粘贴块回调都捕获了 `this`；句柄只置取消标志，故调度器触发前会跳过它们。
     for (const aurora::TimerHandle &handle : paste_timers_) {
         handle.cancel();
@@ -372,6 +381,16 @@ auto TerminalView::on_frame() -> void {
     compensate_search_drift();
     flush_copy_request();
     flush_paste_request();
+    // 发送侧一次性提示在**帧边界**取走 latch（裁决 7.104 的 D5①）：取走是消费动作，放进绘制路径就
+    // 破坏「同一帧重绘画出同一张卡」那条幂等前提；会话已退时取走了也不挂卡——那时 dead-session 那一层
+    // 已经在同一片居中区域落笔（本件排在它下面一层），而提示的对象是一个活着的会话。
+    if (auto notice = session_->take_unrepresentable_notice(); notice.has_value() && session_->alive()) {
+        show_unrepresentable_notice(std::move(*notice));
+    }
+    // 清卡的第二条路（D3①）：会话退出即撤，不等那枚 5 s 定时器——换绑会话即新建控件，状态天然从零开始。
+    if (unrepresentable_notice_.has_value() && !session_->alive()) {
+        clear_unrepresentable_notice();
+    }
     // 回看换源与光标移动都不在提交里：前者由距底行数变化指认（`on_scroll` 在帧序里先于本函数，
     // 故同帧就能换源），后者直接比较光标快照。
     if (!frame.empty() || previous_back != mirror_.back_rows() || !(cursor_ == painted_cursor_)) {
@@ -445,6 +464,9 @@ auto TerminalView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, cons
     }
     paint_cursor(p, bounds, rows);
     paint_scroll_indicator(p, bounds, rows);
+    // 发送侧一次性提示卡在 dead-session 那一层**之前**画：本卡非模态、不铺带，两者同框时让位于
+    // 「会话已退出」那条更重的状态（裁决 7.104 的 D2①，判据文 §1 事实 3）。
+    paint_unrepresentable_notice(p, bounds);
     // dead-session 浮层排在最后一层（`SPEC.FEAT.WS.05`）：它是「会话已退出」这一状态上的模态提示，
     // 盖在回看内容与指示条之上都不为过。判据现取 `Session::alive()` 而不是缓存的翻转标志——
     // `on_closed` 那一次唤醒会带着最后一批 damage 排上帧，于是浮层与「最后一段输出」同一帧落定。
@@ -1125,6 +1147,77 @@ auto TerminalView::paint_restart_overlay(aurora::Painter &p, const aurora::Rect 
     // 交进 `restart_button_box_` 的是**控件本地 dp**，与 `e.local_position` 同一坐标空间，
     // 于是指针入口不需要再补 `bounds.origin`（框架派发那条原点已在 G31 回货里对齐到本控件的绘制盒）。
     restart_button_box_ = button_box;
+}
+
+auto TerminalView::show_unrepresentable_notice(session::UnrepresentableNotice notice) -> void {
+    unrepresentable_notice_ = std::move(notice);
+    // 定时器一律「先撤旧再排新」（口径同 `reregister_blink_timer`：`cancel()` 对未注册句柄是幂等空
+    // 操作）。同一会话对象按 D1① 只上弦一次，本不该有第二次重排，但「不叠两枚定时器」这件事不该
+    // 依赖上游那条不变量——它归会话，而这一句归本控件。
+    notice_timer_.cancel();
+    if (auto *scheduler = aurora::Scheduler::current(); scheduler != nullptr) {
+        notice_timer_ =
+            scheduler->set_timeout(kNoticeVisibleFor, [this]() -> void { clear_unrepresentable_notice(); });
+    }
+    // 没有调度器（无头帧）时卡片常驻：与光标闪烁在无头帧不跳是同一条既定形态，判据文 §5 已登记。
+    mark_needs_paint();
+}
+
+auto TerminalView::clear_unrepresentable_notice() -> void {
+    if (!unrepresentable_notice_.has_value()) {
+        return;  // 定时器与帧边界都会走到这里，本来就没挂着就别白标一次脏
+    }
+    notice_timer_.cancel();
+    unrepresentable_notice_.reset();
+    mark_needs_paint();
+}
+
+auto TerminalView::paint_unrepresentable_notice(aurora::Painter &p, const aurora::Rect &bounds) -> void {
+    if (!unrepresentable_notice_.has_value()) {
+        return;
+    }
+    const double box_w = static_cast<double>(bounds.size.width);
+    const double box_h = static_cast<double>(bounds.size.height);
+    const double card_w = std::min(kRestartCardWidthDp, box_w - 2.0 * kRestartCardHorizontalInsetDp);
+    // 让位不画（判据 6）：纵向装不下「卡高 + 上下内缩」时整张不画，而不是压掉回看内容或截到只剩一行。
+    // 卡宽那一侧已由 `min` 收进可视区，非正值意味着这一格连卡都放不住，同样不画。
+    if (card_w <= 0.0 || box_h < kNoticeCardHeightDp + 2.0 * kRestartCardHorizontalInsetDp) {
+        return;
+    }
+
+    const auto chrome = settings_chrome();
+    const double card_h = kNoticeCardHeightDp;
+    const double card_x = (box_w - card_w) / 2.0;
+    const double card_y = box_h - card_h - kRestartCardHorizontalInsetDp;
+    // 非模态三不（D2①）：不铺覆盖整可见区的半透明带、不吃焦点、不写任何命中盒——本函数一个成员都不
+    // 往 `*_button_box_` 那组里写，指针入口因此看不见这张卡，卡下的旧内容照常可读、可选。
+    p.fill_rect(to_rect(Rect{card_x, card_y, card_w, card_h}, bounds.origin), chrome.card_bg);
+    const double inner_h = card_h - 2.0 * kRestartStrokeDp;
+    p.fill_rect(to_rect(Rect{card_x, card_y, card_w, kRestartStrokeDp}, bounds.origin), chrome.card_line);
+    p.fill_rect(to_rect(Rect{card_x, card_y + card_h - kRestartStrokeDp, card_w, kRestartStrokeDp}, bounds.origin),
+                chrome.card_line);
+    p.fill_rect(to_rect(Rect{card_x, card_y + kRestartStrokeDp, kRestartStrokeDp, inner_h}, bounds.origin),
+                chrome.card_line);
+    p.fill_rect(to_rect(Rect{card_x + card_w - kRestartStrokeDp, card_y + kRestartStrokeDp, kRestartStrokeDp,
+                             inner_h},
+                        bounds.origin),
+                chrome.card_line);
+
+    const double text_x = card_x + kRestartCardPaddingDp;
+    const double text_w = card_w - 2.0 * kRestartCardPaddingDp;
+    // 第一行报名字与实际生效腿（D6②：`Session` 构造期折一次的那份，与真正跑的解码器同源）。
+    p.draw_text(to_rect(Rect{text_x, card_y + kRestartCardPaddingDp, text_w, kRestartHintLineHeightDp},
+                        bounds.origin),
+                settings_label("terminal.notice.unrepresentable.line",
+                               {aurora::LocalizedString{unrepresentable_notice_->leg},
+                                aurora::LocalizedString{std::to_string(unrepresentable_notice_->count)}}),
+                ref_font_, chrome.text);
+    // 第二行只指路径、不报当前档位名（D4①）：设置页那枚下拉显示的是 ASCII 档名本身，卡片报中文档名
+    // 会对不上、报 ASCII 又违背界面语言。副色档与「出口」这句话的分量相称。
+    p.draw_text(to_rect(Rect{text_x, card_y + kRestartCardPaddingDp + kRestartHintLineHeightDp, text_w,
+                             kRestartHintLineHeightDp},
+                        bounds.origin),
+                settings_label("terminal.notice.unrepresentable.action"), ref_font_, chrome.text_dim);
 }
 
 auto TerminalView::mirror_line_of(std::size_t storage_row) const noexcept -> const grid::Row * {

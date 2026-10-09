@@ -249,6 +249,13 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"session.restart.by_profile", "重启（按档案）"},
     {"session.restart.retry_credential", "重试并换凭据"},
 
+    // ---- 发送侧「不可表示字符」一次性提示卡（`SPEC.FEAT.TERM.09` 的提示腿，裁决 7.104 的 D4①）----
+    // 第二行只指路径、不报当前处置档名：那枚下拉显示的是 ASCII 档名本身（replace / drop /
+    // pass_through_utf8），卡片报中文档名会对不上、报 ASCII 又违背界面语言；档名中文化属设置面板本体。
+    // 路径三段各与真标签同源（`settings.page.terminal` ＋ `terminal.unrepresentable`）。
+    {"terminal.notice.unrepresentable.line", "{0} 发不出这一段里的 {1} 个字符"},
+    {"terminal.notice.unrepresentable.action", "已按当前处置档发送 · 改档见 设置 › 终端 › 不可表示字符处置"},
+
     // ---- 命令面板（`SPEC.FEAT.WS.07`，判据文 `codespec/UI_WORKSPACE.draft.md` §4）----
     // 占位符与空态两条的 **key 由框架命名**（`CommandPalette::AURORA_DEFAULT_*_KEY`，G38 / G39 回货形
     // 态），本件只登记取值，故这两串 key 不得自创——key 一漂移，面板就静默回落英文（裁决 **7.92**②）。
