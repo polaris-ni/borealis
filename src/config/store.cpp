@@ -505,6 +505,9 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     put(ssh, "agent_forwarding", connection.ssh.agent_forwarding);
     put(ssh, "keepalive_interval_sec", connection.ssh.keepalive_interval_sec);
     put(ssh, "connect_timeout_sec", connection.ssh.connect_timeout_sec);
+    put(ssh, "reconnect_base_delay_ms", connection.ssh.reconnect_base_delay_ms);
+    put(ssh, "reconnect_max_delay_ms", connection.ssh.reconnect_max_delay_ms);
+    put(ssh, "reconnect_attempts", connection.ssh.reconnect_attempts);
     node.set("ssh", std::move(ssh));
 
     auto serial = Value::object();
@@ -754,6 +757,15 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
         static_cast<int>(ssh.integer("keepalive_interval_sec", defaults.connection.ssh.keepalive_interval_sec, 0, 86400));
     connection.ssh.connect_timeout_sec =
         static_cast<int>(ssh.integer("connect_timeout_sec", defaults.connection.ssh.connect_timeout_sec, 0, 600));
+    // 三键各守自己的区间，不做跨键比较（见 `SshDefaults` 注）：基数高于上限时退避照样钳到上限。
+    connection.ssh.reconnect_base_delay_ms =
+        static_cast<int>(
+            ssh.integer("reconnect_base_delay_ms", defaults.connection.ssh.reconnect_base_delay_ms, 100, 60000));
+    connection.ssh.reconnect_max_delay_ms =
+        static_cast<int>(ssh.integer("reconnect_max_delay_ms", defaults.connection.ssh.reconnect_max_delay_ms, 1000,
+                                     600000));
+    connection.ssh.reconnect_attempts =
+        static_cast<int>(ssh.integer("reconnect_attempts", defaults.connection.ssh.reconnect_attempts, 0, 100));
     ssh.collect_unknown();
 
     auto serial = scope.enter("serial");

@@ -286,7 +286,7 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // 双向：落盘里有而表里没有 = 面板漏画控件；表里有而落盘里没有 = 面板画了存不回去的控件。
     AURORA_TEST_CHECK_MSG(leaves == keys, "leaves=[" + join(leaves) + "] table=[" + join(keys) + "]");
     AURORA_TEST_CHECK_EQ(leaves.size(), keys.size());
-    AURORA_TEST_CHECK_EQ(keys.size(), 58U);
+    AURORA_TEST_CHECK_EQ(keys.size(), 61U);
 }
 
 AURORA_TEST_CASE(keys_are_unique_and_rows_are_addressable) {
@@ -533,7 +533,9 @@ AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
             AURORA_TEST_CHECK_MSG(control.effect == EffectLevel::NextSession, control.key);
         }
     }
-    AURORA_TEST_CHECK_EQ(rows_with_consumer(ConsumerStatus::Absent).size(), 28U);
+    // 含 WS.05 的自动重连三键：键已落盘、面板可改，但消费方（重拨环）在实现批 2 接线，
+    // 那一批落地后本行回到 28。
+    AURORA_TEST_CHECK_EQ(rows_with_consumer(ConsumerStatus::Absent).size(), 31U);
 }
 
 }  // namespace borealis::test_cases::utest_settings_catalog

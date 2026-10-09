@@ -274,6 +274,26 @@ namespace {
                                    600.0,
                                    ConsumerStatus::Absent,
                                    EffectLevel::NextSession));
+    // 自动重连三键（WS.05，裁决 7.99 D4①）：区间照抄装载侧把守的那三条。生效档取 Immediate 是
+    // 按消费方的实际读法登记的——重拨环每回拨前现读现算，故改档位不等下一次建会话（批 2 接线）。
+    catalog.push_back(integer_step("connection.ssh.reconnect_base_delay_ms",
+                                   SettingsPage::Connection,
+                                   100.0,
+                                   60000.0,
+                                   ConsumerStatus::Absent,
+                                   EffectLevel::Immediate));
+    catalog.push_back(integer_step("connection.ssh.reconnect_max_delay_ms",
+                                   SettingsPage::Connection,
+                                   1000.0,
+                                   600000.0,
+                                   ConsumerStatus::Absent,
+                                   EffectLevel::Immediate));
+    catalog.push_back(integer_step("connection.ssh.reconnect_attempts",
+                                   SettingsPage::Connection,
+                                   0.0,
+                                   100.0,
+                                   ConsumerStatus::Absent,
+                                   EffectLevel::Immediate));
     catalog.push_back(integer_step("connection.serial.baud",
                                    SettingsPage::Connection,
                                    1.0,

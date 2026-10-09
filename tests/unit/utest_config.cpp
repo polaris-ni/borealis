@@ -28,6 +28,7 @@
 #include "borealis/term/width.h"
 #include "borealis/ui/font_choice.h"
 #include "borealis/ui/palette.h"
+#include "conn/reconnect.h"
 #include "framework/aurora_test.h"
 
 namespace borealis::test_cases::utest_config {
@@ -139,6 +140,11 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     next.connection.ssh.agent_forwarding = true;
     next.connection.ssh.keepalive_interval_sec = 30;
     next.connection.ssh.connect_timeout_sec = 5;
+    // 自动重连三键（`SPEC.FEAT.WS.05`，裁决 7.99 D4①）。次数刻意取 **0**：0 是「不限次」的
+    // 合法档而非「没填」，写侧漏键或读侧把 0 当缺失回落到 3，都会在这里露出来。
+    next.connection.ssh.reconnect_base_delay_ms = 700;
+    next.connection.ssh.reconnect_max_delay_ms = 45000;
+    next.connection.ssh.reconnect_attempts = 0;
     next.connection.serial.baud = 9600;
     next.connection.serial.data_bits = 7;
     next.connection.serial.stop_bits = 2;
@@ -573,6 +579,12 @@ AURORA_TEST_CASE(defaults_are_the_first_launch_shape) {
     AURORA_TEST_CHECK_EQ(defaults.connection.ssh.port, 22);
     AURORA_TEST_CHECK_EQ(defaults.connection.ssh.auth_method, "agent");
     AURORA_TEST_CHECK_FALSE(defaults.connection.ssh.agent_forwarding);
+    // 重连三键的缺省档与代码侧回落档必须是同一份数（`conn::default_reconnect_policy()`）：
+    // 配置读不到时装配层拿它兜底，两处各自漂移就会出现「首屏设置写着 3 回、实际拨 4 回」。
+    const auto reconnect_fallback = conn::default_reconnect_policy();
+    AURORA_TEST_CHECK_EQ(defaults.connection.ssh.reconnect_base_delay_ms, reconnect_fallback.base_ms);
+    AURORA_TEST_CHECK_EQ(defaults.connection.ssh.reconnect_max_delay_ms, reconnect_fallback.cap_ms);
+    AURORA_TEST_CHECK_EQ(defaults.connection.ssh.reconnect_attempts, reconnect_fallback.max_attempts);
     AURORA_TEST_CHECK_EQ(defaults.connection.serial.line_ending, "LF");
     AURORA_TEST_CHECK_EQ(defaults.connection.serial.encoding, "GB18030");
     AURORA_TEST_CHECK_FALSE(defaults.connection.session_logging);  // 裁决 7.9

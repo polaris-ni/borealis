@@ -332,6 +332,21 @@ auto assign_shortcuts(Settings &settings, const FormValue &value) -> void {
                     return FormValue::integral(static_cast<std::int64_t>(s.connection.ssh.connect_timeout_sec));
                 },
                 [](Settings &s, const FormValue &v) { assign(s.connection.ssh.connect_timeout_sec, v); }},
+        Binding{"connection.ssh.reconnect_base_delay_ms",
+                [](const Settings &s) -> FormValue {
+                    return FormValue::integral(static_cast<std::int64_t>(s.connection.ssh.reconnect_base_delay_ms));
+                },
+                [](Settings &s, const FormValue &v) { assign(s.connection.ssh.reconnect_base_delay_ms, v); }},
+        Binding{"connection.ssh.reconnect_max_delay_ms",
+                [](const Settings &s) -> FormValue {
+                    return FormValue::integral(static_cast<std::int64_t>(s.connection.ssh.reconnect_max_delay_ms));
+                },
+                [](Settings &s, const FormValue &v) { assign(s.connection.ssh.reconnect_max_delay_ms, v); }},
+        Binding{"connection.ssh.reconnect_attempts",
+                [](const Settings &s) -> FormValue {
+                    return FormValue::integral(static_cast<std::int64_t>(s.connection.ssh.reconnect_attempts));
+                },
+                [](Settings &s, const FormValue &v) { assign(s.connection.ssh.reconnect_attempts, v); }},
         Binding{"connection.serial.baud",
                 [](const Settings &s) -> FormValue {
                     return FormValue::integral(static_cast<std::int64_t>(s.connection.serial.baud));

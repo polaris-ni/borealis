@@ -167,6 +167,13 @@ struct SshDefaults {
     bool agent_forwarding{false};      ///< `SPEC.FEAT.CONN.02` 明写「按 profile 开关，默认关」。
     int keepalive_interval_sec{60};    ///< 需求未规定数值，本仓取 60 秒（与 OpenSSH 客户端缺省同量级）。
     int connect_timeout_sec{10};       ///< 同上：错误分类提示需要它，具体值属本仓自定。
+    // 自动重连三键（`SPEC.FEAT.WS.05`，裁决 7.99 D4①「全局粒度」）：逐字段现读现算，
+    // 不做跨键校验——基数高于上限时退避照样钳到上限（`retry_delay_ms` 的既有口径），
+    // 故「上限小于基数」只是让等待变短，不是需要拒绝的坏配置。
+    int reconnect_base_delay_ms{1000};  ///< 掉线后第一回重拨前的等待；下限 100 防「零退避快拨」。
+    int reconnect_max_delay_ms{30000};  ///< 逐次翻倍后的封顶。
+    int reconnect_attempts{3};          ///< 还能再拨几回；0＝不限次（`conn::RetryPolicy::max_attempts` 同口径）。
+                                        ///  缺省取 3 而非不限：不限次会把「连不上」变成静默无限重试。
 
     /// @brief 逐字段全等比较（配置往返断言用）。
     [[nodiscard]] auto operator==(const SshDefaults &other) const noexcept -> bool = default;
