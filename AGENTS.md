@@ -1,6 +1,6 @@
 # AGENTS.md — Borealis（路由 + 硬约束）
 
-> 单一入口：只路由到 `codespec/` 权威文档（§3）与硬约束（§4 / §5）。细则不在这里——超 8 KiB 会静默截断，由 `check_agents_size` 门禁守护。
+> 单一入口：只路由到 `codespec/` 权威文档（§3）与硬约束（§4 / §5）。细则不在这里——超 8 KiB 会静默截断（`check_agents_size` 守护）。
 
 ## 1 项目定位
 
@@ -13,7 +13,7 @@
 
 `codespec/` 项目文档；`CMakeLists.txt` `CMakePresets.json` `cmake/` 构建（测试与门禁在 BorealisTests.cmake）；`include/borealis/` 公共头（不含 Aurora 类型）；`src/` 实现（平台腿 `src/platform/{win,posix}/`）；`tests/`（framework/ support/、unit/ integration/ e2e/ fixtures/）；`tools/`（msvc_env.bat、bench/、check/）；`assets/` **计划 / 待建**。
 
-分层细则见 `ARCHITECTURE.md` §2；绘制侧控件类声明含框架类型，留私有头 `src/ui/`（裁决 D1①）；标「计划/待建」者非既存事实，落地后回填。
+分层细则见 `ARCHITECTURE.md` §2；绘制侧控件类声明含框架类型，留私有头 `src/ui/`（裁决 D1①）；标「计划/待建」者落地后回填。
 
 ## 3 文档导航
 
@@ -74,7 +74,7 @@ UI 件节奏：UI 编写前先出设计图评审（稿入 `codespec/`），实�
 26. 分层本地提交：每项独立工作一个提交，按意图切分。
 27. 推送与远端操作逐次授权：push、建 PR、评论他人仓库逐次确认；push 前给事实化风险评估。
 28. 显式路径暂存：只 `git add <具体路径>`，禁 `git add -A`/`git add .`；暂存后 `git status` 复核，可疑文件先读内容。
-29. 提交信息 `<type>: <一句话摘要>`（≤72 字符中文，type ∈ `docs`/`feat`/`fix`/`refactor`/`test`/`chore`/`perf`）；正文写「为什么 + 口径与代价」与需求标识；禁绕过钩子。
+29. 提交信息 `<type>: <一句话摘要>`（≤72 字符中文，type ∈ `docs|feat|fix|refactor|test|chore|perf`）；正文写「为什么 + 口径与代价」与需求标识；禁绕过钩子。
 30. 分支命名 `<type>/<scope>-<短描述>`；跨仓改 Aurora 在该仓单独提交，互相引用不互为包含。
 31. 危险操作先确认：`reset --hard`、`checkout --`、`clean -f`、删分支/文件、覆盖未提交内容，先 `git status` 再征同意或改可逆手段；共享工作区不用裸 `git stash`。
 32. 长任务每 2 分钟播报进度；后台长命令日志无缓冲重定向。
@@ -87,19 +87,19 @@ UI 件节奏：UI 编写前先出设计图评审（稿入 `codespec/`），实�
 3. 不在应用侧私改渲染路径（硬禁）；按公共 API 组合的应用侧控件不算私改。
 4. 改 Aurora 前读其根 `AGENTS.md` 并遵守之；引用写「Aurora 主仓 `codespec/<文档>` §N」。
 5. `add_subdirectory` 两前提：① Aurora 默认 ON 的开关须在其前以缓存变量关掉；② Aurora 须「子项目安全」。任一不成立构建即断。
-6. 修改BUG或者增加特性时，先调查清楚是否是Aurora的BUG或者需要Aurora补全的缺口
+6. 修 BUG / 加特性前先查清是否本属 Aurora 的缺口
 
 ## 6 现状快照
 
 逐项现状以 `SPECIFICATIONS.md` §7/附录 A.2 与 `CHANGELOG.md`、`PLAN.md` 为准。长期两条：
 
 - **无 CI 工作流**：门禁已落、无流水线（`SPEC.NF.PERF.02` 的「进 CI」未闭环）。
-- 本机 vcpkg 已接（2026-10-09，`VCPKG_ROOT=/home/polaris/Projects/demo/vcpkg`，manifest 锁 `libssh` 0.12.0；未设时按无 vcpkg 构建，仅 SSH 腿受影响）。
+- 本机 vcpkg 接入现状与 triplet 验证边界见 `codespec/ARCHITECTURE.md` §1.2。
 
 ## 7 构建 · 测试
 
 ```sh
-# Windows 主通道（MSVC+Ninja，须 VS 开发者环境）；Linux 把 msvc 换 linux
+# Windows 主通道（MSVC+Ninja，须 VS 开发者环境）；Linux 换 linux
 cmake --preset msvc && cmake --build --preset msvc && ctest --preset msvc -E etest_
 # 基准走优化档 → build-bench/（裁决 7.35）
 cmake --preset msvc-bench && cmake --build --preset msvc-bench

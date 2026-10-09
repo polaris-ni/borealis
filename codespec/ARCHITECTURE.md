@@ -15,7 +15,7 @@ Borealis 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨�
 ### 1.2 接入方式
 
 - Aurora 经 `add_subdirectory(../aurora)` 走源码树接入，**不复制其源码进本仓**。
-- 本仓自有三方依赖（如 SSH 传输栈）经 `find_package` + vcpkg 获取（裁决 7.12）；该 triplet 组合尚未经真机链接验证，留待接入时实测回填。
+- 本仓自有三方依赖（如 SSH 传输栈）经 `find_package` + vcpkg 获取（裁决 7.12），不 vendor 源码进仓。本机实测（2026-10-09）：`VCPKG_ROOT` 指同级 `../vcpkg`，manifest 锁 `libssh` 0.12.0；未设该环境变量时按无 vcpkg 构建，受影响的只有 SSH 传输腿。Linux 侧链接与运行已实测通过（裁决 7.94），**Windows/MSVC triplet 尚未验证**。
 - UI 层**只使用 Aurora 公共 API**；不私改渲染路径（`SPECIFICATIONS.md` §3.3 第 1 条）。
 
 ### 1.3 命名
