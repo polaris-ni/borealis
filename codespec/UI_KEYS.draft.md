@@ -99,7 +99,8 @@ src/ui/settings_catalog.cpp        修改 —— 白名单登记（`utest_settin
 codespec/FRAMEWORK_TASK_CONN10.md  新增 —— Aurora 侧缺口单：`file_dialog::open_folder()` 的 POSIX 真实现
                                         （AGENTS §5.1 分流，登记为 SPECIFICATIONS.md 附录 A.2 的 G41；
                                         本仓不等不绕、也不自建文件选择器）
-src/CMakeLists.txt                 修改 —— 上述 .cpp 编入 borealis_core（显式源列表，见 HANDOFF §3）
+src/CMakeLists.txt                 修改 —— 上述 .cpp 逐条编入 borealis_core（该 TU 列表是显式的，不像
+                                        tests 侧走 CONFIGURE_DEPENDS GLOB，漏一行即链接期才炸）
 codespec/UI_KEYS.draft.{md,svg,png} 本稿三件套
 tests/unit/utest_keys_model.cpp    新增 —— 校验/目录表规范化/碰撞/判重/公钥拼装（无头、无 IO）
 tests/unit/utest_keys_format.cpp   新增 —— 五族枚举的词条 key 映射、行序与路径唯一键
