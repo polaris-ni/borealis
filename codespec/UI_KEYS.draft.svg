@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1660" viewBox="0 0 1560 1660" font-family="'Noto Sans CJK SC',sans-serif">
 <rect x="0" y="0" width="1560" height="1660" fill="#eef0f5"/>
 <text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">屏 7 · SSH 密钥管理器：多目录列表 + 一键复制 + 生成 / 推送 / 删除（SPEC.FEAT.CONN.10）</text>
-<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_KEYS.draft.svg · 高保真草图（已收口） · 窗口 1500×900 dp @100% DPI · D1–D10 经人逐条裁决：D2/D9 改判、其余按推荐（裁决 7.106）· 细则见 UI_KEYS.draft.md §3</text>
+<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_KEYS.draft.svg · 高保真草图（已收口） · 窗口 1500×900 dp @100% DPI · D1–D12 经人逐条裁决：D2/D9 改判、其余按推荐（裁决 7.106）· 细则见 UI_KEYS.draft.md §3</text>
 
 <g transform="translate(30,70)">
   <!-- 窗口 -->
@@ -191,8 +191,8 @@
   <text x="18" y="240" font-size="10.5" fill="#62728A">读回段：exec cat authorized_keys → 本地判重</text>
   <text x="18" y="258" font-size="10.5" fill="#62728A">追加段：exec sh -c 'umask 077; cat &gt;&gt; 同一文件'</text>
   <text x="18" y="284" font-size="11" fill="#F1FA8C">判重命中 → 不发写，留痕「已在授权表里」</text>
-  <text x="18" y="306" font-size="11" fill="#FF5555">失败归因六档＝DialOutcome 四档（网络 / 主机键 /</text>
-  <text x="18" y="324" font-size="11" fill="#FF5555">认证 / 会话未分配）＋推送腿两档（执行被拒 / 写回执异常）</text>
+  <text x="18" y="306" font-size="11" fill="#FF5555">失败归因七档＝PushFailure：拨号四档（网络 / 主机键 /</text>
+  <text x="18" y="324" font-size="11" fill="#FF5555">认证 / 会话未分配）＋执行被拒 / 写回执异常 / 行不成立</text>
   <text x="18" y="346" font-size="10.5" fill="#62728A">凭据链照 7.97 D7：句柄直取，ask_every_time 弹询问件</text>
   <rect x="212" y="356" width="110" height="26" rx="5" fill="#BD93F9"/><text x="267" y="374" font-size="12" fill="#1E1F29" font-weight="700" text-anchor="middle">开始推送</text>
   <circle cx="348" cy="20" r="10" fill="#BD93F9"/><text x="348" y="24" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">6</text>
@@ -205,7 +205,7 @@
   <g transform="translate(0,74)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">3</text><text x="30" y="0">加密两档逐把探测（F8 一次导入，0 ms）；孤儿私钥给「公钥缺失」态并把动作换成「导出公钥」</text></g>
   <g transform="translate(0,104)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">4</text><text x="30" y="0">一键复制交出完整单行（type + base64 + comment），经 ClipboardOutbox 帧边界落剪贴板 + 留痕</text></g>
   <g transform="translate(0,134)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">5</text><text x="30" y="0">生成对话框：两卡定字段集、只有 RSA 出位数下拉、目标目录可选；同名即拒不覆盖；长计算在 worker</text></g>
-  <g transform="translate(0,164)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">6</text><text x="30" y="0">推送＝独立会话两段 exec：读回判重 → 追加走 stdin；四步态与失败归因（DialOutcome 四档失败＋推送腿两档，D7①/D8①）</text></g>
+  <g transform="translate(0,164)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">6</text><text x="30" y="0">推送＝独立会话两段 exec：读回判重 → 追加走 stdin；四步态与失败七档（conn::PushFailure，订正见 7.108）</text></g>
   <g transform="translate(0,194)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">7</text><text x="30" y="0">删除两段式：一次清一对（私钥连同同名 .pub）、拒删符号链接、~/.ssh 不可移出扫面（D9② 细则）</text></g>
   <g transform="translate(0,242)">
     <text x="0" y="0" font-size="12" font-weight="700" fill="#1b1f28">徽标与状态色例（keys_format 是唯一枚举→词条 key 的地方）</text>
