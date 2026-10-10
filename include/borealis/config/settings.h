@@ -251,7 +251,8 @@ struct ShortcutsSettings {
 };
 
 /// @brief 一份完整配置：四分类各一域 + 连接档案域（M3 的 `SPEC.FEAT.CONN.03`）
-///        + 隧道定义域（M3 的 `SPEC.FEAT.CONN.08`，裁决 7.97 D3①），
+///        + 隧道定义域（M3 的 `SPEC.FEAT.CONN.08`，裁决 7.97 D3①）
+///        + 密钥目录域（M3 的 `SPEC.FEAT.CONN.10`，裁决 7.106 D2③），
 ///        `Settings{}` 即 `SPEC.FEAT.PREF.06` 的首次启动形态。
 struct Settings {
     AppearanceSettings appearance{};
@@ -264,6 +265,14 @@ struct Settings {
     /// @brief 隧道定义（`SPEC.FEAT.CONN.08`）：列表启停的管理对象，重启不丢（D3①）。
     ///        全字段纯值、凭据只经 `profile_id` 引用（CONN.09 审计天然过闸）。
     std::vector<conn::TunnelSpec> tunnels{};
+    /// @brief 密钥扫描目录表（`SPEC.FEAT.CONN.10`，裁决 7.106 D2③）：缺省空＝只扫 `~/.ssh`。
+    ///
+    /// **只存路径串，不存任何密钥材料**：私钥与 `.pub` 恒在盘上原处，passphrase 不入 schema
+    /// （`SPEC.FEAT.CONN.09` 的「配置目录 grep 无明文凭据」审计因此不因本域放宽）。
+    /// 本域**不做规范化**——去重、`~/.ssh` 恒在不可移、可达性判定都在
+    /// `conn::normalize_key_dirs()`（裁决 7.106 D2③ 细则⑶），装载侧与 `font_fallback_chain`
+    /// 同一条分工：只判类型、丢空串元素并留痕，不查文件系统（装载接缝不得做同步 IO，第 25 条）。
+    std::vector<std::string> key_dirs{};
 
     /// @brief 逐域全等比较：配置往返（写盘再读回）的判据就是它。
     [[nodiscard]] auto operator==(const Settings &other) const noexcept -> bool = default;

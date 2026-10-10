@@ -54,10 +54,11 @@ using au::json::Value;
 
 /// @brief 顶层版本键。
 constexpr std::string_view kVersionKey = "schema_version";
-/// @brief 域键名（裁决 7.26① 的四分类 + M3 的连接档案域 `profiles` + 隧道定义域 `tunnels`，
-///        后者形态见裁决 7.97 D3①）。
-constexpr std::array<std::string_view, 6> kDomainKeys{
-    {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels"}};
+/// @brief 域键名（裁决 7.26① 的四分类 + M3 的连接档案域 `profiles` + 隧道定义域 `tunnels`（后者
+///        形态见裁决 7.97 D3①）+ 密钥目录域 `key_dirs`（裁决 7.106 D2③，形态同前两域：
+///        顶层 `{ "items": [...] }`，因为 `read_settings` 的域闸要求域节点必须是对象）。
+constexpr std::array<std::string_view, 7> kDomainKeys{
+    {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels", "key_dirs"}};
 
 constexpr std::array<std::string_view, 4> kSshAuthMethods{"password", "privatekey", "agent", "keyboard-interactive"};
 
@@ -649,6 +650,20 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return node;
 }
 
+/// @brief 写密钥目录域：顶层 `{ "items": [...] }`，与 profiles/tunnels 域同形态。
+///
+/// 原样写出，不去重也不补 `~/.ssh`——规范化归 `conn::normalize_key_dirs()`（裁决 7.106 D2③），
+/// 在这里再折一次就是第二真值源。
+[[nodiscard]] auto key_dirs_to_json(const std::vector<std::string> &dirs) -> Value {
+    auto node = Value::object();
+    auto items = Value::array();
+    for (const std::string &dir : dirs) {
+        items.push_back(Value(dir));
+    }
+    node.set("items", std::move(items));
+    return node;
+}
+
 /// @brief 读外观域。
 [[nodiscard]] auto read_appearance(ScopeReader &scope, const Settings &defaults) -> AppearanceSettings {
     AppearanceSettings appearance{};
@@ -1042,6 +1057,15 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return out;
 }
 
+/// @brief 读密钥目录域（`SPEC.FEAT.CONN.10`，裁决 7.106 D2③）：**只判类型，不查文件系统**。
+///
+/// 复用 `ScopeReader::string_list`，故坏一项只丢该元素并留痕其下标（与 `font_fallback_chain`
+/// 同一条容错方向）；去重、`~/.ssh` 恒在与可达性判定归 `conn::normalize_key_dirs()`——装载接缝
+/// 不得做同步 IO（§4.5 第 25 条），在这里 stat 一次就是把它钉进配置层。
+[[nodiscard]] auto read_key_dirs(ScopeReader &scope, const Settings &defaults) -> std::vector<std::string> {
+    return scope.string_list("items", defaults.key_dirs);
+}
+
 /// @brief 把一份顶层 JSON 对象读成 `Settings`，并把校验留痕写进报告。
 ///
 /// 装载、回滚与导入三条路都走这里（裁决 7.87③）：快照与导出件本来就是同一个 schema 的文档，
@@ -1067,6 +1091,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
             settings.profiles = read_profiles(is_domain ? node : nullptr, report);
         } else if (domain == "tunnels") {
             settings.tunnels = read_tunnels(is_domain ? node : nullptr, report);
+        } else if (domain == "key_dirs") {
+            settings.key_dirs = read_key_dirs(scope, defaults);
         } else {
             settings.shortcuts = read_shortcuts(scope, defaults);
         }
@@ -1107,6 +1133,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     root.set("shortcuts", shortcuts_to_json(settings.shortcuts));
     root.set("profiles", profiles_to_json(settings.profiles));
     root.set("tunnels", tunnels_to_json(settings.tunnels));
+    root.set("key_dirs", key_dirs_to_json(settings.key_dirs));
     return root;
 }
 
@@ -1464,6 +1491,7 @@ struct Store::Impl {
         prefs.set("shortcuts", shortcuts_to_json(next.shortcuts));
         prefs.set("profiles", profiles_to_json(next.profiles));
         prefs.set("tunnels", tunnels_to_json(next.tunnels));
+        prefs.set("key_dirs", key_dirs_to_json(next.key_dirs));
         if (const auto flushed = prefs.flush(); !flushed.ok()) {
             return flushed.error().message;
         }

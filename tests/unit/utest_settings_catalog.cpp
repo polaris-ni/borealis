@@ -270,10 +270,11 @@ auto collect_leaves(const au::json::Value &node, std::string &prefix, std::vecto
 AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // 随同一配置文件落盘、但不属偏好设置的数据件：recent（D4 最近连接）与
     // profiles（CONN.03 档案集）由连接管理器 UI 拥有（增删改查在侧栏，非面板），
-    // tunnels（CONN.08 隧道集）由隧道面板拥有（裁决 7.97 D1①/D3①）——
-    // 面板不画控件，在此登记例外，其余落盘叶子仍须与面板逐一对应。
-    static constexpr std::array<std::string_view, 3> kNonPreferenceLeaves{
-        "connection.recent", "profiles.items", "tunnels.items"};
+    // tunnels（CONN.08 隧道集）由隧道面板拥有（裁决 7.97 D1①/D3①），
+    // key_dirs（CONN.10 密钥目录表）由密钥面板拥有（裁决 7.106 D2③/D11：录入走系统目录框，
+    // 设置页不画它）——面板不画控件，在此登记例外，其余落盘叶子仍须与面板逐一对应。
+    static constexpr std::array<std::string_view, 4> kNonPreferenceLeaves{
+        {"connection.recent", "profiles.items", "tunnels.items", "key_dirs.items"}};
 
     auto leaves = written_leaves();
     std::erase_if(leaves, [](const std::string &leaf) {

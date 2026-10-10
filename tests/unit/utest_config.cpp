@@ -197,6 +197,11 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     // 最近连接（`SPEC.FEAT.CONN.07`）：两条非缺省条目，覆盖 connection 域新增表的往返等值。
     next.connection.recent.push_back(config::RecentConnection{"ssh-import:gateway", 1700000000});
     next.connection.recent.push_back(config::RecentConnection{"local:default", 1699999999});
+
+    // M3 密钥目录域（`SPEC.FEAT.CONN.10`，裁决 7.106 D2③）：两条互异且**有序**的路径，覆盖
+    // key_dirs 域的往返等值守卫。刻意不放重复项——落盘侧**不去重**（规范化归
+    // conn::normalize_key_dirs），放了重复项这条守卫就判不出「原样往返」与「顺手折过」。
+    next.key_dirs = {"~/.ssh", "/home/dev/keys"};
     return next;
 }
 
@@ -627,6 +632,7 @@ AURORA_TEST_CASE(every_value_survives_a_write_read_round_trip) {
     AURORA_TEST_CHECK_TRUE(reader.settings().terminal == next.terminal);
     AURORA_TEST_CHECK_TRUE(reader.settings().connection == next.connection);
     AURORA_TEST_CHECK_TRUE(reader.settings().shortcuts == next.shortcuts);
+    AURORA_TEST_CHECK_TRUE(reader.settings().key_dirs == next.key_dirs);
     AURORA_TEST_CHECK_TRUE(reader.report().rejected_keys.empty());
     AURORA_TEST_CHECK_TRUE(reader.report().unknown_keys.empty());
 }
@@ -726,6 +732,64 @@ AURORA_TEST_CASE(chain_entries_drop_individually_not_wholesale) {
     AURORA_TEST_CHECK_TRUE(holds(broken.report().rejected_keys, "appearance.font_fallback_chain"));
 }
 
+AURORA_TEST_CASE(key_dirs_domain_is_verbatim_and_is_not_a_credential_name) {
+    // 缺省空是「只扫 ~/.ssh」的哨兵，不是「一个目录都不扫」（裁决 7.106 D2③ 细则⑵）：
+    // 补齐那一步归 conn::normalize_key_dirs()，落盘侧只保证原样往返。
+    AURORA_TEST_CHECK_TRUE(Settings{}.key_dirs.empty());
+
+    const auto file = make_path("key_dirs.json");
+    Settings next{};
+    next.key_dirs = {"/srv/keys", "~/.ssh", "/srv/keys"};  // 首末重复：落盘侧**不去重**
+    {
+        Store writer{file};
+        AURORA_TEST_CHECK_FALSE(writer.replace(next).has_value());
+    }
+    {
+        const Store reader{file};
+        AURORA_TEST_CHECK_TRUE(reader.settings().key_dirs == next.key_dirs);
+        AURORA_TEST_CHECK_TRUE(reader.report().rejected_keys.empty());
+        AURORA_TEST_CHECK_TRUE(reader.report().unknown_keys.empty());
+    }
+
+    // 域形态与 profiles/tunnels 同构（顶层对象带 items）：`read_settings` 的域闸要求域节点是
+    // 对象，直接把数组挂在顶层会被读成「整个域缺失」并留痕一次。
+    const auto parsed = au::json::parse(read_file(file));
+    AURORA_TEST_REQUIRE(parsed.ok());
+    const au::json::Value *domain = parsed.value().at("key_dirs");
+    AURORA_TEST_REQUIRE(domain != nullptr);
+    AURORA_TEST_REQUIRE(domain->is_object());
+    const au::json::Value *items = domain->at("items");
+    AURORA_TEST_REQUIRE(items != nullptr);
+    AURORA_TEST_REQUIRE(items->is_array());
+    AURORA_TEST_CHECK_EQ(items->size(), 3U);
+
+    // 坏一项只丢该元素并留痕其下标（与 font_fallback_chain 同一条容错方向）：空串不算一个目录。
+    const auto partial_file = make_path("key_dirs_partial.json");
+    write_file(partial_file, R"({"schema_version": 1, "key_dirs": {"items": ["/a", 7, "", "/b"]}})");
+    const Store partial{partial_file};
+    AURORA_TEST_CHECK_TRUE((partial.settings().key_dirs == std::vector<std::string>{"/a", "/b"}));
+    AURORA_TEST_CHECK_TRUE(holds(partial.report().rejected_keys, "key_dirs.items[1]"));
+    AURORA_TEST_CHECK_TRUE(holds(partial.report().rejected_keys, "key_dirs.items[2]"));
+
+    // 类型不符（items 压根不是数组）才整键回落默认。
+    const auto broken_file = make_path("key_dirs_not_an_array.json");
+    write_file(broken_file, R"({"schema_version": 1, "key_dirs": {"items": "/a"}})");
+    const Store broken{broken_file};
+    AURORA_TEST_CHECK_TRUE(broken.settings().key_dirs.empty());
+    AURORA_TEST_CHECK_TRUE(holds(broken.report().rejected_keys, "key_dirs.items"));
+
+    // 本域存的**只有路径串**：域内任何键名都不得撞凭据名单——`key_dirs` 与既有的
+    // `identity_file`（同为私钥路径）都不含 "private_key" 子串，撞名会让导出/导入被
+    // `find_credential_key` 整体拒绝（那条闸比本例更严）。
+    std::vector<std::string> keys;
+    collect_keys(parsed.value(), keys);
+    for (const auto &key : keys) {
+        for (std::string_view banned : {"password", "passphrase", "secret", "token", "private_key"}) {
+            AURORA_TEST_CHECK_MSG(key.find(banned) == std::string::npos, key + " ~ " + std::string{banned});
+        }
+    }
+}
+
 AURORA_TEST_CASE(missing_domains_are_reported_once_each) {
     const auto file = make_path("empty_domains.json");
     write_file(file, R"({"schema_version": 1})");
@@ -734,9 +798,10 @@ AURORA_TEST_CASE(missing_domains_are_reported_once_each) {
     AURORA_TEST_CHECK_TRUE(store.report().outcome == LoadOutcome::Loaded);
     AURORA_TEST_CHECK_TRUE(store.settings() == Settings{});
     // 父作用域整体缺失只留痕父键一次：逐子键刷屏会让截断文件报出几十条噪声。
-    // 六域（裁决 7.97 D3① 起）：缺省文件形态只带 schema_version，六域全落空。
-    AURORA_TEST_CHECK_EQ(store.report().rejected_keys.size(), 6U);
-    for (std::string_view domain : {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels"}) {
+    // 七域（裁决 7.106 D2③ 起）：缺省文件形态只带 schema_version，七域全落空。
+    AURORA_TEST_CHECK_EQ(store.report().rejected_keys.size(), 7U);
+    for (std::string_view domain :
+         {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels", "key_dirs"}) {
         AURORA_TEST_CHECK_MSG(holds(store.report().rejected_keys, domain), std::string{domain});
     }
     AURORA_TEST_CHECK_TRUE(store.report().unknown_keys.empty());
@@ -860,11 +925,11 @@ AURORA_TEST_CASE(stored_file_is_a_single_json_with_all_schema_domains) {
     // 框架的元数据键由 `Preferences` 自己读写，不属本仓 schema（`keys()` 亦已剥离它）。
     std::erase(domains, "__aurora_preference_meta__");
     std::ranges::sort(domains);
-    AURORA_TEST_CHECK_TRUE((domains == std::vector<std::string>{"appearance", "connection", "profiles",
+    AURORA_TEST_CHECK_TRUE((domains == std::vector<std::string>{"appearance", "connection", "key_dirs", "profiles",
                                                                 "schema_version", "shortcuts", "terminal",
                                                                 "tunnels"}));
     for (std::string_view domain :
-         {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels"}) {
+         {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels", "key_dirs"}) {
         const au::json::Value *node = root.at(domain);
         AURORA_TEST_REQUIRE(node != nullptr);
         AURORA_TEST_CHECK_MSG(node->is_object(), std::string{domain});
