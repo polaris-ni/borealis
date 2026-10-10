@@ -10,6 +10,7 @@ add_library(borealis_core STATIC
         config/settings.cpp
         config/store.cpp
         config/themes.cpp
+        conn/key_model.cpp
         conn/profile.cpp
         conn/profile_views.cpp
         conn/reconnect.cpp
