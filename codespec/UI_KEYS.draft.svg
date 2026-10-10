@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1460" viewBox="0 0 1560 1460" font-family="'Noto Sans CJK SC',sans-serif">
-<rect x="0" y="0" width="1560" height="1460" fill="#eef0f5"/>
-<text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">屏 7 · SSH 密钥管理器：~/.ssh 列表 + 一键复制 + 生成对话框 + 推送步骤态（SPEC.FEAT.CONN.10）</text>
-<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_KEYS.draft.svg · 高保真草图（待评审） · 窗口 1500×900 dp @100% DPI · D1–D10 逐条推荐见 UI_KEYS.draft.md §3 · 实测地基 F1–F11 见 §0</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1660" viewBox="0 0 1560 1660" font-family="'Noto Sans CJK SC',sans-serif">
+<rect x="0" y="0" width="1560" height="1660" fill="#eef0f5"/>
+<text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">屏 7 · SSH 密钥管理器：多目录列表 + 一键复制 + 生成 / 推送 / 删除（SPEC.FEAT.CONN.10）</text>
+<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_KEYS.draft.svg · 高保真草图（已收口） · 窗口 1500×900 dp @100% DPI · D1–D10 经人逐条裁决：D2/D9 改判、其余按推荐（裁决 7.106）· 细则见 UI_KEYS.draft.md §3</text>
 
 <g transform="translate(30,70)">
   <!-- 窗口 -->
@@ -23,7 +23,7 @@
   <text x="218" y="64" font-size="12.5" fill="#E8EAF0">dev@build01 · ssh</text>
   <line x1="206" y1="76" x2="398" y2="76" stroke="#50FA7B" stroke-width="3"/>
   <text x="424" y="64" font-size="14" fill="#62728A">＋</text>
-  <text x="1130" y="63" font-size="11.5" fill="#62728A">（推送自开独立会话 · 与标签会话无关，D8①）</text>
+  <text x="1120" y="63" font-size="11.5" fill="#62728A">（推送自开独立会话 · 与标签会话无关，D8①）</text>
   <line x1="0" y1="78" x2="1500" y2="78" stroke="#3A3C4C" stroke-width="1"/>
   <!-- 左侧折叠轨 -->
   <rect x="0" y="78" width="34" height="794" fill="#21222C"/>
@@ -37,13 +37,15 @@
   <text x="600" y="142" font-size="12" fill="#8BE9FD" font-family="'Cascadia Code',monospace">$</text>
   <rect x="614" y="131" width="7" height="14" fill="#BD93F9"/>
 
-  <!-- ===== 密钥面板（判据 1/2/3/4）===== -->
+  <!-- ===== 密钥面板（判据 1/2/3/4/7）===== -->
   <rect x="44" y="92" width="520" height="700" rx="8" fill="#21222C" stroke="#4D4F63" stroke-width="1"/>
   <!-- 面板头 -->
   <rect x="44" y="92" width="520" height="40" rx="8" fill="#282A36"/>
   <text x="60" y="117" font-size="13" fill="#F8F8F2" font-weight="600">SSH 密钥 · 5</text>
-  <rect x="152" y="101" width="150" height="22" rx="11" fill="none" stroke="#62728A"/>
-  <text x="227" y="116" font-size="11" fill="#8B93A7" text-anchor="middle">已扫 ~/.ssh 单层</text>
+  <rect x="150" y="101" width="118" height="22" rx="11" fill="none" stroke="#62728A"/>
+  <text x="209" y="116" font-size="11" fill="#8B93A7" text-anchor="middle">2 目录 · 各自单层</text>
+  <rect x="278" y="100" width="64" height="24" rx="5" fill="none" stroke="#62728A"/>
+  <text x="310" y="116" font-size="11.5" fill="#E8EAF0" text-anchor="middle">＋目录</text>
   <rect x="428" y="100" width="94" height="24" rx="5" fill="#BD93F9"/>
   <text x="475" y="116" font-size="11.5" fill="#1E1F29" font-weight="700" text-anchor="middle">＋ 生成密钥</text>
   <text x="548" y="117" font-size="13" fill="#8B93A7">✕</text>
@@ -56,8 +58,9 @@
   <rect x="222" y="159" width="10" height="8" rx="1.5" fill="none" stroke="#62728A" stroke-width="1.2"/>
   <path d="M224.5 159 v-2.5 a2.5 2.5 0 0 1 5 0 V159" stroke="#62728A" fill="none" stroke-width="1.2"/>
   <text x="238" y="166" font-size="11" fill="#62728A">无口令</text>
-  <rect x="392" y="152" width="56" height="24" rx="5" fill="none" stroke="#62728A"/><text x="420" y="168" font-size="11.5" fill="#E8EAF0" text-anchor="middle">复制</text>
-  <rect x="454" y="152" width="60" height="24" rx="5" fill="#BD93F9"/><text x="484" y="168" font-size="11.5" fill="#1E1F29" font-weight="600" text-anchor="middle">推送</text>
+  <rect x="368" y="152" width="52" height="24" rx="5" fill="none" stroke="#62728A"/><text x="394" y="168" font-size="11.5" fill="#E8EAF0" text-anchor="middle">复制</text>
+  <rect x="426" y="152" width="58" height="24" rx="5" fill="#BD93F9"/><text x="455" y="168" font-size="11.5" fill="#1E1F29" font-weight="600" text-anchor="middle">推送</text>
+  <rect x="490" y="152" width="26" height="24" rx="5" fill="none" stroke="#62728A"/><text x="503" y="169" font-size="12" fill="#E8EAF0" text-anchor="middle">⋯</text>
   <text x="70" y="190" font-size="11.5" fill="#E8EAF0" font-family="'Cascadia Code',monospace">SHA256:7hNf4kQ0mR2sV8xLcPbJtY6wZd3gK1nEsTqIuO9aBcd</text>
   <text x="70" y="210" font-size="11" fill="#62728A">~/.ssh/id_ed25519 · 配对 id_ed25519.pub · 模式 0600</text>
   <circle cx="52" cy="150" r="10" fill="#BD93F9"/><text x="52" y="154" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">2</text>
@@ -69,8 +72,9 @@
   <rect x="232" y="251" width="10" height="8" rx="1.5" fill="#FFB86C"/>
   <path d="M234.5 251 v-2.5 a2.5 2.5 0 0 1 5 0 V251" stroke="#FFB86C" fill="none" stroke-width="1.4"/>
   <text x="248" y="258" font-size="11" fill="#FFB86C">有口令</text>
-  <rect x="392" y="244" width="56" height="24" rx="5" fill="none" stroke="#62728A"/><text x="420" y="260" font-size="11.5" fill="#E8EAF0" text-anchor="middle">复制</text>
-  <rect x="454" y="244" width="60" height="24" rx="5" fill="#BD93F9"/><text x="484" y="260" font-size="11.5" fill="#1E1F29" font-weight="600" text-anchor="middle">推送</text>
+  <rect x="368" y="244" width="52" height="24" rx="5" fill="none" stroke="#62728A"/><text x="394" y="260" font-size="11.5" fill="#E8EAF0" text-anchor="middle">复制</text>
+  <rect x="426" y="244" width="58" height="24" rx="5" fill="#BD93F9"/><text x="455" y="260" font-size="11.5" fill="#1E1F29" font-weight="600" text-anchor="middle">推送</text>
+  <rect x="490" y="244" width="26" height="24" rx="5" fill="none" stroke="#62728A"/><text x="503" y="261" font-size="12" fill="#E8EAF0" text-anchor="middle">⋯</text>
   <text x="70" y="282" font-size="11.5" fill="#E8EAF0" font-family="'Cascadia Code',monospace">SHA256:0pQ8sW2kXcN5mYt3RvB7lHfJd1gZuK4eA6oIeSrTq9</text>
   <text x="70" y="302" font-size="11" fill="#62728A">~/.ssh/deploy-key · 配对 deploy-key.pub · 模式 0600</text>
 
@@ -80,22 +84,25 @@
   <rect x="160" y="337" width="66" height="18" rx="4" fill="#44475A"/><text x="193" y="350" font-size="10.5" fill="#FF79C6" text-anchor="middle" font-weight="700">rsa 2048</text>
   <circle cx="240" cy="346" r="4" fill="#F1FA8C"/><text x="248" y="350" font-size="11.5" fill="#F1FA8C">公钥缺失</text>
   <text x="316" y="350" font-size="10.5" fill="#62728A">无 .pub</text>
-  <rect x="392" y="336" width="56" height="24" rx="5" fill="#44475A" opacity="0.6"/><text x="420" y="352" font-size="11.5" fill="#8B93A7" text-anchor="middle">复制</text>
-  <rect x="454" y="336" width="60" height="24" rx="5" fill="#BD93F9"/><text x="484" y="352" font-size="10.5" fill="#1E1F29" font-weight="600" text-anchor="middle">导出公钥</text>
+  <rect x="368" y="336" width="52" height="24" rx="5" fill="#44475A" opacity="0.6"/><text x="394" y="352" font-size="11.5" fill="#8B93A7" text-anchor="middle">复制</text>
+  <rect x="426" y="336" width="74" height="24" rx="5" fill="#BD93F9"/><text x="463" y="352" font-size="10.5" fill="#1E1F29" font-weight="600" text-anchor="middle">导出公钥</text>
+  <rect x="506" y="336" width="26" height="24" rx="5" fill="none" stroke="#62728A"/><text x="519" y="353" font-size="12" fill="#E8EAF0" text-anchor="middle">⋯</text>
   <text x="70" y="374" font-size="11.5" fill="#E8EAF0" font-family="'Cascadia Code',monospace">SHA256:2mK7xQvT9sLb3NcP8wYfH1dA5gJuR4eI0oUtSqW7z</text>
   <text x="70" y="394" font-size="11" fill="#F1FA8C">导出公钥需口令 ⇒ 走 credential_prompt（询问型不落盘，CONN.09）</text>
+  <circle cx="52" cy="334" r="10" fill="#BD93F9"/><text x="52" y="338" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">3</text>
 
-  <!-- 行 4：bastion_ed25519 · 推送进行中（判据 6 的列表侧投影） -->
+  <!-- 行 4：bastion_ed25519 · 推送进行中（自选目录里的行，判据 6/7） -->
   <rect x="56" y="418" width="496" height="84" rx="6" fill="#282A36"/>
   <text x="70" y="442" font-size="13" fill="#F8F8F2" font-weight="600">bastion_ed25519</text>
   <rect x="190" y="429" width="60" height="18" rx="4" fill="#44475A"/><text x="220" y="442" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-weight="700">ed25519</text>
   <circle cx="264" cy="438" r="4" fill="#8BE9FD"/><text x="272" y="442" font-size="11.5" fill="#8BE9FD">推送中 · 执行</text>
-  <rect x="392" y="428" width="56" height="24" rx="5" fill="#44475A" opacity="0.6"/><text x="420" y="444" font-size="11.5" fill="#8B93A7" text-anchor="middle">复制</text>
-  <rect x="454" y="428" width="60" height="24" rx="5" fill="#44475A" opacity="0.6"/><text x="484" y="444" font-size="11.5" fill="#8B93A7" text-anchor="middle">推送</text>
+  <rect x="368" y="428" width="52" height="24" rx="5" fill="#44475A" opacity="0.6"/><text x="394" y="444" font-size="11.5" fill="#8B93A7" text-anchor="middle">复制</text>
+  <rect x="426" y="428" width="58" height="24" rx="5" fill="#44475A" opacity="0.6"/><text x="455" y="444" font-size="11.5" fill="#8B93A7" text-anchor="middle">推送</text>
+  <rect x="490" y="428" width="26" height="24" rx="5" fill="none" stroke="#62728A"/><text x="503" y="445" font-size="12" fill="#E8EAF0" text-anchor="middle">⋯</text>
   <text x="70" y="466" font-size="11.5" fill="#E8EAF0" font-family="'Cascadia Code',monospace">SHA256:9fR2sKd7mXcV1pQb8LnT4yHwJ3gZu5eA0cIoSrUq7</text>
-  <text x="70" y="486" font-size="11" fill="#62728A">目标 dev@build01 · 步骤态「拨号 ✓ 认证 ✓ 执行 … 完成」的列表侧摘要</text>
+  <text x="70" y="486" font-size="11" fill="#62728A">/home/dev/keys/bastion_ed25519 · 自选目录 · 行唯一键＝全路径（撞名靠路径分）</text>
 
-  <!-- 行 5：ci-runner · 生成中（provisional 行，快照合成，判据 5 的列表侧投影） -->
+  <!-- 行 5：ci-runner · 生成中（provisional 行，快照合成） -->
   <rect x="56" y="510" width="496" height="84" rx="6" fill="#282A36" stroke="#8BE9FD" stroke-opacity="0.4" stroke-dasharray="5 3"/>
   <text x="70" y="534" font-size="13" fill="#F8F8F2" font-weight="600">ci-runner</text>
   <rect x="140" y="521" width="72" height="18" rx="4" fill="#44475A"/><text x="176" y="534" font-size="10.5" fill="#FF79C6" text-anchor="middle" font-weight="700">rsa 4096</text>
@@ -108,12 +115,11 @@
   <rect x="56" y="608" width="496" height="28" rx="5" fill="#44475A" fill-opacity="0.55"/>
   <text x="70" y="627" font-size="11.5" fill="#50FA7B">已复制 id_ed25519 公钥（单行 87 字节 → ClipboardOutbox，帧边界落剪贴板）</text>
   <circle cx="556" cy="614" r="10" fill="#BD93F9"/><text x="556" y="618" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">4</text>
-  <circle cx="52" cy="334" r="10" fill="#BD93F9"/><text x="52" y="338" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">3</text>
 
   <!-- 面板脚注 -->
-  <text x="60" y="676" font-size="11" fill="#62728A">行内动作只有「复制」「推送」两枚（导出公钥仅缺公钥行，D6①）· 本期不做删除/改名/改口令（D9①）</text>
-  <text x="60" y="698" font-size="11" fill="#62728A">扫描口径：~/.ssh 单层 · 不递归 · 不跟符号链接 · 行源＝配对 .pub ∪ 孤儿私钥（D2①）</text>
-  <text x="60" y="720" font-size="11" fill="#62728A">扫盘只在 keys.open 与每次生成/导出/推送之后：启动序不扫盘（PREF.06 首屏零同步 IO）</text>
+  <text x="60" y="676" font-size="11" fill="#62728A">行内动作＝复制 / 推送 /「⋯」删除（两段式，判据 7）·「导出公钥」仅缺公钥行（D6①）</text>
+  <text x="60" y="698" font-size="11" fill="#62728A">扫描口径：~/.ssh ∪ 自选目录 · 各自单层 · 不递归 · 不跟符号链接 · ~/.ssh 恒在不可移（D2③）</text>
+  <text x="60" y="720" font-size="11" fill="#62728A">扫盘只在 keys.open 与每次生成 / 导出 / 推送 / 删除之后：启动序不扫盘（PREF.06 首屏零同步 IO）</text>
   <text x="60" y="742" font-size="11" fill="#62728A">✕ 关闭面板不取消在途任务：对象与快照都在装配层，回来看见的就是终态（D4①，同「关面板不停隧道」）</text>
   <text x="60" y="764" font-size="11" fill="#62728A">口令（passphrase）只活在提交那一次调用栈：不落盘、不进日志、不进 schema（CONN.09 不变量）</text>
 
@@ -127,8 +133,8 @@
 <!-- ===== 底部左：生成对话框（判据 5）===== -->
 <g transform="translate(30,1010)">
   <text x="0" y="0" font-size="14" font-weight="700" fill="#1b1f28">生成密钥对对话框（两卡定字段集，ed25519 缺省）</text>
-  <rect x="0" y="14" width="470" height="376" rx="8" fill="#21222C" stroke="#4D4F63"/>
-  <text x="18" y="42" font-size="13" fill="#F8F8F2" font-weight="600">生成密钥对 → ~/.ssh</text>
+  <rect x="0" y="14" width="470" height="408" rx="8" fill="#21222C" stroke="#4D4F63"/>
+  <text x="18" y="42" font-size="13" fill="#F8F8F2" font-weight="600">生成密钥对</text>
   <text x="450" y="42" font-size="13" fill="#8B93A7">✕</text>
   <!-- 两式类型卡 -->
   <rect x="18" y="56" width="212" height="44" rx="6" fill="#282A36" stroke="#BD93F9" stroke-width="1.6"/>
@@ -149,15 +155,19 @@
   <rect x="18" y="190" width="212" height="26" rx="4" fill="#191A21" stroke="#44475A"/><text x="28" y="208" font-size="11.5" fill="#E8EAF0">••••••••••</text>
   <text x="244" y="184" font-size="11" fill="#8B93A7">确认口令</text>
   <rect x="244" y="190" width="212" height="26" rx="4" fill="#191A21" stroke="#44475A"/><text x="254" y="208" font-size="11.5" fill="#E8EAF0">••••••••••</text>
+  <!-- 目标目录（D2③：生成也可选目录） -->
+  <text x="18" y="236" font-size="11" fill="#8B93A7">目标目录（缺省 ~/.ssh；三道闸按所选目录适用）</text>
+  <rect x="18" y="242" width="352" height="26" rx="4" fill="#191A21" stroke="#44475A"/><text x="28" y="259" font-size="11.5" fill="#E8EAF0">~/.ssh</text>
+  <rect x="378" y="242" width="78" height="26" rx="5" fill="none" stroke="#62728A"/><text x="417" y="259" font-size="11.5" fill="#E8EAF0" text-anchor="middle">浏览…</text>
   <!-- 同名即拒（F5）+ 落盘三道闸（D5①） -->
-  <text x="18" y="240" font-size="11" fill="#FF5555">⚠ 同名已存在：~/.ssh/ci-runner 与 .pub 有一枚在场即拒绝，绝不覆盖（F5）</text>
-  <text x="18" y="262" font-size="10.5" fill="#8B93A7">三道闸：0600 临时文件（O_CREAT|O_EXCL）→ libssh 截断写 → rename 就位</text>
-  <text x="18" y="280" font-size="10.5" fill="#62728A">库侧模式受 umask 支配（本机 002 时实测落成 0664，F6）⇒ 模式由本仓收</text>
-  <text x="18" y="298" font-size="10.5" fill="#62728A">无口令档走同一导出函数（F4）· 指纹现取不自算（F9）</text>
+  <text x="18" y="290" font-size="11" fill="#FF5555">⚠ 同名已存在：目标目录内私钥或 .pub 有一枚在场即拒绝，绝不覆盖（F5）</text>
+  <text x="18" y="310" font-size="10.5" fill="#8B93A7">三道闸：0600 临时文件（O_CREAT|O_EXCL）→ libssh 截断写 → rename 就位</text>
+  <text x="18" y="328" font-size="10.5" fill="#62728A">库侧模式受 umask 支配（本机 002 时实测落成 0664，F6）⇒ 模式由本仓收</text>
+  <text x="18" y="346" font-size="10.5" fill="#62728A">无口令档走同一导出函数（F4）· 指纹现取不自算（F9）· 目标目录不入表，每次缺省 ~/.ssh</text>
+  <text x="18" y="366" font-size="10.5" fill="#62728A">提交后本钮置灰、行内「生成中」，直到快照到终态（D4①）</text>
   <!-- 按钮 -->
-  <rect x="252" y="344" width="90" height="30" rx="5" fill="none" stroke="#62728A"/><text x="297" y="364" font-size="12" fill="#E8EAF0" text-anchor="middle">取消</text>
-  <rect x="352" y="344" width="104" height="30" rx="5" fill="#BD93F9"/><text x="404" y="364" font-size="12" fill="#1E1F29" font-weight="700" text-anchor="middle">生成</text>
-  <text x="18" y="332" font-size="10.5" fill="#62728A">提交后本钮置灰、行内「生成中」，直到快照到终态（D4①）</text>
+  <rect x="252" y="378" width="90" height="30" rx="5" fill="none" stroke="#62728A"/><text x="297" y="398" font-size="12" fill="#E8EAF0" text-anchor="middle">取消</text>
+  <rect x="352" y="378" width="104" height="30" rx="5" fill="#BD93F9"/><text x="404" y="398" font-size="12" fill="#1E1F29" font-weight="700" text-anchor="middle">生成</text>
   <circle cx="470" cy="20" r="10" fill="#BD93F9"/><text x="470" y="24" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">5</text>
 </g>
 
@@ -191,12 +201,13 @@
 <!-- ===== 底部右：判据清单 ===== -->
 <g transform="translate(920,1010)" font-size="12" fill="#1b1f28">
   <g transform="translate(0,14)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">1</text><text x="30" y="0">入口＝命令 keys.open 呼出左侧停靠卡片（520 dp、非模态），无 SSH 标签也能列表与生成（D1①）</text></g>
-  <g transform="translate(0,44)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">2</text><text x="30" y="0">两行堆叠：名称 + 类型徽标 + 口令徽标 + 复制/推送；次行 SHA256 指纹 + 路径 + 模式（D2①）</text></g>
+  <g transform="translate(0,44)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">2</text><text x="30" y="0">两行堆叠：名称 + 类型徽标 + 口令徽标 + 复制/推送/「⋯」；次行 SHA256 指纹 + 全路径（D2③）</text></g>
   <g transform="translate(0,74)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">3</text><text x="30" y="0">加密两档逐把探测（F8 一次导入，0 ms）；孤儿私钥给「公钥缺失」态并把动作换成「导出公钥」</text></g>
   <g transform="translate(0,104)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">4</text><text x="30" y="0">一键复制交出完整单行（type + base64 + comment），经 ClipboardOutbox 帧边界落剪贴板 + 留痕</text></g>
-  <g transform="translate(0,134)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">5</text><text x="30" y="0">生成对话框：两卡定字段集、只有 RSA 出位数下拉；同名即拒不覆盖；长计算在 worker（F3/D4①）</text></g>
+  <g transform="translate(0,134)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">5</text><text x="30" y="0">生成对话框：两卡定字段集、只有 RSA 出位数下拉、目标目录可选；同名即拒不覆盖；长计算在 worker</text></g>
   <g transform="translate(0,164)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">6</text><text x="30" y="0">推送＝独立会话两段 exec：读回判重 → 追加走 stdin；四步态与 DialOutcome 六档归因（D7①/D8①）</text></g>
-  <g transform="translate(0,212)">
+  <g transform="translate(0,194)"><circle cx="10" cy="-4" r="10" fill="#BD93F9"/><text x="10" y="0" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">7</text><text x="30" y="0">删除两段式：一次清一对（私钥连同同名 .pub）、拒删符号链接、~/.ssh 不可移出扫面（D9② 细则）</text></g>
+  <g transform="translate(0,242)">
     <text x="0" y="0" font-size="12" font-weight="700" fill="#1b1f28">徽标与状态色例（keys_format 是唯一枚举→词条 key 的地方）</text>
     <rect x="2" y="16" width="10" height="8" rx="1.5" fill="#FFB86C"/><text x="20" y="24" font-size="11.5" fill="#1b1f28">有口令</text>
     <rect x="72" y="16" width="10" height="8" rx="1.5" fill="none" stroke="#62728A"/><text x="90" y="24" font-size="11.5" fill="#1b1f28">无口令</text>
@@ -205,14 +216,41 @@
     <circle cx="352" cy="20" r="4" fill="#50FA7B"/><text x="362" y="24" font-size="11.5" fill="#1b1f28">完成</text>
     <circle cx="410" cy="20" r="4" fill="#FF5555"/><text x="420" y="24" font-size="11.5" fill="#1b1f28">失败（归因）</text>
   </g>
-  <g transform="translate(0,262)">
-    <text x="0" y="0" font-size="12" font-weight="700" fill="#1b1f28">本稿未裁的十问（D1–D10，详见 UI_KEYS.draft.md §3）</text>
-    <text x="0" y="22" font-size="11" fill="#1b1f28">D1 面板形态 · D2 行源与扫描面 · D3 加密态是否逐把判</text>
-    <text x="0" y="42" font-size="11" fill="#1b1f28">D4 生成字段与线程 · D5 覆盖闸与 0600 · D6 复制交付面</text>
-    <text x="0" y="62" font-size="11" fill="#1b1f28">D7 推送通道 · D8 会话与凭据归属 · D9 删除是否本期</text>
-    <text x="0" y="82" font-size="11" fill="#1b1f28">D10 ~/.ssh 目录来源（platform::ssh_user_dir 或 getenv）</text>
-    <text x="0" y="110" font-size="11" fill="#5a6070">安全与性能纪律的落点＝D4/D5（非口味）；真机走查与</text>
-    <text x="0" y="128" font-size="11" fill="#5a6070">真 sshd 成功腿（etest_）各为在册欠账，本稿不称「可用」。</text>
+  <g transform="translate(0,292)">
+    <text x="0" y="0" font-size="12" font-weight="700" fill="#1b1f28">裁决落点（人已逐条裁完，详见 UI_KEYS.draft.md §3）</text>
+    <text x="0" y="22" font-size="11" fill="#1b1f28">按推荐①：D1 面板形态 · D3 逐把判加密 · D4 生成线程</text>
+    <text x="0" y="42" font-size="11" fill="#1b1f28">D5 覆盖闸与 0600 · D6 只一键复制 · D7 推送通道</text>
+    <text x="0" y="62" font-size="11" fill="#1b1f28">D8 会话与凭据归属 · D10 platform::ssh_user_dir()</text>
+    <text x="0" y="82" font-size="11" fill="#BD93F9" font-weight="700">改判：D2③ 自选目录入扫面且可作生成目录（D11 接</text>
+    <text x="0" y="100" font-size="11" fill="#BD93F9" font-weight="700">      au::file_dialog）· D9② 本期做删除（D12 细则）</text>
+    <text x="0" y="128" font-size="11" fill="#5a6070">连带代价：Settings 第七域 key_dirs（公共头 + store 往</text>
+    <text x="0" y="146" font-size="11" fill="#5a6070">返 + catalog 白名单），POSIX 目录选择器腿走框架分流。</text>
   </g>
+</g>
+
+<!-- ===== 最底左：删除确认（判据 7）===== -->
+<g transform="translate(30,1450)">
+  <text x="0" y="0" font-size="14" font-weight="700" fill="#1b1f28">删除两段式（「⋯」→ 确认框列出具体路径）</text>
+  <rect x="0" y="14" width="470" height="150" rx="8" fill="#21222C" stroke="#FF5555" stroke-opacity="0.4"/>
+  <text x="18" y="42" font-size="13" fill="#F8F8F2" font-weight="600">删除密钥「deploy-key」？</text>
+  <text x="18" y="64" font-size="11" fill="#E8EAF0">· ~/.ssh/deploy-key（私钥，0600）</text>
+  <text x="18" y="82" font-size="11" fill="#E8F0E6">· ~/.ssh/deploy-key.pub（同名公钥，一次动作清一对）</text>
+  <text x="18" y="106" font-size="11" fill="#FF5555">不可逆。远端 authorized_keys 里已推送的公钥不会随之回收。</text>
+  <text x="18" y="124" font-size="10.5" fill="#62728A">删除不读私钥内容 ⇒ 有口令的钥匙也不需要口令；符号链接一律拒删</text>
+  <rect x="282" y="132" width="80" height="26" rx="5" fill="none" stroke="#62728A"/><text x="322" y="150" font-size="12" fill="#E8EAF0" text-anchor="middle">取消</text>
+  <rect x="372" y="132" width="80" height="26" rx="5" fill="#FF5555"/><text x="412" y="150" font-size="12" fill="#1E1F29" font-weight="700" text-anchor="middle">删除</text>
+  <circle cx="470" cy="20" r="10" fill="#BD93F9"/><text x="470" y="24" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">7</text>
+</g>
+
+<!-- ===== 最底中：目录腿（D2③/D11）===== -->
+<g transform="translate(540,1450)">
+  <text x="0" y="0" font-size="14" font-weight="700" fill="#1b1f28">目录腿：录入走 au::file_dialog，面板只判「给了/没给」</text>
+  <rect x="0" y="14" width="340" height="150" rx="8" fill="#21222C" stroke="#4D4F63"/>
+  <text x="18" y="40" font-size="11.5" fill="#F8F8F2" font-weight="600">＋目录 → open_folder() → 校验 → 第七域落盘</text>
+  <text x="18" y="62" font-size="10.5" fill="#62728A">Hook 形态照 settings_panel 的 pick_export_path：面板</text>
+  <text x="18" y="80" font-size="10.5" fill="#62728A">不碰对话框，装配层取路径；空串＝取消或平台起不来</text>
+  <text x="18" y="102" font-size="10.5" fill="#8BE9FD">无头判据经 headless_folder_result 钩子：接线可证</text>
+  <text x="18" y="124" font-size="10.5" fill="#F1FA8C">POSIX 真选择器缺（Win32 已真实现）⇒ Aurora 侧分流</text>
+  <text x="18" y="144" font-size="10.5" fill="#62728A">去重 · 不可达目录保留条目并行内留痕 · ~/.ssh 不可移</text>
 </g>
 </svg>
