@@ -8,7 +8,9 @@
 #include "conn/key_model.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -103,6 +105,93 @@ namespace {
     return out;
 }
 
+/// @brief 标准 base64 字母表取值；非法字符回 -1（`=` 填充由调用侧先行剥掉）。
+[[nodiscard]] auto base64_value(char c) -> int {
+    if (c >= 'A' && c <= 'Z') {
+        return c - 'A';
+    }
+    if (c >= 'a' && c <= 'z') {
+        return c - 'a' + 26;
+    }
+    if (c >= '0' && c <= '9') {
+        return c - '0' + 52;
+    }
+    if (c == '+') {
+        return 62;
+    }
+    if (c == '/') {
+        return 63;
+    }
+    return -1;
+}
+
+/// @brief 解标准 base64（只用于公钥 blob，故不收 URL-safe 变体、不收换行）。
+///
+/// 长度不是 4 的倍数时按「残缺的最后一组」处理：余 2 或 3 个实字符可出 1 或 2 字节，
+/// 余 1 个不可能——那是坏数据，回空串让调用方按「解不出」办。
+[[nodiscard]] auto base64_decode(std::string_view text) -> std::optional<std::string> {
+    auto payload = std::string_view{trim(text)};
+    while (!payload.empty() && payload.back() == '=') {
+        payload.remove_suffix(1U);
+    }
+    auto out = std::string{};
+    out.reserve(payload.size() / 4U * 3U + 3U);
+    auto group = std::array<int, 4>{0, 0, 0, 0};
+    std::size_t index = 0U;
+    for (const char c : payload) {
+        const auto value = base64_value(c);
+        if (value < 0) {
+            return std::nullopt;  // 含空白、含非法字符：不是公钥 blob 该有的样子
+        }
+        group[index] = value;
+        ++index;
+        if (index == 4U) {
+            out.push_back(static_cast<char>((group[0] << 2) | (group[1] >> 4)));
+            out.push_back(static_cast<char>(((group[1] & 0x0F) << 4) | (group[2] >> 2)));
+            out.push_back(static_cast<char>(((group[2] & 0x03) << 6) | group[3]));
+            index = 0U;
+        }
+    }
+    if (index == 1U) {
+        return std::nullopt;
+    }
+    if (index == 2U) {
+        out.push_back(static_cast<char>((group[0] << 2) | (group[1] >> 4)));
+    } else if (index == 3U) {
+        out.push_back(static_cast<char>((group[0] << 2) | (group[1] >> 4)));
+        out.push_back(static_cast<char>(((group[1] & 0x0F) << 4) | (group[2] >> 2)));
+    }
+    return out;
+}
+
+/// @brief 线格式里的一个 `uint32` 大端长度前缀；越界回 nullopt（不猜、不截断读取）。
+[[nodiscard]] auto read_length(std::string_view blob, std::size_t &cursor) -> std::optional<std::size_t> {
+    if (cursor + 4U > blob.size()) {
+        return std::nullopt;
+    }
+    auto value = std::size_t{0U};
+    for (std::size_t i = 0U; i < 4U; ++i) {
+        value = (value << 8U) | static_cast<unsigned char>(blob[cursor + i]);
+    }
+    cursor += 4U;
+    if (value > blob.size() - cursor) {
+        return std::nullopt;  // 长度字段说的字节不在 blob 里：坏数据
+    }
+    return value;
+}
+
+/// @brief 线格式里的一个 `string`（长度前缀 + 原始字节）。
+[[nodiscard]] auto read_wire_string(std::string_view blob, std::size_t &cursor)
+    -> std::optional<std::string_view> {
+    const auto length = read_length(blob, cursor);
+    if (!length.has_value()) {
+        return std::nullopt;
+    }
+    const auto out = blob.substr(cursor, *length);
+    cursor += *length;
+    return out;
+}
+
 }  // namespace
 
 auto key_wire_name(KeyType type) -> std::string_view {
@@ -121,6 +210,32 @@ auto rsa_bits_is_supported(std::uint16_t bits) -> bool {
     return bits == static_cast<std::uint16_t>(RsaBits::Bits2048) ||
            bits == static_cast<std::uint16_t>(RsaBits::Bits3072) ||
            bits == static_cast<std::uint16_t>(RsaBits::Bits4096);
+}
+
+auto rsa_bits_from_public_base64(std::string_view base64) -> std::uint16_t {
+    const auto decoded = base64_decode(base64);
+    if (!decoded.has_value()) {
+        return 0U;
+    }
+    const auto blob = std::string_view{*decoded};
+    std::size_t cursor = 0U;
+    const auto wire_name = read_wire_string(blob, cursor);
+    if (!wire_name.has_value() || *wire_name != "ssh-rsa") {
+        return 0U;  // ed25519 与其余线名都没有位数概念
+    }
+    const auto exponent = read_wire_string(blob, cursor);  // mpint e：读过即弃
+    const auto modulus = read_wire_string(blob, cursor);
+    if (!exponent.has_value() || !modulus.has_value() || modulus->empty()) {
+        return 0U;
+    }
+    auto bytes = std::size_t{modulus->size()};
+    if (modulus->front() == '\0') {
+        --bytes;  // OpenSSH 的符号位填充：最高位为 1 时前置一个 0x00，不计位数
+    }
+    if (bytes == 0U || bytes > (0xFFFFU / 8U)) {
+        return 0U;  // 全零模数与荒谬长度都不出数（uint16 装不下即判解不出，而非判合法）
+    }
+    return static_cast<std::uint16_t>(bytes * 8U);
 }
 
 auto sort_rows(std::vector<KeyCandidate> &rows, const std::vector<std::string> &dirs)

@@ -59,6 +59,18 @@ enum class RsaBits : std::uint16_t {
 /// @brief 位数是否本仓允许的档（面板下拉之外的手填路径也走这一道）。
 [[nodiscard]] auto rsa_bits_is_supported(std::uint16_t bits) -> bool;
 
+/// @brief 从公钥的 base64 段解出 RSA 位数——类型徽标「rsa 3072」里那个数的唯一来源。
+///
+/// **为什么本仓自己解**：libssh 0.12 的公共头没有任何位数访问器（`ssh_key_type()` 只到
+/// `SSH_KEYTYPE_RSA` 为止，带位数的 `ssh_rsa_struct` 在库的私有头里），而稿 §2 判据 2 要
+/// 徽标带位数（三档在同一列表里必须分得开）。于是这里按 SSH 线格式读公钥 blob 的
+/// `mpint n`：OpenSSH 在最高位为 1 时前置一个 `0x00` 作符号位填充，那一字节不计入位数。
+///
+/// 回 0 的四种情形（调用方据此只显「rsa」不带数，而不是判成错误）：base64 字符非法、
+/// blob 截断或长度字段越界、线名不是 `ssh-rsa`（ed25519 无位数概念）、模数长度不合法。
+/// 本函数**只读不定信**：不判密钥强弱、不做任何 IO，故留在纯逻辑层可无头单测（第 20 条）。
+[[nodiscard]] auto rsa_bits_from_public_base64(std::string_view base64) -> std::uint16_t;
+
 /// @brief 一行＝一把私钥在列表里的全部事实（D2①：行源＝配对私钥 ∪ 无 `.pub` 的私钥）。
 ///
 /// **只有私钥成行**：孤零零的 `.pub` 不是「一把钥匙」，列进去反而给不出任何动作。

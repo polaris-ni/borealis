@@ -297,4 +297,68 @@ AURORA_TEST_CASE(append_plan_protects_the_last_remote_line_and_carries_its_own_n
     AURORA_TEST_CHECK_MSG(conn::plan_append({}, {}).payload.empty(), "empty line is not a key");
 }
 
+
+// ---- rsa_bits_from_public_base64()：类型徽标「rsa 3072」里那个数的唯一来源 ----
+//
+// 这些 base64 串是**公钥 blob**（公开材料，非凭据），其中两条由本机 `ssh-keygen` 真实
+// 生成后取其 `.pub` 第二段，其余是手工构造的边界形态（无符号位填充、截断、全零模数）。
+
+/// @brief 本机 ssh-keygen 生成的 RSA-2048 公钥 blob（真实读数，非手拼）。
+constexpr auto kRealRsa2048Blob =
+    "AAAAB3NzaC1yc2EAAAADAQABAAABAQCzpvqFJ32C0YBLEiUiJycvKKy1JB2CkgVkoIZHGn56nJ8NiRCBTHR3"
+    "PCRPeE0IQBqrhO/v32Be1jG5/BGe9BB15NbKahF32MRj+LD/SW37mpLYc9Fi7gvw3L/6mO3l/ZLc0pMZYO3I"
+    "LeRZy968/FtOr4JivhXiDHBqri2vbyMNbLNll4PB1erk8KQQ5ARF0kbcnG5AibXOkn1Puv7/JCRzeVchjG82"
+    "9osbq2vMJKbSpR1e7j/WpNqs8GorvUkq+FzR776w7JqItK3CbrtoopS6/FF83q5SfumG34lKwX9psPnjdZRe"
+    "B6G3Vhq8Dg+TabcNIQaEDV8+/vtLvQ3uiFlr";
+
+/// @brief 同一档位的另一形态：模数 257 字节、首字节是 OpenSSH 的符号位填充。
+constexpr auto kPaddedRsa2048Blob =
+    "AAAAB3NzaC1yc2EAAAADAQABAAABAQCqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+    "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+    "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+    "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+    "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+
+/// @brief 本机 ssh-keygen 生成的 ed25519 公钥 blob（该族无位数概念）。
+constexpr auto kRealEd25519Blob = "AAAAC3NzaC1lZDI1NTE5AAAAIFfRe1n2f7pFRG8fdBBdSq9cF8GzH9fkXrj82G42ltbw";
+
+AURORA_TEST_CASE(rsa_bits_reads_a_real_openssh_blob_and_the_sign_padding) {
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64(kRealRsa2048Blob), 2048U);
+    // 首字节 0x00 是符号位填充，不是模数的一部分：算进去会报成 2056 这种不存在的档。
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64(kPaddedRsa2048Blob), 2048U);
+    // 无填充（最高位本就不为 1）时长度即位数：4 字节模数＝32 位。
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64("AAAAB3NzaC1yc2EAAAADAQABAAAABP////8="), 32U);
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64("AAAAB3NzaC1yc2EAAAADAQABAAAAAwD//w=="), 16U);
+    // 读数还得过本仓的档位闸：32 位是「解得出来但不是能用的档」，两件事不混为一谈。
+    AURORA_TEST_CHECK_FALSE(conn::rsa_bits_is_supported(32U));
+}
+
+AURORA_TEST_CASE(a_trailing_newline_is_input_noise_not_a_malformed_blob) {
+    // `.pub` 文件按行读出来就带尾换行，纯逻辑侧照 trim 处理——判「解不出」会让整列丢位数。
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64(std::string{kRealRsa2048Blob} + "\n"), 2048U);
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64("  " + std::string{kRealRsa2048Blob}), 2048U);
+    // 但**行内**空白是坏数据：base64 字母表里没有空白，出现即整体判废而不是跳过——
+    // 「跳过」会让一份被串行污染的 blob 读出一个看起来完全合法的位数。
+    const auto blob = std::string{kRealRsa2048Blob};
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64(blob.substr(0, 40) + "\t" + blob.substr(40)), 0U);
+}
+
+AURORA_TEST_CASE(every_unreadable_shape_yields_zero_instead_of_a_guess) {
+    // 非 RSA 线名：ed25519 真实 blob 与一个手工的 ssh-dss blob 都该回 0。
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64(kRealEd25519Blob), 0U);
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64("AAAAB3NzaC1kc3MAAAADAQABAAAAAv//"), 0U);
+    // 长度字段说 257 字节、blob 里只剩 8 字节：越界即判废，不做截断读取。
+    // 两条各守一侧：前一条的越界长度在指数段，后一条在模数段（徽标读的就是模数段）。
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64("AAAAB3NzaC1yc2EAAAEBABEAEQARABE="), 0U);
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64("AAAAB3NzaC1yc2EAAAADAQABAAABAQARABEAEQARABEAEQARABE="),
+                         0U);
+    // 剥掉符号位填充后模数为零长度：出「0 位」比出「没有位数」更容易被误当成合法读数。
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64("AAAAB3NzaC1yc2EAAAADAQABAAAAAQA="), 0U);
+    // 非法字符、残缺的最后一组、空串与纯空白。
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64("AAAA!"), 0U);
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64("A"), 0U);
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64({}), 0U);
+    AURORA_TEST_CHECK_EQ(conn::rsa_bits_from_public_base64("   "), 0U);
+}
+
 }  // namespace borealis::test_cases::utest_keys_model
