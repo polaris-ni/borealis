@@ -73,11 +73,13 @@ add_library(borealis_core STATIC
 if (WIN32)
     target_sources(borealis_core PRIVATE
             platform/win/conpty_connection.cpp
+            platform/win/file_secure.cpp
             platform/win/local_terminal.cpp
             platform/win/tcp.cpp
             platform/win/win_text.cpp)
 elseif (UNIX)
     target_sources(borealis_core PRIVATE
+            platform/posix/file_secure.cpp
             platform/posix/forkpty_connection.cpp
             platform/posix/local_terminal.cpp
             platform/posix/tcp.cpp)
