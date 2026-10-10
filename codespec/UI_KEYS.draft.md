@@ -1,9 +1,9 @@
 # SSH 密钥管理器 UI 设计稿（`SPEC.FEAT.CONN.10`）
 
-> **状态**：评审已收口（2026-10-10）——§3 的 D1–D12 经人逐条裁决：**D1/D3/D4/D5/D6/D7/D8/D10 按推荐①**，**D2 改判「自选目录入扫面，且可作生成落盘目录」**（细则＝D11 的录入接 `au::file_dialog`），**D9 改判「本期做删除」**（细则＝D12：一次清一对、拒删符号链接、`~/.ssh` 不可移出扫面）。并入 `codespec/SPECIFICATIONS.md` §7 裁决 **7.106**，据此按 §4 分批转实现。
+> **状态**：评审已收口（2026-10-10）——§3 的 D1–D12 经人逐条裁决：**D1/D3/D4/D5/D6/D7/D8/D10 按推荐①**，**D2 改判「自选目录入扫面，且可作生成落盘目录」**（细则＝D11 的录入接 `au::file_dialog`），**D9 改判「本期做删除」**（细则＝D12：一次清一对、拒删符号链接、`~/.ssh` 不可移出扫面）。并入 `codespec/SPECIFICATIONS.md` §7 裁决 **7.106**，据此按 §4 分批转实现。**批 1（纯逻辑两件 + platform 腿 + 第七域）已于同日落地＝裁决 7.107**，落地期把本稿三处口径按代码改口（§4 的 `settings_catalog` 那行、§6 的 `utest_config` 那行、名称与注释的两个长度数），并删掉一处永远走不到的分支——详见 §8 末段与稿内标注。
 > **配套高保真草图**：`codespec/UI_KEYS.draft.svg`（屏 7）/ `.png`；底部 1–7 标号判据对应本稿 §2，SVG 为事实来源。
 > **已落地的前置**：`SPEC.FEAT.CONN.02` 传输腿与 `conn/ssh_dial`（裁决 7.94）、`CONN.03` 档案与 `ProfileStore`、`CONN.09` 的 `SecretHandle`/询问件（裁决 7.93，配置目录审计的自动化证人已在 `utest_config`）、`CONN.04` 的 worker 串行队列先例（裁决 7.95）、`CONN.08` 的左停靠卡片面板与「装配层持有运行态」形态（裁决 7.97/7.98）。
-> **本条是 M3 主干余下唯一未开工的需求条目**（`PLAN.md` §4 交接清册 §4.1 所列 CONN.08 真转 etest / WS.05 etest 都要 sshd 环境、TERM.09 提示卡与各 UI 件走查都归人工门槛）。
+> **本条是 M3 主干余下唯一未全部落地的需求条目**（批 1 已落，批 2–4 未开工）（`PLAN.md` §4 交接清册 §4.1 所列 CONN.08 真转 etest / WS.05 etest 都要 sshd 环境、TERM.09 提示卡与各 UI 件走查都归人工门槛）。
 
 ## 0 本稿的实测地基（libssh 0.12.0 + vcpkg OpenSSL，本机 Linux 腿，2026-10-10 一次性探针，探针件已删）
 
@@ -42,7 +42,7 @@
 | 3 | 加密态两档：锁「有口令」/ 空锁「无口令」（F8 的一次探测）；**私钥无配对 `.pub`** 的行给「公钥缺失」态并把动作换成「导出公钥」 | ②（D2①/D3①） |
 | 4 | 一键复制：交出行内**完整单行** `ssh-ed25519 AAAA… comment`，经 `session::ClipboardOutbox` 在帧边界落系统剪贴板（7.41 先例），行上方留痕一句「已复制」 | ③（D6 拍形态） |
 | 5 | 生成对话框：两卡定字段集（ed25519 缺省；**只有 RSA 卡出位数下拉** 2048/3072/4096，缺省 3072）＋文件名＋注释＋passphrase 双栏（可空、掩码）＋**目标目录（缺省 `~/.ssh`，经「浏览…」取，D2③）**；**同名即拒并红提示，绝不覆盖**（F5）；提交后按钮置灰、行内「生成中」，长计算在 worker（F3） | ①（D4/D5） |
-| 6 | 推送对话框：目标＝档案下拉（SSH 子集，同 `tunnel_panel` 的 `profiles` Hook）；步骤态 `拨号 → 认证 → 执行 → 完成/失败`，失败归因走 `conn::DialOutcome` 六档文案；**本地判重**：先读回远端 `authorized_keys` 比对，已含同一行就不发写并告知 | ④（D7/D8） |
+| 6 | 推送对话框：目标＝档案下拉（SSH 子集，同 `tunnel_panel` 的 `profiles` Hook）；步骤态 `拨号 → 认证 → 执行 → 完成/失败`，失败归因＝`conn::DialOutcome` 的**四档失败**（会话未分配／网络／主机键未信任／认证被拒；该枚举实测五值含 `Ok`）再加推送腿自证的「执行被拒／写回执异常」两档——后两档**不属 `DialOutcome`**，随批 2 `key_push` 的阶段枚举到货（落地期订正，裁决 7.107 ④d）；**本地判重**：先读回远端 `authorized_keys` 比对，已含同一行就不发写并告知 | ④（D7/D8） |
 | 7 | 删除两段式：行内「⋯」→ 确认框**列出要删的具体路径**（私钥连同同名 `.pub` 一次清一对），红字写明「不可逆 + 远端 `authorized_keys` 的公钥不会随之回收」；取消则一物不动 | ②（D9② 改判追加，细则＝D12） |
 
 ## 3 裁决（D1–D12，2026-10-10 收口：D1/D3/D4/D5/D6/D7/D8/D10 按推荐①，D2/D9 改判，改判追加 D11/D12）
@@ -66,11 +66,19 @@
 
 ```
 src/conn/key_model.{h,cpp}         新增 —— 纯逻辑，无 libssh / 无 au:: 类型（可无头单测）：
-                                        KeyCandidate（**唯一键＝全路径**：dir/basename/type/bits/comment/
-                                        fingerprint/有无私钥·公钥/加密态）与行序折叠、名称与注释校验（禁路径
-                                        分隔符与控制字符、长度上限）、**目录表规范化（去重、~/.ssh 恒在不可移、
-                                        不可达标「不可达」）**、同名碰撞判定、authorized_keys 的判重与
-                                        「该不该追加」计划 plan_append()、公钥单行的拼装（type+b64+comment）
+                                        KeyCandidate（**唯一键＝全路径**：path/basename/type/bits/
+                                        has_public·public_path/encrypted/fingerprint/comment）与行序（目录表
+                                        次序优先、同目录按名、**表外行排最后且不丢**）、名称与注释校验（禁路径
+                                        分隔符与控制字符；出稿未给的两个数**落地期取定**＝名称 64 字节、
+                                        注释 72 字节，裁决 7.107）、**目录表规范化（去重、~/.ssh 恒在表首且
+                                        「移除」请求整条作废、不可达只标不删——可达性是**注入的判定函数**，
+                                        纯逻辑层不许 stat，第 23/25 条）**、同名碰撞判定（**只看得见行**：
+                                        行源是私钥，孤 `.pub` 不成行，故「无主公钥也占名」那一半归 key_store
+                                        的盘上存在性检查，此处不留永远走不到的分支）、authorized_keys 的判重
+                                        （按线名+base64 两字段，忽略注释与远端 `from="…"` 选项前缀）与
+                                        「该不该追加」计划 plan_append()（远端末行无换行则前置一个换行、
+                                        payload 自带尾随换行——与剪贴板那条相反）、公钥单行的拼装
+                                        （type+b64+comment，单行、无尾随换行）
 src/conn/key_store.{h,cpp}         新增 —— 私有头：libssh PKI 传输腿。多目录扫盘成 KeyCandidate 表、
                                         ssh_pki_generate_key + F4 落盘 + D5① 的临时文件与 rename（按所选目标
                                         目录适用）、从私钥导出公钥（ssh_pki_export_privkey_to_pubkey）、
@@ -79,13 +87,23 @@ src/conn/key_store.{h,cpp}         新增 —— 私有头：libssh PKI 传输�
                                         **全部阻塞 IO / 长计算，调用方须在 worker 线程**（头注写明，同 sftp_client）
 src/conn/key_push.{h,cpp}          新增 —— 私有头：执行通道推送腿。ssh_dial 自开会话 + 两段 exec（D7①）；
                                         exit status 处沿用 tunnel_client 的定点抑制写法（F10）；四态结果回投
-src/platform/file_secure.h         新增 —— 私钥文件权限腿（AGENTS 第 23 条）：
-src/platform/posix/file_secure.cpp      `create_private(path)`＝O_CREAT|O_EXCL|0600 的裸 fd 打开后关闭，
-src/platform/win/file_secure.cpp        供传输腿把文件交给自己已建好的 0600 路径；Win32 腿本期＝建文件后
-                                        不改 ACL 并 AURORA_LOG_WARN 留痕（真机 ACL 归 §7）
-src/ui/keys_format.{h,cpp}         新增 —— 枚举→词条 key 的唯一映射（DialOutcome / 推送四态 / 生成三态 /
-                                        加密两态 / 删除与目录留痕）+ 行模型 key_rows()（tunnel_format
-                                        同族，无头单测）
+src/platform/file_secure.h         新增 —— 私钥文件权限腿（AGENTS 第 23 条），批 1 已落：
+src/platform/posix/file_secure.cpp      `platform::create_private_file(path)`＝O_WRONLY|O_CREAT|O_EXCL 建空文件
+src/platform/win/file_secure.cpp        → **`fchmod(0600)` 无条件钉死**（mode 实参受 umask 支配，本机实测
+                                        umask 0277 时只剩 0400）→ 立即关闭，三档 `Created`/`AlreadyExists`/`Error`；
+                                        符号链接与目录都算 `AlreadyExists` 且永不跟随，`fchmod` 失败即 `unlink` 回滚；
+                                        内容由传输腿截断写入（`open` 对已存在文件忽略 mode 实参，权限因此保住），
+                                        最后调用方 `rename` 就位。Win32 腿本期＝建文件后不改 ACL 并 `AURORA_LOG_WARN`
+                                        留痕（真机 ACL 归 §7；该腿未经 MSVC 编译验证，属推断/未验证）
+src/ui/keys_format.{h,cpp}         新增 —— 枚举→词条 key 的唯一映射（tunnel_format 同族，无头单测）。
+                                        **批 1 到货四族**：类型徽标（ed25519 / rsa 3072，三档互异）、
+                                        加密两态、公钥缺失、名称与注释校验留痕 + 目录不可达留痕，
+                                        外加次行数据段（指纹 + **全路径恒在**）。**随批 2/3 到货**：
+                                        `conn::DialOutcome` 的四档失败归因（该枚举实测五值含 `Ok`；稿原写「六档」
+                                        把推送腿那两档算了进去，落地期订正见裁决 7.107 ④d）、生成三态、推送四态
+                                        （三者的阶段枚举
+                                        在 `key_store`/`key_push` 里，先写占位枚举＝第二真值源，第 3 条）、
+                                        删除留痕与行模型 `key_rows()`（要等运行态快照类型，裁决 7.97 D6① 同族）
 src/ui/keys_panel.{h,cpp}          新增 —— 左停靠卡片 + 生成对话框 + 推送对话框 + 删除确认；本件不认识
                                         libssh，也不认识 au::file_dialog（D8①/D1①/D11 纪律：目录经 Hook 进出）
 src/main.cpp                       修改 —— keys.open 命令（照 tunnels.open 写法）、单 worker 串行队列、
@@ -95,7 +113,12 @@ src/main.cpp                       修改 —— keys.open 命令（照 tunnels.
 include/borealis/config/settings.h 修改 —— **第七域 key_dirs（std::vector<std::string>，缺省空＝只扫 ~/.ssh，
                                         D2③ 的连带代价）**；纯路径串、不含任何凭据材料
 src/config/store.cpp               修改 —— key_dirs 域读写与往返；`kDomainKeys` 追加一项
-src/ui/settings_catalog.cpp        修改 —— 白名单登记（`utest_settings_catalog` 的键数台账随之变动）
+src/ui/settings_catalog.cpp        **不改**——`key_dirs` 不属四页偏好设置（增删改在面板自己在「＋目录」
+                                        上做，不在设置面板画控件），故反向核对表里不登记它；改的是
+                                        `tests/unit/utest_settings_catalog.cpp` 的 `kNonPreferenceLeaves`
+                                        例外数组（与 `profiles.items` / `tunnels.items` 同档加一条
+                                        `key_dirs.items`），**键数台账 62 行不变**——出稿时那句
+                                        「白名单登记（键数台账随之变动）」把两处混成了一处，落地时按代码改口（裁决 7.107）
 codespec/FRAMEWORK_TASK_CONN10.md  新增 —— Aurora 侧缺口单：`file_dialog::open_folder()` 的 POSIX 真实现
                                         （AGENTS §5.1 分流，登记为 SPECIFICATIONS.md 附录 A.2 的 G41；
                                         本仓不等不绕、也不自建文件选择器）
@@ -108,7 +131,11 @@ tests/integration/itest_keys_panel.cpp 新增 —— 无头真派发：行表随
                                         同名红提示、生成期按钮置灰、推送步骤态推进与失败归因、
                                         删除两段式（「⋯」只呼框、取消不删）、目录腿经
                                         `file_dialog::headless_folder_result` 钩子证接线
-tests/unit/utest_config.cpp        修改 —— 第七域往返补例（缺省空＝只扫 ~/.ssh、去重、不可达目录条目保留）
+tests/unit/utest_config.cpp        修改 —— 第七域往返补例（缺省空、**逐字往返不去重**、空串元素逐个丢弃并
+                                        留 `key_dirs.items[N]` 痕迹、`items` 非数组整键回落、`key_dirs`
+                                        不含凭据子串）——去重与可达性**不在装载侧**（那是
+                                        `conn::normalize_key_dirs()` 的活儿，同步 IO 不进装载接缝），
+                                        出稿把这两条记在本件名下是笔误，落地时改口（裁决 7.107）
 ```
 
 > 公共头只动 `include/borealis/config/settings.h` 一处（第七域，D2③ 的连带代价）；面板与三条传输腿仍全走私有头（D1① 先例）。除 `key_dirs` 外**不加配置键**。无新框架缺口——卡片/按钮/下拉/掩码输入/浮层全部是 Aurora 公共控件组合，`credential_prompt` 与 `connection_wizard` 先例齐备；`file_dialog` 的 POSIX 腿是**既有**缺口的追加消费方，已按 AGENTS §5.1 分流并出缺口单，本条不自建替代实现。
@@ -148,9 +175,9 @@ KeysPanel（UI 线程）：tick() 读快照 → key_rows() 合成 → 行表有�
 
 - **生成密钥对（①）**：ed25519 缺省、RSA 三档；passphrase 可空；产物＝同 basename 的私钥 + `.pub`；D5① 三道闸各有判据（同名拒绝、临时文件 0600、rename 就位），且**按所选目标目录适用**；**ed25519 的真生成允许进无头用例**（F8/F3：亚毫秒、无网络），断言私钥文件模式与 `.pub` 单行三字段与指纹前缀 `SHA256:`；RSA 档在用例里只判参数与计划，不跑秒级生成。
 - **列表（②）**：扫盘件是「目录表 → 行表」的纯 IO 函数，用例走临时目录夹具（成对、孤儿私钥、非密钥文件、子目录、**两个目录里同名 basename** 五类干扰项，最后一项证「唯一键＝路径」）；加密两档徽标按 F8 判；孤儿私钥行的「导出公钥」腿有判据。
-- **目录腿（D2③/D11）**：`key_dirs` 第七域读写往返（缺省空、去重、不可达条目保留）归 `utest_config`；面板侧判据＝**给了路径就规范化＋落盘＋重扫，空串就整条不跑且不留痕**，经 `file_dialog::headless_folder_result` 钩子证接线（同 `settings_panel` 的导出腿：只测接线不测产物）；「`~/.ssh` 不可移」有独立判据（试图移除后表内仍在）。
+- **目录腿（D2③/D11）**：`key_dirs` 第七域读写往返归 `utest_config`，判的四件事＝缺省空、**逐字往返不去重**、空串元素逐个丢弃并留 `key_dirs.items[N]` 痕迹、`items` 非数组整键回落（外加既有的不含凭据子串那条审计）；**去重与「不可达条目保留」不在装载侧**，那是 `conn::normalize_key_dirs()` 的活儿（`utest_keys_model` 守），同步 IO 不进装载接缝——出稿把这两条记在本件名下是笔误，落地时改口（裁决 7.107）；面板侧判据＝**给了路径就规范化＋落盘＋重扫，空串就整条不跑且不留痕**，经 `file_dialog::headless_folder_result` 钩子证接线（同 `settings_panel` 的导出腿：只测接线不测产物）；「`~/.ssh` 不可移」有独立判据（试图移除后表内仍在）。
 - **一键复制（③）**：判据交出的字节＝`type + ' ' + base64 + ' ' + comment` 单行、无尾随换行进 outbox；是否真落系统剪贴板归真机走查（7.41 同口径，本仓只判 outbox 侧）。
-- **推送至主机（④）**：本地判重命中即不发写并告知「已在授权表里」；追加走 stdin，**公钥不出现在命令串**（该判据写成用例断言 exec 命令常量里没有 base64 段）；四态推进与 `DialOutcome` 六档归因文案；**真 sshd 成功腿待 `etest_`**（与 7.96① / 7.100 的在册欠账同一条环境约束），本棒交付面只到「无头可证」。
+- **推送至主机（④）**：本地判重命中即不发写并告知「已在授权表里」；追加走 stdin，**公钥不出现在命令串**（该判据写成用例断言 exec 命令常量里没有 base64 段）；四态推进与失败归因文案（`DialOutcome` 四档失败＋推送腿「执行被拒／写回执异常」两档，共六档措辞但**只有前四档来自该枚举**）；**真 sshd 成功腿待 `etest_`**（与 7.96① / 7.100 的在册欠账同一条环境约束），本棒交付面只到「无头可证」。
 - **删除（D9②/D12）**：临时目录夹具里建对 ⇒ 确认后两文件皆无、列表少一行；**「⋯」只呼确认框，未确认前文件仍在**（两段式判据）；符号链接例＝拒绝且红留痕，链接与其目标都还在；**有口令私钥的删除不弹询问**（反向判据，防实现顺手加）；改名/改口令不在本期。
 - **安全面（CONN.09 交界）**：配置目录明文审计那条既有自动化用例（F11）在本棒后仍绿——新增的 `key_dirs` 只是路径串、密钥产物落 `~/.ssh` 或所选目录而非配置目录、passphrase 不入 schema；`grep` 判据不因本棒新增第七域而放宽。
 - **门禁与测试**：`utest_keys_model` + `utest_keys_format` + `itest_keys_panel` 全绿并入 CTest（前缀纪律，AGENTS 第 18 条）；`ctest --preset linux -E etest_` 项数在此之上 +3；`utest_config` 与 `utest_settings_catalog` 的既有例随第七域一并补/改。
@@ -169,3 +196,14 @@ KeysPanel（UI 线程）：tick() 读快照 → key_rows() 合成 → 行表有�
 ## 8 收口与分批
 
 D1–D12 已于 2026-10-10 经人逐条裁完：**八条按推荐①，D2/D9 改判，改判追加 D11/D12 两条细则**（其中 **D4 worker 线程与 D5 不覆盖 + 0600 + rename 是安全与性能纪律的落点而非口味**）。收口动作＝本稿 §3 转「已裁决」+ 并入 `SPECIFICATIONS.md` §7 裁决 **7.106** + `CHANGELOG.md` 记 **v0.106** + `PLAN.md` 的 CONN.10 行回写 + 缺口单 `FRAMEWORK_TASK_CONN10.md` 出件并登记附录 A.2 的 **G41**（已于 2026-10-10 全部完成）。实现按 §4 布局分四批落：批 1 纯逻辑两件 + platform 腿 + 第七域；批 2 传输腿两件（含删除腿）；批 3 面板与装配（含目录腿）；批 4 文档回写与走查登记。
+
+**批 1 已于 2026-10-10 落地**（裁决 7.107 记四处落地期取定/改口）：第七域 `key_dirs`（`settings.h` +
+`store.cpp` 五处 + `utest_config` 补例）、`platform::create_private_file` 两腿 + `utest_file_secure`、
+`conn::key_model` + `utest_keys_model` 13 案、`ui::keys_format` + `utest_keys_format` 7 案；
+`ctest --test-dir build -E etest_` 由 64 项增至 **67 项**（§6 那条「+3」判据兑现），本机全跑 867 案全绿。
+**未随批 1 到货的两处如实登记**：① `keys_format` 只映射已有枚举，生成三态/推送四态与
+`conn::DialOutcome` 的四档失败归因随批 2 的阶段枚举到货（该枚举实测五值含 `Ok`，稿初版那句「六档」
+把推送腿的「执行被拒／写回执异常」也算进了枚举名下——落地期按代码订正，裁决 7.107 ④d；
+现在写占位枚举就是第二真值源，第 3 条）；
+② 中文词条随批 3 面板登记进 `settings_i18n`——`utest` 只判 key，批 3 的 itest 按 label 找控件，
+漏登记当场转红，不靠记忆兜底。
