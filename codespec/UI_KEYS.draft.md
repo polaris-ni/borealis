@@ -1,6 +1,6 @@
 # SSH 密钥管理器 UI 设计稿（`SPEC.FEAT.CONN.10`）
 
-> **状态**：评审已收口（2026-10-10）——§3 的 D1–D12 经人逐条裁决：**D1/D3/D4/D5/D6/D7/D8/D10 按推荐①**，**D2 改判「自选目录入扫面，且可作生成落盘目录」**（细则＝D11 的录入接 `au::file_dialog`），**D9 改判「本期做删除」**（细则＝D12：一次清一对、拒删符号链接、`~/.ssh` 不可移出扫面）。并入 `codespec/SPECIFICATIONS.md` §7 裁决 **7.106**，据此按 §4 分批转实现。**批 1（纯逻辑两件 + platform 腿 + 第七域）已于同日落地＝裁决 7.107**，落地期把本稿三处口径按代码改口（§4 的 `settings_catalog` 那行、§6 的 `utest_config` 那行、名称与注释的两个长度数），并删掉一处永远走不到的分支——详见 §8 末段与稿内标注。**批 2（传输腿两件，含删除腿）已于同日落地＝裁决 7.108**：§0 增 F12–F17 六条实测读数，四处口径按代码改口（判据 6 的失败档数、§4 的弃用抑制作废、「生成三态」归属、`keys_format` 不 include 传输腿头），详见 §8 末段。
+> **状态**：评审已收口（2026-10-10）——§3 的 D1–D12 经人逐条裁决：**D1/D3/D4/D5/D6/D7/D8/D10 按推荐①**，**D2 改判「自选目录入扫面，且可作生成落盘目录」**（细则＝D11 的录入接 `au::file_dialog`），**D9 改判「本期做删除」**（细则＝D12：一次清一对、拒删符号链接、`~/.ssh` 不可移出扫面）。并入 `codespec/SPECIFICATIONS.md` §7 裁决 **7.106**，据此按 §4 分批转实现。**批 1（纯逻辑两件 + platform 腿 + 第七域）已于同日落地＝裁决 7.107**，落地期把本稿三处口径按代码改口（§4 的 `settings_catalog` 那行、§6 的 `utest_config` 那行、名称与注释的两个长度数），并删掉一处永远走不到的分支——详见 §8 末段与稿内标注。**批 2（传输腿两件，含删除腿）已于同日落地＝裁决 7.108**：§0 增 F12–F17 六条实测读数，四处口径按代码改口（判据 6 的失败档数、§4 的弃用抑制作废、「生成三态」归属、`keys_format` 不 include 传输腿头），详见 §8 末段。**批 3（面板与装配，含目录腿与中文词条）已于同日落地＝裁决 7.109**，§4/§5/§6 三处按代码回写（重建触发面三档、目录腿的闸收在面板、「已复制」的留痕来源）；**批 4（文档回写与走查登记）随之收口**——真机走查仍是人工门槛（§6 末条），本条不称「可用」。
 > **配套高保真草图**：`codespec/UI_KEYS.draft.svg`（屏 7）/ `.png`；底部 1–7 标号判据对应本稿 §2，SVG 为事实来源。
 > **已落地的前置**：`SPEC.FEAT.CONN.02` 传输腿与 `conn/ssh_dial`（裁决 7.94）、`CONN.03` 档案与 `ProfileStore`、`CONN.09` 的 `SecretHandle`/询问件（裁决 7.93，配置目录审计的自动化证人已在 `utest_config`）、`CONN.04` 的 worker 串行队列先例（裁决 7.95）、`CONN.08` 的左停靠卡片面板与「装配层持有运行态」形态（裁决 7.97/7.98）。
 > **本条是 M3 主干余下唯一未全部落地的需求条目**（批 1–2 已落，批 3–4 未开工）（`PLAN.md` §4 交接清册 §4.1 所列 CONN.08 真转 etest / WS.05 etest 都要 sshd 环境、TERM.09 提示卡与各 UI 件走查都归人工门槛）。
@@ -121,11 +121,27 @@ src/ui/keys_format.{h,cpp}         新增 —— 枚举→词条 key 的唯一�
                                         `ExportOutcome` 四档、`DeleteOutcome` 四档，而稿说的「三态」指装配层快照里
                                         那一行的「空闲／进行中／已回投」，是运行态不是枚举，本件不映射它
 src/ui/keys_panel.{h,cpp}          新增 —— 左停靠卡片 + 生成对话框 + 推送对话框 + 删除确认；本件不认识
-                                        libssh，也不认识 au::file_dialog（D8①/D1①/D11 纪律：目录经 Hook 进出）
+                                        libssh，也不认识 au::file_dialog（D8①/D1①/D11 纪律：目录经 Hook 进出）。
+                                        **批 3 落地注记（裁决 7.109）**：另有一行顶行留痕（head＝「无归属在途
+                                        任务 > 上一次留痕」的三选一，`key_headline_key`）；重建触发面按件
+                                        拆三档——主卡比「行表逐字段全等（`KeyCandidate::operator==`）＋顶行
+                                        留痕 key/arg 双比」（动作不改行表只改留痕，单比行表看不见「已复制」）、
+                                        推送框比「在途档／阶梯格／留痕」三样**就地重建**（框里没有输入草稿，
+                                        重建不打断什么）、生成框**不随 tick 重建**（正在输入的草稿不被动），
+                                        其唯一自动出口是「快照离开 Generate 档」的 latch，提交成功即置灰防连点；
+                                        目录腿的「不留痕」闸收在本件 `on_add_dir`（空选路整条返回，装配层不备
+                                        第二道空闸，D11②）
 src/main.cpp                       修改 —— keys.open 命令（照 tunnels.open 写法）、单 worker 串行队列、
                                         latest-value 快照、剪贴板帧边界、凭据链接 credential_prompt、启动不扫盘、
                                         **pick_key_dir 接 au::file_dialog::open_folder()**（照既有
-                                        `picked_save_path`/`picked_open_path` 的形态与「空串＝取消或起不来同途」口径）
+                                        `picked_save_path`/`picked_open_path` 的形态与「空串＝取消或起不来同途」口径）。
+                                        **批 3 落地注记（裁决 7.109）**：KeysWorker 在**提交时**发布在途标记（op/op_path
+                                        立即可见、UI 即时置灰），任务尾巴把标记交给下一件排队任务或收成 Idle；扫盘腿
+                                        收成 `run_keys_scan()` 一个自由函数（normalize → scan → sort，任务尾巴直接调
+                                        它而不是捕获栈上 lambda，免悬挂）；「已复制」走 `publish_notice("keys.notice.copied")`
+                                        即时留痕（无 conn 枚举可映射，不为它发明第二套枚举）；导出/推送的口令接续＝
+                                        `SecretAsk` 按 `secret_ask_for(normalized_auth_method(…))` 取档，回调续交 secret
+                                        给 worker 任务，明文只活在那一次调用栈（CONN.09）
 include/borealis/config/settings.h 修改 —— **第七域 key_dirs（std::vector<std::string>，缺省空＝只扫 ~/.ssh，
                                         D2③ 的连带代价）**；纯路径串、不含任何凭据材料
 src/config/store.cpp               修改 —— key_dirs 域读写与往返；`kDomainKeys` 追加一项
@@ -189,6 +205,7 @@ KeysPanel（UI 线程）：tick() 读快照 → key_rows() 合成 → 行表有�
 - **系统目录框是唯一例外**：`open_folder()` 由用户主动呼出、是 OS 的模态框，与设置面板导出/导入那两条腿同档（AGENTS §25 禁的是回调里的静默阻塞 IO，用户按下的模态框不在其列）。
 - **面板关闭不等 worker**：析构时投一条「跑完当前任务即退」的收尾，`join` 上界＝一次 RSA-4096 生成（F3 读数）或一次 exec 的连接超时；该取舍与 `SftpPanel` 断连同档并写在头注，走查不可接受再改投递。
 - **明文面**：passphrase 只活在对话框提交那一次调用栈，随 F4 的实参进 libssh 后即销毁；本件与传输腿都不持副本、不落盘、不进日志（CONN.09 不变量，判据 §6 末条）。
+- **批 3 落地注记（裁决 7.109）**：在途标记在**提交时**发布（op/op_path 立即可见、UI 即时置灰），不存在「排队中」那一格的字面量——串行队列里下一件任务的标记由任务尾巴交接；快照的行模型 `key_rows()` 只把标记点在 `op_path` 对上的那一行（顶行与行内动作的措辞分工见 `keys_format` 头注）。
 - 启动序**不扫盘**（零配置可用 `PREF.06`：首屏不做同步 IO）；扫盘只发生在 `keys.open` 与每次生成/导出/推送/删除/目录变更之后。
 - **删除的落点**：只删「扫描面内、被识别为密钥、且当前确实在场」的路径；目录表本身不因删文件而变动（`~/.ssh` 恒在不可移，其余目录去留归用户自己管）。
 
@@ -196,12 +213,12 @@ KeysPanel（UI 线程）：tick() 读快照 → key_rows() 合成 → 行表有�
 
 - **生成密钥对（①）**：ed25519 缺省、RSA 三档；passphrase 可空；产物＝同 basename 的私钥 + `.pub`；D5① 三道闸各有判据（同名拒绝、临时文件 0600、rename 就位），且**按所选目标目录适用**；**ed25519 的真生成允许进无头用例**（F8/F3：亚毫秒、无网络），断言私钥文件模式与 `.pub` 单行三字段与指纹前缀 `SHA256:`；RSA 档在用例里只判参数与计划，不跑秒级生成。
 - **列表（②）**：扫盘件是「目录表 → 行表」的纯 IO 函数，用例走临时目录夹具（成对、孤儿私钥、非密钥文件、子目录、**两个目录里同名 basename** 五类干扰项，最后一项证「唯一键＝路径」）；加密两档徽标按 F8 判；孤儿私钥行的「导出公钥」腿有判据。
-- **目录腿（D2③/D11）**：`key_dirs` 第七域读写往返归 `utest_config`，判的四件事＝缺省空、**逐字往返不去重**、空串元素逐个丢弃并留 `key_dirs.items[N]` 痕迹、`items` 非数组整键回落（外加既有的不含凭据子串那条审计）；**去重与「不可达条目保留」不在装载侧**，那是 `conn::normalize_key_dirs()` 的活儿（`utest_keys_model` 守），同步 IO 不进装载接缝——出稿把这两条记在本件名下是笔误，落地时改口（裁决 7.107）；面板侧判据＝**给了路径就规范化＋落盘＋重扫，空串就整条不跑且不留痕**，经 `file_dialog::headless_folder_result` 钩子证接线（同 `settings_panel` 的导出腿：只测接线不测产物）；「`~/.ssh` 不可移」有独立判据（试图移除后表内仍在）。
-- **一键复制（③）**：判据交出的字节＝`type + ' ' + base64 + ' ' + comment` 单行、无尾随换行进 outbox；是否真落系统剪贴板归真机走查（7.41 同口径，本仓只判 outbox 侧）。
+- **目录腿（D2③/D11）**：`key_dirs` 第七域读写往返归 `utest_config`，判的四件事＝缺省空、**逐字往返不去重**、空串元素逐个丢弃并留 `key_dirs.items[N]` 痕迹、`items` 非数组整键回落（外加既有的不含凭据子串那条审计）；**去重与「不可达条目保留」不在装载侧**，那是 `conn::normalize_key_dirs()` 的活儿（`utest_keys_model` 守），同步 IO 不进装载接缝——出稿把这两条记在本件名下是笔误，落地时改口（裁决 7.107）；面板侧判据＝**给了路径就规范化＋落盘＋重扫，空串就整条不跑且不留痕**，经 `file_dialog::headless_folder_result` 钩子证接线（同 `settings_panel` 的导出腿：只测接线不测产物）；「`~/.ssh` 不可移」有独立判据（试图移除后表内仍在）。**落地注记（裁决 7.109）**：「不留痕」的闸收在面板 `on_add_dir`——空选路整条返回、`add_dir` 不呼，装配层不再备第二道空闸（一个事实一处判）；落盘仍逐字不去重，规范化归扫盘时的 `normalize_key_dirs()`。
+- **一键复制（③）**：判据交出的字节＝`type + ' ' + base64 + ' ' + comment` 单行、无尾随换行进 outbox；是否真落系统剪贴板归真机走查（7.41 同口径，本仓只判 outbox 侧）。**落地注记（裁决 7.109）**：那一行的第二字段随扫盘交出（`KeyCandidate::public_base64`，取不出的两档留空串 ⇒ 复制/推送整枚不画），「已复制」留痕由装配层 `publish_notice("keys.notice.copied")` 即时写快照——无 conn 枚举可映射，不为它发明第二套枚举。
 - **推送至主机（④）**：本地判重命中即不发写并告知「已在授权表里」——判重本身是 `conn::plan_append()` 的纯逻辑（`utest_keys_model` 守），推送侧只把它映射成 `keys.push.already_authorized`；追加走 stdin，**公钥不出现在命令串**（该判据已写成 `utest_keys_push`：量两条 exec 常量里 base64 字母表的最长连续段，阈值 16 而合法最长串是 `authorized` 的 10，并以 `plan_append` 的 payload 作**正对照**防闸空转）；失败归因按代码为 `conn::PushFailure` **七档**（`DialOutcome` 四档失败一一映射 + 执行被拒／写回执异常 + 行不成立，最后一档在分配会话之前判掉，见判据 6）；取退出码走非弃用的 `ssh_channel_get_exit_state`（F15，出稿计划的定点抑制作废）。**真 sshd 成功腿待 `etest_`**（与 7.96① / 7.100 的在册欠账同一条环境约束；本机复核过无 sshd 与主机密钥），可读回的档位由 `itest_keys_push` 以拒连端口证（拨号档 + 「不成形的行不开 socket」），本棒交付面只到「无头可证」。
 - **删除（D9②/D12）**：临时目录夹具里建对 ⇒ 确认后两文件皆无、列表少一行；**「⋯」只呼确认框，未确认前文件仍在**（两段式判据）；符号链接例＝拒绝且红留痕，链接与其目标都还在；**有口令私钥的删除不弹询问**（反向判据，防实现顺手加）；改名/改口令不在本期。
 - **安全面（CONN.09 交界）**：配置目录明文审计那条既有自动化用例（F11）在本棒后仍绿——新增的 `key_dirs` 只是路径串、密钥产物落 `~/.ssh` 或所选目录而非配置目录、passphrase 不入 schema；`grep` 判据不因本棒新增第七域而放宽。
-- **门禁与测试**：`utest_keys_model` + `utest_keys_format` + `itest_keys_panel` 全绿并入 CTest（前缀纪律，AGENTS 第 18 条）；`ctest --preset linux -E etest_` 项数在此之上 +3；`utest_config` 与 `utest_settings_catalog` 的既有例随第七域一并补/改。**批 2 到货后的实际读数**：本域已有 `utest_keys_model`／`utest_keys_format`／`utest_keys_store`／`utest_keys_push`／`itest_keys_push` 五件在册，`ctest --test-dir build -E etest_` **71 项全绿**；`itest_keys_panel` 与「+3」那条判据随批 3 到货，届时以代码读数回写不预告数字。
+- **门禁与测试**：`utest_keys_model` + `utest_keys_format` + `itest_keys_panel` 全绿并入 CTest（前缀纪律，AGENTS 第 18 条）；`ctest --preset linux -E etest_` 项数在此之上 +3；`utest_config` 与 `utest_settings_catalog` 的既有例随第七域一并补/改。**批 2 到货后的实际读数**：本域已有 `utest_keys_model`／`utest_keys_format`／`utest_keys_store`／`utest_keys_push`／`itest_keys_push` 五件在册，`ctest --test-dir build -E etest_` **71 项全绿**；`itest_keys_panel` 与「+3」那条判据随批 3 到货，届时以代码读数回写不预告数字。**批 3 到货后的实际读数（裁决 7.109）**：`itest_keys_panel` 新件 **8 案**（无头真派发），`utest_keys_format` 10 → **16 案**（在途五档、顶行三选一、行内途标记点名、`public_text` 单行、阶梯次序对枚举、口令双栏一致）、`utest_keys_store` 11 → **12 案**（`public_base64` 两档），`ctest --test-dir build -E etest_` **71 → 72 项全绿**，`borealis_test_runner` 全跑 **912 案全绿**。
 - **真机走查**（AGENTS 第 33 条，本稿不宣称「可用」）：卡片观感与行密度、passphrase 双栏手感、复制与推送两处留痕看不看得见、RSA-4096 生成期的置灰反馈够不够、**「＋目录」在 Win32 真选择器上的手感（Linux 腿本期是空响应，缺口单在册）**。
 
 ## 7 本期不做（延后子项）
@@ -244,3 +261,20 @@ D1–D12 已于 2026-10-10 经人逐条裁完：**八条按推荐①，D2/D9 改
 Hooks 交回装配层」开了一道门。**仍不称「可用」**（第 33 条）：面板一行未写，四个子项与追加的删除腿在用户侧
 仍不可达；推送的两段 exec 与「已授权就不发写」缺可达证据（本机复核无 sshd 与主机密钥），待 `etest_`；
 Win32 腿未编译验证。
+
+**批 3 已于 2026-10-10 落地、批 4（本稿回写与走查登记）随之收口**（裁决 **7.109** 记七处落地期口径）：
+`ui::keys_panel` 四张卡（行表／生成／推送／删除确认）＋顶行留痕，`main.cpp` 装配（单 worker 串行队列、
+提交即发在途标记、`keys.open` 命令、启动不扫盘、目录腿、口令接续经 `credential_prompt`），
+`settings_i18n` 词条族 73 条，conn 三处补字段（`KeyCandidate::public_base64`＋`operator==`、
+`push_stage_index`——复制/推送那一行随扫盘交出、阶梯格序由枚举的主人定）。`itest_keys_panel` 新件
+**8 案**（无头真派发：行表随快照、真点复制进 outbox、同名红提示不落盘、生成期置灰＋终值收框、
+推送阶梯推进与失败归因、删除两段式、目录腿钩子证接线、空态与不可达留痕上屏）；
+`ctest --test-dir build -E etest_` **71 → 72 项全绿**，全跑 **912 案全绿**。非空转以 **5 处变异**自证
+**全红**（置灰摘除、空选路闸摘除、推送框重建判据摘除、顶行优先级摘除、行内途标记不点名路径），
+另有两处**开发期被 itest 当场抓到的真缺陷**如实登记：生成提交钮的 `shared_ptr` 被 `std::move` 进节点树
+后成员置空、置灰调用落空（二次提交双呼，改为只拷不挪）；空选路照常呼 `add_dir`（按裁决收闸在面板，
+装配层撤掉第二道空闸）。重建触发面按件拆三档的落地口径与目录腿闸位已回写本稿 §4/§5/§6。
+**仍不称「可用」**（第 33 条）：真机走查未做（§6 末条那五项在册——卡片观感与行密度、passphrase 双栏
+手感、复制与推送两处留痕、生成期置灰反馈、Win32 真选择器手感）；POSIX「＋目录」等价取消
+（`FRAMEWORK_TASK_CONN10.md`、附录 A.2 的 **G41** 在册）；真 sshd 推送成功腿与「判重命中不发写」
+欠 `etest_`（同 7.96① / 7.100 的环境欠账）；Win32 腿未编译验证。

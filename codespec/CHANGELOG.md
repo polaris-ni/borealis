@@ -4,7 +4,14 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
-## v0.108（2026-10-10）**`SPEC.FEAT.CONN.10` 批 2 落地：传输腿两件 `conn::key_store`（扫／生／导／删）+ `conn::key_push`（两段 exec 推送），`ui::keys_format` 补三家 outcome 与推送阶梯，§0 新增六条读数 F12–F17 并按代码改口稿中三处**（`src/conn/key_store.{h,cpp}` + `tests/unit/utest_keys_store.cpp` → `src/conn/key_push.{h,cpp}` + `tests/unit/utest_keys_push.cpp` + `tests/integration/itest_keys_push.cpp` → `src/ui/keys_format.{h,cpp}` + `tests/unit/utest_keys_format.cpp` + `src/CMakeLists.txt` + `codespec/UI_KEYS.draft.{md,svg,png}`，判据入册为裁决 **7.108**）
+## v0.109（2026-10-10）**`SPEC.FEAT.CONN.10` 批 3 落地＋批 4 收口：`ui::keys_panel` 面板本体与 `main.cpp` 装配（含目录腿、口令接续与中文词条），conn 三处补字段，`itest_keys_panel` 新件；稿面随代码回写、走查登记在册**（`src/ui/keys_panel.{h,cpp}` + `src/main.cpp` + `src/ui/settings_i18n.cpp` + `src/ui/keys_format.{h,cpp}` + `src/conn/key_model.h` + `src/conn/key_store.{h,cpp}` + `src/conn/key_push.{h,cpp}` + `src/CMakeLists.txt` + 三件测试（`utest_keys_format`／`utest_keys_store` 补案、`itest_keys_panel` 新件）+ `codespec/UI_KEYS.draft.md` 回写，判据入册为裁决 **7.109**）
+
+**动机**：批 2 交付的传输腿（扫／生／导／删／推）在用户侧仍不可达——批 3 把它们接上屏：左停靠卡片四张卡（行表／生成／推送／删除确认）＋顶行留痕，动作一律经 Hooks 交回装配层的串行 worker；批 4（文档回写与走查登记）随本裁决一并收口。
+
+**决定形态的口径**：⑴ **行表「有变才重建」的 diff 键是逐字段全等**：`KeyCandidate` 补 `operator==`（default）与 `public_base64` 字段——「复制／推送」交出的那一行随扫盘一起交出（复制发生在点击回调里，现场读 `.pub` 就是回调中的同步 IO，AGENTS §25），取不出的两档（带口令又无 `.pub`、两族之外）留空串 ⇒ 面板把「复制／推送」整枚不画，行照常在场可删。⑵ **推送阶梯格序的唯一来源是 `push_stage_index`**（随 `key_push` 到货，枚举的主人定次序），快照只存整数过闸（面板不含 libssh 类型，7.97 D5① 同条纪律）；「哪一格亮」的措辞仍归 `keys_format`。⑶ **目录腿的「不留痕」闸收在面板**：`on_add_dir` 空选路整条返回（D11②「空串＝取消或平台起不来同途」的落点），装配层 `add_dir` 不再备第二道空闸——一个事实一处判（第 3 条）；落盘仍逐字不去重，规范化归 `normalize_key_dirs`。⑷ **「已复制」没有 conn 枚举**：判据 4 的留痕是无枚举可映射的动作反馈，由装配层 `publish_notice("keys.notice.copied")` 即时写快照（`main.cpp` 一处字面量），不为它发明第二套枚举。⑸ **重建触发面按件拆三档**（稿 §5 的落地化）：主卡＝行表全等 **＋** 顶行留痕 key/arg 双比（动作不改行表只改留痕，单比行表看不见它）；推送框＝在途档／阶梯格／留痕三样比对**就地重建**（框里没有输入草稿，重建不打断什么）；生成框**不随 tick 重建**，唯一自动出口是「快照离开 Generate 档」的 latch，提交成功即置灰防连点。⑹ **口令接续**：导出/推送两腿遇行加密或档案要求时经 `credential_prompt` 询问（`SecretAsk` 按认证方式取档），回调续交 secret 给 worker 任务，明文只活在那一次调用栈（CONN.09 不变量）。
+
+**代价与验收**：⑴ 非空转以 **5 处变异**自证**全红**——生成提交钮置灰摘除、空选路闸摘除、推送框重建判据摘除、顶行「无归属任务优先」摘除、行内途标记不点名路径，各由对应用例当场打红；另有两处**开发期被 itest 抓到的真缺陷**如实登记：生成提交钮的 `shared_ptr` 被 `std::move` 进节点树后成员置空、置灰调用落空（二次提交双呼，改为只拷不挪），空选路照常呼 `add_dir`（按 ⑶ 收闸）。⑵ 读数：`ctest --test-dir build -E etest_` **71 → 72 项全绿**，`borealis_test_runner` 全跑 **912 案全绿**（含 `etest_`）；本域在册六件＝`utest_keys_model` 16 案／`utest_keys_format` 16 案（+6）／`utest_keys_store` 12 案（+1）／`utest_keys_push` 2 案／`itest_keys_push` 2 案／`itest_keys_panel` 8 案（新件，无头真派发）。⑶ 稿 §4/§5/§6 按代码回写（重建触发三档、目录腿闸位、「已复制」留痕来源、批 3 读数），`SPECIFICATIONS.md` CONN.10 现状句改口为「批 1–4 已落（走查动作欠）」，`PLAN.md` 的 CONN.10 行与 M3 里程碑行回写。**仍不称「可用」**（第 33 条）：真机走查未做（稿 §6 那五项在册，含 Win32 真选择器手感）；POSIX「＋目录」等价取消（附录 A.2 的 **G41** 在册）；真 sshd 推送成功腿与「判重命中不发写」欠 `etest_`（同 7.96① / 7.100 的环境欠账）；Win32 腿未编译验证。
+
 
 **动机**：v0.107 落的是地基（第七域 + platform 腿 + 纯逻辑两件），批 2 是把地基接到真实字节上——扫盘出「行唯一键＝全路径」的那张表，生成落「不覆盖 + 0600 + rename」那三道闸，推送走 D7① 的两段 exec。本批不落 UI，面板与中文词条随批 3。
 
