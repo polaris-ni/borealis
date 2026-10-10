@@ -78,13 +78,15 @@ if (WIN32)
             platform/win/file_secure.cpp
             platform/win/local_terminal.cpp
             platform/win/tcp.cpp
+            platform/win/user_dir.cpp
             platform/win/win_text.cpp)
 elseif (UNIX)
     target_sources(borealis_core PRIVATE
             platform/posix/file_secure.cpp
             platform/posix/forkpty_connection.cpp
             platform/posix/local_terminal.cpp
-            platform/posix/tcp.cpp)
+            platform/posix/tcp.cpp
+            platform/posix/user_dir.cpp)
     # forkpty 需要链接 libutil（某些发行版如 Debian/Ubuntu 需要显式指定）。
     find_library(UTIL_LIBRARY util)
     if (UTIL_LIBRARY)
