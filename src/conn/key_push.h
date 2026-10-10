@@ -65,6 +65,15 @@ enum class PushFailure : std::uint8_t {
     InvalidLine,       ///< 交来的公钥行不成行（`plan_append` 出空 payload）：**未拨号、一物未动**。
 };
 
+/// @brief 步骤态在阶梯上的格序（0＝拨号 … 3＝完成）。
+///
+/// 为什么本件提供而不是面板或映射件自己数：快照要能**不含 libssh 类型**地表达「走到哪一格」
+/// （面板只吃标准类型，裁决 7.97 D5① 那条纪律），于是它在快照里存一个整数。那个整数的
+/// 次序由谁定？由枚举的主人定——`PushStage` 的四格次序就是稿 §2 判据 6 那串箭头，
+/// 面板或 `keys_format` 再自己排一遍就是第二真值源（第 3 条）。
+/// 「哪一格亮」的措辞仍归 `ui::keys_format`（`key_push_ladder()`）。
+[[nodiscard]] auto push_stage_index(PushStage stage) -> int;
+
 /// @brief 一次推送的终值（稿 §5 的 `push(profile, secret, line)` 的回投面）。
 struct PushReport {
     PushStage stage{PushStage::Dial};         ///< 走到哪一格。

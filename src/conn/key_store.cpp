@@ -277,6 +277,7 @@ struct PublicFields {
         if (const auto fields = read_public_fields(pub_path); fields.has_value()) {
             row.type = to_key_type(ssh_key_type_from_name(fields->wire_name.c_str()));
             row.comment = fields->comment;
+            row.public_base64 = fields->base64;
             if (row.type == KeyType::Rsa) {
                 row.bits = rsa_bits_from_public_base64(fields->base64);
             }
@@ -301,8 +302,13 @@ struct PublicFields {
         if (row.type == KeyType::Unknown) {
             row.type = to_key_type(ssh_key_type(private_handle.get()));
         }
+        if (row.public_base64.empty()) {
+            // 符号链接的 `.pub` 走的就是这一支：不读链接指向的文件，而**导出**公钥的那一行
+            // 与**复制**的那一行都得有个 base64 来源，于是从私钥的公共部分现算。
+            row.public_base64 = public_base64_of(private_handle.get());
+        }
         if (row.type == KeyType::Rsa && row.bits == 0U) {
-            row.bits = rsa_bits_from_public_base64(public_base64_of(private_handle.get()));
+            row.bits = rsa_bits_from_public_base64(row.public_base64);
         }
         if (row.fingerprint.empty()) {
             row.fingerprint = fingerprint_of(private_handle.get());

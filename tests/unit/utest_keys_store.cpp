@@ -118,6 +118,45 @@ AURORA_TEST_CASE(generated_ed25519_pair_lands_as_one_row_with_a_fingerprint) {
     AURORA_TEST_CHECK_STREQ(row.path, (directory / "id desk").string());
 }
 
+AURORA_TEST_CASE(the_row_carries_the_public_base64_the_copy_action_hands_over) {
+    // 批 3 补字段（裁决 7.109）：判据 4「一键复制」发生在点击回调里，现场读 `.pub` 就是回调中的
+    // 同步 IO（AGENTS §4.5 第 25 条）——base64 由扫盘一次带出，行表自己就是可复制字节的来源。
+    // 变异注入自证非空转：删掉 `row_of_private_key` 里 `row.public_base64 = fields->base64` 那行，
+    // 下面的「行内重建＝盘上一行」当场红。
+    const auto directory = fixture_dir("gen_b64");
+    auto request = ed_request(directory, "id_b64");
+    request.comment = "desk key";
+    AURORA_TEST_CHECK_EQ(static_cast<int>(conn::generate_key(request)),
+                         static_cast<int>(conn::GenerateOutcome::Created));
+    const auto row = only_row(scan_of(directory));
+
+    const auto file_line = read_text(directory / "id_b64.pub");
+    AURORA_TEST_REQUIRE(file_line.ends_with("\n"));
+    const auto body = file_line.substr(0U, file_line.size() - 1U);
+    const auto first_blank = body.find(' ');
+    AURORA_TEST_REQUIRE(first_blank != std::string::npos);
+    const auto second_blank = body.find(' ', first_blank + 1U);
+    AURORA_TEST_REQUIRE_MSG(second_blank != std::string::npos, "comment field present in fixture");
+    AURORA_TEST_CHECK_STREQ(row.public_base64, body.substr(first_blank + 1U, second_blank - first_blank - 1U));
+    // 复制腿据此重建：`public_line(线名, base64, 注释)` 的产物要与盘上 `.pub` 那一行逐字节一致。
+    AURORA_TEST_CHECK_STREQ(conn::public_line(conn::key_wire_name(row.type), row.public_base64, row.comment),
+                            body);
+
+    // 取不出 base64 的那一档（带口令又无 `.pub`）留空串：面板据此把复制/推送整枚不画。
+    std::error_code ec;
+    std::filesystem::remove(directory / "id_b64", ec);
+    std::filesystem::remove(directory / "id_b64.pub", ec);
+    auto locked = ed_request(directory, "id_b64_locked");
+    locked.passphrase = std::string{"pp"};
+    AURORA_TEST_REQUIRE(static_cast<int>(conn::generate_key(locked)) ==
+                        static_cast<int>(conn::GenerateOutcome::Created));
+    std::filesystem::remove(directory / "id_b64_locked.pub", ec);
+    const auto locked_row = only_row(scan_of(directory));
+    AURORA_TEST_CHECK_TRUE(locked_row.encrypted);
+    AURORA_TEST_CHECK_TRUE(!locked_row.has_public);
+    AURORA_TEST_CHECK_STREQ(locked_row.public_base64, "");
+}
+
 AURORA_TEST_CASE(the_private_key_is_owner_only_and_no_scratch_file_survives) {
     // D5① 三道闸的读数点：0600（F6 的教训——libssh 自己写会随 umask 落成组可读）、
     // 就位后不留临时件（rename 那条路）、`.pub` 是一行三字段且以换行终止（判据 §6 的复制形态）。

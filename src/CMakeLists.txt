@@ -49,6 +49,7 @@ add_library(borealis_core STATIC
         ui/font_choice.cpp
         ui/grid_size_debounce.cpp
         ui/keys_format.cpp
+        ui/keys_panel.cpp
         ui/palette.cpp
         ui/pane_tree.cpp
         ui/right_click.cpp

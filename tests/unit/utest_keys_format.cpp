@@ -7,6 +7,10 @@
 ///           `conn/key_store`、`conn/key_push` 的枚举到货一并映射——判据仍是同一句「逐值互异」：
 ///           两档共用一枚词条就等于面板自己再措辞一次。稿 §4 说的「生成三态」不在本件：那是
 ///           装配层快照的属性（排队中／在跑／已完），一次阻塞调用没有中间态可映射。
+///           批 3 到货的下半张（裁决 7.106 D4①/D6① 的 latest-value 面）：`KeysSnapshot`/`key_rows()`
+///           行模型（至多一行在途、按路径点名、行序照扫盘原样）、`KeyRow::public_text()`（复制与
+///           推送共用的那一行字节）、在途措辞族 `keys.op.*`、顶行裁决 `key_headline_key`、
+///           阶梯次序（格序归 `push_stage_index`）与口令双栏一致判据。
 
 #include "ui/keys_format.h"
 
@@ -255,6 +259,121 @@ AURORA_TEST_CASE(the_push_notice_chooses_one_of_three_wordings_by_priority) {
     contradictory.already_authorized = true;
     AURORA_TEST_CHECK_MSG(ui::key_push_notice_key(contradictory) == "keys.push.fail.write_rejected",
                           "a failure never reads as good news");
+}
+
+// ============================================================
+// 批 3 到货：运行态快照与行模型（keys_format.h 的下半张）
+// ============================================================
+
+AURORA_TEST_CASE(the_in_flight_family_names_every_op_and_silence_for_idle) {
+    auto seen = std::set<std::string_view>{};
+    for (const auto op : {ui::KeysOpKind::Scan, ui::KeysOpKind::Generate, ui::KeysOpKind::Export,
+                          ui::KeysOpKind::Delete, ui::KeysOpKind::Push}) {
+        const auto key = ui::key_op_kind_key(op);
+        AURORA_TEST_CHECK_MSG(!key.empty(), "every in-flight op has its word");
+        AURORA_TEST_CHECK_MSG(key.starts_with("keys.op."), "one namespace for in-flight wording");
+        AURORA_TEST_CHECK_MSG(seen.insert(key).second, "distinct word per op");
+    }
+    AURORA_TEST_CHECK_EQ(seen.size(), 5U);
+    // 空闲不占一行措辞：顶行那句话属于上一个动作留下的留痕。
+    AURORA_TEST_CHECK_TRUE(ui::key_op_kind_key(ui::KeysOpKind::Idle).empty());
+}
+
+AURORA_TEST_CASE(the_headline_prefers_an_unattributed_in_flight_task_then_the_last_notice) {
+    auto snapshot = ui::KeysSnapshot{};
+    snapshot.notice_key = "keys.generate.failed";
+    // 空闲：上一句话就是顶行那一句。
+    AURORA_TEST_CHECK_MSG(ui::key_headline_key(snapshot) == "keys.generate.failed",
+                          "idle keeps the last notice");
+    // 有行归属的在途（导出/删除/推送点在某一行上）不在这里说话——那一行自己带着措辞。
+    snapshot.op = ui::KeysOpKind::Export;
+    snapshot.op_path = "/a";
+    AURORA_TEST_CHECK_MSG(ui::key_headline_key(snapshot) == "keys.generate.failed",
+                          "row-attributed ops stay in their row");
+    // 无行归属的在途（扫盘/生成）优先：顶行里「生成中」与上一趟的红字互相说谎是最坏形态。
+    snapshot.op = ui::KeysOpKind::Generate;
+    snapshot.op_path.clear();
+    AURORA_TEST_CHECK_MSG(ui::key_headline_key(snapshot) == "keys.op.generate",
+                          "unattributed op wins the headline");
+    // 无在途、无留痕＝顶行空着，不占一整行空白措辞。
+    snapshot.op = ui::KeysOpKind::Idle;
+    snapshot.notice_key.clear();
+    AURORA_TEST_CHECK_TRUE(ui::key_headline_key(snapshot).empty());
+}
+
+AURORA_TEST_CASE(the_row_model_marks_at_most_one_row_busy_by_path) {
+    // 任务串行（7.95 D7① 同族），因此至多一行带着在途标记——两行同时「导出中」就是谎报。
+    const auto rows = std::vector<conn::KeyCandidate>{
+        candidate("/a", "a", conn::KeyType::Ed25519),
+        candidate("/b", "b", conn::KeyType::Rsa, 2048U),
+        candidate("/c", "c", conn::KeyType::Ed25519),
+    };
+    auto snapshot = ui::KeysSnapshot{};
+    snapshot.rows = rows;
+    snapshot.op = ui::KeysOpKind::Export;
+    snapshot.op_path = "/b";
+    const auto painted = ui::key_rows(rows, snapshot);
+    AURORA_TEST_CHECK_EQ(painted.size(), 3U);
+    AURORA_TEST_CHECK_MSG(painted[0].op == ui::KeysOpKind::Idle, "only the named row is busy");
+    AURORA_TEST_CHECK_MSG(painted[1].op == ui::KeysOpKind::Export, "the named row carries the op");
+    AURORA_TEST_CHECK_MSG(painted[2].op == ui::KeysOpKind::Idle, "only the named row is busy");
+    // 行序照 scanned 原样（装配层已排过）：面板不排第二遍。
+    AURORA_TEST_CHECK_MSG(painted[1].key.path == "/b", "scan order preserved");
+    // 无行归属的任务（扫盘/生成）不点名任何一行：空 op_path 逐字节配不上任何路径。
+    snapshot.op_path.clear();
+    for (const auto &row : ui::key_rows(rows, snapshot)) {
+        AURORA_TEST_CHECK_TRUE(row.op == ui::KeysOpKind::Idle);
+    }
+}
+
+AURORA_TEST_CASE(public_text_is_the_line_the_copy_and_push_actions_hand_over) {
+    auto row = candidate("/a", "a", conn::KeyType::Ed25519);
+    row.public_base64 = "AAAAB3NzaC1";
+    row.comment = "dev@host";
+    // 行模型随 row 改写而重建；先行包一层 lambda，免得聚合初始化的花括号
+    // 把断言宏的实参从逗号处劈开（预处理不认花括号）。
+    const auto as_row = [&row] { return ui::KeyRow{row, ui::KeysOpKind::Idle}; };
+    AURORA_TEST_CHECK_MSG(as_row().public_text() == "ssh-ed25519 AAAAB3NzaC1 dev@host",
+                          "wire name + base64 + comment, single line");
+    // 注释为空只两字段，不留尾随空格（`public_line` 的判据原样透传）。
+    row.comment.clear();
+    AURORA_TEST_CHECK_MSG(as_row().public_text() == "ssh-ed25519 AAAAB3NzaC1",
+                          "no trailing blank");
+    // 两族之外（Unknown）拼不出行：复制/推送整枚不画的判据就在这个空串上。
+    row.type = conn::KeyType::Unknown;
+    AURORA_TEST_CHECK_TRUE(as_row().public_text().empty());
+    // base64 缺（带口令又无 .pub 那一档）同样交不出：没有可交出的动作就没有那枚钮。
+    row.type = conn::KeyType::Ed25519;
+    row.public_base64.clear();
+    AURORA_TEST_CHECK_TRUE(as_row().public_text().empty());
+    // 导出腿要不要先问口令＝行的加密态（D12⑵ 的反面）。
+    AURORA_TEST_CHECK_FALSE(as_row().needs_passphrase_to_export());
+    row.encrypted = true;
+    AURORA_TEST_CHECK_TRUE(as_row().needs_passphrase_to_export());
+}
+
+AURORA_TEST_CASE(the_ladder_order_belongs_to_push_stage_index_not_to_wording) {
+    const auto ladder = ui::key_push_ladder();
+    AURORA_TEST_CHECK_EQ(ladder.size(), 4U);
+    // 次序由 `push_stage_index` 定（枚举的主人），措辞由本件定：格子对得上枚举才叫同一把梯子。
+    for (const auto stage : all_push_stages()) {
+        const auto index = static_cast<std::size_t>(conn::push_stage_index(stage));
+        AURORA_TEST_CHECK_MSG(index < ladder.size(), "every stage has a ladder slot");
+        AURORA_TEST_CHECK_MSG(ladder[index] == ui::key_push_stage_key(stage),
+                              "ladder slot i shows the stage at index i");
+    }
+}
+
+AURORA_TEST_CASE(two_passphrase_columns_must_agree_before_a_generate_can_submit) {
+    AURORA_TEST_CHECK_MSG(ui::key_passphrase_mismatch_key("secret", "secret").empty(),
+                          "equal columns leave no notice");
+    AURORA_TEST_CHECK_TRUE(ui::key_passphrase_mismatch_key({}, {}).empty());
+    const auto mismatch = ui::key_passphrase_mismatch_key("secret", "Secret");
+    AURORA_TEST_CHECK_MSG(mismatch == "keys.generate.issue_mismatch",
+                          "the mismatch has its own wording");
+    // 判「两格输入」本身：一格空一格非空也是不一致。
+    AURORA_TEST_CHECK_MSG(ui::key_passphrase_mismatch_key("secret", {}) == "keys.generate.issue_mismatch",
+                          "empty versus filled is still a mismatch");
 }
 
 }  // namespace borealis::test_cases::utest_keys_format

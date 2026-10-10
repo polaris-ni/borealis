@@ -5,7 +5,8 @@
 // ------------------------------------------------------------
 // `SPEC.FEAT.CONN.10` 面板层的「最后一步」：行模型的徽标与数据段、状态→词条 key 的映射
 // （批 1 的四族：加密两态 / 公钥缺失 / 名称与注释校验留痕 / 目录不可达留痕；批 2 到货的
-// 生成、导出、删除三档结果与推送的步骤态＋失败归因）。全部只依赖标准类型与 `conn/key_model.h`
+// 生成、导出、删除三档结果与推送的步骤态＋失败归因；批 3 到货的 `KeysSnapshot`/`key_rows()`
+// 行模型与在途任务那一族）。全部只依赖标准类型与 `conn/key_model.h`
 // 的枚举，不含 aurora/au:: 类型、不碰文件系统与 UI
 // （`sftp_format`/`tunnel_format` 同族先例，AGENTS.md §4.4 第 20 条 ⇒ `utest_keys_format` 无头单测）。
 //
@@ -31,6 +32,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "conn/key_model.h"  // KeyCandidate/KeyDirEntry/NameIssue/CommentIssue（非框架类型）
 
@@ -116,5 +118,93 @@ namespace borealis::ui {
 /// 也不该显示成「刚写了什么」，所以它在前面判、失败其次、剩下才是真追加成功。本函数是这三者
 /// 的唯一裁决处（面板不再自己排这个优先级）。
 [[nodiscard]] auto key_push_notice_key(const conn::PushReport &report) -> std::string_view;
+
+// ============================================================
+// 批 3 到货：运行态快照与行模型（裁决 7.106 D4① 的 latest-value 那一面）
+// ============================================================
+
+/// @brief 装配层在跑哪一类任务（稿 §4 那句「生成三态」的落地形态：空闲／进行中／已回投）。
+///
+/// **这不是 `key_store` 的枚举**——那三家 outcome 说的是一次阻塞调用的**终局分档**，本枚举说的是
+/// 调用**在途时**界面上该置灰哪枚钮、哪一行显示「生成中」。一次调用没有中间态可映射
+/// （`key_store.h`/`key_push.h` 头注同口径），所以中间态只能由装配层的队列知道，由这里命名。
+enum class KeysOpKind : std::uint8_t {
+    Idle,      ///< 队列空：没有钮要置灰。
+    Scan,      ///< 扫盘在途（开面板、每次动作之后的重扫）。
+    Generate,  ///< 生成在途（判据 5 的「行内生成中」＋提交钮置灰，F3：RSA-4096 秒级）。
+    Export,    ///< 导出公钥在途。
+    Delete,    ///< 删除在途（D12⑷：删后要重扫，两件事共用一趟）。
+    Push,      ///< 推送在途（阶梯在这一档才有当前格）。
+};
+
+/// @brief 装配层交回面板的**最新值**快照（7.97 D6① 同族：状态是可覆盖的量，不留事件队列）。
+///
+/// 面板每帧经 `snapshot` Hook 取一份副本，`key_rows()` 折成行表，行表与上一帧相等就不重建。
+/// 本类型**不含任何 libssh 与框架类型**：`conn::KeyCandidate` 是纯逻辑层的标准类型行模型，
+/// 推送那一格是 `conn::push_stage_index()` 算好的整数——面板因此不需要够得着 `key_push.h`
+/// （那头注的理由：让面板摸到传输腿签名就等于给「动作一律经 Hooks 交回装配层」开门）。
+struct KeysSnapshot {
+    std::vector<conn::KeyCandidate> rows;  ///< 最近一次扫盘的行表（装配层已按 `sort_rows()` 排过）。
+    std::vector<conn::KeyDirEntry> dirs;   ///< 同一次扫盘用的**规范化**目录表（含可达性判定结果）。
+    KeysOpKind op{KeysOpKind::Idle};       ///< 在途任务；`Idle`＝队列空，没有留痕之外的话要说。
+    std::string op_path;                   ///< 该任务作用的那一行路径（生成/扫盘为空＝无行归属）。
+    int push_step{-1};                     ///< 推送阶梯当前格（0..3）；-1＝本帧不在推送、无当前格。
+    std::string notice_key;                ///< 留痕词条 key（空＝无话可说；成功档多半不留痕）。
+    std::string notice_arg;                ///< 留痕的 `{0}` 参数（要带上屏的文件名或路径）。
+
+    [[nodiscard]] auto operator==(const KeysSnapshot &) const noexcept -> bool = default;
+};
+
+/// @brief 面板画出的一行＝扫盘事实 + 这一行摊上的在途任务。
+struct KeyRow {
+    conn::KeyCandidate key;
+    KeysOpKind op{KeysOpKind::Idle};
+
+    /// @brief 这一行能不能交出公钥单行（判据 4 的「复制」、判据 6 的「推送」共用的闸）。
+    ///
+    /// 判据就是 `public_line()` 回不回空串——两族之外的算法族与「带口令又无 `.pub`」那两档
+    /// 都取不出 base64（`key_store.h` 的第 ⑶ 档），拼不出行就**没有可交出的动作**，面板据此
+    /// 整枚不画而不是画一枚点了没反应的钮（侧栏 7.38⑥ F-b 同一条口径）。
+    [[nodiscard]] auto public_text() const -> std::string;
+
+    /// @brief 这一行的私钥是否带口令（导出腿要不要先问口令，D12⑵ 的反面）。
+    [[nodiscard]] auto needs_passphrase_to_export() const noexcept -> bool {
+        return key.encrypted;
+    }
+
+    [[nodiscard]] auto operator==(const KeyRow &) const noexcept -> bool = default;
+};
+
+/// @brief 行模型：扫盘行表 × 快照（`tunnel_rows` 同族，判据比这份而不读浮层树）。
+///
+/// 快照里那个 `op_path` 之外没有别的按路径的查找：任务串行（7.95 D7① 同族——同一时刻只跑
+/// 一把钥匙的事），因此**至多一行**带着在途标记。行序照 `scanned` 原样（装配层已排过）。
+[[nodiscard]] auto key_rows(const std::vector<conn::KeyCandidate> &scanned,
+                            const KeysSnapshot &snapshot) -> std::vector<KeyRow>;
+
+/// @brief 在途任务 → 词条 key（`keys.op.*`）；`Idle` 回空串＝空闲不占一行措辞。
+///
+/// 这一族是「进行中」那一态的唯一措辞处：面板拿到 key 非空就上屏，不自己写「生成中」。
+[[nodiscard]] auto key_op_kind_key(KeysOpKind op) -> std::string_view;
+
+/// @brief 卡片顶部那一行该说哪一句：无行归属的在途任务优先，其次是上一个动作留下的留痕。
+///
+/// 「优先」是本件裁决的（与 `key_push_notice_key()` 的三选一同一类活儿）：面板如果自己排这个
+/// 先后，生成在途时就会既显「生成中」又把上一趟的失败红字留在同一行里，两句互相说谎。
+/// 有行归属的任务（导出／删除／推送点在某一行上）不在这里说话——那一行自己带着措辞。
+[[nodiscard]] auto key_headline_key(const KeysSnapshot &snapshot) -> std::string_view;
+
+/// @brief 推送阶梯的四格词条 key（`keys.push.stage.*` 的次序展开）。
+///
+/// 次序由 `conn::push_stage_index()` 定（枚举的主人说哪一格在第几格），措辞由本件定，
+/// 面板只按快照那个整数决定哪格是当前格——三处各留一份判定，谁也不多知道别人的活儿。
+[[nodiscard]] auto key_push_ladder() -> std::vector<std::string_view>;
+
+/// @brief 口令双栏不一致 → `keys.generate.issue_mismatch`（一致时回空串＝不留痕）。
+///
+/// 为什么在映射件里：这是全表**唯一**一条不对应任何 `conn` 枚举的判据，它纯属于「对话框
+/// 上的两格输入」这件事。措辞仍然只在这里有一份，面板不写第二句（裁决 7.25⑬）。
+[[nodiscard]] auto key_passphrase_mismatch_key(std::string_view first, std::string_view second)
+    -> std::string_view;
 
 }  // namespace borealis::ui

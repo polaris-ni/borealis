@@ -85,6 +85,19 @@ struct KeyCandidate {
     bool encrypted{};             ///< 有口令（D3①：一次探测的结论，不是解密）。
     std::string fingerprint;      ///< `SHA256:…`；探测失败时为空。
     std::string comment;          ///< `.pub` 第三字段；无 `.pub` 时为空。
+
+    /// @brief 公钥 blob 的 base64 段（`public_line()` 的第二字段，判据 4 那一行唯一的来源）。
+    ///
+    /// 为什么随扫盘一起交出而不是让「复制」按钮去读文件：读 `.pub` 是同步 IO，而复制发生在
+    /// 事件回调里（AGENTS §4.5 第 25 条）。本腿在算指纹时本来就握着公钥（`.pub` 里的那一份，
+    /// 或私钥的公共部分），顺手留下这串字节不增加一次打开。
+    /// 带口令又无 `.pub` 的钥匙取不出（F8 不解密），因此恒空——面板据此把「复制／推送」
+    /// 整枚不画，而行照常在场、照常可删（`key_store.h` 头注的第 ⑶ 档同一条理由）。
+    std::string public_base64;
+
+    /// @brief 逐字段全等比较：面板的「行表有变才重建」（裁决 7.97 D6① 同族）比的就是它，
+    ///        故 `public_base64` 也在场——它变了说明盘上的公钥换了一把。
+    [[nodiscard]] auto operator==(const KeyCandidate &) const noexcept -> bool = default;
 };
 
 /// @brief 行序：先按目录表次序（`~/.ssh` 恒在表首），同目录内按 basename 逐字节序。

@@ -191,6 +191,20 @@ auto authorized_keys_append_command() -> std::string_view {
     return kAppendCommand;
 }
 
+auto push_stage_index(PushStage stage) -> int {
+    switch (stage) {
+    case PushStage::Dial:
+        return 0;
+    case PushStage::Auth:
+        return 1;
+    case PushStage::Exec:
+        return 2;
+    case PushStage::Done:
+        return 3;
+    }
+    return 0;  // 穷尽后不可达：阶梯不能有一格落到格子外面（与 `key_push_stage_key` 同尾）。
+}
+
 auto push_public_key(const SshProfile &profile, std::optional<std::string> secret,
                      std::string_view line) -> PushReport {
     auto report = PushReport{};

@@ -176,4 +176,62 @@ auto key_push_notice_key(const conn::PushReport &report) -> std::string_view {
     return report.already_authorized ? "keys.push.already_authorized" : "keys.push.appended";
 }
 
+auto key_push_ladder() -> std::vector<std::string_view> {
+    // 次序交给自己数四档的写法：这里是**措辞**的序列，哪一格在第几格由
+    // `conn::push_stage_index()` 说（枚举的主人定次序），本件不重排它。
+    return {"keys.push.stage.dial", "keys.push.stage.auth", "keys.push.stage.exec",
+            "keys.push.stage.done"};
+}
+
+auto key_passphrase_mismatch_key(std::string_view first, std::string_view second)
+    -> std::string_view {
+    return first == second ? std::string_view{} : "keys.generate.issue_mismatch";
+}
+
+auto key_op_kind_key(KeysOpKind op) -> std::string_view {
+    switch (op) {
+    case KeysOpKind::Idle:
+        return {};  // 空闲没有话要说：留痕位空着，而不是显一句「什么都没在跑」。
+    case KeysOpKind::Scan:
+        return "keys.op.scan";
+    case KeysOpKind::Generate:
+        return "keys.op.generate";
+    case KeysOpKind::Export:
+        return "keys.op.export";
+    case KeysOpKind::Delete:
+        return "keys.op.delete";
+    case KeysOpKind::Push:
+        return "keys.op.push";
+    }
+    return {};
+}
+
+auto key_headline_key(const KeysSnapshot &snapshot) -> std::string_view {
+    // 扫盘与生成没有行归属（新行还没进表、扫的是整张表），那两句只能由卡片顶行说；
+    // 点中某一行的动作（导出／删除／推送）由那一行自己说，顶行让位给留痕。
+    if (snapshot.op != KeysOpKind::Idle && snapshot.op_path.empty()) {
+        return key_op_kind_key(snapshot.op);
+    }
+    return snapshot.notice_key;
+}
+
+auto KeyRow::public_text() const -> std::string {
+    return conn::public_line(conn::key_wire_name(key.type), key.public_base64, key.comment);
+}
+
+auto key_rows(const std::vector<conn::KeyCandidate> &scanned, const KeysSnapshot &snapshot)
+    -> std::vector<KeyRow> {
+    auto rows = std::vector<KeyRow>{};
+    rows.reserve(scanned.size());
+    for (const auto &candidate : scanned) {
+        // 只有被任务点名的那一行带在途标记：队列串行（7.95 D7① 同族），同一时刻至多一个
+        // 动作，因此这里没有「多行同时在跑」那种形态要表达。路径逐字节比对与行唯一键同源
+        // （D2③ 细则⑷）。
+        const bool in_flight = snapshot.op != KeysOpKind::Idle && !snapshot.op_path.empty() &&
+                               snapshot.op_path == candidate.path;
+        rows.push_back(KeyRow{.key = candidate, .op = in_flight ? snapshot.op : KeysOpKind::Idle});
+    }
+    return rows;
+}
+
 }  // namespace borealis::ui

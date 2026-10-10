@@ -1,4 +1,6 @@
 #include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -8,6 +10,8 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -31,13 +35,19 @@
 #include "borealis/ui/settings_form.h"
 #include "borealis/ui/tab_strip.h"
 #include "borealis/ui/closed_tab_stack.h"
+#include "conn/key_model.h"
+#include "conn/key_push.h"
+#include "conn/key_store.h"
 #include "conn/profile_views.h"
 #include "conn/ssh_connection.h"
 #include "conn/tunnel_client.h"
+#include "platform/user_dir.h"
 #include "ui/connection_sidebar.h"
 #include "ui/connection_wizard.h"
 #include "ui/credential_prompt.h"
 #include "ui/debug_panel.h"
+#include "ui/keys_format.h"
+#include "ui/keys_panel.h"
 #include "ui/settings_i18n.h"
 #include "ui/settings_panel.h"
 #include "ui/sftp_panel.h"
@@ -221,6 +231,132 @@ class DecodeCollector final : public borealis::term::CodePointSink {
     auto on_code_point(char32_t cp) -> void override { out.push_back(cp); }
 
     std::u32string out;
+};
+
+/// @brief 一次扫面的完整任务体（worker 线程上跑）：规范化（含可达性 stat）→ 扫盘 →
+///        排序 → 写快照。动作任务的尾巴也交它——「每个动作之后都有一次重扫」（稿 §5）。
+auto run_keys_scan(const std::shared_ptr<std::mutex> &mutex,
+                   const std::shared_ptr<borealis::ui::KeysSnapshot> &latest,
+                   const std::vector<std::string> &raw_dirs, std::string_view user_dir) -> void {
+    auto probe = [](std::string_view path) -> bool {
+        std::error_code ec;
+        return std::filesystem::is_directory(std::filesystem::path{path}, ec);
+    };
+    auto dirs = borealis::conn::normalize_key_dirs(raw_dirs, user_dir, probe);
+    auto rows = borealis::conn::scan_keys(dirs);
+    auto paths = std::vector<std::string>{};
+    paths.reserve(dirs.size());
+    for (const auto &dir : dirs) {
+        paths.push_back(dir.path);
+    }
+    static_cast<void>(borealis::conn::sort_rows(rows, paths));
+    const std::lock_guard lock{*mutex};
+    latest->dirs = std::move(dirs);
+    latest->rows = std::move(rows);
+}
+
+/// @brief 行的公钥单行（判据 4/6 交出的字节；快照里没有该行或拼不出即空串）。
+[[nodiscard]] auto keys_line_of(const borealis::ui::KeysSnapshot &snapshot,
+                                const std::string &path) -> std::string {
+    for (const auto &row : snapshot.rows) {
+        if (row.path == path) {
+            return borealis::ui::KeyRow{row, borealis::ui::KeysOpKind::Idle}.public_text();
+        }
+    }
+    return {};
+}
+
+/// @brief 密钥装配的串行 worker（稿 §5 的 KeysWorker；裁决 7.106 D4①/D6①/D7①）：
+///        单线程任务队列，同一时刻只跑一把钥匙的事；每个任务的终值写 mutex 保护的
+///        latest-value 快照，UI 线程经 snapshot Hook 逐帧取副本——与隧道快照同族
+///        （状态是可覆盖的量，不排事件队列；AGENTS §25 的「合成后的最终值」形态）。
+///        在途标记（op/op_path）在**提交时**发布：UI 立即置灰与点名，不等队列轮到；
+///        排队中那一档没有独立措辞（`keys_format.h` 头注⑵同口径），尾巴上把标记
+///        交给队列里的下一件、没有就归空闲。
+class KeysWorker final {
+  public:
+    KeysWorker() : thread_{[this]() -> void { drain(); }} {}
+    KeysWorker(const KeysWorker &) = delete;
+    auto operator=(const KeysWorker &) -> KeysWorker & = delete;
+    ~KeysWorker() {
+        {
+            const std::lock_guard lock{*mutex_};
+            stopping_ = true;
+        }
+        cv_->notify_all();
+        thread_.join();  // 排空队列再收工：已提交的动作都跑完，不留半截实现（第 3 条）。
+    }
+
+    /// @brief 提交一个动作：先发布在途标记（UI 立即置灰/点名），再入队。
+    auto submit(borealis::ui::KeysOpKind op, std::string op_path, std::function<void()> run)
+        -> void {
+        {
+            const std::lock_guard lock{*mutex_};
+            latest_->op = op;
+            latest_->op_path = op_path;
+            queue_.push_back(Item{op, std::move(op_path), std::move(run)});
+        }
+        cv_->notify_all();
+    }
+
+    /// @brief 快照的一份副本（UI 线程逐帧调用；与隧道 snapshot Hook 同一形态）。
+    [[nodiscard]] auto snapshot() const -> borealis::ui::KeysSnapshot {
+        const std::lock_guard lock{*mutex_};
+        return *latest_;
+    }
+
+    /// @brief 不经队列的即时留痕（一键复制这类瞬时动作：没有任务可排，也就没有终值）。
+    auto publish_notice(std::string key, std::string arg) -> void {
+        const std::lock_guard lock{*mutex_};
+        latest_->notice_key = std::move(key);
+        latest_->notice_arg = std::move(arg);
+    }
+
+    /// @brief 任务体要写的两件共享物（快照与其锁）：任务闭包按值捕获它们，
+    ///        worker 线程因此不摸本对象——栈上的成员先于线程消失也不踩空。
+    [[nodiscard]] auto mutex() const -> const std::shared_ptr<std::mutex> & { return mutex_; }
+    [[nodiscard]] auto latest() const -> const std::shared_ptr<borealis::ui::KeysSnapshot> & {
+        return latest_;
+    }
+
+  private:
+    struct Item {
+        borealis::ui::KeysOpKind op{};
+        std::string op_path;
+        std::function<void()> run;
+    };
+
+    auto drain() -> void {
+        while (true) {
+            Item item;
+            {
+                std::unique_lock lock{*mutex_};
+                cv_->wait(lock, [this]() -> bool { return stopping_ || !queue_.empty(); });
+                if (stopping_ && queue_.empty()) {
+                    return;
+                }
+                item = std::move(queue_.front());
+                queue_.pop_front();
+            }
+            item.run();
+            const std::lock_guard lock{*mutex_};
+            if (queue_.empty()) {
+                latest_->op = borealis::ui::KeysOpKind::Idle;
+                latest_->op_path.clear();
+            } else {
+                latest_->op = queue_.front().op;
+                latest_->op_path = queue_.front().op_path;
+            }
+        }
+    }
+
+    std::shared_ptr<std::mutex> mutex_ = std::make_shared<std::mutex>();
+    std::shared_ptr<std::condition_variable> cv_ = std::make_shared<std::condition_variable>();
+    std::shared_ptr<borealis::ui::KeysSnapshot> latest_ =
+        std::make_shared<borealis::ui::KeysSnapshot>();
+    std::deque<Item> queue_;
+    bool stopping_ = false;
+    std::thread thread_;
 };
 
 }  // namespace
@@ -807,11 +943,21 @@ auto main() -> int {
     auto launch_tunnel =
         std::function<void(const borealis::conn::SshProfile &, std::optional<std::string>,
                            const borealis::conn::TunnelSpec &)>{};
+    // 密钥两腿的异步凭据回-call（批 3 段赋值）：导出「带口令的钥匙必须先问口令」（D12⑵
+    // 的反面）；推送「询问型档案先问认证材料」（D7①，同 pending_tunnel 的先例形态）。
+    auto pending_export = std::optional<std::pair<std::string, std::string>>{};
+    auto pending_push = std::optional<
+        std::tuple<std::string, borealis::conn::SshProfile, std::string>>{};
+    auto submit_keys_export =
+        std::function<void(const std::string &, std::optional<std::string>)>{};
+    auto submit_keys_push = std::function<void(const std::string &,
+                                               const borealis::conn::SshProfile &,
+                                               std::optional<std::string>, std::string_view)>{};
     borealis::ui::CredentialPrompt::Hooks prompt_hooks;
     prompt_hooks.on_secret =
         [&open_ssh_tab, &restart_ssh_tab, &pending_profile, &pending_restart,
-         &pending_tunnel,
-         &launch_tunnel](const std::string &secret) -> void {
+         &pending_tunnel, &pending_export, &pending_push,
+         &launch_tunnel, &submit_keys_export, &submit_keys_push](const std::string &secret) -> void {
         if (pending_restart.has_value()) {
             const auto [id, ssh] = std::move(*pending_restart);
             pending_restart.reset();
@@ -828,12 +974,27 @@ auto main() -> int {
             auto [ssh_profile, spec] = std::move(*pending_tunnel);
             pending_tunnel.reset();
             launch_tunnel(ssh_profile, secret, spec);
+            return;
+        }
+        if (pending_export.has_value()) {
+            auto [path, name] = std::move(*pending_export);
+            pending_export.reset();
+            submit_keys_export(path, secret);
+            return;
+        }
+        if (pending_push.has_value()) {
+            auto [path, ssh_profile, line] = std::move(*pending_push);
+            pending_push.reset();
+            submit_keys_push(path, ssh_profile, secret, line);
         }
     };
-    prompt_hooks.on_cancel = [&pending_profile, &pending_restart, &pending_tunnel]() -> void {
+    prompt_hooks.on_cancel = [&pending_profile, &pending_restart, &pending_tunnel,
+                              &pending_export, &pending_push]() -> void {
         pending_profile.reset();
         pending_restart.reset();
         pending_tunnel.reset();
+        pending_export.reset();
+        pending_push.reset();
     };
     auto credential_prompt =
         std::make_shared<borealis::ui::CredentialPrompt>(*host, std::move(prompt_hooks));
@@ -1105,6 +1266,181 @@ auto main() -> int {
     toggle_sftp.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(toggle_sftp));
 
+    // ---- SSH 密钥装配（SPEC.FEAT.CONN.10 批 3，裁决 7.106 D4–D9 + 7.107/7.108；稿 §5）----
+    // 串行 worker（D7① 同族：同一时刻只跑一把钥匙的事）+ mutex 保护的 latest-value 快照
+    // （D6① 同族），面板每帧取副本。五件事全是阻塞 IO 或长计算（RSA-4096 秒级、建连 10 s
+    // 上界），一律在 worker 线程上跑。启动序不扫盘（PREF.06 首屏零同步 IO）：第一次扫面
+    // 发生在 keys.open 的 request_scan。
+    KeysWorker keys_worker;
+    const std::string keys_user_dir = borealis::platform::ssh_user_dir();
+
+    auto submit_keys_scan = [&keys_worker, keys_user_dir](std::vector<std::string> raw_dirs)
+        -> void {
+        keys_worker.submit(
+            borealis::ui::KeysOpKind::Scan, {},
+            [raw_dirs, keys_user_dir, mutex = keys_worker.mutex(),
+             latest = keys_worker.latest()]() -> void {
+                run_keys_scan(mutex, latest, raw_dirs, keys_user_dir);
+            });
+    };
+
+    // 导出公钥的提交点（hook 与凭据回-call 共用）：口令已在入口处问过或本就不需要。
+    submit_keys_export = [&](const std::string &path, std::optional<std::string> secret) -> void {
+        keys_worker.submit(
+            borealis::ui::KeysOpKind::Export, path,
+            [path, secret = std::move(secret), mutex = keys_worker.mutex(),
+             latest = keys_worker.latest(), raw_dirs = store.settings().key_dirs,
+             keys_user_dir]() -> void {
+                const auto outcome =
+                    borealis::conn::export_public_key(path, std::move(secret));
+                run_keys_scan(mutex, latest, raw_dirs, keys_user_dir);
+                const std::lock_guard lock{*mutex};
+                latest->notice_key = std::string{borealis::ui::key_export_outcome_key(outcome)};
+                latest->notice_arg.clear();
+            });
+    };
+
+    // 推送公钥的提交点（hook 与凭据回-call 共用）：档案副本与公钥行按值进任务，
+    // 认证材料随 dial 返回即消失（CONN.09 的明文纪律）。
+    submit_keys_push = [&](const std::string &path, const borealis::conn::SshProfile &profile,
+                           std::optional<std::string> secret, std::string_view line) -> void {
+        keys_worker.submit(
+            borealis::ui::KeysOpKind::Push, path,
+            [path_target = path, profile, secret = std::move(secret),
+             line = std::string{line}, mutex = keys_worker.mutex(),
+             latest = keys_worker.latest()]() -> void {
+                const auto report =
+                    borealis::conn::push_public_key(profile, std::move(secret), line);
+                const std::lock_guard lock{*mutex};
+                latest->push_step = borealis::conn::push_stage_index(report.stage);
+                latest->notice_key = std::string{borealis::ui::key_push_notice_key(report)};
+                latest->notice_arg.clear();
+            });
+    };
+
+    borealis::ui::KeysPanel::Hooks keys_hooks;
+    keys_hooks.snapshot = [&keys_worker]() -> borealis::ui::KeysSnapshot {
+        return keys_worker.snapshot();
+    };
+    keys_hooks.request_scan = [&store, &submit_keys_scan]() -> void {
+        submit_keys_scan(store.settings().key_dirs);
+    };
+    // 目录腿（D2③/D11②）：面板只交回选中的路径；空串＝取消或平台起不来，整条不跑且
+    // 不留痕（稿 §8 判据）。落盘逐字进第七域（去重归 `normalize_key_dirs`，往返逐字
+    // 有 utest_config 证人），随后重扫让新目录面与可达性留痕同帧可见。
+    keys_hooks.pick_key_dir = []() -> std::string {
+        aurora::file_dialog::Options opts;
+        opts.title = "Choose SSH key directory";  // 平台对话框标题不经本仓词条表（picked_save_path 同口径）
+        const au::Result<std::string> result = aurora::file_dialog::open_folder(opts);
+        return result.ok() ? result.value() : std::string{};
+    };
+    // 面板侧保证 add_dir 只收非空选路（D11②：空＝取消，整条腿在面板就止住）；这里逐字
+    // 落盘不去重——规范化（可达性、~/.ssh 恒在表首）是扫盘时 normalize_key_dirs 的事。
+    keys_hooks.add_dir = [&store, &submit_keys_scan](const std::string &dir) -> void {
+        auto next = store.settings();
+        next.key_dirs.push_back(dir);
+        static_cast<void>(store.replace(std::move(next)));
+        submit_keys_scan(store.settings().key_dirs);
+    };
+    keys_hooks.profiles = [&store]() -> std::vector<borealis::conn::Profile> {
+        return store.settings().profiles;
+    };
+    // 一键复制（判据 4）：帧边界落系统剪贴板（ClipboardOutbox 是主线程静态件）＋即时留痕。
+    keys_hooks.copy_line = [&keys_worker](const std::string &line) -> void {
+        borealis::session::ClipboardOutbox::write(line);
+        keys_worker.publish_notice("keys.notice.copied", {});
+    };
+    // 生成（判据 5）：面板已把名称/注释/口令一致三闸判过，这里只折成传输腿的请求形态
+    // （口令空串与没填是同一件事，`GenerateRequest` 头注同口径）。
+    keys_hooks.generate = [&keys_worker, &store, keys_user_dir](
+                              const borealis::ui::KeysPanel::GenerateDraft &draft) -> void {
+        keys_worker.submit(
+            borealis::ui::KeysOpKind::Generate, {},
+            [draft, mutex = keys_worker.mutex(), latest = keys_worker.latest(),
+             raw_dirs = store.settings().key_dirs, keys_user_dir]() -> void {
+                auto request = borealis::conn::GenerateRequest{};
+                request.type =
+                    draft.rsa ? borealis::conn::KeyType::Rsa : borealis::conn::KeyType::Ed25519;
+                request.rsa_bits = static_cast<std::uint16_t>(draft.rsa_bits);
+                request.directory = draft.directory;
+                request.basename = draft.basename;
+                request.comment = draft.comment;
+                request.passphrase = draft.passphrase;
+                const auto outcome = borealis::conn::generate_key(request);
+                run_keys_scan(mutex, latest, raw_dirs, keys_user_dir);
+                const std::lock_guard lock{*mutex};
+                latest->notice_key = std::string{borealis::ui::key_generate_outcome_key(outcome)};
+                latest->notice_arg.clear();
+            });
+    };
+    // 导出入口（判据 3 的「公钥缺失」出口；D12⑵ 反面）：带口令的钥匙先问口令再提交，
+    // 无口令的直接进队列。行表在快照里，这里不碰文件系统。
+    keys_hooks.export_public = [&](const std::string &path) -> void {
+        const auto snapshot = keys_worker.snapshot();
+        for (const auto &row : snapshot.rows) {
+            if (row.path != path) {
+                continue;
+            }
+            if (row.encrypted) {
+                pending_export = std::pair{path, row.basename};
+                credential_prompt->ask(borealis::conn::SecretAsk::Passphrase, row.basename);
+            } else {
+                submit_keys_export(path, std::nullopt);
+            }
+            return;
+        }
+    };
+    // 推送（判据 6）：目标档案取 SSH 子集里点中的那一个；询问型档案经凭据链异步回来
+    // 再提交（启动序与点击序都不做模态等待之外的事——这里就是模态询问本身）。
+    keys_hooks.push = [&](const std::string &path, const std::string &profile_id) -> void {
+        const auto snapshot = keys_worker.snapshot();
+        const auto line = keys_line_of(snapshot, path);
+        if (line.empty()) {
+            return;  // 行已不在或拼不出公钥单行（快照错帧的那道防，面板侧同款）。
+        }
+        const borealis::conn::Profile *target = nullptr;
+        for (const auto &profile : store.settings().profiles) {
+            if (profile.id == profile_id &&
+                profile.type == borealis::conn::ConnectionType::Ssh) {
+                target = &profile;
+                break;
+            }
+        }
+        if (target == nullptr) {
+            return;
+        }
+        const auto ask = borealis::conn::secret_ask_for(
+            borealis::conn::normalized_auth_method(target->ssh));
+        if (ask == borealis::conn::SecretAsk::None) {
+            submit_keys_push(path, target->ssh, std::nullopt, line);
+            return;
+        }
+        pending_push = std::tuple{path, target->ssh, line};
+        credential_prompt->ask(ask, target->name);
+    };
+    keys_hooks.delete_key = [&keys_worker, &store, keys_user_dir](const std::string &path)
+        -> void {
+        keys_worker.submit(
+            borealis::ui::KeysOpKind::Delete, path,
+            [path, mutex = keys_worker.mutex(), latest = keys_worker.latest(),
+             raw_dirs = store.settings().key_dirs, keys_user_dir]() -> void {
+                const auto outcome = borealis::conn::delete_key_pair(path);
+                run_keys_scan(mutex, latest, raw_dirs, keys_user_dir);
+                const std::lock_guard lock{*mutex};
+                latest->notice_key = std::string{borealis::ui::key_delete_outcome_key(outcome)};
+                latest->notice_arg.clear();
+            });
+    };
+    borealis::ui::KeysPanel keys_panel{*host, std::move(keys_hooks)};
+
+    au::Command open_keys;
+    open_keys.id = "keys.open";
+    open_keys.title = borealis::ui::settings_label("keys.title");
+    open_keys.category = "terminal";
+    open_keys.action = [&keys_panel]() -> void { keys_panel.toggle(); };
+    open_keys.scope = au::ShortcutScope::Global;
+    app.commands().add(std::move(open_keys));
+
     // 打开入口按 `SPEC.FEAT.PREF.02` 走命令层：命令是快捷键、菜单与命令面板的共同真源（架构 §11.2），
     // 在此登记一次即同时得到 `Ctrl+,` 与将来面板/命令面板里的同一条目。
     au::Command open_settings;
@@ -1375,7 +1711,8 @@ auto main() -> int {
     }
 
     app.set_on_frame([&tab_workspaces, &current_tab_id, &outbox, &panel, &tab_strip, &app, &settings,
-                      &last_window_title, &has_live_session, &sftp_panel, &tunnel_panel]() -> void {
+                      &last_window_title, &has_live_session, &sftp_panel, &tunnel_panel,
+                      &keys_panel]() -> void {
         // 排帧范围是**全部标签**每帧都排（含隐藏标签，裁决 7.47⑩）：可见性只影响绘制不影响数据。
         // 只排当前标签的后果是三处静默失灵——别的标签的 `OSC 52` 永远留在队列里（取走语义按会话
         // 记账，裁决 7.21③）、BEL 与活动角标要等用户切过去才补亮、OSC 标题不落进标签名。
@@ -1434,6 +1771,7 @@ auto main() -> int {
         panel.pump_preview();  // 预览盒是第二个会话，脏行同样按帧排（面板关着即空操作）
         sftp_panel.tick();     // SFTP 面板取件与判活（D8①/D9①；面板关着即空操作）
         tunnel_panel.tick();   // 隧道行表随快照刷新（D6①；面板关着即空操作）
+        keys_panel.tick();     // 密钥行表随快照刷新（D6① 同族；面板关着即空操作）
     });
     app.run();
 
