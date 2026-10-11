@@ -3,7 +3,7 @@
 > **状态**：**评审已收口（2026-10-11）**——§3 的 D1–D13 经人裁决为**全按推荐档**（一句「按你推荐的来」收口，无一条改判），并入 `codespec/SPECIFICATIONS.md` §7 裁决 **7.110**，据此转实现（§4 布局落 `src/`，按批 1 纯逻辑与平台腿 → 批 2 连接腿 → 批 3 UI 与装配三批走）。
 > **配套高保真草图**：`codespec/UI_SERIAL.draft.svg`（本稿 §2 的 1–7 标号判据即图中圈号，各贴在所属屏旁；SVG 为事实来源，后续改图直接改 SVG）。
 > **出稿时不碰代码**（AGENTS §4.1 第 2 条的 UI 件节奏：先出稿评审再实现）；2026-10-11 裁决落地后转实现，实现期若与稿面口径分叉，按 AGENTS §4.2 第 12 条以**代码运行时**为准回写本稿。
-> **实现进度**：批 1（档案模型 + `conn/serial_model` + `platform/serial` 两腿 + `flow` 键）**已落**，POSIX 腿在 pty 替身设备上有证人（`utest_posix_serial_platform`，14 档速率回读逐档相符）；Win32 腿按 F10 只到「写完未编译验证」。两处与稿面的出入见 §4（`flow` 行随批 1 进核对表、串口档案往返落在 `utest_config`）。批 2（连接腿 + 写出侧行尾折算）与批 3（向导第三型 + 装配 + 六行改判）未落；落完仍欠真设备 `etest_serial_device`（F1 挡住）与 §6 六条真机走查。
+> **实现进度**：批 1（档案模型 + `conn/serial_model` + `platform/serial` 两腿 + `flow` 键）**已落**，POSIX 腿在 pty 替身设备上有证人（`utest_posix_serial_platform`，14 档速率回读逐档相符）；Win32 腿按 F10 只到「写完未编译验证」。两处与稿面的出入见 §4（`flow` 行随批 1 进核对表、串口档案往返落在 `utest_config`）。批 2（`conn/serial_connection` + `Session` 写出侧行尾折算 + 替身设备 `itest_posix_serial_connection`）**已落**，落地时的两条新读数（F11 端口锁的持有面、F12 替身节点消失后的 ENOENT）与三处稿面出入按 AGENTS §4.2 第 12 条回写在本稿 §0/§4/§5/§6/§8。批 3（向导第三型 + `ui::serial_format` + `main.cpp` 装配 + 六行改判）未落；落完仍欠真设备 `etest_serial_device`（F1 挡住）与 §6 六条真机走查。
 > **上游依据**：`SPEC.FEAT.CONN.05` 原文（枚举 / 波特率·数据位·停止位·校验·流控完整配置 / 断开重连 / 连接中热改波特率 / 默认编码 GB18030 / 发送行尾可配 CR·LF·CRLF 默认 LF / 十六进制视图与行首时间戳＝延后子项）、裁决 7.6（串口缺省 GB18030）、7.16（双向编码）、7.33⑥（`term::LineEnding` 是串口行尾的代码侧形态）、7.99（`session::CloseReason` 与重连分类表）、7.103（`term::SessionEncoding` 已具备）。
 
 ---
@@ -24,6 +24,8 @@
 | **F8** | 替身设备写方向：slave 写 `a\rb\n` → master 读，`ONLCR` 开与关**读数逐字节相同**（均原样 `a\rb\n`） | **发送行尾不得指望设备规程改写**，由本仓自己拼字节（D11 的根据） |
 | **F9** | 替身设备读方向：无写者时 `read()` 返回 **0 字节（EOF）**；master 关闭后 slave `read()` 仍是 **EOF 而不是 EIO** | 替身的掉线形态只有 EOF；真 USB 串口拔出常见 EIO。两条都得进掉线归因（D7） |
 | **F10** | 本沙箱无 MSVC、无 Win32 头可编 | §4 的 Win32 侧一切说法（`CreateFile("\\\\.\\COMn")`、`DCB`、`GetCommProperties`、`QueryDosDevice`）标**推断／未验证**（AGENTS §4.2 第 11 条），待真机复测回写 |
+| **F11** | 实现期读数（2026-10-11，批 2）：读循环**在端口锁内做 20 ms 定时读**时，同进程另一线程问端口（`current_baud()` / `write()`）实测等锁 **1.9–34 s**；同一份代码在 `strace -f` 下 20 ms 就答完。用两线程「持锁 sleep 20 ms × 200 次 + 另一线程取锁」的 30 行最小复现（不含本仓任何代码）同样复现，而「取锁后立即放」的不持锁版平均 0 ms、最长 0 ms | **本沙箱对「持锁休眠」的调度惩罚是秒级**，故连接腿的读循环不许在锁内做定时等待（§5 的锁纪律据此定形，架构 §3.4「锁内不做 IO」在串口腿的读法）；真机上这一改同样把 UI 线程的最长等待从一个读分片降到一次非阻塞探测 |
+| **F12** | 替身设备的 master 关闭后，`/dev/pts<N>` 节点**随即消失**：按原路径重开回 **ENOENT(2)**（本沙箱确定读数，多次一致） | 掉线重拨用例的第二次打开必然落 `NoNode`→`Unknown`→不可重拨。itest 那条用例因此**不锁终态档位**，只锁三条与机器无关的事实：投过 attempt≥1 的环内快照、`on_closed` 只投一次、终态不是「用户停止」 |
 
 ---
 
@@ -97,7 +99,9 @@ src/conn/serial_model.{h,cpp}          新增 —— 纯逻辑件（无 au:: / �
                                                 行尾字节拼接（CR/LF/CRLF 三档）
 src/conn/serial_connection.{h,cpp}     新增 —— 私有头（D1① 先例：平台类型仅前向声明）：
                                                 session::Connection 的串口实现，读线程 + 断线归因（D7）
-                                                + 热改波特率（D6 回读比对）
+                                                + 热改波特率（D6 回读比对）。读循环的锁纪律按 F11 定形：
+                                                `port_mutex_` 内只做一次超时 0 档的非阻塞探测，
+                                                空闲等待留在锁外（与 SSH 腿 read_nonblocking 同款）
 src/platform/serial.h                  新增 —— 平台抽象（口径同 src/platform/tcp.h）：
                                                 list_ports() / open+configure / write / read / set_baud / close
 src/platform/posix/serial.cpp          新增 —— termios 腿（O_NOCTTY|O_NONBLOCK、CLOCAL、raw 六件、
@@ -110,7 +114,7 @@ src/ui/serial_format.{h,cpp}           新增 —— 纯函数小头（无 au::�
 src/main.cpp                           修改 —— 装配：serial.set_baud 命令、枚举 worker 投递与快照、
                                                 串口会话构造吃 encoding/line_ending、消 line_ending 那条 TODO
 include/borealis/config/settings.h     修改 —— SerialDefaults 增 flow（D3）
-include/borealis/term/session.h        修改 —— Session 构造吃「本连接行尾」（D11；与 SessionEncoding 同注入口径）
+include/borealis/session/session.h     修改 —— Session 构造吃「本连接行尾」（D11；与 SessionEncoding 同注入口径）
 src/config/store.cpp                   修改 —— serial 域读写增 flow 键 + profiles 的 serial 子结构
 src/ui/settings_catalog.cpp            修改 —— connection.serial.* 六行 Absent→Wired（批 3），
                                                 flow 行已随批 1 进表：写出的 schema 键必须逐行有控件，
@@ -118,7 +122,10 @@ src/ui/settings_catalog.cpp            修改 —— connection.serial.* 六行 
                                                 the_written_schema_keys`，故行不能押到批 3
 src/CMakeLists.txt                     修改 —— 上述 .cpp 编入 borealis_core（显式源列表）
 tests/unit/utest_serial_model.cpp      新增 —— 折算表 / 取值域 / 行尾拼接 / 枚举投影 / 档位常量
-tests/integration/itest_serial_connection.cpp 新增 —— 替身设备调用序与回读（POSIX-only 编入）
+tests/integration/itest_posix_serial_connection.cpp 新增 —— 替身设备调用序与回读（POSIX-only 编入）。
+                                                文件名带 `_posix_` 才走 `cmake/BorealisTests.cmake` 的
+                                                平台过滤，而那条过滤原先只挡 `utest_posix_`/`utest_win_`
+                                                前缀，本批把它加宽成 `(utest|itest)_(posix|win)_`
 tests/unit/utest_posix_serial_platform.cpp 新增（批 1 落点）—— 平台腿本身的替身证人：十四档
                                                 set_baud 回读相符（F4）、无码速率报 ConfigRejected、
                                                 双向字节与超时档、关掉写端后的 EOF（F9）、
@@ -143,8 +150,9 @@ config::Store（connection.serial 域：默认值灌入新建档案，D4；profi
 装配层（main.cpp）
       ├─ 枚举：向导开设备行 / 点刷新 / 启动取一次（D8）── 串行 worker ──► platform::list_ports()
       │        └─ latest-value 快照（vector<SerialPortInfo>）→ 下拉只读最新一份（AGENTS §4.5 第 25 条）
-      ├─ 连接：conn::SerialConnection(profile.serial, encoding, line_ending)
-      │        ├─ platform::serial.open + configure（worker 线程；UI 线程零阻塞 IO）
+      ├─ 连接：conn::SerialConnection(profile.serial, reconnect_policy)   ← 两参：档案 + 退避档（D7/D13）
+      │        │   编码与发送行尾**不在连接腿**：装配层把它们交进 `Session` 的构造入参（D10/D11）
+      │        ├─ platform::serial_open + 置参（读线程；start() 立即返回，UI 线程零阻塞 IO）
       │        ├─ 读线程 ──on_bytes──► Session（现有链：解码→状态机→网格→副本）
       │        └─ 读侧 EIO/EOF ──on_closed(CloseReason)──► conn::should_reconnect（D7）
       │                                          └─ 可重拨：既有退避环（reconnect.h，不新写）
@@ -155,19 +163,20 @@ UI（connection_wizard 字段集 / serial_format 文案 / serial.set_baud 对话
 ```
 
 - 读线程纪律照 `ssh_dial` / `forkpty_connection` / `tunnel_client` 三处先例：打开与置参在 worker，读在独立线程，`close()` 有 join 上界。
-- 「会话当前波特率」的唯一真值源在 `SerialConnection`（热改成功才更新），面板每帧读快照投影；档案里的 `baud` 是**下次连接的缺省**，不是当前值——两个量必须分开展示，否则热改后用户以为档案没存（D6 的代价面）。
-- D11 的折算发生在 `Session` 写出侧一处，串口之外的连接腿收到的字节逐字节不变（本地/SSH 会话的用例零改动）。
+- **端口锁的持有面**（F11 读数定形）：读循环在 `port_mutex_` 内只做一次超时 0 档的非阻塞探测，空闲的 20 ms 等待留在锁外。串口腿的 `write`/`set_baud`/`current_baud` 都由 UI 线程呼，锁里若留着定时等待，它们就排队在一个读分片之后——本沙箱实测那是秒级（F11），真机上也违背架构 §3.4「锁内不做 IO」。
+- 「会话当前波特率」的唯一真值源在 `SerialConnection`（热改成功才更新），面板每帧读快照投影；档案里的 `baud` 是**下次连接的缺省**，不是当前值——两个量必须分开展示，否则热改后用户以为档案没存（D6 的代价面）。装配层因此取 `current_baud()` 而不取 `profile.baud`（批 3 的接线口径）。
+- D11 的折算发生在 `Session::write_out()` 这**一处**写出出口：`send_text`（编码产物）与 `send_bytes`（键表产的转义字节，Enter 的那一个 CR 走的就是这条路）都收到它。未给行尾档的会话（本地/SSH 的全部既有构造点）逐字节原样下发，收到的字节一寸不动；只折**单独一个 CR**，紧跟 LF 的那个 CR 属于一对 CRLF 故留着——否则 Windows 剪贴板与 bracketed 粘贴会被改成两个行尾（`term::plan_paste` 明写那两种形态逐字节不动）。
 
 ---
 
 ## 6 验收判据映射
 
-- **串口枚举**：`utest_serial_model` 锁「有 `type` 文件即串口类候选」（F2）的投影与稳定排序；`itest_serial_connection` 以替身路径证「枚举结果的 path 能 open」；不可达项照列置灰（D9）在 itest 里以「全不可达⇒列表非空且每行带归因」锁死。
+- **串口枚举**：`utest_serial_model` 锁「有 `type` 文件即串口类候选」（F2）的投影与稳定排序；`itest_posix_serial_connection` 以替身路径证「枚举结果的 path 能 open」；不可达项照列置灰（D9）在 itest 里以「全不可达⇒列表非空且每行带归因」锁死。
 - **完整参数配置**：`utest_serial_model` 逐档锁参数→平台位组合的折算（POSIX 侧 termios 位、Win 侧 DCB 字段），取值域校验锁 `DraftIssue` 四档；**设备侧是否生效**按 F5 明写不可判，故本条只到「写得下去、回读得到、折算表逐档有证人」。
-- **断开重连**：`itest_serial_connection` 证 EOF→`LinkLost`→`should_reconnect` 为真→按档案重开并重置参（D7 的两处代价口径各一条用例）；不可自愈类（模拟 EACCES）证**不**进重拨环。
-- **连接中热改波特率**：`itest_serial_connection` 在替身设备上证 F4（十四档逐档回读相符）与「不相符⇒回报拒绝且界面原档」两分支（D6②）。
-- **默认编码 GB18030**：串口会话构造吃 `encoding` 缺省 GB18030，`utest` 锁折算、`itest` 锁「含汉字的串口输出经替身设备喂进会话后网格内容正确」（现成的 `itest_render_viewport` 通道）。
-- **发送行尾可配**：`utest_serial_model` 锁三档拼接；一条用例锁「键表产 CR ∧ 串口会话落地 CRLF」的两段事实（D11①）；`src/main.cpp:156` 的 `TODO(SPEC.FEAT.CONN.05)` 随本批消除。
+- **断开重连**：`itest_posix_serial_connection` 证 EOF→`LinkLost`→`should_reconnect` 为真→按档案重开并重置参（D7 的两处代价口径各一条用例）；不可自愈类（模拟 EACCES）证**不**进重拨环。按 F12 的读数，重开一条已消失的替身路径必落 `NoNode`，故那条用例锁的是「投过环内快照 + `on_closed` 只投一次 + 终态不是用户停止」三条机器无关事实，不锁终态档位。
+- **连接中热改波特率**：`itest_posix_serial_connection` 在替身设备上证「相符⇒更新当前档」与「不相符⇒回报拒绝且当前档不改脏」两分支（D6②）。**界面观测面**（批 3 接线口径）：热改成功后面板取 `current_baud()`；打开成功那一刻当前档＝档案档（`utest_posix_serial_platform` 锁平台腿回读，`itest_posix_serial_connection` 锁传下来的那一份）。
+- **默认编码 GB18030**：串口会话构造吃 `encoding` 缺省 GB18030，`utest` 锁折算；喂进现场的证人已落在 `itest_posix_serial_connection`（对端写 GB18030 两字节「中」⇒网格第 0 格落成 U+4E2D），走的是串口会话自己的解码链，不借 `itest_render_viewport` 的本地腿通道。
+- **发送行尾可配**：`utest_serial_model` 锁三档拼接；`utest_session` 四条锁折算（单个 CR 落地成选定档、已有的 CRLF 不被折成两个行尾、未给档的会话逐字节不动、Enter 的键表面仍产一个 CR ∧ 串口会话落地 CRLF）；`itest_posix_serial_connection` 在替身设备收端锁最后半段。`src/main.cpp:156` 的 `TODO(SPEC.FEAT.CONN.05)` 随批 3 消除。
 - **测试读数口径**：交付时以 `ctest --test-dir build -E etest_` 的**项数与全案数**结项（AGENTS §4.4 第 21 条不认「应该更快了」，本棒同样不认「测了很多」），变异注入按第 22 条自证非空转。
 - **真机走查**（AGENTS §4.4 第 33 条，未走查不得称「可用」）：⑴ 下拉在真实 USB 口上的友好名好不好认；⑵ 置灰归因文案够不够排障（F1 那种「有节点没权限」）；⑶ 热改拒绝档的手感与「档案值 vs 当前值」两处显示分不分得清；⑷ GB18030 串口会话里中文上屏观感与键入中文发到设备侧的字节（设备端回显，需真板子）；⑸ 拔线掉线与重连浮层的交接感；⑹ 六条 `connection.serial.*` 键在设置页改默认值后新建档案灌入是否合直觉（D4 的代价面）。
 
@@ -180,6 +189,7 @@ UI（connection_wizard 字段集 / serial_format 文案 / serial.set_baud 对话
 - **调制解调器线状态显示**（F7：替身设备 ENOTTY，本环境无从证；需求亦未要求）。
 - **真设备 etest**（F1）：`etest_serial_device` 待有 `tty`/`dialout` 权限与实机串口线的环境补，与 CONN.08/10 那两处待 sshd 的欠账同档登记。
 - **Windows/MSVC 腿验证**（F10）：`src/platform/win/serial.cpp` 以头文件与官方 API 形态写出，编译与真机复测待真机。
+- **`POLLHUP`/`POLLERR` 无 `POLLIN` 那种「半开」读数**：平台腿的 `wait_for` 只认请求的那一位，故此类读数按超时档处理，读侧不会因此结束。本沙箱**无从造出这一形态**——替身设备的掉线一律是 EOF（F9），节点消失后重开一律 ENOENT（F12），两条都走得到 `Closed`/`NoNode`。真串口上是否出现「插着但不回话」的形态属**推断／未验证**（AGENTS §4.2 第 11 条），`etest_serial_device` 落地时一并取读数再决定是否给读侧加一档硬错归因；本棒不预建。
 - **逐标签连接类型图标**（D12）：随 `SPEC.FEAT.WS.04` 余腿单开。
 - **RS-485 半双工、Lin/Modem 协议、流控下的吞吐调优**：需求未提，不预建抽象。
 
@@ -190,3 +200,6 @@ UI（connection_wizard 字段集 / serial_format 文案 / serial.set_baud 对话
 - **2026-10-11 收口**：D1–D13 经人裁为**全按推荐档**（无一条改判），入册 `SPECIFICATIONS.md` §7 裁决 **7.110**、`CHANGELOG.md` v0.110，`PLAN.md` 的 M3–M5 行与本稿状态同步改口。实现按 §4 布局分三批走：批 1＝档案模型 + `conn::serial_model` + `platform::serial` 两腿 + `flow` 键；批 2＝`conn::serial_connection` + `Session` 行尾折算 + 替身设备 `itest`；批 3＝向导第三型 + `ui::serial_format` + `main.cpp` 装配。
 - **收口时点最需人判、已按推荐落定的三条**（留此备查，实现期若手感不合一律按 AGENTS §4.2 第 12 条以运行时为准回写）：D5（入口＝命令 `serial.set_baud`，藏在命令面板）、D7（串口 EOF 归 `LinkLost` 而**不**新增 `CloseReason` 枚举档；不可自愈类落 `Unknown` 即不重拨）、D11（折算点放 `Session` 写出侧一处，一处影响三路发送）。
 - 探针复现口径（一次性脚本，不入仓）：§0 的 F1–F9 由 `probe_serial.py` / `probe_serial2.py` 两趟跑出（`os.getgroups()`、`/sys/class/tty/*/type`、`pty.openpty()` slave 路径重开 + `termios.tcsetattr` 逐档、`fcntl.ioctl(TIOCGSERIAL/TIOCMGET)`、写读环回与 EOF/EIO 分档）。**读数只在本沙箱成立**，换机器（真串口、`dialout` 组成员）后 F1/F5 两档须重取并回写本稿。
+- **2026-10-11 批 2 落地**：`src/conn/serial_connection.{h,cpp}`（读线程 + 归因表 `serial_close_reason()` + 复用 `conn/reconnect.h` 的退避环 + `set_baud`/`current_baud` 两枚热改口，`resize()` 是有意空操作）、`Session` 的写出侧一处折算（`include/borealis/session/session.h` 尾追加 `line_ending` 入参，缺省 `nullopt`＝不折算），替身设备证人 `tests/integration/itest_posix_serial_connection.cpp` 七条，`utest_session` 四条折算用例。结项读数：`ctest --preset linux -E etest_` **75 项全绿**（新增 `itest_posix_serial_connection` 一项），runner **938 案全绿**（基线 927 + 11），该套件 403 ms。
+  - 与稿面的三处出入已按 AGENTS §4.2 第 12 条回写：① §4 的 Session 公共头路径（稿写 `term/session.h`，实际在 `include/borealis/session/session.h`）；② §4/§6 的 itest 文件名（要带 `_posix_` 才走平台过滤，故 `cmake/BorealisTests.cmake` 那条过滤加宽成 `(utest|itest)_(posix|win)_`）；③ §5 的 `SerialConnection` 构造式（编码与行尾不在连接腿，是 `Session` 的构造入参）。
+  - F11 的复现件：`mutex_probe.cpp`（两线程：持锁 sleep 20 ms × 200 次 vs 另一线程取锁计时）与 `mutex_probe2.cpp`（同形但取锁后立即放，作对照）——两份都在沙箱临时目录，不含本仓代码，跑出来是 2–4 s vs 0 ms。批 2 的实现原先在锁内做 20 ms 定时读，正是踩在这一读数上：整套 itest 从 403 ms 涨到 75–113 s，而 `strace -f` 下同一份代码 204 ms 跑完。

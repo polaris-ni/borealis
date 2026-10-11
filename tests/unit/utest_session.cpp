@@ -1,13 +1,13 @@
 /// 测试类型: unit
 /// 目标单元: include/borealis/session/session.h
 /// 测试说明: 会话层的读侧接线（字节 → 解码 → 状态机 → 网格 → 脏行提交）与写侧通道
-///           （文本编码下发、尺寸下发、DSR/DA1 应答回写、OSC 52 读方向应答）、OSC 消费产物
+///           （文本编码下发、**行尾折算**、尺寸下发、DSR/DA1 应答回写、OSC 52 读方向应答）、OSC 消费产物
 ///           的会话侧取值（标题 / 工作目录 / 超链接 / 剪贴板待写合并）、帧唤醒句柄的注入与
 ///           唤醒时机（含「连接生死那一次唤醒独立于批量输入有没有产出提交」这一条 `SPEC.FEAT.WS.05`
 ///           的例外），以及对端退出时的解码收尾与非法字节替换
 ///           （SPEC.FEAT.TERM.01 查询响应、SPEC.FEAT.TERM.07 OSC 消费、
-///           SPEC.FEAT.TERM.09 双向编码、SPEC.FEAT.XFER.01 尺寸同步、SPEC.FEAT.WS.01 存活判定、
-///           架构 §3.2/§3.3/§7.2）。
+///           SPEC.FEAT.TERM.09 双向编码、SPEC.FEAT.CONN.05 发送行尾折算、SPEC.FEAT.XFER.01 尺寸同步、
+///           SPEC.FEAT.WS.01 存活判定、架构 §3.2/§3.3/§7.2）。
 
 #include <cstddef>
 #include <cstdint>
@@ -21,6 +21,8 @@
 
 #include "borealis/grid/storage.h"
 #include "borealis/session/session.h"
+#include "borealis/term/keymap.h"
+#include "borealis/term/paste.h"
 #include "borealis/term/terminal.h"
 #include "borealis/term/utf8.h"
 #include "borealis/term/width.h"
@@ -155,6 +157,23 @@ struct Fixture {
     return {connection, std::move(session)};
 }
 
+/// @brief 起一条给了「本连接行尾」的会话——串口形态（裁决 7.110 D11①，`SPEC.FEAT.CONN.05`）。
+[[nodiscard]] auto make_line_ending_session(borealis::term::LineEnding ending) -> Fixture {
+    auto owned = std::make_unique<FakeConnection>();
+    auto *connection = owned.get();
+    auto session = std::make_unique<Session>(
+        std::move(owned), Size{10, 3}, 5, width_policy, borealis::term::TerminalDefaults{},
+        borealis::term::SessionEncoding{}, std::optional<borealis::term::LineEnding>{ending});
+    session->start();
+    return {connection, std::move(session)};
+}
+
+/// @brief 把文本折成发送字节（`send_bytes` 那条原样通道的入口形态）。
+[[nodiscard]] auto as_bytes(std::string_view text)
+    -> std::span<const std::byte> {
+    return std::as_bytes(std::span<const char>{text.data(), text.size()});
+}
+
 /// @brief 起一个挂「会自愈连接」的会话，用来验能力接口的分派。
 [[nodiscard]] auto make_self_healing_session() -> std::pair<SelfHealingConnection *,
                                                             std::unique_ptr<Session>> {
@@ -256,6 +275,61 @@ AURORA_TEST_CASE(send_text_encodes_to_session_encoding) {
     fixture.session->send_text(U"a\x4E2D");  // UTF-8 是本地/SSH 默认编码（裁决 7.16）
     const auto written = text_of(fixture.connection->written);
     AURORA_TEST_CHECK_EQ(written, std::string("a\xE4\xB8\xAD", 4));
+}
+
+AURORA_TEST_CASE(lone_cr_folds_to_the_session_line_ending) {
+    // 裁决 7.110 D11①：折算只在会话写出侧这一处，LF 档把**单独一个 CR** 折成 LF，LF 本身不动。
+    auto fixture = make_line_ending_session(borealis::term::LineEnding::Lf);
+    fixture.session->send_text(U"a\rb\nc");
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("a\nb\nc"));
+
+    // 键入那条通道同样过这一处：`send_bytes` 里 Enter 产的正是单个 CR（F8：设备规程不替本仓改写）。
+    fixture.connection->written.clear();
+    fixture.session->send_bytes(as_bytes("\r"));
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\n"));
+
+    // 转义序列里没有 CR，故 CSI 一份字节不改（方向键与鼠标上报都在这条路上）。
+    fixture.connection->written.clear();
+    fixture.session->send_bytes(as_bytes("\x1B[A"));
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\x1B[A"));
+}
+
+AURORA_TEST_CASE(crlf_target_leaves_an_existing_pair_alone) {
+    auto fixture = make_line_ending_session(borealis::term::LineEnding::Crlf);
+    // 已成对的 CRLF 原样留着：否则 Windows 剪贴板与 bracketed 粘贴里每行多一个行尾，而
+    // `term::plan_paste` 明写那两种形态逐字节不动（D11① 的边界就在这条配对判据上）。
+    fixture.session->send_text(U"a\r\nb\rc");
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("a\r\nb\r\nc"));
+
+    // 连续两个 CR（老设备的一空行形态）各自折开。
+    fixture.connection->written.clear();
+    fixture.session->send_bytes(as_bytes("\r\r"));
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\r\n\r\n"));
+}
+
+AURORA_TEST_CASE(a_session_without_a_line_ending_writes_bytes_unchanged) {
+    // 本地/SSH 两腿不给这一参 ⇒ 折算点对它们不存在（既有构造点与收到的字节都不动一字）。
+    auto fixture = make_session();
+    fixture.session->send_text(U"a\rb\nc");
+    fixture.session->send_bytes(as_bytes("\r"));
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("a\rb\nc\r"));
+
+    // CR 档是「不折」的另一半：串口选 CR 时与不给这一参完全一致，键表产的就是 CR。
+    auto cr = make_line_ending_session(borealis::term::LineEnding::Cr);
+    cr.session->send_bytes(as_bytes("\r\n\r"));
+    AURORA_TEST_CHECK_EQ(text_of(cr.connection->written), std::string("\r\n\r"));
+}
+
+AURORA_TEST_CASE(keymap_enter_still_produces_cr_while_the_fold_lands_crlf) {
+    // D11① 要锁的两段事实：键表逐字节不动（仍产 CR），落地形态由会话的行尾档决定。
+    const auto encoded = aurora::testing::require_value(
+        borealis::term::encode_key(borealis::term::KeyPress{.sym = borealis::term::KeySym::Enter},
+                                   TermModes{}));
+    AURORA_TEST_CHECK_EQ(encoded, std::string("\r"));
+
+    auto fixture = make_line_ending_session(borealis::term::LineEnding::Crlf);
+    fixture.session->send_bytes(as_bytes(encoded));
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\r\n"));
 }
 
 AURORA_TEST_CASE(resize_forwards_size_and_rebuilds_viewport) {

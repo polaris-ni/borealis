@@ -29,6 +29,7 @@
 #include "borealis/session/connection.h"
 #include "borealis/session/damage_queue.h"
 #include "borealis/term/codec.h"
+#include "borealis/term/paste.h"
 #include "borealis/term/terminal.h"
 #include "borealis/term/utf8.h"
 #include "borealis/term/width.h"
@@ -64,9 +65,16 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// @param encoding 会话编解码档（`terminal.encoding` 与 `terminal.unrepresentable`，
     ///                 `SPEC.FEAT.TERM.09`）。与 `defaults` 同一条生效口径：**建会话这一刻**取一次，
     ///                 解码器与发送策略都是构造期值；缺省即 UTF-8 + 替换，故既有构造点不改一字。
+    /// @param line_ending **本连接行尾**（`SPEC.FEAT.CONN.05` 的 `connection.serial.line_ending`，
+    ///                 裁决 7.110 D11①）。取用时机与 `encoding` 同颗口径（建会话这一刻，生效档
+    ///                 `NextSession`）。缺省 `std::nullopt`＝**不折算**，故本地/SSH 的既有构造点与
+    ///                 它们收到的字节逐字节不变；串口腿由装配层给出选定档，写出前把**单独一个 CR
+    ///                 字节**（未被 LF 紧跟者）折成选定序列——键入 Enter、粘贴与快捷片段三路都过
+    ///                 这一处，`term::encode_key` 的字节表因此不动一字。
     Session(std::unique_ptr<Connection> connection, Size size, std::size_t scrollback_limit,
             std::shared_ptr<const term::WidthPolicy> width_policy, term::TerminalDefaults defaults = {},
-            term::SessionEncoding encoding = {});
+            term::SessionEncoding encoding = {},
+            std::optional<term::LineEnding> line_ending = std::nullopt);
 
     Session(const Session &) = delete;
     auto operator=(const Session &) -> Session & = delete;
@@ -94,10 +102,14 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     ///
     /// 键入、输入法 commit（`SPEC.FEAT.INTERACT.06`）、粘贴（`SPEC.FEAT.INTERACT.03`）
     /// 与快捷片段都走这里，不得绕过去直接发字节。
+    /// 编码后还要过**一处**行尾折算（构造期给的 `line_ending`，裁决 7.110 D11①）。
     /// @param text 码点流。
     auto send_text(std::u32string_view text) -> void;
 
-    /// @brief 原样发送字节（键映射生成的 CSI/SS3 转义序列一类，已过编码环节）。
+    /// @brief 发送已过编码环节的字节（键映射生成的 CSI/SS3 转义序列、鼠标上报一类）。
+    ///
+    /// 本通道同样过那一处行尾折算：键入 Enter 产的是**一个 CR 字节**、走的就是这条路，而串口设备
+    /// 只认档案选定的行尾（F8：设备规程不改写这批字节）。未给 `line_ending` 的会话逐字节原样下发。
     /// @param bytes 待发送字节。
     auto send_bytes(std::span<const std::byte> bytes) -> void;
 
@@ -222,6 +234,12 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// @brief 把码点流按会话编码成字节交给连接（调用方不得持锁：临界区内不做 IO）。
     auto flush(std::u32string_view text) -> void;
 
+    /// @brief 写连接的**唯一**出口：先按构造期给的行尾把单个 CR 字节折算成选定序列，再交连接。
+    ///
+    /// 两条发送通道（`flush` 的编码产物与 `send_bytes` 的原样转义字节）都收到这里，故「一处折算」
+    /// 在代码上也确实只有一处（裁决 7.110 D11①）。调用方不得持锁。
+    auto write_out(std::span<const std::byte> bytes) -> void;
+
     /// @brief 唤醒主线程排帧：句柄在锁内取出、锁外调用（架构 §3.4 的「锁内不做 IO」）。
     auto wake_frame() -> void;
 
@@ -237,6 +255,9 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// 不认识 UTF-8 还是 GB18030。`mutex_` 护住——读线程喂入与主线程取统计都走它。
     std::unique_ptr<term::SessionDecoder> decoder_;
     term::SessionEncoding encoding_;  ///< 发送方向的编码名与策略档，与 `decoder_` 同世代。
+    /// 本连接的发送行尾档（裁决 7.110 D11①）：构造期取一次，此后只读，故不进 `mutex_` 的射程。
+    /// `nullopt`＝不折算——本地/SSH 两腿正是这一档，它们的既有构造点与收到的字节都不动一字。
+    std::optional<term::LineEnding> line_ending_;
     /// 构造期折一次的**实际生效腿**名（裁决 7.104 的 D6②）：提示卡片报的就是它，故与 `decoder_`
     /// 走的是同一张别名表、不会与真正跑的解码器分叉。指向 `codec.cpp` 里的表项与字面量，静态
     /// 存储期，不随 `encoding_.name` 生死。

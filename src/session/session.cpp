@@ -8,7 +8,12 @@
 
 #include "borealis/session/session.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <utility>
+#include <vector>
+
+#include "conn/serial_model.h"  // 行尾字节序列的唯一一份表（裁决 7.110 D4① 的「档位表只有一份」）
 
 namespace borealis::session {
 
@@ -29,10 +34,11 @@ class BufferSink final : public term::CodePointSink {
 
 Session::Session(std::unique_ptr<Connection> connection, Size size, std::size_t scrollback_limit,
                  std::shared_ptr<const term::WidthPolicy> width_policy, term::TerminalDefaults defaults,
-                 term::SessionEncoding encoding)
+                 term::SessionEncoding encoding, std::optional<term::LineEnding> line_ending)
     : connection_{std::move(connection)},
       terminal_{size.columns, size.rows, scrollback_limit, std::move(width_policy), defaults},
-      encoding_{std::move(encoding)} {
+      encoding_{std::move(encoding)},
+      line_ending_{line_ending} {
     decoder_ = term::make_session_decoder(encoding_.name);
     // 提示卡片的名字口径在构造期折一次（裁决 7.104 的 D6②）：与上一行的解码器同源，
     // 故「卡片报的腿」与「真正在跑的腿」不可能分叉，填 GB2312 的会话报的是 UTF-8。
@@ -74,7 +80,7 @@ auto Session::wake_frame() -> void {
 
 auto Session::send_text(std::u32string_view text) -> void { flush(text); }
 
-auto Session::send_bytes(std::span<const std::byte> bytes) -> void { connection_->write(bytes); }
+auto Session::send_bytes(std::span<const std::byte> bytes) -> void { write_out(bytes); }
 
 auto Session::resize(Size size) -> void {
     if (size.columns == 0 || size.rows == 0) {
@@ -235,8 +241,7 @@ auto Session::flush(std::u32string_view text) -> void {
     // 编码名与策略档都是构造期值、此后只读，故这里取 `encoding_` 不需要持锁；写连接也不在锁内
     // （架构 §3.4：临界区内不做 IO）。
     const auto encoded = term::encode_for_encoding(text, encoding_.name, encoding_.unrepresentable);
-    connection_->write(
-        {reinterpret_cast<const std::byte *>(encoded.bytes.data()), encoded.bytes.size()});
+    write_out({reinterpret_cast<const std::byte *>(encoded.bytes.data()), encoded.bytes.size()});
     if (encoded.unrepresentable == 0U) {
         return;
     }
@@ -249,6 +254,38 @@ auto Session::flush(std::u32string_view text) -> void {
         notice_ = UnrepresentableNotice{
             .count = encoded.unrepresentable, .leg = std::string{encoding_leg_}};
     }
+}
+
+auto Session::write_out(std::span<const std::byte> bytes) -> void {
+    // 未给行尾档（本地/SSH 两腿的全部既有构造点）与 CR 档都是原样下发：键表产的本来就是一个 CR
+    // （裁决 7.110 D11①「`term::encode_key` 的字节表逐字节不动」的另一半）。
+    if (!line_ending_.has_value() || *line_ending_ == term::LineEnding::Cr) {
+        connection_->write(bytes);
+        return;
+    }
+    const auto target = conn::line_ending_bytes(*line_ending_);
+    auto out = std::vector<std::byte>{};
+    out.reserve(bytes.size());
+    auto folded = false;
+    for (std::size_t index = 0; index < bytes.size(); ++index) {
+        const auto byte = bytes[index];
+        // 只折**单独一个 CR**：紧跟 LF 的那个 CR 属于一对 CRLF，原样留着。否则 Windows 剪贴板与
+        // bracketed 粘贴里的 CRLF 会被改成两个行尾，而 `term::plan_paste` 明写那两种形态逐字节不动。
+        // 折的是**编码后**的字节：0x0D 不会是 UTF-8 的续字节（≥0x80），也不是 GB18030 多字节序列的
+        // 任一后续字节（落在 0x30–0x39 / 0x40–0x7E / 0x80–0xFE），故不存在把半个汉字改断的情形。
+        const auto paired_with_lf =
+            index + 1U < bytes.size() && bytes[index + 1U] == std::byte{0x0A};
+        if (byte != std::byte{0x0D} || paired_with_lf) {
+            out.push_back(byte);
+            continue;
+        }
+        folded = true;
+        for (const char c : target) {
+            out.push_back(static_cast<std::byte>(static_cast<unsigned char>(c)));
+        }
+    }
+    // 一批里没有可折的 CR 就不换缓冲：绝大多数按键（含全部 CSI/SS3 转义序列）走这条零分配路。
+    connection_->write(folded ? std::span<const std::byte>{out.data(), out.size()} : bytes);
 }
 
 }  // namespace borealis::session

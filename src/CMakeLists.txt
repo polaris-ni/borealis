@@ -16,6 +16,7 @@ add_library(borealis_core STATIC
         conn/profile.cpp
         conn/profile_views.cpp
         conn/reconnect.cpp
+        conn/serial_connection.cpp
         conn/serial_model.cpp
         conn/sftp_client.cpp
         conn/sftp_model.cpp
