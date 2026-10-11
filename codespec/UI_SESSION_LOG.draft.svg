@@ -1,0 +1,346 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="2392" viewBox="0 0 1560 2392" font-family="'Noto Sans CJK SC',sans-serif">
+<rect x="0" y="0" width="1560" height="2392" fill="#eef0f5"/>
+<text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">会话日志：能力闸 + 逐会话开关 + 剥离 SGR 的纯文本落盘（SPEC.FEAT.CONN.11）</text>
+<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_SESSION_LOG.draft.svg · 高保真草图（待评审 · D1–D13 待人逐条裁，裁决前不动 src/）· 1 dp == 1 px @100% · 圈号 1–7 对应 UI_SESSION_LOG.draft.md §2 的判据标号 · 底部「实测口径」是该稿 §0 的 F10–F15 读数</text>
+
+<!-- ============ 屏 A：右键菜单两态 + 风险提示对话框 ============ -->
+<g transform="translate(30,78)">
+  <rect x="-1" y="-1" width="1502" height="596" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">A</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 视口右键菜单自此三条（左：未记录态 · 中：记录中态 · 右：确认后才建文件）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="560" fill="#1E1F29"/>
+
+  <!-- A-1 未记录态 -->
+  <g transform="translate(24,56)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">① 未记录态：菜单第三条＝「开启会话日志」</text>
+    <rect x="0" y="12" width="440" height="300" fill="#282A36" stroke="#4D4F63"/>
+    <text x="14" y="34" font-size="11" fill="#62728A" font-family="monospace">lab@router:~$ ls --color=auto /etc</text>
+    <text x="14" y="52" font-size="11" fill="#F8F8F2" font-family="monospace">adduser.conf  bash.bashrc  cron.d   fstab</text>
+    <text x="14" y="70" font-size="11" fill="#F8F8F2" font-family="monospace">aliases       inputrc      group     group-</text>
+    <text x="14" y="88" font-size="11" fill="#8BE9FD" font-family="monospace">bluetooth     ld.so.conf.d</text>
+    <text x="14" y="106" font-size="11" fill="#F8F8F2" font-family="monospace">lab@router:~$ _</text>
+    <rect x="126" y="124" width="300" height="150" rx="6" fill="#21222C" stroke="#62728A"/>
+    <text x="140" y="146" font-size="11.5" fill="#F8F8F2">复制</text>
+    <line x1="132" y1="156" x2="420" y2="156" stroke="#3A3C4C"/>
+    <text x="140" y="176" font-size="11.5" fill="#F8F8F2">粘贴</text>
+    <line x1="132" y1="186" x2="420" y2="186" stroke="#3A3C4C"/>
+    <rect x="132" y="192" width="288" height="26" rx="4" fill="#342B47"/>
+    <text x="140" y="210" font-size="11.5" fill="#F8F8F2" font-weight="600">开启会话日志</text>
+    <text x="414" y="210" font-size="10.5" fill="#BD93F9" text-anchor="end">ToggleSessionLog</text>
+    <text x="140" y="238" font-size="10.5" fill="#62728A">前两条逐字节不变（Copy / Paste 不动）</text>
+    <text x="140" y="256" font-size="10.5" fill="#62728A">新增项排在末尾，次序即 plan_right_click 的产出次序</text>
+    <text x="140" y="274" font-size="10.5" fill="#62728A">条目文案随当前态在两值之间取</text>
+<g transform="translate(0,300)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">1</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 1 · D1/D6：菜单三条 + 两态文案</text>
+</g>
+  </g>
+
+  <!-- A-2 记录中态 -->
+  <g transform="translate(506,56)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">② 记录中态：第三条改「停止会话日志」</text>
+    <rect x="0" y="12" width="440" height="300" fill="#282A36" stroke="#BD93F9" stroke-width="1.5"/>
+    <rect x="0" y="12" width="440" height="18" fill="#2A1C22"/>
+    <text x="8" y="25" font-size="10.5" fill="#FF5555" font-weight="600">● 正在记录 → session-7-1762329600.log</text>
+    <text x="14" y="52" font-size="11" fill="#F8F8F2" font-family="monospace">lab@router:~$ cat /etc/shadow</text>
+    <text x="14" y="70" font-size="11" fill="#62728A" font-family="monospace">cat: /etc/shadow: Permission denied</text>
+    <text x="14" y="88" font-size="11" fill="#F8F8F2" font-family="monospace">lab@router:~$ _</text>
+    <rect x="126" y="124" width="300" height="150" rx="6" fill="#21222C" stroke="#62728A"/>
+    <text x="140" y="146" font-size="11.5" fill="#F8F8F2">复制</text>
+    <line x1="132" y1="156" x2="420" y2="156" stroke="#3A3C4C"/>
+    <text x="140" y="176" font-size="11.5" fill="#F8F8F2">粘贴</text>
+    <line x1="132" y1="186" x2="420" y2="186" stroke="#3A3C4C"/>
+    <rect x="132" y="192" width="288" height="26" rx="4" fill="#342B47"/>
+    <text x="140" y="210" font-size="11.5" fill="#F8F8F2" font-weight="600">停止会话日志</text>
+    <text x="414" y="210" font-size="10.5" fill="#BD93F9" text-anchor="end">同一命令，取反</text>
+    <text x="140" y="238" font-size="10.5" fill="#62728A">顶部细条是示意，本期不做常驻图标（D6④ 不取）</text>
+    <text x="140" y="256" font-size="10.5" fill="#62728A">「正在记录」的唯一判据是菜单文案，不另开一条状态位</text>
+    <text x="140" y="274" font-size="10.5" fill="#62728A">能力闸关 ⇒ 第三条根本不出现在 items（不是灰显，F17）</text>
+<g transform="translate(0,300)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">2</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 2 · D6：同一条闭包，另一入口在命令面板</text>
+</g>
+  </g>
+
+  <!-- A-3 风险提示对话框 -->
+  <g transform="translate(988,56)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">③ 点「开启」⇒ 先提示，确认后才建文件</text>
+    <rect x="0" y="12" width="488" height="230" rx="8" fill="#282A36" stroke="#FF5555" stroke-width="1.5"/>
+    <text x="20" y="40" font-size="13" fill="#F8F8F2" font-weight="700">开启会话日志？</text>
+    <text x="20" y="70" font-size="11.5" fill="#FF5555">日志可能包含密码、令牌或其他敏感信息。</text>
+    <text x="20" y="94" font-size="11.5" fill="#F8F8F2">将写入：</text>
+    <text x="20" y="114" font-size="11" fill="#8BE9FD" font-family="monospace">/home/lab/.config/borealis-logs/</text>
+    <text x="20" y="132" font-size="11" fill="#8BE9FD" font-family="monospace">session-7-1762329600.log</text>
+    <text x="20" y="158" font-size="10.5" fill="#62728A">敏感词表打码已生效（D10①，缺省开）；目录里的旧日志本期不自动清理</text>
+    <rect x="266" y="180" width="98" height="30" rx="6" fill="#BD93F9"/>
+    <text x="315" y="200" font-size="12" fill="#1E1F29" font-weight="700" text-anchor="middle">开启</text>
+    <rect x="372" y="180" width="98" height="30" rx="6" fill="none" stroke="#4D4F63"/>
+    <text x="421" y="200" font-size="12" fill="#62728A" text-anchor="middle">取消</text>
+    <text x="20" y="200" font-size="10.5" fill="#50FA7B">取消 ⇒ 文件不存在</text>
+    <text x="20" y="216" font-size="10.5" fill="#62728A">（含不创建零字节空档）</text>
+<g transform="translate(0,254)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">3</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 3 · D7：开启动作即问，每次问，不持久化</text>
+</g>
+<text x="0" y="292" font-size="11" fill="#62728A">au::confirm 现成形态（同 ask_multiline_warning，F17「无宿主就不问」）</text>
+<text x="0" y="310" font-size="11" fill="#62728A">路径报全 = 原文那句「首次落盘给出风险提示」真正要的东西</text>
+<text x="0" y="328" font-size="11" fill="#62728A">「已提示过」的跨进程标志全仓不存在（F7），本棒也不新增 ⇒ 每次开启都问</text>
+<text x="0" y="346" font-size="11" fill="#FFB86C">原文「首次落盘」与本稿「开启时」的措辞差集，按 §4.2 第 11 条交人裁决</text>
+  </g>
+
+  <line x1="24" y1="404" x2="1476" y2="404" stroke="#3A3C4C"/>
+  <g transform="translate(24,424)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">入口的第二条腿：命令面板（`terminal.right_click` 取 Paste / CopyOnSelect 两态时菜单根本不发 — 裁决 7.38⑥）</text>
+    <rect x="0" y="12" width="700" height="116" rx="6" fill="#282A36" stroke="#4D4F63"/>
+    <text x="14" y="34" font-size="11.5" fill="#F8F8F2">会话日志</text>
+    <rect x="10" y="44" width="680" height="26" rx="4" fill="#342B47"/>
+    <text x="22" y="62" font-size="11.5" fill="#F8F8F2" font-weight="600">会话日志：开启（当前标签）</text>
+    <text x="678" y="62" font-size="10.5" fill="#BD93F9" text-anchor="end">session.toggle_logging</text>
+    <text x="22" y="88" font-size="11.5" fill="#62728A">会话日志：查看目录（本期不做，§7 在册）</text>
+    <text x="14" y="118" font-size="10.5" fill="#62728A">标题随态改字；能力闸关 ⇒ enabled=false（灰显不响应，同 F16 那族）</text>
+    <text x="730" y="34" font-size="11.5" fill="#F8F8F2">D6 的四档里取 ①：右键一条 + 命令面板一条，同一闭包。</text>
+    <text x="730" y="54" font-size="11.5" fill="#62728A">② 只做右键 ⇒ 两态用户拿不到入口；③ 只做面板 ⇒ 菜单里那条天然位置落空；</text>
+    <text x="730" y="74" font-size="11.5" fill="#62728A">④ 常驻图标 ⇒ 新绘制件 + 新常驻位，本期不值。</text>
+    <text x="730" y="100" font-size="11.5" fill="#FFB86C">代价（要人点头的那一条）：plan_right_click 是纯函数，要区分三态就得改签名</text>
+    <text x="730" y="118" font-size="11.5" fill="#FFB86C">⇒ utest_right_click / itest_right_click_paste 同批改口；本棒唯一一处改既有签名</text>
+  </g>
+</g>
+
+<!-- ============ 屏 B：日志文件的真实形态对照 ============ -->
+<g transform="translate(30,696)">
+  <rect x="-1" y="-1" width="1502" height="676" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 同一轮远端输出，四列并排（字节 → 码点流的处置 → 日志文件 → 屏上）；左侧数字是 F10/F11/F12 的实测读数</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="640" fill="#1E1F29"/>
+
+  <g transform="translate(24,54)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">列 1 · 连接读线程收到的字节（F1：唯一入口 Session::ingest）</text>
+    <rect x="0" y="12" width="350" height="150" rx="5" fill="#12131A" stroke="#4D4F63"/>
+    <text x="12" y="32" font-size="10.5" fill="#FF5555" font-family="monospace">1b 5b 30 31;34 6d 61 6c 69 61 73 1b 5b 30 6d</text>
+    <text x="12" y="48" font-size="10.5" fill="#62728A" font-family="monospace">ESC[01;34m alias ESC[0m  + CR LF</text>
+    <text x="12" y="70" font-size="10.5" fill="#F1FA8C" font-family="monospace">1b 5b 48 1b 5b 32 4a   value=41   CR LF</text>
+    <text x="12" y="86" font-size="10.5" fill="#62728A">ESC[H ESC[2J（清屏归位）→ 覆盖同</text>
+    <text x="12" y="100" font-size="10.5" fill="#62728A">一屏，屏上恒 1 行</text>
+    <text x="12" y="124" font-size="10.5" fill="#8BE9FD">ls --color=auto /etc：7149 B</text>
+    <text x="12" y="140" font-size="10.5" fill="#8BE9FD">CR 83 / LF 86 / CRLF 83 / ESC 309（全 SGR）/ BS 0</text>
+  </g>
+
+  <g transform="translate(400,54)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">列 2 · 处置表（D3①，取数点＝入向码点流，D2①）</text>
+    <rect x="0" y="12" width="330" height="150" rx="5" fill="#282A36" stroke="#4D4F63"/>
+    <text x="12" y="32" font-size="10.5" fill="#50FA7B">Print          → 留</text>
+    <text x="12" y="48" font-size="10.5" fill="#50FA7B">Execute CR/LF  → 一条 LF（成对 CRLF 合成一条）</text>
+    <text x="12" y="64" font-size="10.5" fill="#50FA7B">Execute TAB    → 留</text>
+    <text x="12" y="80" font-size="10.5" fill="#FF5555">Execute BS     → 丢（不做屏幕仿真器）</text>
+    <text x="12" y="96" font-size="10.5" fill="#FF5555">其余 C0        → 丢</text>
+    <text x="12" y="112" font-size="10.5" fill="#FF5555">Escape/Csi/Osc/Dcs*/Ignored → 全丢</text>
+    <text x="12" y="136" font-size="10.5" fill="#62728A">孤立 CR 折一条换行：进度条一帧一行，可 grep</text>
+    <text x="12" y="150" font-size="10.5" fill="#62728A">（D3② 会把它们粘成一条几 MB 的超长行）</text>
+  </g>
+
+  <g transform="translate(760,54)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">列 3 · 日志文件里最终的样子（UTF-8，0600）</text>
+    <rect x="0" y="12" width="380" height="238" rx="5" fill="#12131A" stroke="#BD93F9"/>
+    <text x="12" y="32" font-size="10.5" fill="#F8F8F2" font-family="monospace">[2026-10-12 09:20:01] alias</text>
+    <text x="12" y="48" font-size="10.5" fill="#F8F8F2" font-family="monospace">[2026-10-12 09:20:01] bash.bashrc</text>
+    <text x="12" y="64" font-size="10.5" fill="#F8F8F2" font-family="monospace">[2026-10-12 09:20:01] cron.d</text>
+    <text x="12" y="80" font-size="10.5" fill="#62728A">（ESC[01;34m 一类一个字节都不留）</text>
+    <text x="12" y="102" font-size="10.5" fill="#FF5555" font-family="monospace">[2026-10-12 09:21:07] [redacted]</text>
+    <text x="12" y="118" font-size="10.5" fill="#62728A">↑ Password: 命中词表 ⇒ 整行替换（D10①）</text>
+    <text x="12" y="134" font-size="10.5" fill="#62728A">  不含关键词的行逐字节不变（打码≠改写）</text>
+    <text x="12" y="156" font-size="10.5" fill="#F1FA8C" font-family="monospace">[2026-10-12 09:22:14] value=1</text>
+    <text x="12" y="172" font-size="10.5" fill="#F1FA8C">[2026-10-12 09:22:14] value=2 … value=40</text>
+    <text x="12" y="188" font-size="10.5" fill="#F1FA8C" font-family="monospace">[2026-10-12 09:22:15] value=41</text>
+    <text x="12" y="206" font-size="10.5" fill="#FFB86C">屏上 1 行，文件 43 行 ← 语义不是缺陷（F12）</text>
+    <text x="12" y="222" font-size="10.5" fill="#62728A">记的是「远端发出的行」，不是「屏上那一屏」</text>
+  </g>
+
+  <g transform="translate(1170,54)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">列 4 · 屏上（对照）</text>
+    <rect x="0" y="12" width="306" height="106" rx="5" fill="#282A36" stroke="#4D4F63"/>
+    <text x="12" y="34" font-size="10.5" fill="#8BE9FD" font-family="monospace">bluetooth  ld.so.conf.d</text>
+    <text x="12" y="52" font-size="10.5" fill="#F8F8F2" font-family="monospace">lab@router:~$ _</text>
+    <text x="12" y="76" font-size="10.5" fill="#62728A">彩色靠 SGR 画在屏上；日志不留属性</text>
+    <text x="12" y="92" font-size="10.5" fill="#62728A">⇒ 编辑器打开即干净文本（走查第 ⑴ 条）</text>
+<g transform="translate(0,140)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">5</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 5 · D2/D3：换行结构按 F10 折算</text>
+</g>
+<g transform="translate(0,176)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">6</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 6 · D8/D9：前缀按行给</text>
+</g>
+  </g>
+
+  <line x1="24" y1="314" x2="1476" y2="314" stroke="#3A3C4C"/>
+
+  <g transform="translate(24,334)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">越限覆盖（D9①：单文件 + 上限常量，丢前半、后半前移继续写）</text>
+    <rect x="0" y="12" width="700" height="118" rx="5" fill="#282A36" stroke="#4D4F63"/>
+    <text x="14" y="34" font-size="10.5" fill="#62728A">写满 8 MiB 那一刻（一轮 ingest 出锁后发生，只在越限的那一轮）</text>
+    <text x="14" y="56" font-size="10.5" fill="#FF5555">前 4 MiB ─────────────────┐ 丢弃</text>
+    <text x="14" y="74" font-size="10.5" fill="#50FA7B">后 4 MiB ─────────────────┘ 前移到文件头，新字节接在其后</text>
+    <text x="14" y="96" font-size="10.5" fill="#8BE9FD">界两侧时刻仍单调递增 ⇒ 读起来是「一段连续时间」，文件始终是正常文本</text>
+    <text x="14" y="112" font-size="10.5" fill="#62728A">② 真环形（头尾指针）名义最贴但 less 打开是尾段拼头段，人读不了；③ 停止写入＝违背「覆盖」；④ .1/.2 是轮转不是环形</text>
+  </g>
+
+  <g transform="translate(750,334)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">谁写、在哪条线程写（D5：① 读线程同轮 append）</text>
+    <rect x="0" y="12" width="726" height="118" rx="5" fill="#12131A" stroke="#4D4F63"/>
+    <text x="14" y="34" font-size="10.5" fill="#F8F8F2">ingest 锁内：只做一次 decode_buffer_ → log_pending_ 的拷贝（F2「锁内不做 IO」）</text>
+    <text x="14" y="52" font-size="10.5" fill="#F8F8F2">出锁后同轮：行缓冲 → 时间戳 → 词表打码 → UTF-8 → ofstream(app)</text>
+    <text x="14" y="74" font-size="10.5" fill="#50FA7B">F14 实测：4 KiB 分片均值 0.0012 ms/片（最差 0.016）≪ 一次读分片</text>
+    <text x="14" y="92" font-size="10.5" fill="#FF5555">② 有界队列的两个现成先例（F15）都是丢弃型 ⇒ 日志丢行＝日志不可信</text>
+    <text x="14" y="110" font-size="10.5" fill="#FFB86C">写失败 ⇒ 自我禁用 + 上弦一次性提示（形态照 take_unrepresentable_notice，F7）</text>
+  </g>
+
+  <g transform="translate(24,478)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">目录里的样子（D13①：文件名不带标签名——洗名字是平台知识，本棒不为命名开平台腿）</text>
+    <rect x="0" y="12" width="700" height="150" rx="5" fill="#12131A" stroke="#4D4F63"/>
+    <text x="14" y="34" font-size="10.5" fill="#62728A">~/.config/borealis-logs/            0600（create_private_file，F9）</text>
+    <text x="14" y="56" font-size="10.5" fill="#F8F8F2">session-3-1762325100.log     8.0 MiB   ← 已越限过一次</text>
+    <text x="14" y="74" font-size="10.5" fill="#F8F8F2" font-family="monospace">session-5-1762327842.log     141 KiB</text>
+    <text x="14" y="92" font-size="10.5" fill="#BD93F9">session-7-1762329600.log      62 KiB   ← 当前标签</text>
+    <text x="14" y="112" font-size="10.5" fill="#62728A">TabId 单调不复用（src/main.cpp 的那条纪律）⇒ 同目录不撞名</text>
+    <text x="14" y="132" font-size="10.5" fill="#62728A">一次开启＝一个文件；重启会话＝新对象＝新文件且回到未记录态（D11①）</text>
+<g transform="translate(716,20)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">4</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 4 · D13：session-&lt;TabId&gt;-&lt;epoch 秒&gt;.log</text>
+</g>
+    <text x="716" y="56" font-size="11.5" fill="#F8F8F2">人类可读性由判据 3 那句「将写入：完整路径」承担，</text>
+    <text x="716" y="76" font-size="11.5" fill="#62728A">不靠文件名。② 带净化后的标签名要挡中文、空格、</text>
+    <text x="716" y="96" font-size="11.5" fill="#62728A">/\:*?"&lt;&gt;| 与 Windows 保留名（CON/NUL）；③ 档案 id 同样不可读。</text>
+    <text x="716" y="128" font-size="11.5" fill="#FFB86C">代价：目录里只有一列时刻与序号，翻找靠时刻排序。</text>
+  </g>
+</g>
+
+<!-- ============ 屏 C：设置页连接域两行改口 ============ -->
+<g transform="translate(30,1394)">
+  <rect x="-1" y="-1" width="1502" height="500" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">C</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 设置 · 连接（两枚键早已在册而零消费方；本棒把它们改判 Wired ⇒ 反向核对表必然要求改口，漏判即红）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="464" fill="#1E1F29"/>
+
+  <g transform="translate(24,54)">
+    <rect x="0" y="0" width="1452" height="256" rx="8" fill="#282A36" stroke="#4D4F63"/>
+    <text x="20" y="28" font-size="12" fill="#F8F8F2" font-weight="700">连接</text>
+    <text x="20" y="52" font-size="11" fill="#62728A">既有行（逐字节不变）：本地 shell / 启动目录 / SSH 五档 / 串口七档 …</text>
+    <line x1="20" y1="64" x2="1432" y2="64" stroke="#3A3C4C"/>
+
+    <rect x="20" y="76" width="1412" height="72" rx="6" fill="#22232E" stroke="#50FA7B" stroke-width="1.5"/>
+    <text x="34" y="98" font-size="11.5" fill="#F8F8F2" font-weight="600">允许会话日志</text>
+    <text x="200" y="98" font-size="10.5" fill="#62728A" font-family="monospace">connection.session_logging</text>
+    <rect x="34" y="106" width="40" height="20" rx="4" fill="#BD93F9"/>
+    <text x="54" y="121" font-size="11" fill="#1E1F29" font-weight="700" text-anchor="middle">ON</text>
+    <text x="88" y="121" font-size="11.5" fill="#F8F8F2">能力闸（非「自动开始记录」）</text>
+    <rect x="600" y="104" width="112" height="22" rx="4" fill="#342B47"/>
+    <text x="656" y="119" font-size="10.5" fill="#BD93F9" text-anchor="middle">即时 · Wired</text>
+    <text x="724" y="119" font-size="10.5" fill="#FFB86C">改判前：延后 · Absent（零消费方）</text>
+    <text x="34" y="142" font-size="10.5" fill="#50FA7B">旁注（判据 7 那句，D1 的代价面由它承担）：开启后仍需逐会话显式点「开启会话日志」，默认不记录任何会话。</text>
+
+    <rect x="20" y="156" width="1412" height="72" rx="6" fill="#22232E" stroke="#50FA7B" stroke-width="1.5"/>
+    <text x="34" y="178" font-size="11.5" fill="#F8F8F2" font-weight="600">日志目录</text>
+    <text x="200" y="178" font-size="10.5" fill="#62728A" font-family="monospace">connection.session_log_dir</text>
+    <rect x="34" y="186" width="560" height="24" rx="5" fill="#12131A" stroke="#4D4F63"/>
+    <text x="44" y="203" font-size="10.5" fill="#62728A">留空＝&lt;配置目录&gt;/borealis-logs（F19：该目录不含应用子目录，故本仓自带一个有归属的名字）</text>
+    <rect x="600" y="184" width="112" height="22" rx="4" fill="#3A3C4C"/>
+    <text x="656" y="199" font-size="10.5" fill="#62728A" text-anchor="middle">延后 · Wired</text>
+    <text x="724" y="199" font-size="10.5" fill="#FFB86C">生效档不变：路径在开启那一刻取用</text>
+    <text x="34" y="222" font-size="10.5" fill="#62728A">改它不回溯在途会话的文件位置 ⇒ 保持 NextSession；非空＝原样用，不做相对路径展开。</text>
+<g transform="translate(1180,120)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">7</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 7 · D1/D9</text>
+</g>
+  </g>
+
+  <g transform="translate(24,330)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">为什么「接线」这件事在设置域一侧是自证的（F8：反向核对表是双向闸）</text>
+    <rect x="0" y="12" width="704" height="112" rx="5" fill="#12131A" stroke="#4D4F63"/>
+    <text x="14" y="34" font-size="10.5" fill="#F8F8F2">utest_settings_catalog.cpp:291  钉「schema 键数 = 表行数」＝ 63（本棒不加键 ⇒ 不动）</text>
+    <text x="14" y="52" font-size="10.5" fill="#F8F8F2">:556  钉 Absent 行数 ＝ 21 → 本棒改 19（两行都离开 Absent）</text>
+    <text x="14" y="70" font-size="10.5" fill="#F8F8F2">:526-544  钉 Wired ∧ NextSession 的逐条名单（session_log_dir 进，session_logging 不进）</text>
+    <text x="14" y="94" font-size="10.5" fill="#50FA7B">⇒ 「画了控件但没人读」这种分叉，本仓有一道闸拦着；改口即证人。</text>
+    <text x="730" y="34" font-size="11.5" fill="#F8F8F2">本棒不加任何新 schema 键（D8①/D9①/D10① 三条同一条理由）：</text>
+    <text x="730" y="56" font-size="11.5" fill="#62728A">每枚键＝schema + store 读写 + form_transfer + 核对表行 + 词条 + 三处计数，六处同步。</text>
+    <text x="730" y="76" font-size="11.5" fill="#62728A">时间戳档取会话级参数（装配层开启时给，形态固定「每行 + 本地秒」）；</text>
+    <text x="730" y="96" font-size="11.5" fill="#62728A">上限 8 MiB 取文件级常量；词表内置。代价：这三样重启后回到缺省，与 D11 同档登记。</text>
+  </g>
+</g>
+
+<!-- ============ 屏 D：线程模型 / 边界 / 本期不做 ============ -->
+<g transform="translate(30,1916)">
+  <rect x="-1" y="-1" width="1502" height="404" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">D</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 数据流、被结构挡住的那条主线程反例、本期边界（§5 / §7）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="368" fill="#1E1F29"/>
+
+  <g transform="translate(24,50)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">两条线程，一次拷贝</text>
+    <rect x="0" y="12" width="704" height="150" rx="6" fill="#12131A" stroke="#4D4F63"/>
+    <text x="14" y="34" font-size="10.5" fill="#F8F8F2">连接读线程 ─► on_bytes ─► ingest</text>
+    <text x="14" y="52" font-size="10.5" fill="#62728A">│ 锁内：decode → terminal_.feed → collect_damage → (拷 log_pending_)</text>
+    <text x="14" y="70" font-size="10.5" fill="#62728A">│ 出锁：应答 flush / 脏行入队 / wake_frame</text>
+    <text x="14" y="88" font-size="10.5" fill="#BD93F9">└─► SessionLog::append  同步、同线程、同轮（D5①）</text>
+    <text x="14" y="112" font-size="10.5" fill="#50FA7B">顺序即文件内容：写点全在该会话自己的读线程 ⇒ 不需要队列、不需要重排</text>
+    <text x="14" y="130" font-size="10.5" fill="#62728A">未挂日志的会话：一个 bool 早退，那份拷贝不发生 ⇒ 既有字节一寸不动</text>
+    <text x="14" y="150" font-size="10.5" fill="#FFB86C">UI 线程不写盘；慢盘拖的是该会话的输入到达，不是界面（走查第 ⑸ 条实测）</text>
+  </g>
+
+  <g transform="translate(750,50)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">唯一的主线程反例：设置面板预览腿（F4）</text>
+    <rect x="0" y="12" width="726" height="76" rx="6" fill="#2A1C22" stroke="#FF5555" stroke-dasharray="3 2"/>
+    <text x="14" y="34" font-size="10.5" fill="#FF5555">settings_preview.cpp:90  在主线程呼 events_-&gt;on_bytes(raw)</text>
+    <text x="14" y="54" font-size="10.5" fill="#F8F8F2">本稿不「容忍」它，也不加线程判断：预览会话由 SettingsPreview 自建，</text>
+    <text x="14" y="72" font-size="10.5" fill="#F8F8F2">装配层从不给它 LogSpec，而 F17「钩子未注入即无入口」连菜单项都不画。</text>
+    <text x="0" y="112" font-size="11" fill="#62728A">这一条要写成注释钉在挂钩处，否则后人加「预览也开日志」会静默在主线程写盘。</text>
+    <text x="0" y="132" font-size="11" fill="#62728A">Session 的八处构造点（main.cpp 七处 + bench 一处）一字不动 ⇒ 日志是运行期动作，</text>
+    <text x="0" y="152" font-size="11" fill="#62728A">走「钩子 + setter」而不是「又一个构造参数」（F3：会话不知道自己是谁）。</text>
+  </g>
+
+  <g transform="translate(24,224)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">本期不做（§7 在册）</text>
+    <text x="14" y="24" font-size="11.5" fill="#62728A">· 带属性的原生存式（自定格式）——原文是「或」，且写出来的东西没有读法就没有判据（D4①）</text>
+    <text x="14" y="44" font-size="11.5" fill="#62728A">· 可配正则 / 上限可配 / 目录级配额与清理 · 逐会话开关跨重启记忆（D8/D9/D10/D11）</text>
+    <text x="14" y="64" font-size="11.5" fill="#62728A">· 日志的搜索与回放界面（属新需求面，不预建，也不写进 SPECIFICATIONS）</text>
+    <text x="14" y="84" font-size="11.5" fill="#FF5555">· 真机走查六条一条未做 + src/main.cpp 那两处装配无自动化证人（裁决 7.83 同档）⇒ 本棒结项不称「可用」</text>
+  </g>
+
+  <g transform="translate(790,224)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">三批切法（D12）</text>
+    <text x="14" y="24" font-size="11.5" fill="#F8F8F2">批 1 · 折算件 + 落盘件 + Session 挂钩 · utest_session_log / itest_session_logging</text>
+    <text x="14" y="44" font-size="11.5" fill="#62728A">批 2 · 菜单项 + 命令 + 提示对话框 + 装配 + 核对表两行改口（界面路径自此可达）</text>
+    <text x="14" y="64" font-size="11.5" fill="#62728A">批 3 · 文档回写与在册收口（新裁决号 + CHANGELOG + PLAN 的 CONN.11 / M4 行）</text>
+    <text x="14" y="84" font-size="11.5" fill="#FFB86C">本棒不新增任何 src/platform/ 东西（AGENTS 第 23 条零风险面）：0600 用现成件 F9</text>
+  </g>
+</g>
+
+<!-- ============ 底部实测口径 ============ -->
+<g transform="translate(30,2338)">
+  <text x="0" y="0" font-size="11.5" fill="#5a6070" font-weight="700">实测口径（2026-10-12 本沙箱 POSIX 腿；探针一次性、不入仓，复现见稿 §8）</text>
+  <text x="0" y="20" font-size="11.5" fill="#5a6070">F10 PTY 把 \n 折成 \r\n（直写 691 B：CR 41/LF 41 vs 经 PTY 893 B：CR 82/LF 44）· F11 朴素剥离后可打印率 0.994 · F12 整屏重绘样本「屏上 1 行 / 文件 43 行」· F13 非法模式抛 regex_error(5)、. 不跨 \r、万行 13 ms · F14 4 KiB 同步 append 均值 0.0012 ms/片</text>
+  <text x="0" y="40" font-size="11.5" fill="#c2410c">未实测即外推的两条（标推断／未验证，AGENTS 第 11 条）：慢盘与 NFS 的写成本（D5① 的代价面）、Win32 腿的 0600 与路径落点（本沙箱无 MSVC，F9 只 WARN）</text>
+</g>
+</svg>
