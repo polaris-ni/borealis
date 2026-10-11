@@ -3,10 +3,10 @@
 > **状态**：**评审已收口（2026-10-11）**——§3 的 D1–D12 经人裁决：**D6 / D7 按推荐档，D10 改判「本期顺带做 NAWS」**，其余九条（D1–D5、D8、D9、D11、D12）按稿面推荐档收口（稿里每条都已写明推荐档的理由与代价，人未改判）。据此并入 `codespec/SPECIFICATIONS.md` §7 裁决 **7.112**，转实现按 §4 布局分三批走（批 1 档案模型 + 协商纯逻辑件 → 批 2 连接腿 + 平台 `set_nodelay` → 批 3 向导第四型 + 装配）。
 > **D10 改判的连带回写**（本稿六处已同步改口）：§2 新增判据 8、§3 D10 行、§4 的 `telnet_negotiation` 与 `telnet_connection` 两行（`resize()` 自此**不是**空操作）、§5 数据流多一条尺寸下发腿、§6 新增 NAWS 验收条目与走查第 ⑷ 条改口、§7 把 NAWS 移出「不做」清单。
 > **实现期的口径更正（裁决 7.113，2026-10-11）**：批 1 落地时按 §0 新增的 **F14** 实测读数发现，本稿原写的 NAWS 载荷次序「`<rows hi lo><cols hi lo>`」**与线上格式相反**——RFC 1073 §2 的语法行与 §6 的例子（80 列×24 行 ⇒ `0 80 0 24`）、加上本机 GNU inetutils 2.7 客户端在 20 行×60 列 pty 上实测发出的 `FF FA 1F 00 3C 00 14 FF F0`，三者一致指向**宽（列）在前、高（行）在后，各大端两字节**。代码按实测落（`utest_telnet_negotiation` 的组包用例锁住），本稿 §2／§3／§5／§6 一并照此改口（AGENTS §4.2 第 12 条：冲突以代码运行时为准）。同一条更正顺手改掉 §7 把 RFC 1073 说成「四字节宽度扩展」的错引——RFC 1073 就是 NAWS 本体，只有 `2+2` 字节形态。
-> **实现进度**：**批 1 已落地**（2026-10-11，两笔提交：档案第四型进 `profile.h`/`store.cpp`/`profile_views`，与 `conn::telnet_negotiation` 纯逻辑件及其 `utest`）；批 2（`conn::telnet_connection` + `TcpStream::set_nodelay` + 环回 `itest`）与批 3（向导第四型 + `main.cpp` 装配 + 词条族）**未开工**。本稿一律不称「可用」（AGENTS §4.4 第 33 条）。
+> **实现进度**：**批 1・批 2 已落地**（2026-10-11。批 1 两笔提交＝档案第四型进 `profile.h`/`store.cpp`/`profile_views`，与 `conn::telnet_negotiation` 纯逻辑件及其 `utest`；批 2 两笔提交＝`platform::TcpStream::set_nodelay` 两腿 + `conn::telnet_connection` 连接腿（含尺寸腿）与环回 `itest_telnet_connection` 十三案，入册裁决 **7.114**）；批 3（向导第四型 + `main.cpp` 装配 + 词条族）**未开工** ⇒ 界面上还没有第四张类型卡，Telnet 档案建不出来、会话上不了屏。本稿一律不称「可用」（AGENTS §4.4 第 33 条）。
 > **配套高保真草图**：`codespec/UI_TELNET.draft.svg`（本稿 §2 的 1–8 标号判据即图中圈号，各贴在所属屏旁；SVG 为事实来源，后续改图直接改 SVG）。
 > **上游依据**：`SPEC.FEAT.CONN.06` 原文（基础 Telnet 客户端，不含 TN3270；选项协商覆盖 ECHO / SGA / TTYPE；编码按 `SPEC.FEAT.TERM.09` 可配）、裁决 7.6（本地终端 / SSH / **Telnet** 缺省 UTF-8，串口才吃 GB18030）、7.99（`session::CloseReason` 与重连分类表）、7.103（`term::SessionEncoding` 已具备）、7.110 D1①/D11①（类型域追加式扩型的先例 + 写出侧一处行尾折算点）、7.96（平台 TCP 腿的 IPv4 收窄）、7.94（向导两步式与侧栏连接族）。
-> **既成地基（本棒只消费，不新建）**：`src/platform/tcp.h` 的 `tcp_connect` / `TcpStream`（POSIX + Win32 两腿已在，`utest_tcp_loopback` 4 例为证）、`session::Connection` 五件、`src/conn/reconnect.{h,cpp}` 的退避环与 `should_reconnect` 分类、`Session` 的构造期 `encoding` / `line_ending` 两枚入参、`ui::connection_wizard` 的三张类型卡与字段集分派。
+> **既成地基（本棒只消费，不新建）**：`src/platform/tcp.h` 的 `tcp_connect` / `TcpStream`（POSIX + Win32 两腿已在，出稿时以 `utest_tcp_loopback` 4 例为证；批 2 为 `set_nodelay` 追加一枚 ⇒ 现 5 例）、`session::Connection` 五件、`src/conn/reconnect.{h,cpp}` 的退避环与 `should_reconnect` 分类、`Session` 的构造期 `encoding` / `line_ending` 两枚入参、`ui::connection_wizard` 的三张类型卡与字段集分派。
 
 ---
 
@@ -106,7 +106,8 @@ src/conn/telnet_connection.{h,cpp}     新增 —— 私有头（D11①，口径
                                                 把尺寸交 latest-value 槽、由读线程发 SB NAWS…SE（**不是**空操作），
                                                 重拨时清「已发尺寸」记忆
 src/CMakeLists.txt                     修改 —— `borealis_core` 的源列表是显式清单（只有 tests 走 GLOB），
-                                                新增 `conn/telnet_negotiation.cpp` 要手写进去，否则链接期 undefined reference
+                                                新增 `conn/telnet_negotiation.cpp` 要手写进去，否则链接期
+                                                undefined reference（批 2 的 `conn/telnet_connection.cpp` 同此）
 src/conn/profile.cpp                   修改 —— `ProfileStore::search()` 的主机命中覆盖 Telnet 型（档案的 JSON
                                                 读写**不在这件里**，住在 `src/config/store.cpp`——出稿时这行写错了，按代码回写）
 src/conn/profile_views.{h,cpp}         修改 —— validate_draft / draft_to_profile / profile_to_draft 补第四腿
@@ -129,7 +130,12 @@ tests/integration/itest_telnet_connection.cpp  新增 —— D12②，环回假�
 tests/unit/utest_config.cpp            修改 —— telnet 档案 JSON 往返 + 坏字段逐项落回
 tests/unit/utest_profile_views.cpp     修改 —— 第四腿的校验顺序与草稿往返
 tests/integration/itest_connection_wizard.cpp  修改 —— 四张类型卡真点 + Telnet 三行字段集 + 端口留空＝23
-tests/unit/utest_tcp_loopback.cpp      修改（D6①）—— set_nodelay 的环回证人（只证调用不报错与选项回读）
+tests/unit/utest_tcp_loopback.cpp      修改（D6①）—— set_nodelay 的环回证人。**落地时按实际改口**：
+                                                原写「只证调用不报错与**选项回读**」，而 `platform::TcpStream`
+                                                的抽象面上没有 `getsockopt`，回读做不到（为此加一枚选项查询
+                                                = 为一条腿扩整个平台抽象面，第 3 条不做）。实落三条：两端呼
+                                                都回 true 且幂等、设过之后 12 字节往返逐字节照旧、`close()`
+                                                之后呼回 false
 ```
 
 > 不改既有公共头的可见性与既有成员顺序（AGENTS §4.1 第 6 条）。框架侧**不预登记新缺口**：向导所需控件（`Dialog`/`Row`/`Column`/`TextInput`）与退避环、重连浮层、`TcpStream` 全部有已落地消费先例；`platform::TcpStream` 追加成员属**本仓自己的平台抽象**（不是 Aurora 的面），按 AGENTS §5 第 3 条的同一口径处理。若实现期撞到新的框架形态限制，按 AGENTS §5.1 类别分流另立 G 号并出任务书，不在本稿预写。
@@ -161,7 +167,8 @@ UI（connection_wizard 第四型三行 / 侧栏档案行 / 重连浮层沿用已
 ```
 
 - 读线程纪律照 `ssh_dial` / `forkpty_connection` / `serial_connection` / `tunnel_client` 四处先例：建连与读在**同一后台线程**，`start()` 立即返回，UI 线程零网络 IO（AGENTS §4.5 第 25 条）。
-- **锁的持有面**：socket 锁内**不做带超时的等待**——串口 F11 那条「本沙箱对持锁休眠的秒级惩罚」读数在 TCP 腿同样适用，真机上也违背架构 §3.4「锁内不做 IO」。做法口径：读循环取「一次带超时读」时不与写侧争同一把长持有锁，或降到 0 档非阻塞探测 + 锁外短等；判据不变——**UI 线程的 `write()` 不得排在一个读分片之后**（实现期以变异自证：把带超时读塞进锁内必须让某条用例转红）。
+- **锁的持有面**：socket 锁内**不做带超时的等待**——串口 F11 那条「本沙箱对持锁休眠的秒级惩罚」读数在 TCP 腿同样适用，真机上也违背架构 §3.4「锁内不做 IO」。落法（批 2 已按此实现）：读循环在锁内只做**超时 0 档的非阻塞探测**，20 ms 的空闲等待留在锁外，于是锁的常驻持有者只可能是一次探测或一次写。判据不变——**UI 线程的 `write()` 不得排在一个读分片之后**。
+  - **这条判据本棒未做变异自证**（稿面原写「实现期以变异自证：把带超时读塞进锁内必须让某条用例转红」，按实际改口，AGENTS §4.2 第 12 条）：环回上键入线程等一个 20 ms 读分片是**观测不到后果**的——没有第二把锁争用的现场，也没有时延断言。故本棒的四条变异（§6 末条）不含这一条，该判据的实证落在两处：① 代码形态（`stream_mutex_` 内只有 `kProbeTimeoutMs = 0` 与一次 `write`）；② 真机走查第 ⑹ 条的逐键手感。把它写成「已证」是假读数。
 - **协商状态只在读线程**：`telnet_negotiation` 的实例由连接腿私有持有，不跨线程读它；给界面的只有「会话是否已就绪」与 `ReconnectProgress` 那两枚既有快照通道（latest-value，AGENTS §4.5 第 25 条）。选项状态位（ECHO 开/关等）本期**没有 UI 消费方**（D7①），故不投快照、不落浮层——这是「不加将来才用的抽象」的直接落点。
 - **跨线程的唯一入口是尺寸槽**（D10②）：`TelnetConnection::resize(rows, cols)` 由 UI 线程呼，只做一件事——把这对整数写进 latest-value 槽（不取 socket 锁、不做 IO、不排队列，同值直接覆盖）；真正组包与上线由读线程在下一轮完成。这条是改判 NAWS 唯一新增的跨线程面，其余方向与串口/SSH 两腿同构。
 - 发送方向：`Session::send_text` / `send_bytes` → 编码 → `write_out()` 一处行尾折算（CRLF，D8①）→ `TelnetConnection::write()` → **数据段里的 0xFF 必须转义成 `FF FF`** 再上线（F7，`negotiation` 的写出侧一半）。转义发生在连接腿而不是 `Session`：SSH/本地腿没有这层规程，把协议细节渗进会话层就违背分层。
@@ -175,11 +182,12 @@ UI（connection_wizard 第四型三行 / 侧栏档案行 / 重连浮层沿用已
 - **基础客户端可用**（连接/收发/关闭）：`itest_telnet_connection` 证「环回假服务端发净文本 ⇒ 网格自第 0 格起逐码点对齐」与「本端写一条命令 ⇒ 服务端收到的字节与预期逐字节全等」两向；`tcp_connect` 失败（拒连 errno 111，F9）证归因落 `DialNetwork` 且不假装会话已建立。
 - **编码按 `TERM.09` 可配**：装配层把 `make_session_encoding(settings)` 交进 Telnet 会话构造（与本地/SSH 同一枚现成件，D5①），`itest_telnet_connection` 以对端写多字节序列 ⇒ 网格落子的形态证解码链吃的是该档；裁决 7.6 的「Telnet 缺省 UTF-8」在装配折算处锁住，**不新增设置键**。
 - **发送行尾 CRLF**（D8①）：`utest_session` 既有四条折算用例覆盖折算点本身；本棒加一条「Telnet 会话的 Enter 落 CRLF 且键表面仍产一个 CR」的组装断言，`itest_telnet_connection` 在收端锁最后半段。
-- **掉线与重连**：`itest_telnet_connection` 证 EOF→`RemoteExit`→**不**进重拨环（分类表零改动）、ECONNRESET→`LinkLost`→投 attempt≥1 的环内快照；重拨成功回到读循环时擦快照（既有三处投递时机，裁决 7.99）。
+- **掉线与重连**：`itest_telnet_connection` 证 EOF→`RemoteExit`→**不**进重拨环（分类表零改动，且终态档位就是 `RemoteExit`）、ECONNRESET→`LinkLost`→投 attempt≥1 的环内快照并**真的把同一份档案再拨一回**（第二回受理在现场，中途掉线期间 `on_closed` 一份都不投＝会话不闪断）；「停止重连」截断正等待的退避档，终态落 `UserStopped` 而归因仍是掉线那回的 `LinkLost`。重拨成功时把进度快照擦回「不在环里」这一步由既有投递时机负责（`post_progress(ReconnectProgress{})`），本棒没有为它单断言——`saw_redial()` 与 `closes()==0` 是它的间接读数。
 - **跨分片与转义**（判据 5）：`utest_telnet_negotiation` 以「同一段字节流，分别按 1 字节 / 随机分片 / 整段三种喂法喂入，净数据与待回字节必须逐字节全等」锁 F5/F6/F7 的形态等价性——这条是本棒最容易出真缺陷的地方，也是把它拆成纯逻辑件（D11①）的全部理由。
 - **界面腿（判据 1/2）**：`itest_connection_wizard` 补无头真点击用例——四张类型卡真点、Telnet 型不画 SSH 的 user/认证/known_hosts 三栏也不画串口九栏、三行字段集产值进草稿、端口留空＝23、`validate_draft` 三档问题码逐档上屏且不关框。四张卡的**行宽好不好看**属绘制判据，无头断不了，留下面走查第 ⑸ 条。
-- **尺寸下发 NAWS**（判据 8，D10② 人改判新增）：`utest_telnet_negotiation` 锁组包形态——`window_size_command(40, 130)`（40 行×130 列）⇒ 待回字节恰为 `IAC SB NAWS 0x00 0x82 0x00 0x28 IAC SE`（**宽在前**，各大端两字节，按 F14；RFC 1073 §6 的 80×24 ⇒ `0 80 0 24` 同读数）、尺寸与上一次**真的发出去的**相同则不发（拖回旧值仍要发）、载荷里撞上 0xFF 要转义、越界与 0 值不发且不记账、重拨后再发；`itest_telnet_connection` 在真 socket 上证环回服务端确实收到这串字节，并证「UI 线程呼 `resize()` 时读线程尚未取走也不阻塞 UI」（latest-value 槽语义）。
-- **测试读数口径**：交付时以 `ctest --test-dir build -E etest_` 的**项数与 runner 全案数**结项（AGENTS §4.4 第 21 条不认「测了很多」），变异注入按第 22 条自证非空转——本棒至少要证三条承重：摘掉 `FF FF` 反转义 ⇒ 转义用例转红；把未完成的命令段漏进 `on_bytes` ⇒ 等价性用例转红；把 NAWS 的大端字节序写反（或摘掉同值去重）⇒ 组包用例转红。
+- **尺寸下发 NAWS**（判据 8，D10② 人改判新增）：`utest_telnet_negotiation` 锁组包形态——`window_size_command(40, 130)`（40 行×130 列）⇒ 待回字节恰为 `IAC SB NAWS 0x00 0x82 0x00 0x28 IAC SE`（**宽在前**，各大端两字节，按 F14；RFC 1073 §6 的 80×24 ⇒ `0 80 0 24` 同读数）、尺寸与上一次**真的发出去的**相同则不发（拖回旧值仍要发）、载荷里撞上 0xFF 要转义、越界与 0 值不发且不记账、重拨后再发；`itest_telnet_connection` 在真 socket 上证环回服务端确实收到这串字节（100 列×40 行 ⇒ `FF FA 1F 00 64 00 28 FF F0`，同值再给一次线上**一个字节都不多**，改成 80×24 就又上一回）。
+  - 原写「并证『UI 线程呼 `resize()` 时读线程尚未取走也不阻塞 UI』」按实际改口：**不阻塞这一半没有断言**（环回上量不出 20 ms 级的排队差值，见 §5 那条）。`resize()` 零 IO、零 socket 锁是**代码形态**（它只写 `size_mutex_` 护着的一对整数），itest 证的是另一半——槽里的值确实上线，含「拨号之前就给尺寸 ⇒ 连上那一轮首发」这条用例。
+- **测试读数口径**：交付时以 `ctest --test-dir build -E etest_` 的**项数与 runner 全案数**结项（AGENTS §4.4 第 21 条不认「测了很多」），变异注入按第 22 条自证非空转。稿面原列的三条承重与实落结果：① 摘掉 `FF FF` 反转义 ⇒ 批 1 的 `utest` 3 案转红（已证）；② 把未完成的命令段漏进 `on_bytes` ⇒ 等价性与断裂案转红（已证：批 1 用「解析状态不跨读保留」这一枚变异打到等价性案，批 2 的 itest 另以「半条命令停在解析器里时网格为空」把同一事实钉在真 socket 上）；③ 把 NAWS 的大端字节序写反 ⇒ 组包用例转红（已证，批 1 utest 3 案／批 2 itest 2 案）；④ 摘同值去重 ⇒ 组包用例转红（已证）。批 2 另加三条只属于连接腿的承重：**摘掉写出侧 `escape_outbound` ⇒ 转义案转红**、**把 EOF 归成 `LinkLost` ⇒ 归因表案与 EOF 案双双转红**（D9① 的分野有两处在读，不是单点）、**尺寸槽改成只在建连时取一次 ⇒ 缩放案转红**。唯一登记为「未自证」的承重是 §5 那条锁纪律，理由同处已写。
 - **真机走查**（AGENTS §4.4 第 33 条，未走查不得称「可用」）：⑴ 真 telnetd 上发起 `DO ECHO`/`DO SGA` 有没有异常反应（F8 只证参考客户端沉默，不证服务器）；⑵ 只认 CR 的老设备在固定 CRLF 档下是否可用（D8 的代价面）；⑶ 遇到 `WONT ECHO` 的服务器时「看不见输入」的可接受度（D7 的代价面）；⑷ 真 telnetd 上 **NAWS 的实际观感**（D10② 的实测补账）：分屏/缩放后远端全屏程序是否按新尺寸重排、服务器对客户端主动发起的子协商有无异常反应——本沙箱无 telnetd（F1），这条只能真机取数；⑸ 四张类型卡的行宽与文案；⑹ 开 `TCP_NODELAY` 前后的逐键手感差值（D6 的实测补账，本沙箱无从复现）。
 
 ---
@@ -207,6 +215,10 @@ UI（connection_wizard 第四型三行 / 侧栏档案行 / 重连浮层沿用已
 - **2026-10-11 出稿**：§0 的地基实测已跑完（F1–F13），§3 的 D1–D12 送人逐条裁决。**裁决前不落 `src/` 代码**（AGENTS §4.1 第 2 条）。
 - **2026-10-11 收口**：人已裁完——**D6／D7 按稿面推荐档 ①**，**D10 改判为 ②（本期顺带做 NAWS）**，其余九条（D1–D5、D8、D9、D11、D12）按推荐档收口。据此入册 `codespec/SPECIFICATIONS.md` §7 裁决 **7.112** 与 `codespec/CHANGELOG.md` v0.112，改判的六处连带回写已落在本稿（见文首状态块）。
 - **2026-10-11 批 1 落地 + 一处口径按实测改口**：两笔提交——档案第四型（`include/borealis/conn/profile.h` 追加 `Telnet` 与 `TelnetProfile{host, port=23}`、`src/config/store.cpp` 的 `EnumName` 表与 telnet 段读写、`src/conn/profile_views.{h,cpp}` 的第四腿、`src/conn/profile.cpp` 的主机搜索）与协商纯逻辑件（`src/conn/telnet_negotiation.{h,cpp}` + `tests/unit/utest_telnet_negotiation.cpp`，10 案）。落地时按新增的 **F14** 读数把 NAWS 载荷次序改成**宽在前**，稿面四处一并改口，入册裁决 **7.113**／v0.113。结项读数：`ctest --preset linux -E etest_` **78 项全绿**、`borealis_test_runner` **963 案全绿**（§4.4 第 21 条）；非空转四条变异各自转红（摘 `FF FF` 反转义 3 案红／解析状态不跨读保留 ⇒ 等价性与断裂案红／宽高次序写反 3 案红／摘同值去重 1 案红，第 22 条）。
+- **2026-10-11 批 2 落地（连接腿 + 平台 `set_nodelay` + 环回 itest）**：两笔提交——① `src/platform/tcp.h` 的 `TcpStream` 追加纯虚 `set_nodelay()`，POSIX 腿 `setsockopt(IPPROTO_TCP, TCP_NODELAY)`、Win 腿同形但**未经 MSVC 编译**（F12），`utest_tcp_loopback` 补一枚用例（两端回 true 且幂等／设后 12 字节往返照旧／`close()` 后回 false）；② `src/conn/telnet_connection.{h,cpp}` 私有头连接腿（稿 §4 那一行的形态：`TcpStream` + 读线程 + 协商件 + `telnet_close_reason()` 归因表 + 复用 `conn/reconnect.h` 退避环），`src/CMakeLists.txt` 手写进源列表，`tests/integration/itest_telnet_connection.cpp` **十三案**在真环回 socket 上证协议面。结项读数：`ctest --preset linux -E etest_` **79 项全绿**、`borealis_test_runner` **977 案全绿**。四则变异各打红、还原后 `cmp` 逐字节相同：摘写出侧转义 1 案红／NAWS 宽高次序写回 2 案红（另带动 `utest_telnet_negotiation` 4 案红）／EOF 归成 `LinkLost` 2 案红／尺寸槽只在建连时取一次 1 案红。
+  - **RST 的造法**（本棒最值得留档的一处）：`platform::TcpStream` 不暴露 fd，`SO_LINGER(1,0)` 那条探针路径要用裸 socket——那会把平台知识带进 tests（AGENTS §4.5 第 23 条）。改用内核本就有的行为：**一条 socket 带着未读字节被关闭即发 RST**，故假服务端「只吞发起序的前 4 字节」再关（后 2 字节留在接收队列）⇒ 本端 `recv` 得 ECONNRESET ⇒ 归 `LinkLost` 进环；同一台替身随后回到 `accept`，第二回受理就是「按同一份档案重拨并真连上」的直接证人，不需要第二台服务端。
+  - **一处替身的析构顺序是硬约束**：事件记录替身必须**声明在连接之前**，它才比连接活得久。顺序倒了，通过的用例毫无影响、**失败**的用例会在栈展开里让读线程撞上已销毁的替身——实测 `pure virtual method called` 掀掉整个 runner，红线退化成没有读数的崩溃。串口那棒（`itest_posix_serial_connection`）同形的五处一并改正。这不是风格问题：第 22 条的变异自证全靠「红线可读」才成立。
+  - `set_nodelay` 在连接腿的调用**没有字节级证人**：环回上 ACK 即时，Nagle 的有无观测不出差别（F11），故本棒只证「拨号后确实呼过、失败只记日志不改归因」，手感差值留真机走查第 ⑹ 条。这是如实登记，不是已证。
 - **本稿最需要人判的三条与其结果**：D6（要不要动 `platform::TcpStream` 加 `set_nodelay`——**裁：加，只 Telnet 腿呼**）、D7（对端不回显时本期不做本地回显，用户可能看不见自己敲的字——**裁：不做也不提示**）、D10（NAWS 是否本期顺带——**裁：改判为做**，代价与本节 §2 判据 8／§5 尺寸腿／§6 组包用例一并生效）。
 - 探针复现口径（一次性脚本，不入仓，全在沙箱临时目录）：
   - `telnet_probe.py`：环回假服务端起停（F2）、协商命令与服务端文本的到达形态、客户端发起字节被对端逐字节收到（判据 3/4）、`FF FF` 在数据段的往返（F7）、有序 FIN 的 EOF 形态（F3 的一半）、空闲读超时不吞数据（F13）。
