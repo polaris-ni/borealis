@@ -1,9 +1,11 @@
 // ============================================================
 // 连接新建/编辑向导实现（src/ui/connection_wizard.cpp）
 // ------------------------------------------------------------
-// 步骤 0＝三张类型卡（Local / SSH / Serial，`UI_SERIAL.draft.md` D1①），步骤 1＝
+// 步骤 0＝四张类型卡（Local / SSH / Serial / Telnet，`UI_SERIAL.draft.md` D1① 与
+// `UI_TELNET.draft.md` D1①/D2①），步骤 1＝
 // 该类型的字段集（串口九行见该稿 §2 标号 2：展示名是输入框、设备行是「下拉 + 刷新 +
-// 自定义」三件套、其余七行一律循环按钮）。参数与主机密钥策略用循环按钮（行内不用覆盖
+// 自定义」三件套、其余七行一律循环按钮；Telnet 只有展示名/主机/端口三行，见
+// `UI_TELNET.draft.md` §2 判据 1）。参数与主机密钥策略用循环按钮（行内不用覆盖
 // 绘制不占布局的控件，settings_panel 文件头那条形态约束同源；向导里的设备下拉是
 // D2① 明裁的行外控件，同 `itest_settings_panel` 的行内下拉先例）。校验失败只在 notice
 // 行给文案，不弹二级对话框。
@@ -12,6 +14,7 @@
 #include "connection_wizard.h"
 
 #include <array>
+#include <optional>
 #include <utility>
 
 #include "aurora/widget/button.h"
@@ -40,6 +43,27 @@ constexpr std::array<conn::KnownHostsPolicy, 4> kPolicyCycle{
 constexpr std::array<int, 4> kDataBitsCycle{5, 6, 7, 8};
 constexpr std::array<int, 2> kStopBitsCycle{1, 2};
 constexpr std::array<std::string_view, 2> kEncodingCycle{"GB18030", "UTF-8"};
+
+/// @brief 两型的主机端口缺省（裁决 7.112 D2①：端口留空＝该型缺省，同一条硬编码口径，
+///        不为它开设置键——`settings_catalog` 因此零改动，D5①）。
+constexpr int kDefaultSshPort = 22;
+constexpr int kDefaultTelnetPort = 23;
+
+/// @brief 端口行的读取：空串折成该型缺省；控件不在场（编辑别的型）时交回 nullopt。
+///
+/// 「留空＝缺省」而不是「留空＝非法」是向导既有的宽容口径：SSH 那型一直如此，Telnet 照同
+/// 一条走（`validate_draft` 只在落成的整数值越界时判 `PortOutOfRange`）。
+[[nodiscard]] auto port_from_input(const std::shared_ptr<aurora::TextInput> &input,
+                                   int blank_default) -> std::optional<int> {
+    if (input == nullptr) {
+        return std::nullopt;
+    }
+    const auto text = input->value();
+    if (text.empty()) {
+        return blank_default;
+    }
+    return static_cast<int>(std::strtol(text.c_str(), nullptr, 10));  // NOLINT: 界面口径宽容
+}
 
 [[nodiscard]] auto auth_display(const std::string &method) -> std::string {
     return settings_label("connections.auth." + method);
@@ -220,10 +244,15 @@ auto ConnectionWizard::collect_draft() -> void {
         draft_.user = user_input_ != nullptr ? user_input_->value() : draft_.user;
         draft_.identity_file = identity_input_ != nullptr ? identity_input_->value()
                                                           : draft_.identity_file;
-        if (port_input_ != nullptr) {
-            const auto text = port_input_->value();
-            const auto parsed = std::strtol(text.c_str(), nullptr, 10);  // NOLINT: 界面口径宽容
-            draft_.port = text.empty() ? 22 : static_cast<int>(parsed);
+        if (const auto port = port_from_input(port_input_, kDefaultSshPort)) {
+            draft_.port = *port;
+        }
+    } else if (draft_.type == conn::ConnectionType::Telnet) {
+        // Telnet 只有主机与端口两枚产值字段（展示名在公共那行）：没有 user/认证/私钥三栏，
+        // 也没有串口那些循环钮（裁决 7.112 D2① 的「字段集三行、不造没有消费方的凭据链」）。
+        draft_.host = host_input_ != nullptr ? host_input_->value() : draft_.host;
+        if (const auto port = port_from_input(port_input_, kDefaultTelnetPort)) {
+            draft_.port = *port;
         }
     } else if (draft_.type == conn::ConnectionType::Serial) {
         // 设备值只从**当前可见的那一行**取（切档时另一份控件已退场）：留着看不见的那串才算说谎，
@@ -282,7 +311,7 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(title))});
 
     if (step_ == 0) {
-        // 步骤 0：三张类型卡（裁决 7.110 D1①：串口自此进档案模型，向导自此有第三型）。
+        // 步骤 0：四张类型卡（裁决 7.110 D1① 落第三型、7.112 D1① 落第四型）。
         auto make_type_card = [&](conn::ConnectionType type, std::string_view label_key)
             -> aurora::Node {
             auto card = std::make_shared<aurora::Button>(aurora::ButtonProps{
@@ -303,6 +332,11 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
                         draft_.serial = hooks_.serial_defaults();
                     }
                     request_port_scan();
+                } else if (type == conn::ConnectionType::Telnet) {
+                    // 端口那行在建草稿那一刻就显示该型缺省 23，而不是草稿结构体带着的 22：
+                    // 「留空＝23」这条口径要能在界面上看见，否则用户清空后才拿到 23、留着 22
+                    // 就直接连错端口（裁决 7.112 D2①）。
+                    draft_.port = kDefaultTelnetPort;
                 }
                 step_ = 1;
                 build_and_show();  // 换步重建：字段集随类型卡变（设计稿标号 5）。
@@ -312,18 +346,21 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
         auto card_row = std::make_shared<aurora::Row>(aurora::RowProps{
             .children = {make_type_card(conn::ConnectionType::Local, "connections.type.local"),
                          make_type_card(conn::ConnectionType::Ssh, "connections.type.ssh"),
-                         make_type_card(conn::ConnectionType::Serial, "connections.type.serial")},
+                         make_type_card(conn::ConnectionType::Serial, "connections.type.serial"),
+                         make_type_card(conn::ConnectionType::Telnet, "connections.type.telnet")},
             .gap = 12.0F,
         });
         children.push_back(
             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(card_row))});
     } else {
-        // 步骤 1：字段集。名称三型共用；其余字段按类型卡决定（SSH / Serial / Local 三套）。
+        // 步骤 1：字段集。名称四型共用；其余字段按类型卡决定（SSH / Serial / Telnet / Local 四套）。
         name_input_ = make_input(240.0F);
         name_input_->set_value(draft_.name);
         children.push_back(make_field_row(settings_label("connections.field.name"), aurora::Node{std::static_pointer_cast<aurora::Widget>(name_input_)}));
 
-        if (draft_.type == conn::ConnectionType::Ssh) {
+        // 主机与端口两行的形态只有一处：SSH 与 Telnet 共用同一对成员句柄与同一份
+        // 「留空＝该型缺省」口径（`collect_draft` 那侧同一条 `port_from_input`）。
+        auto add_host_and_port_rows = [&]() -> void {
             host_input_ = make_input(240.0F);
             host_input_->set_value(draft_.host);
             children.push_back(make_field_row(settings_label("connections.field.host"), aurora::Node{std::static_pointer_cast<aurora::Widget>(host_input_)}));
@@ -331,7 +368,10 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
             port_input_ = make_input(240.0F);
             port_input_->set_value(std::to_string(draft_.port));
             children.push_back(make_field_row(settings_label("connections.field.port"), aurora::Node{std::static_pointer_cast<aurora::Widget>(port_input_)}));
+        };
 
+        if (draft_.type == conn::ConnectionType::Ssh) {
+            add_host_and_port_rows();
             user_input_ = make_input(240.0F);
             user_input_->set_value(draft_.user);
             children.push_back(make_field_row(settings_label("connections.field.user"), aurora::Node{std::static_pointer_cast<aurora::Widget>(user_input_)}));
@@ -525,6 +565,11 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
                                   kEncodingCycle[0])};
                               return draft_.serial.encoding;
                           });
+        } else if (draft_.type == conn::ConnectionType::Telnet) {
+            // Telnet 的字段集到此为止：三行＝展示名 + 主机 + 端口（裁决 7.112 D2①）。不画
+            // SSH 的 user/认证/私钥三栏（Telnet 无认证协议，登录提示由远端程序给，「存进档案
+            // 的口令」没有消费方），也不画串口那七行循环钮。
+            add_host_and_port_rows();
         } else {
             command_input_ = make_input(240.0F);
             command_input_->set_value(draft_.command_line);

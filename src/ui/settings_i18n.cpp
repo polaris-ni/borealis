@@ -39,6 +39,10 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"connections.notice.imported", "已导入 {0} 条"},
     {"connections.type.local", "本地终端"},
     {"connections.type.ssh", "SSH"},
+    // 向导第四型的类型卡（`SPEC.FEAT.CONN.06`，裁决 7.112 D2①）：本棒的新词条**只有这一枚**
+    // ——字段名复用 host/port 两行、掉线留痕复用既有措辞，故 Telnet 没有自己的词条族。
+    // 「串口终端」那枚在下面的串口块里，随该块的参数档一族同处登记。
+    {"connections.type.telnet", "Telnet"},
     {"connections.field.name", "名称"},
     {"connections.field.host", "主机"},
     {"connections.field.port", "端口"},
@@ -61,7 +65,9 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"connections.wizard.title_new", "新建连接"},
     {"connections.wizard.title_edit", "编辑连接"},
     {"connections.wizard.issue_empty_name", "名称不能为空"},
-    {"connections.wizard.issue_empty_host", "SSH 主机不能为空"},
+    // 措辞不带型名：SSH 与 Telnet 共用这一档问题码（裁决 7.112 D2① 的「零新增问题码」），
+    // 写成「SSH 主机不能为空」会在 Telnet 字段集上把用户指向另一个型。
+    {"connections.wizard.issue_empty_host", "主机不能为空"},
     {"connections.wizard.issue_port", "端口须在 1..65535"},
     {"connections.wizard.issue_auth", "认证方式无效"},
     // ---- 串口向导与热改波特率（UI_SERIAL.draft.md，裁决 7.110；`connections.serial.*` 的

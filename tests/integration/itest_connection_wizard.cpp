@@ -166,6 +166,14 @@ class Harness {
         return handled;
     }
 
+    /// @brief 向当前焦点控件发一个真实按键（清端口框走这条：`set_value()` 不触发编辑语义）。
+    [[nodiscard]] auto press(au::KeyCode key) -> bool {
+        au::KeyEvent event;
+        event.key = static_cast<int>(key);
+        event.action = au::KeyAction::Down;
+        return au::EventDispatcher::dispatch(root_.widget(), event, focus_);
+    }
+
     /// @brief 扫描派发链，找第 nth 个满足 accept 的控件（行序＝扫描序，4 dp 步长）。
     [[nodiscard]] auto find(std::string_view type_name, std::size_t nth,
                             const std::function<bool(au::Widget *)> &accept = {}) -> HitSpot {
@@ -270,21 +278,42 @@ auto enter_serial_step(Harness &h, ui::ConnectionWizard &wizard) -> void {
     return profile;
 }
 
+/// @brief 一条 Telnet 档案（`SPEC.FEAT.CONN.06` 批 3 的编辑腿入口同样是 `open_edit`）。
+[[nodiscard]] auto telnet_profile(std::string name, std::string host, int port) -> conn::Profile {
+    auto profile = conn::Profile{};
+    profile.id = "profile:" + name;
+    profile.name = std::move(name);
+    profile.type = conn::ConnectionType::Telnet;
+    profile.telnet.host = std::move(host);
+    profile.telnet.port = port;
+    return profile;
+}
+
+/// @brief 第 nth 个 TextInput 的当前值（字段行的产值与回填都从这一处取读数）。
+[[nodiscard]] auto text_at(Harness &h, std::size_t nth) -> std::string {
+    auto spot = h.find("TextInput", nth);
+    AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr, "the input row is missing");
+    const auto *input = dynamic_cast<const au::TextInput *>(spot.widget);
+    AURORA_TEST_REQUIRE(input != nullptr);
+    return input->value();
+}
+
 }  // namespace
 
 // ------------------------------------------------------------
-// 判据①（稿 §2 标号 1/2）：三张类型卡 + 串口字段集九行，SSH 四栏不出现
+// 判据①（稿 §2 标号 1/2）：四张类型卡 + 串口字段集九行，SSH 四栏不出现
 // ------------------------------------------------------------
-AURORA_TEST_CASE(three_type_cards_land_and_serial_opens_the_nine_rows) {
+AURORA_TEST_CASE(four_type_cards_land_and_serial_opens_the_nine_rows) {
     static_cast<void>(ui::install_settings_strings());
     Probe probe;
     Harness h;
     auto wizard = h.attach(probe);
     h.open(*wizard);
 
-    // 步骤 0 自此三张（Local / SSH / Serial，裁决 7.110 D1①）：三张都真点得到。
+    // 步骤 0 自此四张（Local / SSH / Serial / Telnet，裁决 7.110 D1① 与 7.112 D1①）：
+    // 四张都真点得到——第四张是本棒新增的入口，点不到就是 Telnet 档案仍建不出来。
     for (const auto *key : {"connections.type.local", "connections.type.ssh",
-                            "connections.type.serial"}) {
+                            "connections.type.serial", "connections.type.telnet"}) {
         AURORA_TEST_REQUIRE_MSG(h.find_button(ui::settings_label(key)).widget != nullptr, key);
     }
 
@@ -621,6 +650,139 @@ AURORA_TEST_CASE(port_results_rebuild_only_the_open_serial_device_row) {
     h.render();
     AURORA_TEST_CHECK_EQ(h.overlay_count(), overlays_while_typing);
     AURORA_TEST_CHECK_EQ(h.count_of("Dropdown"), 0U);
+}
+
+// ------------------------------------------------------------
+// 判据⑧（`SPEC.FEAT.CONN.06` 批 3，稿 §6 界面腿）：Telnet 字段集只有三行，端口行显示该型缺省
+// ------------------------------------------------------------
+AURORA_TEST_CASE(telnet_opens_three_rows_only_and_prefills_the_type_default_port) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    Harness h;
+    auto wizard = h.attach(probe);
+    h.open(*wizard);
+    // 停在类型卡时不取设备：Telnet 型既没有设备行也不画串口那三件套。
+    AURORA_TEST_CHECK_EQ(probe.refresh_requests, 0);
+
+    h.click_and_settle(h.find_button(ui::settings_label("connections.type.telnet")));
+
+    // 三行标签逐行上屏（展示名 + 主机 + 端口，裁决 7.112 D2①）。
+    for (const auto *key : {"connections.field.name", "connections.field.host",
+                            "connections.field.port"}) {
+        AURORA_TEST_REQUIRE_MSG(h.find_text(ui::settings_label(key)).widget != nullptr, key);
+    }
+    // 另外三型的行一条都不画（稿 §6：不画 SSH 的 user/认证/私钥，也不画串口九行与本地两行）。
+    for (const auto *key : {"connections.field.user", "connections.field.auth",
+                            "connections.field.identity", "connections.field.device",
+                            "connections.field.baud", "connections.field.data_bits",
+                            "connections.field.stop_bits", "connections.field.parity",
+                            "connections.field.flow", "connections.field.line_ending",
+                            "connections.field.encoding", "connections.field.command",
+                            "connections.field.workdir"}) {
+        AURORA_TEST_CHECK_MSG(h.find_text(ui::settings_label(key)).widget == nullptr, key);
+    }
+    AURORA_TEST_CHECK_EQ(h.count_of("TextInput"), 3U);   // 只有这三行的落笔控件
+    AURORA_TEST_CHECK_EQ(h.count_of("Dropdown"), 0U);    // 设备下拉不在这一型里
+    // 端口行显示**该型**缺省 23，而不是 `ProfileDraft` 结构体带着的 22：留着 22 直接保存
+    // 就会连到 SSH 的端口上去，「留空＝23」这条口径得先在界面上看得见。
+    AURORA_TEST_CHECK_EQ(text_at(h, 3), std::string{"23"});
+    AURORA_TEST_CHECK_EQ(text_at(h, 2), std::string{});
+}
+
+// ------------------------------------------------------------
+// 判据⑨（稿 §6）：三行产值进档案；端口留空＝23，填了就用填的那个数
+// ------------------------------------------------------------
+AURORA_TEST_CASE(the_telnet_rows_save_back_a_profile_and_a_blank_port_falls_back_to_23) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    Harness h;
+    auto wizard = h.attach(probe);
+
+    auto enter_telnet = [&]() -> void {
+        h.open(*wizard);
+        h.click_and_settle(h.find_button(ui::settings_label("connections.type.telnet")));
+        auto name_spot = h.find("TextInput", 1);
+        AURORA_TEST_REQUIRE_MSG(name_spot.widget != nullptr, "the name field is missing");
+        h.click(name_spot);
+        static_cast<void>(h.type("lab-box"));
+        auto host_spot = h.find("TextInput", 2);
+        AURORA_TEST_REQUIRE_MSG(host_spot.widget != nullptr, "the host field is missing");
+        h.click(host_spot);
+        static_cast<void>(h.type("10.0.0.5"));
+    };
+
+    // 第一档：端口不动 ⇒ 交回预填的 23。
+    enter_telnet();
+    h.click_and_settle(h.find_button(ui::settings_label("connections.action.save")));
+    AURORA_TEST_REQUIRE_EQ(probe.saved.size(), 1U);
+    AURORA_TEST_CHECK_TRUE(probe.saved[0].type == conn::ConnectionType::Telnet);
+    AURORA_TEST_CHECK_TRUE(probe.saved[0].telnet.host == "10.0.0.5");
+    AURORA_TEST_CHECK_EQ(probe.saved[0].telnet.port, 23);
+    AURORA_TEST_CHECK_FALSE(wizard->is_open());  // 保存即收框
+
+    // 第二档：把端口**清空** ⇒ 留空折成该型缺省 23（同 SSH 那型的 22 一条口径）。
+    enter_telnet();
+    auto port_spot = h.find("TextInput", 3);
+    AURORA_TEST_REQUIRE_MSG(port_spot.widget != nullptr, "the port field is missing");
+    h.click(port_spot);
+    static_cast<void>(h.press(au::KeyCode::End));
+    for (int i = 0; i < 2; ++i) {
+        static_cast<void>(h.press(au::KeyCode::Backspace));
+    }
+    AURORA_TEST_CHECK_EQ(text_at(h, 3), std::string{});
+    h.click_and_settle(h.find_button(ui::settings_label("connections.action.save")));
+    AURORA_TEST_REQUIRE_EQ(probe.saved.size(), 2U);
+    AURORA_TEST_CHECK_EQ(probe.saved[1].telnet.port, 23);
+
+    // 第三档：填了就用填的那个数（防「缺省值永远赢」这一枚变异）。先清掉预填的两位再敲，
+    // 否则接上去就成了 232323，落在端口区间外——那是校验档，不是这一档要读的东西。
+    enter_telnet();
+    auto typed_port = h.find("TextInput", 3);
+    AURORA_TEST_REQUIRE_MSG(typed_port.widget != nullptr, "the port field is missing");
+    h.click(typed_port);
+    static_cast<void>(h.press(au::KeyCode::End));
+    for (int i = 0; i < 2; ++i) {
+        static_cast<void>(h.press(au::KeyCode::Backspace));
+    }
+    static_cast<void>(h.type("2323"));
+    AURORA_TEST_CHECK_EQ(text_at(h, 3), std::string{"2323"});
+    h.click_and_settle(h.find_button(ui::settings_label("connections.action.save")));
+    AURORA_TEST_REQUIRE_EQ(probe.saved.size(), 3U);
+    AURORA_TEST_CHECK_EQ(probe.saved[2].telnet.port, 2323);
+}
+
+// ------------------------------------------------------------
+// 判据⑩（稿 §6）：Telnet 的三档问题码逐档折成一行可读文案，不关框也不交出档案
+// ------------------------------------------------------------
+AURORA_TEST_CASE(each_telnet_draft_issue_lands_its_own_notice_line) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    Harness h;
+    auto wizard = h.attach(probe);
+
+    // 三档按 `validate_draft` 的声明次序逐一造境（每例只脏一个字段，其余合法）。
+    const std::vector<std::pair<conn::Profile, std::string_view>> cases{
+        {telnet_profile("", "10.0.0.5", 23), "connections.wizard.issue_empty_name"},
+        {telnet_profile("lab", "", 23), "connections.wizard.issue_empty_host"},
+        {telnet_profile("lab", "10.0.0.5", 70000), "connections.wizard.issue_port"},
+    };
+    for (const auto &[profile, issue_key] : cases) {
+        wizard->open_edit(profile);
+        h.render();
+        h.render();
+        // 编辑腿的回填：主机与端口两行显示档案里的值（回填错了下面的留痕就成了假读数）。
+        AURORA_TEST_CHECK_EQ(text_at(h, 3), std::to_string(profile.telnet.port));
+        auto save_spot = h.find_button(ui::settings_label("connections.action.save"));
+        AURORA_TEST_REQUIRE_MSG(save_spot.widget != nullptr, "the save button is missing");
+        h.click_and_settle(save_spot);
+        AURORA_TEST_CHECK_EQ(probe.saved.size(), 0U);
+        AURORA_TEST_CHECK_TRUE(wizard->is_open());  // 不关框：用户就地改
+        AURORA_TEST_REQUIRE_MSG(
+            h.find_text(ui::settings_label(issue_key)).widget != nullptr,
+            std::string{issue_key}.c_str());
+        wizard->close();
+        h.render();
+    }
 }
 
 }  // namespace borealis::test_cases::itest_connection_wizard
