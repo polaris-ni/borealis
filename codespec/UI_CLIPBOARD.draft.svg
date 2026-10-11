@@ -1,0 +1,343 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="2290" viewBox="0 0 1560 2290" font-family="'Noto Sans CJK SC',sans-serif">
+<rect x="0" y="0" width="1560" height="2290" fill="#eef0f5"/>
+<text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">剪贴板读授权：OSC 52 读方向三态闸（默认禁止 · 被拒必回空响应）—— SPEC.FEAT.CONN.12</text>
+<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_CLIPBOARD.draft.svg · 高保真草图（D1–D12 按人已授权的推荐档自决收口，改判位见稿 §3）· 1 dp == 1 px @100% · 圈号 1–6 对应 UI_CLIPBOARD.draft.md §2 的判据标号 · 底部读数＝稿 §0 的 G1–G17</text>
+
+<!-- ============ 屏 A：设置页终端页那一行 + 组顶旁注 ============ -->
+<g transform="translate(30,78)">
+  <rect x="-1" y="-1" width="1502" height="626" rx="10" fill="#f7f8fb" stroke="#c6cbd8"/>
+  <rect x="0" y="0" width="1500" height="38" rx="10" fill="#e9ecf4"/>
+  <circle cx="19" cy="19" r="7" fill="#7c3aed"/>
+  <text x="19" y="23" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">A</text>
+  <text x="36" y="24" font-size="12.5" fill="#1b1f28" font-weight="600">设置 — 终端页（新增那一行紧随 terminal.right_click，其余行序不动；Immediate ⇒ 改档即刻生效，无「应用」按钮）</text>
+  <text x="1486" y="24" font-size="12" fill="#8a90a0" text-anchor="end">— □ ×</text>
+  <line x1="0" y1="38" x2="1500" y2="38" stroke="#d3d8e4"/>
+
+  <!-- 左导航 -->
+  <g transform="translate(16,58)">
+    <rect x="0" y="0" width="156" height="540" rx="8" fill="#eef1f7"/>
+    <text x="14" y="24" font-size="11" fill="#8a90a0" font-weight="700">页</text>
+    <text x="14" y="52" font-size="12" fill="#3b4252">外观</text>
+    <rect x="6" y="64" width="144" height="28" rx="6" fill="#ffffff" stroke="#7c3aed"/>
+    <text x="14" y="83" font-size="12" fill="#5b21b6" font-weight="700">终端</text>
+    <text x="14" y="114" font-size="12" fill="#3b4252">连接</text>
+    <text x="14" y="140" font-size="10.5" fill="#8a90a0">（Keys 面板是停靠卡片，</text>
+    <text x="14" y="156" font-size="10.5" fill="#8a90a0">不在本页三格里）</text>
+    <line x1="10" y1="176" x2="146" y2="176" stroke="#d3d8e4"/>
+    <text x="14" y="198" font-size="11" fill="#3b4252" font-weight="600">本棒动的四处</text>
+    <text x="14" y="218" font-size="10.5" fill="#5a6070">· schema 键 + 落盘名</text>
+    <text x="14" y="234" font-size="10.5" fill="#5a6070">· 表单一枚 Binding</text>
+    <text x="14" y="250" font-size="10.5" fill="#5a6070">· 目录一行 dropdown</text>
+    <text x="14" y="266" font-size="10.5" fill="#5a6070">· 词条 + 组顶旁注</text>
+    <text x="14" y="290" font-size="10.5" fill="#c2410c">核对表总数 64 → 65</text>
+    <text x="14" y="306" font-size="10.5" fill="#c2410c">Absent 19 不变</text>
+    <text x="14" y="322" font-size="10.5" fill="#c2410c">NextSession 名单不变</text>
+  </g>
+
+  <!-- 组顶旁注 -->
+  <g transform="translate(190,58)">
+    <rect x="0" y="0" width="1294" height="60" rx="8" fill="#fff6e5" stroke="#FFB86C"/>
+    <text x="14" y="22" font-size="11.5" fill="#8a5a00" font-weight="700">组顶旁注（settings_panel.cpp 的 kGroupNotes 追加这一行 —— D9① 的赔付处：拒绝档静默，界面上得把话说清）</text>
+    <text x="14" y="42" font-size="11.5" fill="#5a4010">「远端读取剪贴板」控制的是 OSC 52 的读方向：默认禁止。选「每次询问」时每条读请求都会问一次；改动即刻对所有在途会话生效。</text>
+    <text x="14" y="56" font-size="10.5" fill="#8a5a00">写方向（远端往本机剪贴板写）不在这道闸里 —— 那是 SPEC.FEAT.TERM.07 已落的口径，D10① 明确不并管，故措辞只写「读取」。</text>
+  </g>
+
+  <!-- 行表 -->
+  <g transform="translate(190,134)">
+    <rect x="0" y="0" width="1294" height="30" rx="4" fill="#eef1f7"/>
+    <text x="14" y="20" font-size="11" fill="#5a6070" font-weight="700">交互</text>
+    <text x="70" y="20" font-size="10.5" fill="#8a90a0">同族样本：terminal.right_click（三态 + Immediate）· 行序即 catalog 产出序</text>
+
+    <text x="14" y="56" font-size="12" fill="#1b1f28">鼠标右键行为</text>
+    <rect x="360" y="40" width="230" height="24" rx="4" fill="#ffffff" stroke="#c6cbd8"/>
+    <text x="372" y="57" font-size="11.5" fill="#3b4252">上下文菜单</text>
+    <text x="578" y="57" font-size="11" fill="#8a90a0" text-anchor="end">▾</text>
+    <text x="610" y="57" font-size="10.5" fill="#8a90a0" font-family="monospace">terminal.right_click</text>
+
+    <line x1="8" y1="74" x2="1286" y2="74" stroke="#d3d8e4"/>
+
+    <text x="14" y="98" font-size="12" fill="#1b1f28">远端读取剪贴板（OSC 52）</text>
+    <rect x="360" y="82" width="230" height="24" rx="4" fill="#ffffff" stroke="#7c3aed" stroke-width="1.6"/>
+    <text x="372" y="99" font-size="11.5" fill="#5b21b6" font-weight="700">禁止</text>
+    <text x="578" y="99" font-size="11" fill="#7c3aed" text-anchor="end">▾</text>
+    <text x="610" y="99" font-size="10.5" fill="#7c3aed" font-family="monospace">terminal.clipboard_read</text>
+    <g transform="translate(-4,120)">
+      <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+      <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">1</text>
+      <text x="16" y="4" font-size="11.5" fill="#1b1f28">判据 1 · D1①：缺省选中位＝「禁止」</text>
+    </g>
+
+    <!-- 展开的下拉 -->
+    <rect x="360" y="108" width="230" height="100" rx="6" fill="#ffffff" stroke="#7c3aed" stroke-dasharray="4 3"/>
+    <rect x="362" y="110" width="226" height="26" rx="4" fill="#f2ecfd"/>
+    <text x="374" y="128" font-size="11.5" fill="#5b21b6">禁止</text>
+    <text x="576" y="128" font-size="10" fill="#7c3aed" text-anchor="end">deny ●缺省</text>
+    <text x="374" y="154" font-size="11.5" fill="#1b1f28">允许</text>
+    <text x="576" y="154" font-size="10" fill="#8a90a0" text-anchor="end">allow</text>
+    <text x="374" y="180" font-size="11.5" fill="#1b1f28">每次询问</text>
+    <text x="576" y="180" font-size="10" fill="#8a90a0" text-anchor="end">ask</text>
+    <g transform="translate(-4,232)">
+      <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+      <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">2</text>
+      <text x="16" y="4" font-size="11.5" fill="#1b1f28">判据 2 · 三态可配、可开启：三个落盘名 deny / allow / ask（G10 同族那四处）</text>
+    </g>
+
+    <text x="610" y="226" font-size="10.5" fill="#c2410c">新增 · Wired ∧ Immediate</text>
+    <text x="610" y="242" font-size="10.5" fill="#c2410c">紧随 right_click，其余行序不动</text>
+    <line x1="8" y1="248" x2="1286" y2="248" stroke="#d3d8e4"/>
+    <text x="14" y="272" font-size="12" fill="#1b1f28">选中即复制</text>
+    <rect x="360" y="256" width="42" height="20" rx="10" fill="#7c3aed"/>
+    <circle cx="392" cy="266" r="8" fill="#ffffff"/>
+    <text x="420" y="272" font-size="10.5" fill="#8a90a0" font-family="monospace">terminal.copy_on_select</text>
+
+    <text x="14" y="300" font-size="12" fill="#1b1f28">粘贴时把换行按原样送入</text>
+    <text x="420" y="300" font-size="10.5" fill="#8a90a0" font-family="monospace">terminal.paste_newlines = as_is</text>
+
+    <line x1="8" y1="316" x2="1286" y2="316" stroke="#d3d8e4"/>
+    <text x="14" y="340" font-size="11.5" fill="#5a6070">页脚（既有）：本棒的「授权态上屏」不在这里 —— 状态栏本体未落地（G12），</text>
+    <text x="14" y="358" font-size="11.5" fill="#5a6070">appearance.status_bar.show_clipboard_policy 继续停在「只落盘不广播」那一档。</text>
+  </g>
+
+  <!-- 右侧口径栏 -->
+  <g transform="translate(952,134)">
+    <rect x="0" y="0" width="532" height="196" rx="8" fill="#eef1f7" stroke="#c6cbd8"/>
+    <text x="14" y="24" font-size="11.5" fill="#1b1f28" font-weight="700">D1①：键为什么落 terminal 域而不是 connection 域</text>
+    <text x="14" y="46" font-size="11" fill="#3b4252">读它的是 term 层状态机（G1）；同族交互三态都在终端页（G10）；</text>
+    <text x="14" y="64" font-size="11" fill="#3b4252">落 connection 会让 term/session 反向依赖连接域。</text>
+    <text x="14" y="86" font-size="11" fill="#c2410c">代价：需求标识域（CONN.12）≠ schema 域（terminal.*）——</text>
+    <text x="14" y="104" font-size="11" fill="#c2410c">先例是 terminal.encoding 同时服务串口/SSH/Telnet，写明即可。</text>
+    <text x="14" y="128" font-size="11.5" fill="#1b1f28" font-weight="700">D2①：EffectLevel 取 Immediate，不是 NextSession</text>
+    <text x="14" y="148" font-size="11" fill="#3b4252">安全闸延后生效＝留洞；而装配层广播本来就只到当前标签（G15），</text>
+    <text x="14" y="166" font-size="11" fill="#3b4252">所以走「app 级一份原子闸门 + 状态机现读」，不扩广播、不加快照。</text>
+    <text x="14" y="186" font-size="11" fill="#5a6070">未接线即 fail-closed 按 deny —— 想要的失败方向。</text>
+  </g>
+</g>
+
+<!-- ============ 屏 B：ask 档的询问框 + 三态分派 ============ -->
+<g transform="translate(30,726)">
+  <rect x="-1" y="-1" width="1502" height="442" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">远端发 ESC ] 52 ; c ; ? ST 的那一刻：现读闸门三态分派 → 主线程帧边界逐条答（左：ask 档的模态一问 · 中：分派 · 右：任何出口都回写）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ×</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+
+  <!-- B-1 视口 + 模态框 -->
+  <g transform="translate(24,52)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">① ask 档：会话停在框前，直到用户答（D6①）</text>
+    <rect x="0" y="12" width="470" height="300" fill="#282A36" stroke="#4D4F63"/>
+    <text x="14" y="34" font-size="11" fill="#F8F8F2" font-family="monospace">lab@router:~$ tmux new -A -s main</text>
+    <text x="14" y="52" font-size="11" fill="#62728A">#(tmux 探测本机剪贴板：OSC 52 ; c ; ?)</text>
+    <text x="14" y="70" font-size="11" fill="#F8F8F2" font-family="monospace">lab@router:~$ _</text>
+    <rect x="60" y="92" width="390" height="196" rx="8" fill="#21222C" stroke="#FFB86C" stroke-width="1.5"/>
+    <text x="80" y="120" font-size="13" fill="#F8F8F2" font-weight="700">远端请求读取本机剪贴板</text>
+    <text x="80" y="146" font-size="11.5" fill="#FFB86C">本会话收到 OSC 52 读请求（选择位 c）。拒绝会回送一条空响应，</text>
+    <text x="80" y="164" font-size="11.5" fill="#FFB86C">远端不会挂起；允许则把当前剪贴板内容交给它。</text>
+    <text x="80" y="186" font-size="10.5" fill="#62728A">正文走词条；au::confirm 只吃一条 message ⇒ 两句合一行（G14）</text>
+    <text x="80" y="204" font-size="10.5" fill="#62728A">内容恒取系统剪贴板：框架只有一格（G8 已由 strace 坐实）</text>
+    <rect x="228" y="216" width="100" height="30" rx="6" fill="#BD93F9"/>
+    <text x="278" y="236" font-size="12" fill="#1E1F29" font-weight="700" text-anchor="middle">允许</text>
+    <rect x="336" y="216" width="100" height="30" rx="6" fill="none" stroke="#4D4F63"/>
+    <text x="386" y="236" font-size="12" fill="#62728A" text-anchor="middle">拒绝</text>
+    <text x="430" y="112" font-size="13" fill="#FF5555">×</text>
+    <g transform="translate(0,300)">
+      <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+      <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">4</text>
+      <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 4 · 「允许」⇒ 真把内容 base64 给出去</text>
+    </g>
+    <g transform="translate(0,326)">
+      <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+      <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">5</text>
+      <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 5 · 关框 ✕ / 遮罩 / 拒绝 —— 任何出口都回写一条</text>
+    </g>
+  </g>
+
+  <!-- B-2 三态分派 -->
+  <g transform="translate(520,52)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">② 锁内只做分派，不做 IO（D3①）</text>
+    <rect x="0" y="12" width="440" height="46" rx="6" fill="#12131A" stroke="#4D4F63"/>
+    <text x="14" y="32" font-size="10.5" fill="#F8F8F2">读线程 ingest → 锁内 feed → do_osc(52)</text>
+    <text x="14" y="50" font-size="10.5" fill="#8BE9FD">→ apply_clipboard("?") 现读 ClipboardGate</text>
+
+    <rect x="0" y="70" width="440" height="46" rx="6" fill="#2A1C22" stroke="#FF5555"/>
+    <text x="14" y="90" font-size="10.5" fill="#FF5555">Deny / 未接线 ⇒ emit_response 空响应</text>
+    <text x="14" y="108" font-size="10.5" fill="#62728A">判据 ①③ 的既有语义一字不动（现状那条就是它）</text>
+
+    <rect x="0" y="126" width="214" height="52" rx="6" fill="#1F2B21" stroke="#50FA7B"/>
+    <text x="12" y="146" font-size="10.5" fill="#50FA7B">Allow ⇒ 登记请求</text>
+    <text x="12" y="164" font-size="10.5" fill="#62728A">留 Pc 段，等主线程答</text>
+
+    <rect x="226" y="126" width="214" height="52" rx="6" fill="#2A2438" stroke="#BD93F9"/>
+    <text x="238" y="146" font-size="10.5" fill="#BD93F9">Ask ⇒ 登记待询问</text>
+    <text x="238" y="164" font-size="10.5" fill="#62728A">问不问由主线程定</text>
+
+    <text x="0" y="196" font-size="11" fill="#F8F8F2">队列有界 8（D4① 逐条答，不照写方向合并 —— 读是「别人在等自己那一条」）</text>
+    <text x="0" y="214" font-size="11" fill="#62728A">第 9 条丢最旧并计数 ⇒ 判据 ⑥「本地资源不被无限抽走」的第一道闸</text>
+    <text x="0" y="236" font-size="11" fill="#8BE9FD">Pc 回显（D8①）：52;c;p;? 回显首段 c；52;? 无 Pc 段回显 c</text>
+    <text x="0" y="254" font-size="11" fill="#62728A">不做选择位分离：s/p/0–7 在框架侧无处可取（G8）⇒ §7 在册</text>
+
+    <g transform="translate(0,278)">
+      <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+      <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">3</text>
+      <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 3 · 被拒 ⇒ 空响应，而不是静默（远端不挂起）</text>
+    </g>
+  </g>
+
+  <!-- B-3 主线程应答腿 -->
+  <g transform="translate(1006,52)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">③ 主线程帧边界：一问 → 一读 → 一答</text>
+    <rect x="0" y="12" width="474" height="250" rx="6" fill="#12131A" stroke="#4D4F63"/>
+    <text x="14" y="34" font-size="10.5" fill="#F8F8F2">set_on_frame 对全部标签每个会话排一次（G7 同一条腿）</text>
+    <text x="14" y="56" font-size="10.5" fill="#8BE9FD" font-family="monospace">session.take_clipboard_reads()</text>
+    <text x="14" y="76" font-size="10.5" fill="#62728A">├ ask 档 ⇒ confirm_clipboard_read(钩子, answer)</text>
+    <text x="14" y="94" font-size="10.5" fill="#62728A">└ allow 档 ⇒ 直接读</text>
+    <text x="14" y="116" font-size="10.5" fill="#F8F8F2">ClipboardOutbox::read()  一次子进程往返</text>
+    <text x="14" y="136" font-size="10.5" fill="#BD93F9">encode_base64(utf8)  ← 本棒补的那半件（G4）</text>
+    <text x="14" y="156" font-size="10.5" fill="#62728A" font-family="monospace">"ESC]52;&lt;Pc&gt;;&lt;b64&gt;BEL"</text>
+    <text x="14" y="176" font-size="10.5" fill="#F8F8F2" font-family="monospace">session.answer_clipboard_read(resp)</text>
+    <text x="14" y="196" font-size="10.5" fill="#62728A">仍走 ResponseSink → pending_responses_ → 出锁 flush（G5）</text>
+    <text x="14" y="220" font-size="10.5" fill="#FFB86C">出口穷举：答是⇒正文 · 答否⇒空响应 · 关框⇒空响应 ·</text>
+    <text x="14" y="238" font-size="10.5" fill="#FFB86C">读不到⇒空响应 · 超 64 KiB⇒空响应 + WARN（D7①）</text>
+    <text x="0" y="284" font-size="11" fill="#62728A">延后到下一帧（16 ms 量级）对「等回应的远端」无感 —— D3① 的代价面</text>
+    <text x="0" y="304" font-size="11" fill="#62728A">没有宿主就问不了：钩子留空即回落默认（G14 那档），未经确认不替用户按</text>
+  </g>
+</g>
+
+<!-- ============ 屏 C：三档降级的可观测形态 ============ -->
+<g transform="translate(30,1190)">
+  <rect x="-1" y="-1" width="1502" height="470" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">C</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">超限 / 读不到 / 不答 三种降级的可观测形态 —— 左边那条日志是本期唯一真实落点，右边面板里的 OSC 那一行本期不存在（G17）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ×</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+
+  <g transform="translate(24,52)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">① 诊断日志（AURORA_LOG_*，不落 std::cout）</text>
+    <rect x="0" y="12" width="700" height="176" rx="6" fill="#12131A" stroke="#4D4F63"/>
+    <text x="12" y="34" font-size="10" fill="#FFB86C" font-family="monospace">[WRN][clipboard_outbox] clipboard read response too</text>
+    <text x="12" y="50" font-size="10" fill="#FFB86C" font-family="monospace">      big: 4194304 B &gt; 65536 B — empty response sent</text>
+    <text x="12" y="72" font-size="10" fill="#FF5555" font-family="monospace">[WRN][clipboard_outbox] system clipboard is inaccessible:</text>
+    <text x="12" y="88" font-size="10" fill="#FF5555">      'xsel --clipboard --output ... code 32512'（本机即此档，G9）</text>
+    <text x="12" y="110" font-size="10" fill="#62728A">deny 档：一条日志也不写、不弹窗（D9①）—— 只 ++clipboard_read_denied</text>
+    <text x="12" y="132" font-size="10" fill="#62728A">ask 档用户答否：同样不写日志（用户自己按的，不是降级）</text>
+    <text x="12" y="156" font-size="10.5" fill="#50FA7B">超限那句走词条回报一次（publish_notice 即时留痕），措辞见 §6 走查第 ⑶ 条</text>
+    <g transform="translate(0,206)">
+      <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+      <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">6</text>
+      <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 6 · 两道上限：队列 8 条（第 9 条丢弃）+ 正文 64 KiB（超限退空响应）</text>
+    </g>
+  </g>
+
+  <g transform="translate(760,52)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">② OscState 两枚计数（可由用例断言，本期不上屏）</text>
+    <rect x="0" y="12" width="700" height="92" rx="6" fill="#282A36" stroke="#4D4F63"/>
+    <text x="12" y="34" font-size="10" fill="#8BE9FD" font-family="monospace">struct OscState {                        // src/term/osc.h</text>
+    <text x="12" y="52" font-size="10" fill="#62728A">    std::size_t clipboard_write_requests;     // 既有</text>
+    <text x="12" y="68" font-size="10" fill="#BD93F9">    std::size_t clipboard_read_requests = 0;  // 新增</text>
+    <text x="12" y="84" font-size="10" fill="#BD93F9">    std::size_t clipboard_read_denied   = 0;  // 新增</text>
+    <text x="0" y="124" font-size="11" fill="#62728A">既有两枚（clipboard_write_requests / unhandled_count）从来也只活在结构体里：</text>
+    <text x="0" y="142" font-size="11" fill="#62728A">F12 那只面板每会话渲染 parse / decode / encode / queue 四行，没有 OSC 族。</text>
+
+    <text x="0" y="170" font-size="12" fill="#8BE9FD" font-weight="700">③ F12 调试面板（本期形状不动，只标注缺口）</text>
+    <rect x="0" y="182" width="700" height="150" rx="8" fill="#21222C" stroke="#4D4F63"/>
+    <text x="14" y="204" font-size="11" fill="#F8F8F2" font-weight="600">调试面板 — 标签 1 · 分屏 1（打开那一刻的快照）</text>
+    <text x="14" y="226" font-size="10.5" fill="#62728A">解析：忽略 0 · 取消 0</text>
+    <text x="14" y="244" font-size="10.5" fill="#62728A">解码：替换 0 · 码点 0</text>
+    <text x="14" y="262" font-size="10.5" fill="#62728A">编码：不可表示 0</text>
+    <text x="14" y="280" font-size="10.5" fill="#62728A">背压：在途 0 · 峰值 0 · 过载 0 · 合并 0 · 让出 0</text>
+    <rect x="10" y="300" width="680" height="26" rx="4" fill="none" stroke="#FF5555" stroke-dasharray="4 3"/>
+    <text x="18" y="318" font-size="10.5" fill="#FF5555">（这一行本期不画：加 OSC 族要同时改快照/渲染/装配取数/itest 行数契约 ⇒ §7 在册）</text>
+  </g>
+
+  <g transform="translate(24,300)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">④ 三态 × 出口矩阵（itest_clipboard_read 逐格断字节）</text>
+    <rect x="0" y="12" width="700" height="132" rx="6" fill="#12131A" stroke="#4D4F63"/>
+    <text x="12" y="34" font-size="10.5" fill="#F8F8F2">deny   │ 任何来路 ──────► ESC]52;c;BEL（与现状逐字节相等）</text>
+    <text x="12" y="52" font-size="10.5" fill="#F8F8F2">allow  │ 有内容 ──────► ESC]52;&lt;Pc&gt;;&lt;base64&gt;BEL</text>
+    <text x="12" y="70" font-size="10.5" fill="#F8F8F2">       │ 读不到 / 空 / 超限 ──────► ESC]52;&lt;Pc&gt;;BEL + WARN</text>
+    <text x="12" y="88" font-size="10.5" fill="#F8F8F2">ask    │ 答是 ─► 同 allow · 答否 ─► 空响应</text>
+    <text x="12" y="106" font-size="10.5" fill="#FF5555">       │ 不答即关框 / 遮罩 ─► 空响应（判据 ③⑤ 的那一格）</text>
+    <text x="12" y="130" font-size="10.5" fill="#62728A">每格断言：该会话写出的字节里「恰有一条」，既不静默也不重复</text>
+  </g>
+</g>
+
+<!-- ============ 屏 D：批次 / 证人 / 在册 ============ -->
+<g transform="translate(30,1682)">
+  <rect x="-1" y="-1" width="1502" height="500" fill="#ffffff" stroke="#c6cbd8"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#e9ecf4"/>
+  <circle cx="19" cy="17" r="7" fill="#7c3aed"/>
+  <text x="19" y="21" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">D</text>
+  <text x="36" y="22" font-size="12.5" fill="#1b1f28" font-weight="600">三批切法 · 证人分层 · 本期不做（稿 §4 / §6 / §7）</text>
+
+  <g transform="translate(24,50)">
+    <text x="0" y="0" font-size="12" fill="#1b1f28" font-weight="700">三批（D11）</text>
+    <text x="0" y="22" font-size="11.5" fill="#3b4252">批 1 · term 层纯逻辑件：ClipboardReadPolicy / ClipboardGate /</text>
+    <text x="0" y="40" font-size="11.5" fill="#3b4252">        有界待答队列 / encode_base64 + 三态分派（不含界面）</text>
+    <text x="0" y="58" font-size="11" fill="#5a6070">     证人：utest_term_clipboard_read、utest_term_base64（新 TU）</text>
+    <text x="0" y="80" font-size="11.5" fill="#3b4252">批 2 · Session 两枚入口 + ClipboardOutbox::answer_reads +</text>
+    <text x="0" y="98" font-size="11.5" fill="#3b4252">        视口的 confirm_clipboard_read 钩子（模态一问）</text>
+    <text x="0" y="116" font-size="11" fill="#5a6070">     证人：itest_clipboard_read（替身剪贴板 + 替身确认钩子）</text>
+    <text x="0" y="138" font-size="11.5" fill="#3b4252">批 3 · 新键六处同步 + 终端页那一行与旁注 + 装配接线 +</text>
+    <text x="0" y="156" font-size="11.5" fill="#3b4252">        etest 读方向腿 + 文档回写与在册收口</text>
+    <text x="0" y="174" font-size="11" fill="#5a6070">     证人：utest_config / utest_form_transfer / utest_settings_catalog</text>
+    <text x="0" y="192" font-size="11" fill="#c2410c">src/main.cpp 的装配腿无自动化证人（裁决 7.83 同档）</text>
+    <text x="0" y="210" font-size="11" fill="#c2410c">⇒ 照会话日志棒 §8.1 的手法如实登记</text>
+  </g>
+
+  <g transform="translate(430,50)">
+    <text x="0" y="0" font-size="12" fill="#1b1f28" font-weight="700">基线与读数口径</text>
+    <text x="0" y="22" font-size="11.5" fill="#3b4252">结项基线＝会话日志棒：ctest 81 项 / runner 1019 案</text>
+    <text x="0" y="40" font-size="11.5" fill="#3b4252">本棒新增两件测试 TU ⇒ 项数 +2</text>
+    <text x="0" y="62" font-size="11.5" fill="#3b4252">回归底线（不许改坏的既有用例名）：</text>
+    <text x="0" y="80" font-size="11" fill="#5a6070" font-family="monospace">utest_terminal_osc.osc_52_read_request_answers_empty_selection</text>
+    <text x="0" y="96" font-size="11" fill="#5a6070" font-family="monospace">utest_session.osc_52_read_request_answers_through_write_channel</text>
+    <text x="0" y="112" font-size="11" fill="#5a6070" font-family="monospace">osc_52_empty_payload_is_a_valid_clear / rejects_malformed_payloads</text>
+    <text x="0" y="128" font-size="11" fill="#5a6070" font-family="monospace">/ multiple_clipboard_numbers_keep_last_payload</text>
+    <text x="0" y="152" font-size="11.5" fill="#c2410c">变异注入按 AGENTS 第 22 条逐则给「注入点 ⇒ 转红用例」，随批 3 落稿 §8.1</text>
+
+    <text x="0" y="186" font-size="12" fill="#1b1f28" font-weight="700">本期不做（§7）</text>
+    <text x="0" y="210" font-size="11" fill="#3b4252">· 选择位分离 s/p/0–7（框架只有一格，G8）· 写方向同闸（D10①）</text>
+    <text x="0" y="234" font-size="11" fill="#3b4252">· 「本会话总是允许」的记住 / 按档案记住 / 审计列表（D5③）</text>
+    <text x="0" y="258" font-size="11" fill="#3b4252">· 授权态上屏（状态栏未落地，G12）· 调试面板 OSC 那一行（G17）</text>
+    <text x="0" y="282" font-size="11" fill="#3b4252">· 上限可配（64 KiB 取文件级常量，D7①）</text>
+    <text x="0" y="306" font-size="11.5" fill="#c2410c">真机走查六条未做 + 本机缺桥 ⇒ 本棒结项不称「可用」（AGENTS 第 33 条）</text>
+  </g>
+
+  <g transform="translate(1000,50)">
+    <text x="0" y="0" font-size="12" fill="#1b1f28" font-weight="700">三道线程纪律（§5）</text>
+    <rect x="0" y="12" width="460" height="150" rx="8" fill="#f7f8fb" stroke="#c6cbd8"/>
+    <text x="14" y="36" font-size="11" fill="#3b4252">① 锁内不碰剪贴板、不碰 UI —— 一次读是子进程</text>
+    <text x="14" y="54" font-size="11" fill="#3b4252">    往返（G9 实测 0.5–0.9 ms/次，缺桥档），进网格锁</text>
+    <text x="14" y="72" font-size="11" fill="#3b4252">    等于让一次 xsel 阻塞该会话解码与取网格</text>
+    <text x="14" y="96" font-size="11" fill="#3b4252">② 状态机只分派（登记 / 立刻空响应），内容与编码在主线程</text>
+    <text x="14" y="120" font-size="11" fill="#3b4252">③ 闸门是 app 级一份，不是每会话一份 —— 这是 D2① 与</text>
+    <text x="14" y="138" font-size="11" fill="#3b4252">    G15（广播只到当前标签）联立的唯一解法</text>
+
+    <text x="0" y="192" font-size="12" fill="#1b1f28" font-weight="700">与框架的边界（AGENTS §5.1）</text>
+    <text x="0" y="214" font-size="11" fill="#3b4252">观察指针接缝（G5）、取走型动作（G7）、异步确认钩子</text>
+    <text x="0" y="232" font-size="11" fill="#3b4252">（G14）、有界常量（会话日志 D9① 同档）全有已落地先例</text>
+    <text x="0" y="252" font-size="11" fill="#c2410c">⇒ 本棒不预登记框架缺口；选择位分离若要做才回 Aurora 侧</text>
+  </g>
+
+  <g transform="translate(24,290)">
+    <text x="0" y="0" font-size="12" fill="#1b1f28" font-weight="700">D2① vs D2②（这条是本棒最贵的一档，稿面留了改判位）</text>
+    <rect x="0" y="14" width="1452" height="160" rx="8" fill="#f7f8fb" stroke="#c6cbd8"/>
+    <text x="16" y="38" font-size="11.5" fill="#3b4252">② 的构造期快照照的是 TerminalDefaults 的先例，但它关掉的是「远端能不能读你的剪贴板」：用户在 A 标签点「禁止」，B 标签的远端照样能读——那不是延迟生效，是安全洞。</text>
+    <text x="16" y="58" font-size="11.5" fill="#3b4252">② 还要先把装配层的广播从「当前标签」扩到「全部标签」（G15），动一处既有语义去换一档延迟。</text>
+    <text x="16" y="82" font-size="11.5" fill="#3b4252">① 的落法不新增广播：app 级一份 std::atomic 闸门，状态机在 apply_clipboard 里现读 —— 读一枚 atomic 不是 IO，不违反架构 §3.4。</text>
+    <text x="16" y="106" font-size="11.5" fill="#c2410c">① 的代价：term 层多一枚非持有观察指针（先例 set_response_sink，生命周期归装配层）；未接线即 deny（fail-closed，正是想要的方向）。</text>
+    <text x="16" y="130" font-size="11.5" fill="#5a6070">语义差别写清楚：Ambiguous 宽度改档「重排已上屏格宽」是错的 ⇒ 构造期；安全闸改档「不立即生效」是错的 ⇒ 现读。两者不该照抄。</text>
+    <text x="16" y="152" font-size="11.5" fill="#5a6070">界面唯一证人处＝屏 A 那一行的 Immediate 档；现场唯一证人处＝走查第 ⑹ 条（改档后别的标签立刻能读）。</text>
+  </g>
+</g>
+
+<!-- ============ 底部实测口径 ============ -->
+<g transform="translate(30,2226)">
+  <text x="0" y="0" font-size="11.5" fill="#5a6070" font-weight="700">实测口径（2026-10-12 本沙箱 POSIX 腿；探针一次性、不入仓，复现见稿 §8）</text>
+  <text x="0" y="20" font-size="11.5" fill="#5a6070">G8 strace 只出现 xsel/xclip 的 --clipboard 四条串，无 -selection primary · G9 本机 xsel 与 xclip 均不在位（双双回 127），一次「命令不存在」的读 ≈ 0.5–0.9 ms/次 · G17 调试面板四族不含 OSC 字段 · 既有用例 19 案 / utest_session 全绿＝回归底线锚点</text>
+  <text x="0" y="40" font-size="11.5" fill="#c2410c">未实测即外推者标推断／未验证（AGENTS 第 11 条）：有桥机器的读耗时与 4 MiB 内容的线性度（D7 的 64 KiB 量级）、Win32 腿 OpenClipboard 的读语义、PuTTY 类客户端对 Pc 回显的兼容性（本沙箱无 MSVC）</text>
+</g>
+</svg>
