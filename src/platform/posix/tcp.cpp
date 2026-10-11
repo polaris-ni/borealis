@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -122,6 +123,18 @@ class PosixTcpStream final : public TcpStream {
     }
 
     auto close() -> void override { fd_.reset(); }
+
+    auto set_nodelay() -> bool override {
+        if (!fd_.valid()) {
+            return false;
+        }
+        const int one = 1;
+        if (::setsockopt(fd_.get(), IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) != 0) {
+            AURORA_LOG_ERROR("platform", "tcp set_nodelay failed: ", std::strerror(errno));
+            return false;
+        }
+        return true;
+    }
 
     [[nodiscard]] auto peer_address() const -> std::string override {
         sockaddr_in peer{};

@@ -149,6 +149,19 @@ class WinTcpStream final : public TcpStream {
 
     auto close() -> void override { socket_.reset(); }
 
+    auto set_nodelay() -> bool override {
+        if (!socket_.valid()) {
+            return false;
+        }
+        const char one = 1;  // Winsock 的 char* 选项档：单字节非零即生效。
+        if (::setsockopt(socket_.get(), IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) ==
+            SOCKET_ERROR) {
+            AURORA_LOG_ERROR("platform", "tcp set_nodelay failed: ", last_error_text());
+            return false;
+        }
+        return true;
+    }
+
     [[nodiscard]] auto peer_address() const -> std::string override {
         sockaddr_in peer{};
         int length = sizeof(peer);

@@ -7,6 +7,8 @@
 // 裸 socket API（POSIX socket/poll 与 Winsock2）是平台假设，只进
 // src/platform/{win,posix}/ 实现（AGENTS.md §4.5 第 23 条，裁决 7.11 同款
 // 纪律）；conn 层的隧道传输腿只消费下面两个抽象类加两个工厂函数。
+// `SPEC.FEAT.CONN.06`（Telnet）是第二个消费方，它额外要用一枚 `set_nodelay()`
+// （裁决 7.112 D6①）：选项只在 Telnet 腿呼，隧道腿的线上行为逐字节不变。
 //
 // 本期射程收窄（裁决 7.96）：仅 IPv4；阻塞语义 + 每调用超时（隧道传输腿
 // 每条隧道一个工作线程，串行受理连接，故接口不设并发 accept 面）。
@@ -51,6 +53,13 @@ class TcpStream {
 
     /// @brief 全量写（内部吞掉部分写与 EINTR）；对端断开或出错回 false。
     virtual auto write(std::span<const std::uint8_t> bytes) -> bool = 0;
+
+    /// @brief 关掉 Nagle 合并（`IPPROTO_TCP`/`TCP_NODELAY`）；句柄已关或系统调用失败回
+    ///        false（失败原因进 platform 日志）。幂等：重复呼只是把同一枚选项再设一次。
+    ///
+    /// 只有逐键往返的消费方呼它（Telnet 腿，裁决 7.112 D6①）：隧道转发泵按块搬运字节，
+    /// 合并反而省包，故**不**在 `tcp_connect` 里全局设——那会顺手改掉既有隧道的线上行为。
+    virtual auto set_nodelay() -> bool = 0;
 
     /// @brief 关闭并释放底层句柄（幂等；析构自动调用）。
     virtual auto close() -> void = 0;

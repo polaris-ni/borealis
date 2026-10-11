@@ -1,7 +1,8 @@
 /// 测试类型: unit
 /// 目标单元: src/platform/tcp.h TCP 转发腿（当前跑的是 POSIX 实现）
-/// 测试说明: 纯环回集成——listen/accept/connect/read/write 与关闭分档，不出本机、
-///           不需要外网与特权端口。Windows 腿同接口，待 MSVC 真机回归（未验证口径
+/// 测试说明: 纯环回集成——listen/accept/connect/read/write 与关闭分档，另证 `set_nodelay`
+///           的抽象面（裁决 7.112 D6①：设上/重复设回 true、设完读写照旧、关闭后回 false），
+///           不出本机、不需要外网与特权端口。Windows 腿同接口，待 MSVC 真机回归（未验证口径
 ///           与其余 win 腿一致）。
 
 #include "platform/tcp.h"
@@ -81,6 +82,39 @@ AURORA_TEST_CASE(connect_refused_fails_fast) {
     const int port = probe->bound_port();
     probe->close();
     AURORA_TEST_CHECK_TRUE(platform::tcp_connect("127.0.0.1", port, 1000) == nullptr);
+}
+
+AURORA_TEST_CASE(set_nodelay_succeeds_twice_and_leaves_the_roundtrip_untouched) {
+    auto listener = platform::tcp_listen("127.0.0.1", 0);
+    AURORA_TEST_CHECK_TRUE(listener != nullptr);
+    if (listener == nullptr) {
+        return;
+    }
+    auto client = platform::tcp_connect("127.0.0.1", listener->bound_port(), 2000);
+    auto server_side = listener->accept(2000);
+    AURORA_TEST_CHECK_TRUE(client != nullptr && server_side != nullptr);
+    if (client == nullptr || server_side == nullptr) {
+        return;
+    }
+    // 裁决 7.112 D6① 的抽象面证人：设上回 true、重复设仍 true（幂等，重拨路径会再呼一次）。
+    AURORA_TEST_CHECK_TRUE(client->set_nodelay());
+    AURORA_TEST_CHECK_TRUE(client->set_nodelay());
+    AURORA_TEST_CHECK_TRUE(server_side->set_nodelay());
+
+    // 选项本身要 getsockopt 才看得见，不在本抽象面上；这里锁的是「设完之后读写照旧」。
+    AURORA_TEST_CHECK_TRUE(client->write(bytes_of("nodelay-ping")));
+    std::uint8_t buf[32] = {};
+    const auto read = server_side->read(std::span<std::uint8_t>{buf, 12}, 2000);
+    AURORA_TEST_CHECK_EQ(static_cast<int>(read.outcome),
+                         static_cast<int>(platform::TcpReadOutcome::Data));
+    AURORA_TEST_CHECK_EQ(read.bytes, 12U);
+    AURORA_TEST_CHECK_MSG((std::string{reinterpret_cast<char *>(buf), read.bytes} ==
+                           "nodelay-ping"),
+                          "payload intact after TCP_NODELAY");
+
+    // 句柄已关 ⇒ 回 false，不崩不挂（连接腿在 close 之后仍可能被呼到）。
+    client->close();
+    AURORA_TEST_CHECK_FALSE(client->set_nodelay());
 }
 
 AURORA_TEST_CASE(peer_close_surfaces_closed_outcome) {
