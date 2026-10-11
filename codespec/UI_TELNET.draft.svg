@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="2300" viewBox="0 0 1560 2300" font-family="'Noto Sans CJK SC',sans-serif">
-<rect x="0" y="0" width="1560" height="2300" fill="#eef0f5"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="2340" viewBox="0 0 1560 2340" font-family="'Noto Sans CJK SC',sans-serif">
+<rect x="0" y="0" width="1560" height="2340" fill="#eef0f5"/>
 <text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">Telnet：向导第四型 + IAC 协商状态机 + 环回可证连接腿（SPEC.FEAT.CONN.06）</text>
-<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_TELNET.draft.svg · 高保真草图（待评审）· 1 dp == 1 px @100% · 判据 1–7 对应 UI_TELNET.draft.md §2，D1–D12 见该稿 §3 · 底部实测口径见 §0（F1–F13）</text>
+<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_TELNET.draft.svg · 高保真草图（评审已收口 · 裁决 7.112）· 1 dp == 1 px @100% · 判据 1–8 对应 UI_TELNET.draft.md §2，D1–D12 的结论见该稿 §3 · 底部实测口径见 §0（F1–F13）</text>
 <g transform="translate(30,78)">
   <rect x="-1" y="-1" width="1502" height="562" fill="#1E1F29" stroke="#4D4F63"/>
   <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
@@ -60,18 +60,18 @@
   <text x="1092" y="484" font-size="12" fill="#62728A" text-anchor="middle">取消</text>
 </g>
 <g transform="translate(30,660)">
-  <rect x="-1" y="-1" width="1502" height="472" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="-1" y="-1" width="1502" height="510" fill="#1E1F29" stroke="#4D4F63"/>
   <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
   <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
   <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
-  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 上线协商（本端 ⇄ 对端；字节序列是实测形态 F5/F6/F7）</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 上线协商与尺寸下发（本端 ⇄ 对端；字节序列是实测形态 F5/F6/F7）</text>
   <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
   <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
-  <rect x="0" y="34" width="1500" height="436" fill="#1E1F29"/>
+  <rect x="0" y="34" width="1500" height="474" fill="#1E1F29"/>
   <text x="40" y="66" font-size="12" fill="#8BE9FD" font-weight="700">本端（TelnetConnection + telnet_negotiation）</text>
   <text x="1460" y="66" font-size="12" fill="#8BE9FD" font-weight="700" text-anchor="end">对端（环回假服务端 / 真 telnetd）</text>
-  <line x1="360" y1="80" x2="360" y2="424" stroke="#3A3C4C"/>
-  <line x1="1200" y1="80" x2="1200" y2="424" stroke="#3A3C4C"/>
+  <line x1="360" y1="80" x2="360" y2="462" stroke="#3A3C4C"/>
+  <line x1="1200" y1="80" x2="1200" y2="462" stroke="#3A3C4C"/>
   <text x="372" y="90" font-size="10.5" fill="#62728A">本端发起（连上即发，各 3 字节）</text>
   <line x1="360" y1="106" x2="1192" y2="106" stroke="#50FA7B" stroke-width="1.6"/>
   <path d="M 1192 106 l8 -4 l0 8 z" fill="#50FA7B"/>
@@ -157,8 +157,30 @@
 <rect x="442.79999999999995" y="362" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
 <text x="456.99999999999994" y="377" font-size="10.5" fill="#FF5555" text-anchor="middle" font-family="monospace">03</text>
   <text x="488.19999999999993" y="377" font-size="10.5" fill="#FF5555" font-family="monospace">IAC WONT SGA (once per stance)</text>
-  <text x="40" y="400" font-size="11" fill="#62728A">TTYPE 报的 "XTERM" 是 telnet_negotiation 里的一枚常量：本仓没有 TERM 类型设置域，需求也只要求「协商覆盖 TTYPE」（§7 登记代价）</text>
-  <text x="40" y="420" font-size="11" fill="#62728A">NAWS(31) 不在本期（D10①）：resize() 是有意的空操作 ⇒ 远端全屏程序按 80×24 重排，走查第 ⑷ 条实测</text>
+  <text x="372" y="394" font-size="10.5" fill="#62728A">尺寸下发（D10② 人改判：值变了才发，同值去重）</text>
+  <line x1="360" y1="410" x2="1192" y2="410" stroke="#FFB86C" stroke-width="1.6"/>
+  <path d="M 1192 410 l8 -4 l0 8 z" fill="#FFB86C"/>
+<rect x="376" y="400" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="390.2" y="415" font-size="10.5" fill="#FFB86C" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="409.4" y="400" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="423.59999999999997" y="415" font-size="10.5" fill="#FFB86C" text-anchor="middle" font-family="monospace">FA</text>
+<rect x="442.79999999999995" y="400" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="456.99999999999994" y="415" font-size="10.5" fill="#FFB86C" text-anchor="middle" font-family="monospace">1F</text>
+<rect x="476.19999999999993" y="400" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="490.3999999999999" y="415" font-size="10.5" fill="#FFB86C" text-anchor="middle" font-family="monospace">00</text>
+<rect x="509.5999999999999" y="400" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="523.8" y="415" font-size="10.5" fill="#FFB86C" text-anchor="middle" font-family="monospace">28</text>
+<rect x="542.9999999999999" y="400" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="557.1999999999999" y="415" font-size="10.5" fill="#FFB86C" text-anchor="middle" font-family="monospace">00</text>
+<rect x="576.3999999999999" y="400" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="590.5999999999999" y="415" font-size="10.5" fill="#FFB86C" text-anchor="middle" font-family="monospace">50</text>
+<rect x="609.7999999999998" y="400" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="623.9999999999999" y="415" font-size="10.5" fill="#FFB86C" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="643.1999999999998" y="400" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="657.3999999999999" y="415" font-size="10.5" fill="#FFB86C" text-anchor="middle" font-family="monospace">F0</text>
+  <text x="688.5999999999998" y="415" font-size="10.5" fill="#FFB86C" font-family="monospace">IAC SB NAWS 40x80 IAC SE</text>
+  <text x="40" y="438" font-size="11" fill="#62728A">TTYPE 报的 "XTERM" 是 telnet_negotiation 里的一枚常量：本仓没有 TERM 类型设置域，需求也只要求「协商覆盖 TTYPE」（§7 登记代价）</text>
+  <text x="40" y="458" font-size="11" fill="#FFB86C">NAWS(31) 本期做（D10② 人改判）：rows/cols 各大端两字节，载荷里的 0xFF 仍转义成 FF FF（F7）；重拨后清「已发尺寸」记忆</text>
 <g transform="translate(1240,110)">
   <circle cx="0" cy="0" r="11" fill="#50FA7B"/>
   <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">3</text>
@@ -170,7 +192,7 @@
   <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 4：应答表 + 只答一次</text>
 </g>
 </g>
-<g transform="translate(30,1150)">
+<g transform="translate(30,1188)">
   <rect x="-1" y="-1" width="1502" height="362" fill="#1E1F29" stroke="#4D4F63"/>
   <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
   <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
@@ -249,14 +271,14 @@
   <text x="233.2" y="297" font-size="11" fill="#62728A">⇒ 网格收 "x" 0xFF "y"（两字节 FF 吃掉一个）</text>
   <rect x="780" y="248" width="680" height="72" rx="8" fill="#22232E" stroke="#4D4F63"/>
   <text x="798" y="272" font-size="11.5" fill="#F8F8F2">写出侧本仓自己转义（D11 契约的另一半）</text>
-  <text x="798" y="297" font-size="11" fill="#F1FA8C">data 含 FF → 线上写 FF FF；SB 载荷同规则（F7）</text>
+  <text x="798" y="297" font-size="11" fill="#F1FA8C">data 含 FF → 线上写 FF FF；SB 载荷同规则（F7，含 NAWS 的 rows/cols）</text>
 </g>
-<g transform="translate(30,1530)">
+<g transform="translate(30,1568)">
   <rect x="-1" y="-1" width="1502" height="422" fill="#1E1F29" stroke="#4D4F63"/>
   <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
   <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
   <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
-  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — Telnet 会话在途（编码/行尾 + 掉线两档归因）</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — Telnet 会话在途（编码/行尾/尺寸 + 掉线两档归因）</text>
   <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
   <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
   <rect x="0" y="34" width="1500" height="38" fill="#21222C"/>
@@ -278,8 +300,8 @@
   <text x="24" y="250" font-size="12.5" fill="#F8F8F2"># cat /etc/hardware ; 中文型号说明</text>
   <text x="24" y="274" font-size="12.5" fill="#F8F8F2" font-family="monospace"># </text>
   <text x="1476" y="106" font-size="11" fill="#62728A" text-anchor="end">192.168.1.1:23 · 编码 UTF-8（全局档，D5①）· 行尾 CRLF（固定档，D8①）</text>
-  <text x="1476" y="126" font-size="11" fill="#8BE9FD" text-anchor="end">ECHO=WILL · SGA=DO · 已发 XTERM</text>
-  <text x="1476" y="146" font-size="11" fill="#F1FA8C" text-anchor="end">NAWS 不协商 ⇒ 远端按 80×24 重排（D10① 的代价面）</text>
+  <text x="1476" y="126" font-size="11" fill="#8BE9FD" text-anchor="end">ECHO=WILL · SGA=DO · 已发 XTERM · TCP_NODELAY 已设（D6①）</text>
+  <text x="1476" y="146" font-size="11" fill="#FFB86C" text-anchor="end">NAWS 已发 40×100（D10②，判据 8）· 尺寸不变不再发</text>
   <rect x="470" y="252" width="530" height="126" rx="8" fill="#26262F" stroke="#4D4F63"/>
   <text x="490" y="276" font-size="12" fill="#F8F8F2" font-weight="700">读侧 EOF ⇒ RemoteExit</text>
   <text x="490" y="298" font-size="11" fill="#F1FA8C">远端已退出（会话结束）：不进重拨环，网格保留供回看</text>
@@ -289,7 +311,7 @@
   <rect x="1024" y="252" width="452" height="126" rx="8" fill="#2A1C22" stroke="#FF5555"/>
   <text x="1044" y="276" font-size="12" fill="#F8F8F2" font-weight="700">读侧 ECONNRESET ⇒ LinkLost</text>
   <text x="1044" y="298" font-size="11" fill="#F1FA8C">第 2 / 3 回自动重拨 · 2 s 后重试（浮层沿用 UI_RECONNECT 已裁两态）</text>
-  <text x="1044" y="318" font-size="10.5" fill="#62728A">重拨成功即清「已答」状态位，重新发起协商（D4 的代价）</text>
+  <text x="1044" y="318" font-size="10.5" fill="#62728A">重拨成功即清「已答」位与「已发尺寸」记忆，重新协商（D4/D10 的代价）</text>
   <rect x="1300" y="336" width="150" height="26" rx="6" fill="#BD93F9"/>
   <text x="1375" y="354" font-size="11.5" fill="#1E1F29" text-anchor="middle">立即重试</text>
   <rect x="1146" y="336" width="146" height="26" rx="6" fill="none" stroke="#4D4F63"/>
@@ -304,8 +326,13 @@
   <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">7</text>
   <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 7：EOF 与 ECONNRESET 两档分开，重拨只走后者</text>
 </g>
+<g transform="translate(24,332)">
+  <circle cx="0" cy="0" r="11" fill="#8BE9FD"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">8</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 8：resize() 只写 latest-value 槽，发字节在读线程</text>
 </g>
-<g transform="translate(30,1970)">
+</g>
+<g transform="translate(30,2008)">
   <rect x="-1" y="-1" width="1502" height="222" fill="#1E1F29" stroke="#4D4F63"/>
   <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
   <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
@@ -326,13 +353,13 @@
   <text x="28" y="157" font-size="11.5" fill="#F8F8F2">本地终端</text>
   <text x="332" y="157" font-size="11" fill="#62728A" text-anchor="end">☆</text>
   <text x="376" y="67" font-size="11.5" fill="#F8F8F2" font-weight="600">本期边界（稿 §7）</text>
-  <text x="376" y="91" font-size="11" fill="#62728A">TN3270 不做（需求原文即排除）· NAWS/BIN/LFLOW/NEW-ENVIRON 等表外选项一律拒绝（D4①）</text>
+  <text x="376" y="91" font-size="11" fill="#62728A">TN3270 不做（需求原文即排除）· BIN/LFLOW/NEW-ENVIRON/GA/EOF/SUSP 等表外选项一律拒绝（D4①）· NAWS 本期做（D10②），RFC 1073 的四字节宽度不做</text>
   <text x="376" y="112" font-size="11" fill="#62728A">本地回显不做（D7①）：对端 WONT ECHO 时输入不可见 —— 走查第 ⑶ 条如实实测</text>
   <text x="376" y="133" font-size="11" fill="#62728A">IPv6 连不上（F10：tcp_connect 钉死 AF_INET，裁决 7.96 的既定收窄）· quick connect 不加 Telnet 语法</text>
   <text x="376" y="154" font-size="11" fill="#62728A">逐标签类型图标随 SPEC.FEAT.WS.04 余腿单开（口径同 7.110 D12①）⇒ 识别靠档案名</text>
   <text x="376" y="175" font-size="11" fill="#FF5555" opacity="0.9">真 telnetd 不可得（F1）⇒ etest_telnet_server 在册；未真机走查，本稿不称「可用」（第 33 条）</text>
 </g>
-<text x="30" y="2232" font-size="12.5" font-weight="700" fill="#1b1f28">实测口径（UI_TELNET.draft.md §0）：F2 环回假服务端可逐字节证 ｜ F3 EOF(0 字节) 与 ECONNRESET(104) 两态分明 ｜ F4 半关时写侧仍成功 ⇒ 掉线只从读侧归因 ｜ F5/F6 命令跨 read 断裂</text>
-<text x="30" y="2254" font-size="12.5" font-weight="700" fill="#1b1f28">F1 本机无 telnetd ⇒ etest 在册不写 ｜ F8 参考客户端连上后 2 s 零字节（D3 的根据）｜ F10/F11/F12 IPv6 与 NODELAY 与 Win 腿：推断 / 未验证</text>
-<text x="30" y="2284" font-size="12" fill="#5a6070">本图为草图：尺寸与文案以实现为准；SVG 为事实来源，改图直接改 SVG。§3 的 D1–D12 经人裁决后按 §4 文件布局落 src/（裁决前不动代码）。</text>
+<text x="30" y="2270" font-size="12.5" font-weight="700" fill="#1b1f28">实测口径（UI_TELNET.draft.md §0）：F2 环回假服务端可逐字节证 ｜ F3 EOF(0 字节) 与 ECONNRESET(104) 两态分明 ｜ F4 半关时写侧仍成功 ⇒ 掉线只从读侧归因 ｜ F5/F6 命令跨 read 断裂 ｜ F7 SB 载荷里的 0xFF 也要转义（NAWS 组包同规则）</text>
+<text x="30" y="2292" font-size="12.5" font-weight="700" fill="#1b1f28">F1 本机无 telnetd ⇒ etest 在册不写 ｜ F8 参考客户端连上后 2 s 零字节（D3 的根据）｜ F10/F11/F12 IPv6 与 NODELAY 与 Win 腿：推断 / 未验证</text>
+<text x="30" y="2322" font-size="12" fill="#5a6070">本图为草图：尺寸与文案以实现为准；SVG 为事实来源，改图直接改 SVG。§3 的 D1–D12 已于 2026-10-11 裁完（D6／D7 按推荐档、D10 改判为「本期做 NAWS」），入册裁决 7.112 后按 §4 分三批落 src/；未真机走查不称「可用」。</text>
 </svg>
