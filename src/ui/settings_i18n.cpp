@@ -457,6 +457,13 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"terminal.unrepresentable", "不可表示字符处置"},
     {"terminal.paste_newlines", "粘贴换行处理"},
     {"terminal.right_click", "右键行为"},
+    // 读方向的授权一问（`SPEC.FEAT.CONN.12`）：这两句不是设置项标签，而是视口那枚模态框的标题与
+    // 正文，走同一张表是为了让「上屏文案只在词条表一处」这条纪律不被破例。正文那一句「拒绝会回送
+    // 一条空响应」不是修辞：裁决 D5 要框里说清「不给会怎样」，而 `Dialog` 没有关闭叉、遮罩不答，
+    // 用户唯一能读到的说明就只剩这一句。
+    {"terminal.clipboard_read.title", "远端请求读取剪贴板"},
+    {"terminal.clipboard_read.body",
+     "远端程序想读取本地剪贴板的内容并发回会话（选择位 {0}）。允许吗？拒绝会回送一条空响应，远端不会挂起。"},
     {"terminal.copy_on_select", "选中即复制"},
     {"terminal.trim_pasted_trailing_space", "复制时剥行尾空白"},
     {"terminal.smart_line_join", "合并续行"},

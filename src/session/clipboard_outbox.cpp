@@ -7,7 +7,9 @@
 
 #include "borealis/session/clipboard_outbox.h"
 
+#include <span>
 #include <string>
+#include <string_view>
 
 #include "aurora/app/clipboard.h"
 #include "aurora/core/log.h"
@@ -49,6 +51,58 @@ auto ClipboardOutbox::drain(Session &session) -> std::size_t {
     static_cast<void>(term::encode_utf8(*pending, utf8));
     write(utf8);
     return 1U;
+}
+
+namespace {
+
+/// @brief 把纯 ASCII 的应答骨架升格成码点串。
+///
+/// 只喂 ASCII 是刻意的：`ESC ] 52 ; <Pc> ; <base64> BEL` 的每一段都出不了 base64 字母表与
+/// 状态机侧的 Pc 归一，走一遍解码器反而会给「载荷里有非法字节」留一条并不存在的路径。
+[[nodiscard]] auto widen(std::string_view ascii) -> std::u32string {
+    std::u32string out;
+    out.reserve(ascii.size());
+    for (const char c : ascii) {
+        out.push_back(static_cast<char32_t>(static_cast<unsigned char>(c)));
+    }
+    return out;
+}
+
+/// @brief 回显用的选择位：状态机侧已归一成单个 ASCII 码点，这里只兜住「来路不对」那一档。
+[[nodiscard]] auto pc_of(const term::ClipboardReadRequest &request) -> std::string {
+    if (request.pc.size() == 1U && request.pc.front() < 128U) {
+        return std::string{static_cast<char>(static_cast<unsigned char>(request.pc.front()))};
+    }
+    return "c";  // 归一失效即退回系统剪贴板那一位，与空响应的回显同一条
+}
+
+}  // namespace
+
+auto ClipboardOutbox::answer_read(Session &session, const term::ClipboardReadRequest &request,
+                                  std::optional<std::string_view> content) -> bool {
+    static constexpr std::u32string_view kEmptyResponse{U"\x1B]52;c;\x07"};
+    // 超限按拒绝处理而不是截断：半截内容比没有内容更糟（远端会把它当完整粘贴）。
+    const bool oversize = content.has_value() && content->size() > kMaxClipboardResponseBytes;
+    if (oversize) {
+        AURORA_LOG_WARN("session", "clipboard read answer dropped: bytes=", content->size(),
+                        " limit=", kMaxClipboardResponseBytes);
+    }
+    if (!content.has_value() || oversize || content->empty()) {
+        // 三条降级（拒绝、超限、本地没有文本）共用同一条出口，且这条串逐字节是既有判据。
+        session.answer_clipboard_read(kEmptyResponse);
+        return false;
+    }
+    const auto payload = term::encode_base64(
+        std::as_bytes(std::span<const char>{content->data(), content->size()}));
+    std::string answer;
+    answer.reserve(payload.size() + 16U);
+    answer += "\x1B]52;";
+    answer += pc_of(request);
+    answer += ";";
+    answer += payload;
+    answer += "\x07";
+    session.answer_clipboard_read(widen(answer));
+    return true;
 }
 
 }  // namespace borealis::session

@@ -210,6 +210,25 @@ auto Session::take_clipboard_write() -> std::optional<std::u32string> {
     return terminal_.take_clipboard_write();
 }
 
+auto Session::set_clipboard_gate(const term::ClipboardGate *gate) noexcept -> void {
+    // 取锁只为那个指针本身：读线程在 `feed` 期间现读它，主线程裸写就是数据竞争（裁决 D2① 的
+    // 「改档即刻生效」靠的是闸门内部那枚 atomic，而不是这条赋值）。
+    const std::lock_guard lock{mutex_};
+    terminal_.set_clipboard_gate(gate);
+}
+
+auto Session::take_clipboard_reads() -> std::vector<term::ClipboardReadRequest> {
+    // 同一套取走语义：锁内只换走队列，读剪贴板（POSIX 腿是一次子进程往返）与询问框都在主线程。
+    const std::lock_guard lock{mutex_};
+    return terminal_.take_clipboard_reads();
+}
+
+auto Session::answer_clipboard_read(std::u32string_view response) -> void {
+    // 不持锁、不进 `pending_responses_`：那条缓冲的冲出点是读线程下一次喂入，空闲会话里点了
+    // 允许就会永远发不出去。`flush` 内部只在需要上弦提示时才取锁（架构 §3.4）。
+    flush(response);
+}
+
 auto Session::take_bell_triggered() -> bool {
     const std::lock_guard lock{mutex_};
     return terminal_.take_bell_triggered();

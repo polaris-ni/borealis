@@ -66,7 +66,7 @@
 | 2 | 三态可配、可开启 | 屏 A 三个候选 | `utest_settings_catalog`（行数 +1）+ `utest_form_transfer`（该键往返）|
 | 3 | 被拒 ⇒ 回写空响应而非静默 | 屏 B 的「拒绝」按钮与屏 C 的降级三档 | `utest_session`（既有那条 G2 扩成三态矩阵）+ `itest_clipboard_read` |
 | 4 | 允许 ⇒ 真的把内容给出去（base64 且逐字节可还原） | 屏 B 的「允许」按钮 | `utest_term_clipboard_read`（`encode_base64` 逐档 + 与解码件往返互逆，D11 已并件）+ `itest_clipboard_read`（经替身剪贴板断回写串） |
-| 5 | 询问档不挂起：任何出口都回写 | 屏 B 的关闭叉与遮罩点击 | `itest_clipboard_read` 的「未答即关 ⇒ 空响应」「取消 ⇒ 空响应」 |
+| 5 | 询问档不挂起：任何出口都回写 | 屏 B 的「拒绝」按钮与**框一直开着**那一档（批 2 实测：框架的 `Dialog` 没有关闭叉、遮罩点击不触发 `on_close` ⇒ 「不答」的出口是视口析构，不是关框） | `itest_clipboard_read` 的「答否 ⇒ 空响应」「一直不答，析构 ⇒ 空响应」「问不出去 ⇒ 也回写」 |
 | 6 | 本地资源不被无限抽走 | 屏 C 的上限留痕 | `utest_term_clipboard_read` 的满档当场回绝档 |
 
 ---
@@ -80,13 +80,14 @@
 | **D3** | 谁去读剪贴板、在哪儿回写 | ① 状态机只**登记**待答请求，主线程帧边界经 `ClipboardOutbox` 读＋编码＋`Session::send_text` 回写；② 状态机直接读（锁内 IO） | **①** | ② 直接违反架构 §3.4 与 AGENTS §4.5 第 25 条，而 G9 说这次读是**一次子进程往返**——把它放进网格锁等于让一次 `xsel` 阻塞该会话的解码与另一线程的取网格。① 与写方向同构（G7），装配层已有的「每帧对全部标签每个会话排一次 `outbox`」那条腿就是它的位置（G7）。**代价**：应答延后到下一帧（本仓帧口径 16 ms 量级），对「等回应的远端程序」而言无感 |
 | **D4** | 同一帧内多条读请求怎么办 | ① 逐条答（按登记序回写，队列有界，满档那一条**当场回空响应**并计数）；② 合并成最后一份（照写方向 `take_clipboard_write`） | **①**，上限 `kMaxClipboardReadRequests = 8`；**实现后改口**：原写「超出丢最旧并计数」，与判据 ③「被拒 ⇒ 有回写」直接冲突（悄悄丢掉＝让先问的那条远端一直等），故满档走拒绝路径而非淘汰路径 写方向能合并是因为它落的是**本地资源**（同一格剪贴板，后写覆盖前写）；读方向是**别人在等自己的那一条**——`52;c;?` 与 `52;p;?` 问的不是同一格（G8 之后我们答的是同一份内容，但 Pc 段回显不同），合并就是让先问的那条永远收不到回应。8 条上限定的是「远端拿一条输出把我们的写腿喷满」的下限。**代价**：`term` 层要一张小队列而不是 `optional` |
 | **D5** | `ask` 档的界面形态 | ① 视口内非模态卡（照 TERM.09 的一次性提示卡）；② 模态 `au::confirm` 浮层，逐条一问；③ 全局一问 +「记住」写回设置 | **②** | ② 的异步 answer 形状在仓里已有先例（G14 的 `confirm_multiline`：留空即回落默认、可脱界面用替身断言），而本判据要的正是「不答就什么都不能发生」。① 的非模态卡服务的是「通知」（TERM.09 那次），授权决定不该在用户没看时被下一次点击顺带吃掉。③ 的「记住」是跨会话状态，本期没有它的判据（`§7` 在册）。**代价**：模态一问＝该窗口内其它操作在用户点之前停住；远端连发多条时会话级最多问 8 次（D4 的上限同时是骚扰上限） |
-| **D6** | 未答／关框／超时怎么兜底 | ① 一直等到用户答（**任何出口**都回写一条，关框＝拒绝档空响应）；② 5 s 超时按拒绝回写（照 TERM.09 的自收档）；③ 不回写，静等 | **①** | 需求判据 ③ 的原话是「避免远端程序挂起」——真正的挂起风险在「问完就把这一条吞了」（③ 档），而不是「多等一会儿」。② 的 5 s 对一次通知合适，对「要不要把剪贴板交给它」这种决定太短，而且会让「用户去泡了杯茶回来」变成一次静默拒绝＋远端拿到空内容，比弹窗骚扰更难诊断。会话析构那一档无需补写：连接同时断了。**代价**：`ask` 档下远端的读请求会停在框前直到用户答——这是**授权语义本身**，写进草屏 B 的那句说明与走查第 ⑵ 条 |
-| **D7** | 回写内容有上限吗 | ① 有界：`kMaxClipboardResponseBytes = 64 KiB`（UTF-8 字节数），超限按拒绝档回写空响应 + 诊断留痕；② 不设限 | **①** | 剪贴板里可能是几 MB 的日志（复制一次 `cat` 输出就有），base64 再乘 4/3，一条 `send_text` 就是把这份东西喷进该会话的写腿；而远端只问了「给不给」，没承诺收多少。**代价**：超限那一档对用户是「点了允许却没内容」，必须留痕（屏 C 那一档：诊断日志 `AURORA_LOG_WARN` 一条 + `OscState` 计数；调试面板那一行本期没有落点，G17 在册），措辞走词条；上限是文件级常量而非键（会话日志那棒的 D9① 同档取向：能不加键就不加） |
+| **D6** | 未答／关框／超时怎么兜底 | ① 一直等到用户答（**任何出口**都回写一条，关框＝拒绝档空响应）；② 5 s 超时按拒绝回写（照 TERM.09 的自收档）；③ 不回写，静等 | **①**，**实现后改口**：「任何出口」按框架实测收窄成三条——是／否／**一直不答**（`au::Dialog` 没有关闭叉，遮罩点击不触发 `on_close`，Aurora 主仓 `widget/dialog.h` 的 `dialog_geom` 段 ⇒ 稿面那句「关框＝拒绝档空响应」在这一枚控件上**没有对应的用户动作**）；而「一直不答」那份欠账的兜底点是**视口析构**而不是「会话析构无需补写」：实测析构次序是视口先、会话后（`Session` 必须先声明才最后析构），所以视口析构时会话仍在世、回写得住 3 案 | 需求判据 ③ 的原话是「避免远端程序挂起」——真正的挂起风险在「问完就把这一条吞了」（③ 档），而不是「多等一会儿」。② 的 5 s 对一次通知合适，对「要不要把剪贴板交给它」这种决定太短，而且会让「用户去泡了杯茶回来」变成一次静默拒绝＋远端拿到空内容，比弹窗骚扰更难诊断。**代价**：`ask` 档下远端的读请求会停在框前直到用户答——这是**授权语义本身**，写进草屏 B 的那句说明与走查第 ⑵ 条；代价的另一面是「关标签」成为唯一的反悔通道，故 §6 判据 ⑤ 把它单独立案 |
+| **D7** | 回写内容有上限吗 | ① 有界：`kMaxClipboardResponseBytes = 64 KiB`（UTF-8 字节数），超限按拒绝档回写空响应 + 诊断留痕；② 不设限 | **①** | 剪贴板里可能是几 MB 的日志（复制一次 `cat` 输出就有），base64 再乘 4/3，一条 `send_text` 就是把这份东西喷进该会话的写腿；而远端只问了「给不给」，没承诺收多少。**代价**：超限那一档对用户是「点了允许却没内容」，必须留痕（屏 C 那一档：**只留一条 `AURORA_LOG_WARN`**——`OscState` 那两枚计数住在状态机侧的锁内，主线程的降级档没有安全的加锁落点，为它单开一条计数是半件抽象；调试面板那一行本期本就没有落点，G17 在册），措辞走词条；上限是文件级常量而非键（会话日志那棒的 D9① 同档取向：能不加键就不加） |
 | **D8** | Pc 段怎么办 | ① 回显收到的**首段** Pc（无 Pc 段则回 `c`），内容恒取系统剪贴板；② 恒回 `c`（现状）；③ 按 `c`/`s`/`p`/`0-7` 分别取不同选择 | **①** | ③ 在框架侧无处可取（G8：只有一格 CLIPBOARD）——做得出界面但答不出内容，就是留了个「点了什么也不发生」的空位。② 会把 `52;p;?` 的问者答成 `c`，问 tmux 的缓冲区拿到的却是 X11 CLIPBOARD，这是**答错**而不是降级。① 的代价是「回显了选择位而内容同源」这件事本身仍有出入，因此要把这条限制写进头注与 §7 在册（不做选择位分离） |
 | **D9** | 拒绝要不要上屏提示 | ① `deny` 档静默回空响应 + 计数进 `OscState`；② 每次拒绝弹一条提示 | **①** | ② 会被远端程序的安装脚本/`viminfo` 探测一类的常规查询打成弹窗骚扰，而「禁止」本就是用户显式选的缺省态（判据 ①）。计数进 `OscState`（与 `clipboard_write_requests`、`unhandled_count` 同族）够排障用，但要把话说准：**这一族计数本期不上屏**——`SPEC.NF.RELI.01` 的调试面板只渲染 parse/decode/encode/queue 四族，`DebugSessionSnapshot` 里没有任何 OSC 字段（G17），既有的 `clipboard_write_requests` 也一样只活在结构体里；`SPEC.NF.RELI.01` 那句「可观测」在本棒由**诊断日志 + 用例断言**承担，面板补 OSC 那一行按 §7 在册。**代价**：用户第一次遇到「tmux 复制没反应」时不会想到是这道闸，而且在屏幕上**查不到** ⇒ 靠设置页那句组顶旁注赔付 |
 | **D10** | 写方向纳入同一把闸吗 | ① 不纳入（本棒只管读）；② 扩成「读/写各一枚三态」 | **①** | 写方向「默认允许」是 `SPEC.FEAT.TERM.07` + 裁决 7.21③ 已落并有用例的既成口径（G16 三条），改它需要新需求裁决而不是顺手扩面（AGENTS §4.1 第 3 条）。**代价**：界面上那一行只说「读取」，措辞不能写成「剪贴板授权」这种涵盖写的样子——词条按 D10 收窄 |
 | **D11** | 文件布局与批次 | — | 见 §4 | 三批切法：批 1＝`term` 层纯逻辑（枚举 + 闸门 + 待答队列 + `encode_base64`）与其 utest；批 2＝`Session`/`ClipboardOutbox` 的应答腿 + 询问钩子 + `itest`；批 3＝新键六处同步 + 面板行 + 装配接线 + 文档回写 |
-| **D12** | 验证形态 | — | 三层：① `utest_term_clipboard_read`（三态分派 × Pc 回显 × 队列上限 × 超限 × `encode_base64` 逐档——base64 那半件的宿主文件就是 `src/term/clipboard_read.cpp`，不为一枚纯函数另立 TU）；② `itest_clipboard_read`（替身剪贴板经 `Presentation` 钩子注入 ⇒ 断回写串逐字节；含未答即关、取消、超限三档降级）；③ 真机走查（有桥机器、真 tmux/vim 发读请求、Win 腿——本机 `xsel`/`xclip` 双双不在位，只能走缺桥那一档，G9）。`etest_` 那条不新写：`etest_osc_clipboard` 已把「桥可用性显式探测」的口径立住（G9），本棒批 3 给它补一条**读方向**的现场腿（真 shell 发 `printf '\033]52;c;?\a'` ⇒ 断我们回写的字节），Windows 腿投放条件不变 | — |
+| **D13** | 「问出去的那一条」的跨帧状态住在哪 | ① 装配层：帧循环排请求、经视口钩子问、答（§5 原案）；② 视口：`TerminalView` 在 `on_frame` 里排本会话的待答请求，问与答闭合在同一处 | **②（批 2 开工时改口）** | 判据 ③⑤「任何出口都回写一条」是一条**跨帧**承诺——模态一问要等用户点，而 `src/main.cpp` 不编进测试 runner（裁决 7.83），① 会把这条承诺切成「装配层持有待答清单 + 视口只出一张框」两半，最要紧的两条安全判据于是只剩真机走查一个证人。② 让整条链在 `itest_clipboard_read` 里以替身钩子逐档断字节，且「一直不答」那一档有了代码落点（照 `pending_paste_` 那条已落地先例，G14；批 2 实测这一档的落点是**视口析构**而非关框，见 D6 的改口）。**代价**：视口多一枚 `set_clipboard_gate` 观察指针与一份待问队列（上限由状态机侧那 8 条封住），并且**析构与关标签**都得替没答完的请求回写空响应，否则远端永远等——这一条写进 §6 的判据 ⑤。**口径不变**：视口不做「给不给」的判定，只把闸门那一档翻成「问不问 + 答什么」；读剪贴板仍只有 `ClipboardOutbox` 一处（架构 §3.2） |
+| **D12** | 验证形态 | — | 三层：① `utest_term_clipboard_read`（三态分派 × Pc 回显 × 队列上限 × 超限 × `encode_base64` 逐档——base64 那半件的宿主文件就是 `src/term/clipboard_read.cpp`，不为一枚纯函数另立 TU）；② `itest_clipboard_read`（替身剪贴板经 `Presentation` 钩子注入 ⇒ 断回写串逐字节；批 2 落地为 17 案，含**析构撤账**、无宿主、超限／空内容／答否三档降级，以及**不用替身**的生产框命中链两案）；③ 真机走查（有桥机器、真 tmux/vim 发读请求、Win 腿——本机 `xsel`/`xclip` 双双不在位，只能走缺桥那一档，G9）。`etest_` 那条不新写：`etest_osc_clipboard` 已把「桥可用性显式探测」的口径立住（G9），本棒批 3 给它补一条**读方向**的现场腿（真 shell 发 `printf '\033]52;c;?\a'` ⇒ 断我们回写的字节），Windows 腿投放条件不变 | — |
 
 ---
 
@@ -116,21 +117,62 @@ src/term/terminal.cpp                       修改 —— `apply_clipboard` 的 
                                                   闸缺省/`Deny` ⇒ 现有空响应原样回（判据 ①③ 的既有语义一字不动）；
                                                   `Allow` ⇒ 登记请求（Pc 回显留给应答腿）；`Ask` ⇒ 登记待询问；
                                                   同时 `++osc_state_.clipboard_read_requests`
-include/borealis/session/session.h          修改 —— 两枚运行期入口：`take_clipboard_reads()`（转发状态机那份队列，
-                                                  锁内取、锁外交）、`answer_clipboard_read(std::u32string_view response)`
-                                                  （把「该答的那条 OSC 52 正文」走**同一**应答通道回写，复用 G5 的
-                                                  `pending_responses_` 折算与编码，不另开一条写腿）
-src/session/session.cpp                     修改 —— 上述两枚的落地；取走与回写都不在锁内做 IO（§3.4）
-include/borealis/session/clipboard_outbox.h 修改 —— `answer_reads(Session &, const std::string &utf8)`：把「已经拿到手的
-                                                  剪贴板文本」折算成应答串并交回会话（**本件不读剪贴板也不弹窗**——
-                                                  读与问都在装配层，落地件只做编码与形状，这样「超限/为空/非法」三档
-                                                  降级能脱界面断言）；上限常量 `kMaxClipboardResponseBytes`（D7①）
+include/borealis/session/session.h          修改 —— **批 2 改口：三枚运行期入口**（稿面初判「两枚」漏了一件事：
+                                                  状态机那枚闸门是 `Terminal` 的私有观察指针，装配层手上只有
+                                                  `Session`，不转发就永远接不上 ⇒ 漏接线即 `Deny` 那条 fail-closed
+                                                  会误伤所有真实会话）。① `set_clipboard_gate(const ClipboardGate *)`
+                                                  （转发给状态机，锁内赋值——读线程在 `feed` 期间现读它）；
+                                                  ② `take_clipboard_reads()`（转发状态机那份队列，锁内取、锁外交）；
+                                                  ③ `answer_clipboard_read(std::u32string_view response)`
+                                                  （把「该答的那条 OSC 52 正文」交 `flush`，与读线程那批应答共用
+                                                  **同一条**编码与行尾折算腿，不另开写腿）。**不挂 `pending_responses_`**：
+                                                  那条缓冲只在读线程喂入时才被冲出去，而「用户点了允许」多半发生在
+                                                  会话空闲时——挂进去就是让远端等下一次输出
+src/session/session.cpp                     修改 —— 上述三枚的落地；取走与回写都不在锁内做 IO（§3.4），
+                                                  锁只护住那个指针本身与那份队列（改档即刻生效靠的是闸门内部那枚
+                                                  atomic，不是这条赋值）
+include/borealis/session/clipboard_outbox.h 修改 —— `answer_read(Session &, const ClipboardReadRequest &,
+                                                  std::optional<std::string_view> content)`：**一条一答**（D4① 逐条答
+                                                  要求每条各有回写，故入口按条给而不是一批）。把「已经拿到手的剪贴板
+                                                  文本」折算成应答串交回会话（**本件不读剪贴板也不弹窗**——读与问都在
+                                                  调用方，落地件只做编码与形状，这样「拒绝/超限/内容为空」三档降级
+                                                  能脱界面断言）；上限常量 `kMaxClipboardResponseBytes`（D7①）
 src/session/clipboard_outbox.cpp            修改 —— 同一件实现：`encode_base64` 一次、拼 `ESC ] 52 ; <Pc> ; <b64> BEL`、
-                                                  超限即退回空响应并 `AURORA_LOG_WARN`
-src/ui/terminal_view.h                      修改 —— `Presentation` 追加一枚异步询问钩子 `confirm_clipboard_read`
-                                                  （形态照同结构体里的 `confirm_multiline`，G14：留空即回落默认）
-src/ui/terminal_view.cpp                    修改 —— 默认实现：模态 `au::confirm`（标题/正文走词条），
-                                                  **任何出口**（是/否/关框/遮罩）都调一次 `answer(false/true)`（D6①）
+                                                  超限或空内容或 `content == nullopt` 都退回那条既有空响应（**逐字节
+                                                  与现状那条相等**，判据 ①③ 的回归底线），超限另 `AURORA_LOG_WARN`
+                                                  一条（D7① 的留痕只有这一处）。返回值是「是否给出了正文」，
+                                                  调用方只用于断言与日志，不据它改回写形状。**降级档恒回显 `c`
+                                                  而不回显请求的 Pc**（与状态机 `Deny` 那一路同源）：判据 ①③ 要的是
+                                                  「与现状那条逐字节相等」，而现状就是恒 `c`——D8① 的回显只加在
+                                                  **有正文**那一档，别让一条被拒的应答反过来破底线
+src/ui/terminal_view.h                      修改 —— D13② 的宿主：`Presentation` 追加一枚异步询问钩子
+                                                  `confirm_clipboard_read`（形态照同结构体里的 `confirm_multiline`，
+                                                  G14：留空即回落默认）；`set_clipboard_gate(const ClipboardGate *)`
+                                                  （与视口既有的 `set_restart_hook`/`set_logging_hooks` 同一套装配接缝）；
+                                                  **批 2 补**只读句柄 `clipboard_read_dialog()`（理由同既有的
+                                                  `multiline_warning()`：按钮落点要经真实命中链才知道是哪一枚，
+                                                  「答话即收起、收起不摘浮层」除本句柄无处可读）＋ 四件私有账本
+                                                  （闸门观察指针 / 待问队列 / 在问的那一条 / 懒建对话框）
+src/ui/terminal_view.cpp                    修改 —— `on_frame` 尾部 `drain_clipboard_reads()`（D13②）：取走状态机
+                                                  那份队列**只并入**待问队列，分流全在唯一入口 `ask_clipboard_read()`
+                                                  ——因为「按闸门现档处置」有两个触发点（帧边界、上一条答完之后），
+                                                  而三档都必有一条回写，没有「先收下以后再说」的第四档。
+                                                  批 2 实现后的口径改口（三处与稿面初判不同）：
+                                                  ① 现读闸门的**唯一**读取点就是 `ask_clipboard_read()`，`Deny` /
+                                                     闸门摘除 ⇒ 待问队列**整批当场拒**、`Allow` ⇒ **整批直接读并答掉**
+                                                     （稿面初判是「逐条」，实测整批更贴 D2①：改档之后不该再问，
+                                                     也不该一帧一条慢慢放）；
+                                                  ② `Ask` 一次一问（D5②）：在问的那一条占住账本，答完**不在回调里
+                                                     递归再问**，改为 `mark_needs_paint()` 排下一帧——递归会经由
+                                                     `Dialog::set_content` 把当前还在栈上的那份内容（本次回调的宿主）
+                                                     拆掉，实测正是这一条把「一次一问」的证人打成段错误（§5 纪律 ⑤）；
+                                                  ③ 默认问框是模态 `au::Dialog` + `aurora::confirm`（标题/正文走词条），
+                                                     出口只有**是/否两枚按钮**：框架实测遮罩点击不触发 `on_close`
+                                                     （Aurora 主仓 `widget/dialog.h`），稿面初判那句「是/否/关框/遮罩四个
+                                                     出口都答一次」因此改口——「一直不答」是常态而非边角，那份欠账由
+                                                     **视口析构**兜底：在问的那一条与待问队列里的每一条**各**补一条
+                                                     空响应（D6① 的实际形态）。无宿主可问也当场按拒绝答（与粘贴那一路
+                                                     的「不问就不发」相反：这一路问不出去也要回话）
 include/borealis/config/settings.h          修改 —— `terminal` 域追加 `ClipboardReadPolicy clipboard_read{Deny}`
                                                   （判据 ① 的缺省禁止；`operator==` 默认逐字段比较照旧成立）
 src/config/schema_names.h                   修改 —— `kClipboardReadNames` 三档落盘名表（`deny`/`allow`/`ask`，G10 同族）
@@ -142,13 +184,34 @@ src/ui/settings_catalog.cpp                 修改 —— `dropdown("terminal.cl
                                                   交互三态两条挨着，终端页其余行序不动
 src/ui/settings_i18n.cpp                    修改 —— 该行标签、三档候选的中文、组顶旁注一句、询问框两句（标题 + 正文）、
                                                   超限那一档的回报句；`UI_SETTINGS` 稿脚注那句「随该条落期入 schema」
-                                                  自此改口为既成事实
+                                                  自此改口为既成事实。**批 2 只落了询问框那两句**（`terminal.clipboard_read.title`
+                                                  / `.body`，正文带 `{0}` 占位填 Pc）——没有词条视口就没有默认问框可弹，
+                                                  而设置页那一行的标签与候选留批 3 与键同步入表（同一意图一处落）。
+                                                  正文那一句自带「拒绝会回送一条空响应，远端不会挂起」——不是修辞：
+                                                  裁决 D5 要框里说清「不给会怎样」，而批 2 实测这枚 `Dialog` 没有
+                                                  关闭叉、遮罩不答 ⇒ 用户能读到的说明只剩这一句（证人：
+                                                  `the_question_strings_exist_in_the_setting_table` 按 key 断在表内，
+                                                  并断 `{0}` 填进去之后槽位真的换掉了）
 src/ui/settings_panel.cpp                   修改 —— 终端页的组顶旁注表 `kGroupNotes` 追加一行（D9 的赔付处）
-src/main.cpp                                修改 —— 装配：一枚 app 级 `ClipboardGate`（`store.settings()` 折算初值、
-                                                  `hooks.persist` 之后刷新）、每会话 `set_clipboard_gate(&gate)`（八处
-                                                  构造点 + 预览腿**一处不漏**，漏即 fail-closed）、帧边界对每个会话
-                                                  `take_clipboard_reads()` ⇒ 询问（`ask` 档经视口那枚钩子）⇒
-                                                  `ClipboardOutbox::answer_reads`；`perform_close` 撤账口径同 serial/telnet 表
+src/main.cpp                                修改 —— 装配（D13② 之后只剩接线）：一枚 app 级 `ClipboardGate`
+                                                  （`store.settings()` 折算初值、`hooks.persist` 之后刷新）、**每会话
+                                                  两接**：`Session::set_clipboard_gate(&gate)`（状态机侧那档分派）＋
+                                                  视口 `set_clipboard_gate(&gate)`（帧边界的现读）——同一个对象两个
+                                                  持有者，这正是裁决 D13② 说的「一枚闸门同时决定登记与询问」。
+                                                  八处构造点 + 预览腿**一处不漏**，漏即 fail-closed（漏会话那一接
+                                                  更是「查询当场被吞、界面永远不问」）。排请求与问答腿都在视口
+                                                  `on_frame` 里，装配层不再自持跨帧的待答清单 ⇒ **`perform_close`
+                                                  那一路不需要另写撤账**：视口析构就是那条回写的落点（批 2 已把
+                                                  这一档做成 itest 的自动证人）。**批 3 有一条承重的析构次序纪律**
+                                                  （批 2 实测所得）：`TabWorkspace` 的成员是 `workspace` 先、
+                                                  `sessions` 后 ⇒ `sessions` 反而**先析构**，眼下不崩全靠
+                                                  `WorkspaceView::hooks_` 声明在最前（故最后析构）而 `make_pane` /
+                                                  `dispatch_grid` 两枚闭包**按值**捕获了 `shared_ptr<Session>`，
+                                                  替视口把会话撑到 `~TerminalView` 之后。批 2 起「视口析构要往会话
+                                                  写撤账空响应」，这条撑住关系从多余变成**承重**：把那份值捕获换成
+                                                  裸指针（看着更像非拥有接缝）就是 use-after-free，而 itest 换不到
+                                                  证人（驱动台的次序是它自己的成员）。落地形态：`sessions` 提到
+                                                  `workspace` 之前声明，两枚闭包的捕获处留一句 WHY
 src/CMakeLists.txt                          修改 —— `src/term/clipboard_read.cpp` 进 `borealis_core` 的**显式**源清单
                                                   （只有 tests 走 GLOB；漏这一行即链接期 undefined reference，
                                                   Telnet 批 2 与会话日志批 1 的同一处坑）
@@ -158,13 +221,26 @@ tests/unit/utest_term_clipboard_read.cpp     新增 —— 三态分派逐档 ×
                                                   `osc::decode_base64` 往返互逆）
 tests/unit/utest_terminal_osc.cpp            不改 —— 既有那条「读查询回空响应」在批 1 后逐字节保持绿，它就是
                                                   D9① 的回归底线；两枚新计数的断言归新 TU，不在旧 TU 重述
-tests/unit/utest_session.cpp                 修改 —— G2 那条既有用例保持（Deny 档），新增「`answer_clipboard_read` 走
-                                                  同一写通道」与「`Allow` 档经 outbox 折算出的字节」两条
+tests/unit/utest_session.cpp                 修改 —— G2 那条既有用例保持（Deny 档，逐字节不变 ⇒ 判据 ① 的底线），
+                                                  新增两条：`allowed_osc_52_reads_are_queued_and_answered_on_the_same_channel`
+                                                  （Allow 档接线后两条查询留队、取走即清、`answer_clipboard_read` 走
+                                                  **同一条写通道**）与 `the_outbox_turns_one_read_request_into_exactly_one_answer`
+                                                  （`answer_read` 的四档字节：正文 / `nullopt` / 空串 / 超 64 KiB ⇒
+                                                  后三者逐字节同那条既有空响应且返回 false）
 tests/integration/itest_clipboard_read.cpp   新增 —— 替身剪贴板 + 替身确认钩子接进 `Presentation`（G14 的接缝就是为
-                                                  这类用例留的）⇒ 逐档断回写串：`Allow` 出正文、`Ask` 答是出正文／
-                                                  答否出空响应／**不答即关框也出空响应**（判据 ③⑤）、超限出空响应、
-                                                  剪贴板为空出空响应
-tests/unit/utest_config.cpp                  修改 —— 新键的往返等值 + 「缺省 deny」一档（判据 ①）
+                                                  这类用例留的）⇒ 无头断回写串逐字节。共 **17 案**，按六桶组织（案名见 §6）：
+                                                  ① Allow 一帧内问到并答出正文；② 一次一问 + 答完的下一条排在下一帧；
+                                                  ③ 三个「必须有回写」的出口（答否 / 视口析构 / 无宿主问不出去）；
+                                                  ④ 闸门现读（登记之后改档 ⇒ 整批按**现档**处置，不再问）；
+                                                  ⑤ 生产模态框的 Yes/No 经**真实命中链**派发（不靠替身）；
+                                                  ⑥ 三档降级（超限 / 剪贴板空 / 答否）与两句词条在表内。
+                                                  **驱动台的两条析构纪律**（本棒实测所得，写死在文件头）：
+                                                  `Session` 必须**先声明**（最后析构）而 `au::Window` 排在视口/宿主/Node
+                                                  之后——`~Window` 释放它对节点树的引用，那份引用可能是 `TerminalView`
+                                                  的最后一个持有者，次序反过来就是「视口析构往已死会话回写」的段错误；
+                                                  写出的字节记在**用例持有**的记账本里（`FakeConnection` 收一枚
+                                                  `std::vector<std::byte> *sink`），否则「析构之后读数」这件事无从成立
+tests/unit/utest_config.cpp                  修改 —— 新键的往返等值 + 「缺省 deny」一档（判据 ①，批 3）
 tests/unit/utest_form_transfer.cpp           修改 —— 该键的 `Binding` 断言（G10 同族那条枚举搬运写法）
 tests/unit/utest_settings_catalog.cpp        修改 —— G11 的计数改口：总数 64→**65**；`Absent` 19 不变；
                                                   `Wired ∧ NextSession` 名单不变（该键是 Immediate）
@@ -189,34 +265,44 @@ tests/e2e/etest_osc_clipboard.cpp            修改 —— 补一条**读方向*
                           锁内只登记；应答文本经 ResponseSink → pending_responses_（G5）留存
   ──出锁──► flush(responses) ⇒ 连接                                  ← 空响应那一档在这里就走
                                      ‖
-主线程帧边界（`app.set_on_frame`，装配层对**全部标签每个会话**排一次，G7 同一条腿）
-  ├─ session.take_clipboard_reads() ⇒ 非空即逐条处置（D4① 不合并）
-  │     ├─ policy == Ask ⇒ 经视口的 confirm_clipboard_read 弹一问（D5②）
-  │     │      答是 → 读本地剪贴板（`ClipboardOutbox::read`，G9：一次子进程往返）
-  │     │      答否 / 关框 / 遮罩 → 视作拒绝（D6①：**任何出口都回写一条**）
-  │     └─ policy == Allow ⇒ 直接读
-  ├─ ClipboardOutbox::answer_reads(session, utf8)
-  │     ├─ 长度 ≤ 64 KiB ⇒ "ESC ] 52 ; <回显的 Pc> ; <base64> BEL" → session.answer_clipboard_read(...)
-  │     └─ 超限 / 空内容 ⇒ 退回空响应 + `AURORA_LOG_WARN`（D7①，屏 C）
-  └─ 回写的字节仍走 G5 那条：登记 → 出锁 flush ⇒ 连接
+主线程帧边界（`app.set_on_frame` → 每 pane 的 `TerminalView::on_frame`，装配层对**全部标签每只视口**
+排一次，G7 同一条腿；D13② ⇒ 排请求与问答闭合在视口里，装配层只接线）
+  ├─ session.take_clipboard_reads() ⇒ 并入视口的待问队列（登记序即应答序，D4① 不合并）
+  │     └─ `ask_clipboard_read()`：现读闸门 == Ask 且**手上没有在问的那一条**才弹一问（D5②，
+  │            经 `Presentation::confirm_clipboard_read`，一次只问一条，其余留在待问队列）
+  │            答是 → 读本地剪贴板（`ClipboardOutbox::read`，G9：一次子进程往返）→ 回写正文
+  │            答否 → 回写空响应；下一条排在**下一帧**问（就地递归再问会走到 `set_content`，
+  │            而它摘掉的正是当前还在栈上的那份对话框内容，含本次回调自身）
+  │            无宿主（浮层宿主还没挂上）⇒ 问不出去也**当场按拒绝答**——粘贴那一路是「不问就不发」，
+  │            这一路反过来：沉默等于让远端一直等
+  │            视口析构 → 在问的那一条与待问队列里的每一条**各**补一条空响应（D6①：任何出口都不欠账；
+  │            框架的 `Dialog` 没有关闭叉、遮罩不触发 `on_close` ⇒ 析构就是「不答」那一档的唯一兜底点）
+  ├─ 现读闸门 == Allow ⇒ 不问，把待问队列整批直接读并答掉
+  ├─ 现读闸门 == Deny / 闸门摘除 ⇒ 不问，把待问队列整批当场拒（登记之后才改档的那一批也照拒——
+  │      D2① 现读的代价面），三条出口都必有一条回写
+  ├─ ClipboardOutbox::answer_read(session, request, content)   ← 一条一答
+  │     ├─ 有内容且 ≤ 64 KiB ⇒ "ESC ] 52 ; <回显的 Pc> ; <base64> BEL" → session.answer_clipboard_read
+  │     └─ 拒绝 / 超限 / 空内容 ⇒ 退回既有那条空响应（超限另 `AURORA_LOG_WARN` 一条，D7①，屏 C）
+  └─ 回写的字节与读线程那批应答共用同一条出口：`Session::flush` ⇒ 编码 ⇒ 行尾折算 ⇒ 连接
 ```
 
-**三道纪律**：① 锁内不碰剪贴板、不碰 UI（G9 的那一次子进程往返绝不能进网格锁）；② 状态机不做「答不答」的 IO 判定，只做「登记 / 立刻空响应」的**分派**，内容与编码在主线程；③ 闸门是 app 级**一份**而非每会话一份——这是 D2① 与 G15 联立的唯一解法：不扩广播也能让「改档即刻对全部在途会话生效」。
+**五道纪律**：① 锁内不碰剪贴板、不碰 UI（G9 的那一次子进程往返绝不能进网格锁）；② 状态机不做「答不答」的 IO 判定，只做「登记 / 立刻空响应」的**分派**，内容与编码在主线程；③ 闸门是 app 级**一份**而非每会话一份——这是 D2① 与 G15 联立的唯一解法：不扩广播也能让「改档即刻对全部在途会话生效」；④ 主线程发起的应答**不挂** `pending_responses_`——那条缓冲只在读线程喂入时才冲出去，空闲会话里点了允许就会永远发不出去（D13② 的第二次改口由此而来）；⑤ 答完一条**不在回调里接着问下一条**，改为标脏排下一帧——就地递归会经由 `set_content` 把当前还在栈上的那份对话框内容（本次回调的宿主）拆掉，实现后实测正是这一条把「一次一问」的证人打成了段错误。
 
 ---
 
 ## 6 验收判据映射
 
 - **默认禁止（判据 ①）**：`utest_config` 锁「新载入的 Preferences 里该键缺省 `deny`」；`utest_terminal_osc` 锁「闸门未接线 / 显式 Deny 两种来路都回写同一串空响应，逐字节与现状那条相等」——G2 那条既有用例是本判据的**回归底线**，不许改坏。
-- **三态可配（判据 ②）**：`utest_settings_catalog` 锁总数 64→65；`utest_form_transfer` + `utest_config` 锁该键三档落盘名的往返；`itest_settings_panel` 锁终端页那一行画得出、选得中、改得动（该页行序不变）。
-- **被拒 ⇒ 空响应而非静默（判据 ③）**：`itest_clipboard_read` 三档——答否、不答即关框、超限——都断「该会话写出的字节里恰有一条空响应，且没有第二条」。
-- **允许 ⇒ 真给得出且可还原（判据 ④）**：`utest_term_clipboard_read` 锁 `encode_base64` 与 `osc::decode_base64` 往返互逆（含 CJK 与余数三档）；`itest_clipboard_read` 锁「替身剪贴板里那句文本 base64 之后原样出现在回写字节里」。**证人分层要说清**：本沙箱 `xsel`/`xclip` 均不在位（G9，两条命令都 127），⇒「真把系统剪贴板交出去」那一档在这里**只有替身证人**，现场腿要等有桥的机器（走查第 ⒋ 条）。
-- **询问不挂起（判据 ⑤）**：同上「不答即关框」那一档；另在 `utest_term_clipboard_read` 锁「第 9 条当场回空响应并计数，前 8 条仍在待答队列里」，避免远端一条输出把我们的待答队列撑爆。
-- **上限（判据 ⑥）**：两处上限分开走。**待答队列上限**取文件级常量 `kMaxClipboardReadRequests = 8`（不做测试入参覆盖：8 条本身就是判据要的形状，喂 9 条即可锁），`utest_term_clipboard_read` 锁「第 9 条当场回空响应 + `clipboard_read_denied` +1 + 腾出位置后能再登记」。**应答内容上限**（`kMaxClipboardResponseBytes = 64 KiB`，D7①）在批 2 的 outbox 腿，由 `itest_clipboard_read` 锁「超限 ⇒ 空响应 + 一条 warn」。
+- **三态可配（判据 ②）**：`utest_settings_catalog` 锁总数 64→65；`utest_form_transfer` + `utest_config` 锁该键三档落盘名的往返；`itest_settings_panel` 锁终端页那一行画得出、选得中、改得动（该页行序不变）——**这三件都在批 3**。
+- **改档即刻生效（D2① 的正面判据，批 2 有证人）**：`itest_clipboard_read` 三案锁「现读」而不是「登记那一档」——`a_policy_change_answers_the_waiting_batch_without_asking`（Ask 登记、面板写盘之后把同一个闸门改成 Deny ⇒ 待问那一条**当场拒**，不再问）、`an_allow_policy_change_answers_the_waiting_batch_at_once`（同法改 Allow ⇒ 整批直接答出正文）、`a_query_registered_before_the_seams_are_wired_still_gets_answered`（装配晚一拍不丢请求：登记时闸门还没接、接线之后照样有人答）。这三案的形态本身就是 D2① 的取舍：改的是**同一个 app 级对象**的读数，不是给每个会话补一次通知。
+- **被拒 ⇒ 空响应而非静默（判据 ③）**：批 2 的 `itest_clipboard_read` 把「被拒」的五条来路各做成一案，都断「该会话写出的字节里恰有一条空响应，且没有第二条」——`ask_policy_answers_no_with_the_empty_response`（答否）、`the_view_answers_every_outstanding_request_when_it_dies`（三条查询全没人答 ⇒ 三条空响应，一条不多不少）、`a_view_without_a_host_still_answers_the_question_it_cannot_ask`（问不出去也要回话）、`an_oversize_clipboard_degrades_to_the_empty_response` 与 `an_empty_clipboard_degrades_to_the_empty_response`（超限 / 剪贴板为空 ⇒ 降级）。脱界面的那一半在 `utest_session` 的 `the_outbox_turns_one_read_request_into_exactly_one_answer`：`nullopt`、空串、超 64 KiB 三档的字节与既有那条空响应**逐字节相等**。
+- **允许 ⇒ 真给得出且可还原（判据 ④）**：`utest_term_clipboard_read` 锁 `encode_base64` 与 `osc::decode_base64` 往返互逆（含 CJK 与余数三档）；批 2 的 `itest_clipboard_read` 锁「替身剪贴板里那句文本 base64 之后原样出现在回写字节里」——案名 `allow_policy_answers_the_read_within_one_frame`（Allow 档：**一帧之内**问到并答出，不需要第二帧）与 `ask_policy_answers_yes_with_the_local_content`（Ask 档答是），两案都拿 `term::encode_base64` **现算**期望串而不是硬编码，于是编码腿与被测的期望腿不会同时写错。另加 `the_production_dialog_yes_button_answers_through_the_hit_chain` 与 `..._no_button_answers_the_empty_response`：这两案**不用替身**，在对话框内容盒内按阅读序扫 `Button`、经 `hit_test_chain` + `EventDispatcher` 真实派发，证的是生产那枚模态框的按钮次序（Yes 在左）与「答话即收起」确实接在同一个 `answer` 上。**证人分层要说清**：本沙箱 `xsel`/`xclip` 均不在位（G9，两条命令都 127），⇒「真把系统剪贴板交出去」那一档在这里**只有替身证人**，现场腿要等有桥的机器（走查第 ⒋ 条）。
+- **询问不挂起（判据 ⑤）**：**批 2 实测改口**——框架的 `au::Dialog` 没有独立「关框」通道（内容盒外只有遮罩，而遮罩点击**不触发** `on_close`，Aurora 主仓 `widget/dialog.h` 的 `dialog_geom` 段），`aurora::confirm` 也只有 Yes/No 两枚按钮 ⇒ 需求那句「任何出口都回写」在我们的框上实际只有**三条出口**：答是、答否、**一直不答**。第三条不是「关掉就行」，而是把欠账留到视口析构（关标签 / 关窗 / 退出），故证人按这三条各立一案：`ask_policy_answers_yes_with_the_local_content` / `ask_policy_answers_no_with_the_empty_response` / `an_unanswered_question_is_still_answered_when_the_view_dies`（不答 ⇒ 析构补一条空响应，且**只补一条**——`a_question_answered_twice_writes_one_response` 锁账本只放行第一次答话）。另在 `utest_term_clipboard_read` 锁「第 9 条当场回空响应并计数，前 8 条仍在待答队列里」，避免远端一条输出把我们的待答队列撑爆。
+- **上限（判据 ⑥）**：两处上限分开走。**待答队列上限**取文件级常量 `kMaxClipboardReadRequests = 8`（不做测试入参覆盖：8 条本身就是判据要的形状，喂 9 条即可锁），`utest_term_clipboard_read` 锁「第 9 条当场回空响应 + `clipboard_read_denied` +1 + 腾出位置后能再登记」。**应答内容上限**（`kMaxClipboardResponseBytes = 64 KiB`，D7①）在批 2 的 outbox 腿，批 2 的证人是脱界面的 `utest_session.the_outbox_turns_one_read_request_into_exactly_one_answer`（喂一份 > 64 KiB 的正文 ⇒ 字节仍是那条空响应、返回 false）与界面的 `itest_clipboard_read.an_oversize_clipboard_degrades_to_the_empty_response`（替身剪贴板给超限内容 ⇒ 回写恰为一条空响应）。**Warn 那一条留痕不在断言里**：框架的日志宏在测试进程内可注 handler，但本仓既有用例（会话日志、Telnet 各腿）都没有注日志的先例，为这一档单开一套断言基础设施不属本棒的判据 ⇒ 措辞与留痕按走查第 ⑶ 条核。
 - **Pc 回显（D8①）**：`utest_term_clipboard_read` 一次锁齐七档（`c`/`p`/`0`/`*` 各回显自身、`52;c;p;?` 回显**首段** `c` 而非末段、`52;?` 无 Pc 段回显 `c`、`zz` 与 64 字长段归一到 `c`）——归一是承重件：Pc 来自不可信输入，原样回写等于替远端把任意字节喷回它自己。
 - **既有判据不受影响**：`utest_terminal_osc` 那三条写方向用例（空载荷合法清空、非法载荷不写、多段只留最后载荷）逐条保持绿；G16 是本棒的回归面而不是新功能面。
-- **测试读数口径**：结项以 `ctest --preset linux -E etest_` 的**项数**与 `borealis_test_runner` 的**全案数**结项（AGENTS §4.4 第 21 条）；基线是会话日志棒结项的 **81 项／1019 案**（本棒新增两件测试 TU ⇒ 项数 +2）。**批 1 已跑，读数如下**：`82 项／1031 案`全绿（新增 TU `utest_term_clipboard_read` 12 案）。变异注入四则全部变红、还原复绿：M1 去掉拒绝档的空响应回写 ⇒ 4 案红；M2 Pc 不归一（原样吐出首段）⇒ 1 案红；M3 满档不再当场回绝 ⇒ 1 案红；M4 base64 填充位错一档 ⇒ 2 案红（`+/8=`、`AAEC` 那两条 RFC 向量）。变异注入按第 22 条逐则给「注入点 ⇒ 哪条用例转红」，装配那几处（闸门接线、广播后刷新、帧边界排请求）无自动化证人（裁决 7.83 同档）按会话日志棒 §8.1 的手法如实登记。
-- **真机走查**（AGENTS §4.4 第 33 条，未走查不得称「可用」）：⑴ `ask` 档下真 tmux / vim 发读请求，问框出现时该窗口其它操作的手感（D5 的代价面）；⑵ 「去泡杯茶回来」这一档会不会被误认为卡死（D6 的代价面）；⑶ 复制一段几 MB 的文本再让远端读 ⇒ 超限那一档的留痕读不读得懂；⑷ **本机就是缺桥那一档**（G9 实测 `xsel`/`xclip` 双双回 127）：三态各自的表现须是「远端拿到一条空响应 / 一次询问」而不是挂起；有桥机器的对照档另找一台再走；⑸ Win32 腿：`OpenClipboard` 那侧的读、粘贴板占用、以及 64 KiB 档；⑹ 从「禁止」改到「允许」后**别的标签**立刻能读——这一条是 D2① 的正面判据，也是 G15 那条限制的唯一现场证人。
+- **测试读数口径**：结项以 `ctest --preset linux -E etest_` 的**项数**与 `borealis_test_runner` 的**全案数**结项（AGENTS §4.4 第 21 条）；基线是会话日志棒结项的 **81 项／1019 案**（本棒新增两件测试 TU ⇒ 项数 +2）。**批 1 已跑**：`82 项／1031 案`全绿（新增 TU `utest_term_clipboard_read` 12 案）。**批 2 已跑**：`83 项／1050 案`全绿——新增 TU `itest_clipboard_read`（17 案，单跑亦全绿）+ `utest_session` 2 案，项数 +1 是因为批 2 只新增一件 integration TU。两批的变异注入逐则读数见 §8 的「批 1 变异注入」与「批 2 变异注入」两条。装配那几处（闸门两接、`store.settings()` 折算初值、`hooks.persist` 之后刷新）仍无自动化证人（裁决 7.83：`src/main.cpp` 不编进 runner），按会话日志棒 §8.1 的手法如实登记，批 3 走查收口。
+- **真机走查**（AGENTS §4.4 第 33 条，未走查不得称「可用」）：⑴ `ask` 档下真 tmux / vim 发读请求，问框出现时该窗口其它操作的手感（D5 的代价面）；⑵ 「去泡杯茶回来」这一档会不会被误认为卡死（D6 的代价面）——批 2 之后这一条有了具体的走查动作：**不答**、直接关标签，看远端是不是拿到一条空响应而不是永远等（框没有关闭叉，关标签就是那一档的出口）；⑶ 复制一段几 MB 的文本再让远端读 ⇒ 超限那一档的留痕读不读得懂；⑷ **本机就是缺桥那一档**（G9 实测 `xsel`/`xclip` 双双回 127）：三态各自的表现须是「远端拿到一条空响应 / 一次询问」而不是挂起；有桥机器的对照档另找一台再走；⑸ Win32 腿：`OpenClipboard` 那侧的读、粘贴板占用、以及 64 KiB 档；⑹ 从「禁止」改到「允许」后**别的标签**立刻能读——这一条是 D2① 的正面判据，也是 G15 那条限制的唯一现场证人。
 
 ---
 
@@ -241,5 +327,18 @@ tests/e2e/etest_osc_clipboard.cpp            修改 —— 补一条**读方向*
 - **G8（框架只有一格）——跑完，坐实**：`strace -f -e trace=execve` 包住 `borealis_test_runner --run etest_osc_clipboard`，出现过的 execve 只有四条串——`xsel --clipboard --output` / `xsel --clipboard --input` / `xclip -selection clipboard -o` / `xclip -selection clipboard`（各 3 次），**没有一条带 `-selection primary`**；每条都以 `/bin/sh -c --` 起，故「一次读」的真实成本是 fork+shell+等待。
 - **G2/G16（既有用例即底线）——跑完，锚点已取**：`utest_terminal_osc` 19 案全绿，读方向那条叫 **`osc_52_read_request_answers_empty_selection`**，写方向三条回归面叫 `osc_52_empty_payload_is_a_valid_clear` / `osc_52_rejects_malformed_payloads` / `osc_52_multiple_clipboard_numbers_keep_last_payload`；`utest_session` 里连接侧那条叫 **`osc_52_read_request_answers_through_write_channel`**。这两枚用例名是本棒的回归底线，批 1/批 2 不许改坏（Deny 档逐字节不变）。
 - **G17（调试面板不含 OSC 族）——读源码坐实**：`src/ui/debug_panel.cpp` 每会话渲染 `parse` / `decode` / `encode` / `queue` 四行，`DebugSessionSnapshot` 无 OSC 字段，`itest_debug_panel` 把行数写成契约 ⇒ 「计数进可观测面板」在仓里没有落点，稿面已按此改口（§2 屏 C、D7、D9、§7）。
+- **批 1 变异注入（四则，全部变红、还原复绿）**：M1 去掉拒绝档的空响应回写 ⇒ 4 案红；M2 Pc 不归一（原样吐出首段）⇒ 1 案红；M3 满档不再当场回绝 ⇒ 1 案红；M4 base64 填充位错一档 ⇒ 2 案红（`+/8=`、`AAEC` 那两条 RFC 向量）。
+- **批 2 变异注入（六则，全部变红、还原复绿，2026-10-12 实测）**——逐则给「注入点 ⇒ 哪条用例转红」（AGENTS §4.4 第 22 条）：
+
+  | 则 | 注入点 | 转红的证人 |
+  | --- | --- | --- |
+  | M1 | `Session::answer_clipboard_read` 的 `flush(response)` 摘掉（应答不走写通道） | `utest_session` 2 案 + `itest_clipboard_read` 16 案（只有那句词条案不看字节） |
+  | M2 | `Session::take_clipboard_reads` 改回 `return {}`（会话不转发读请求） | 同上：`utest_session` 2 案 + `itest` 16 案 |
+  | M3 | `ClipboardOutbox::answer_read` 的 `oversize` 恒假（超限不降级） | `utest_session.the_outbox_turns_one_read_request_into_exactly_one_answer` + `itest_clipboard_read.an_oversize_clipboard_degrades_to_the_empty_response` |
+  | M4 | 删掉视口析构里对 `clipboard_reads_waiting_` 的撤账循环 | `itest_clipboard_read.the_view_answers_every_outstanding_request_when_it_dies` |
+  | M5 | `ask_clipboard_read` 去掉「手上已有在问的那一条」这一闸 | `itest_clipboard_read.a_query_arriving_while_a_question_is_open_waits` |
+  | M6 | 闸门现读改成立即放行（`granted` 恒真，Deny 档也答） | `itest_clipboard_read.a_policy_change_answers_the_waiting_batch_without_asking` |
+
+  **M5 的第一轮是空转的**（同一份注入跑完仍全绿）——根因不在注入点而在证人：那两条查询写在同一次 `feed` 里，一帧就整批取走，「在问的那一条占住账本」这条闸根本没有第二个触发点可露。补了 `a_query_arriving_while_a_question_is_open_waits`（框开着时**再投**一条 ⇒ 询问次数必须仍是 1）之后 M5 才转红。这一条按第 22 条的口径登记：**变异自证证的是证人，不是代码**——首轮「5/6 变红」当时若直接结项，就会把「一次一问」留在无证人状态。同时补的三案（析构批量撤账 / 账本只放行第一次答话 / 装配晚一拍不丢请求）各锁一条稿面承诺。
 
 **裁决记录（2026-10-12）**：人已给出常存授权（「按顺序持续推进……后续再遇到问题则你自行按照推荐去做」），故 D1–D12 **全部按 §3 的推荐档收口**，无一条改判需要现场等人；其中三条与稿面初判不同、值得点名的自决位是：D2 选**现读**而不是照 `TerminalDefaults` 的构造期快照（理由：G15 让「改档只到当前标签」成为既有事实，走 `NextSession` 等于给安全闸留一个跨标签的洞）；D4 选**逐条答**而不是照写方向的合并（理由：读方向是别人在等自己那一条）；D6 选**一直等到用户答**而不是 TERM.09 那档 5 s 自收（理由：通知可以超时，授权决定不该被时间替用户拍板）。收口与理由随批 1 落地入册 `SPECIFICATIONS.md` §7 裁决 **7.118**、`CHANGELOG.md` **v0.118**，`PLAN.md` 的 CONN.12 行与 M4 行同步改口。实现按 §4 分三批走：批 1＝`term` 层纯逻辑件与其 utest（不含界面）；批 2＝`Session`/`ClipboardOutbox` 应答腿 + 询问钩子 + `itest`；批 3＝新键六处同步 + 设置页那一行与旁注 + 装配接线 + 文档回写与在册收口。

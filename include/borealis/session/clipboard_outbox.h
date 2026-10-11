@@ -9,17 +9,28 @@
 //
 // 全仓的剪贴板 IO 只有本类：`drain` 落远端 `OSC 52` 留存的文本，`write` 落本地选中复制的
 // 文本，`read` 取本地右键粘贴的文本，三条共用同一条失败口径，且框架头不出实现文件。
+// 第四条 `answer_read` 只做编码与降级、不碰 IO：读方向的应答按条给（判据 ③「被拒也要有回写」），
+// 把「问」与「读」留在调用方，三档降级才能脱界面断言。
 // ============================================================
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
+
+#include "borealis/term/clipboard_read.h"
 
 namespace borealis::session {
 
 class Session;
 
-/// @brief 把会话里待写的 `OSC 52` 文本落到系统剪贴板（写方向默认允许，`SPEC.FEAT.CONN.12`）。
+/// @brief 一条 `OSC 52` 读应答允许带出的最大 UTF-8 字节数（`SPEC.FEAT.CONN.12`，裁决 D7①）。
+///
+/// 剪贴板里可能是几 MB 的日志，base64 再乘 4/3，而一条应答是一次 `send` 到对端：远端只问了
+/// 「给不给」，没承诺收多少。取文件级常量而不是配置键——与会话日志那棒的上限同档取向。
+inline constexpr std::size_t kMaxClipboardResponseBytes = 64U * 1024U;
+
+/// @brief 系统剪贴板与会话字节之间的落地件（写方向默认允许，读方向走三态闸，`SPEC.FEAT.CONN.12`）。
 class ClipboardOutbox {
   public:
     /// @brief 取走并落地待写文本；无待写请求即空转。
@@ -45,6 +56,19 @@ class ClipboardOutbox {
     /// @return 剪贴板里的 UTF-8 文本；剪贴板为空、内容非文本或读取失败时回空串，调用方据此
     ///         什么都不发（粘贴一条空文本等于什么都没发生，不需要区分失败原因）。
     [[nodiscard]] static auto read() -> std::string;
+
+    /// @brief 答复**一条** `OSC 52` 读请求（`SPEC.FEAT.CONN.12` 的读方向）。
+    ///
+    /// 按条而非按批：读方向逐条答（裁决 D4①），每条各有回写，合并就是让先问的那条永远收不到回应。
+    /// 本件**不读剪贴板也不弹窗**——内容与许可都由调用方给，这里只做编码与降级，于是
+    /// 「拒绝 / 超限 / 内容为空」三档能脱界面断言。三档的出口是同一条既有空响应，逐字节不变。
+    /// 只可在主线程调用（`session.answer_clipboard_read` 要写连接）。
+    /// @param session 目标会话。
+    /// @param request 待答请求（其 Pc 由状态机侧归一，本件原样回显）。
+    /// @param content 已经拿到手的本地剪贴板文本；`std::nullopt` 即「这一条被拒」。
+    /// @return 是否给出了正文（false ⇒ 回写的是那条空响应）。
+    static auto answer_read(Session &session, const term::ClipboardReadRequest &request,
+                            std::optional<std::string_view> content) -> bool;
 };
 
 }  // namespace borealis::session

@@ -74,7 +74,7 @@ class TerminalView final : public aurora::LeafWidget {
         term::PasteOptions paste{};   ///< 粘贴处置口径（换行策略、行尾与块间隔）。
     };
 
-    /// @brief 视口的三条外部接缝：剪贴板读写与多行粘贴的确认呈现。
+    /// @brief 视口的四条外部接缝：剪贴板读写、多行粘贴的确认呈现、`OSC 52` 读方向的授权一问。
     ///
     /// 默认（字段为空）即生产路径的实现；换成替身是为了让「右键 → 剪贴板 → 会话字节」这条链
     /// 能在无窗口站、无真实剪贴板的环境里断言（AGENTS.md §4.4 第 19 条）。字段留空即回落默认，
@@ -88,6 +88,15 @@ class TerminalView final : public aurora::LeafWidget {
         ///
         /// 是异步形态而非 `bool`：对话框要等用户点，放行与否经 `answer` 回调给出，未回调即取消。
         std::function<void(const term::PastePlan &, std::function<void(bool)> answer)> confirm_multiline;
+        /// @brief `OSC 52` 读方向的授权一问（`SPEC.FEAT.CONN.12` 的 `ask` 档）；空即模态对话框。
+        ///
+        /// 与上一条同一套异步形态，而「未回调即取消」在这里**不成立**：本条的判据是不管答没答都恰好吃掉
+        /// 一次回写，不答就是让远端一直等。默认实现只有是/否两枚按钮答话——框架实测遮罩点击不触发
+        /// `on_close`（`aurora/widget/dialog.h`），于是「一直不答」是一档**常态**而非边角，那份欠账由视口
+        /// 析构按拒绝兜底（`itest_clipboard_read` 的 `an_unanswered_question_is_still_answered_when_the_view_dies`）。
+        /// 测试替身可以只答一次，也可以故意不答以证析构那一档。
+        std::function<void(const term::ClipboardReadRequest &, std::function<void(bool)> answer)>
+            confirm_clipboard_read;
     };
 
     /// @brief 视口的外观包：绘制与排版要用的那六项（裁决 7.52 的 S4①）。
@@ -155,8 +164,17 @@ class TerminalView final : public aurora::LeafWidget {
     auto set_search_dependencies(aurora::ShortcutRegistry &shortcuts, aurora::FocusManager &focus) -> void;
 
     /// @brief 替换剪贴板与确认的默认实现（用例注入替身；缺省不装即走生产路径）。
-    /// @param presentation 三条接缝，字段留空即保持默认。
+    /// @param presentation 四条接缝，字段留空即保持默认。
     auto set_presentation(Presentation presentation) -> void;
+
+    /// @brief 挂上 `OSC 52` 读方向的授权闸门（`SPEC.FEAT.CONN.12`，裁决 D13② 的接线腿）。
+    ///
+    /// 与 `set_restart_hook`、`set_logging_hooks` 同一套装配接缝：**非拥有**的观察指针，闸门是
+    /// app 级一份、由装配层担保生命周期。未装即按 `Deny` 处置（fail-closed，与状态机同一条口径）。
+    /// 视口只**现读**它来决定「问不问」，不据它判定「给不给」——给不给的三档降级在
+    /// `session::ClipboardOutbox::answer_read` 里，那里也是全仓读剪贴板的唯一落点。
+    /// @param gate 授权闸门；传 nullptr 即摘除。
+    auto set_clipboard_gate(const term::ClipboardGate *gate) noexcept -> void { clipboard_gate_ = gate; }
 
     /// @brief 工作区层的两条注入接缝：期望行列的去向、以及「这一键归谁」的判定。
     ///
@@ -221,6 +239,12 @@ class TerminalView final : public aurora::LeafWidget {
     /// 只能自己复制一套按钮尺寸算式去猜哪一枚是「Yes」；而「答话之后对话框自己收起」这条判据
     /// 除本句柄无处可读（浮层仍挂在宿主上，`overlay_count()` 不因关闭而变）。
     [[nodiscard]] auto multiline_warning() const noexcept -> const aurora::Dialog *;
+
+    /// @brief `OSC 52` 读方向授权问框的只读句柄，从未问过即空指针（`SPEC.FEAT.CONN.12` 的观测点）。
+    ///
+    /// 同 `multiline_warning()` 的两条理由：Yes / No 的落点要经真实命中链才知道是哪一枚，而
+    /// 「答话即收起、收起不摘浮层」只能从本句柄读。
+    [[nodiscard]] auto clipboard_read_dialog() const noexcept -> const aurora::Dialog *;
 
     /// @brief 本帧的整格几何（dp 步长、行列数与内边距）——工作区层据此现算最小 pane 尺寸。
     ///
@@ -644,6 +668,35 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 按计划把各块交进会话：块间延迟经 `Scheduler::set_timeout` 累积排期。
     auto send_paste_plan(const term::PastePlan &plan) -> void;
 
+    /// @brief 帧边界把本会话的 `OSC 52` 读请求并进待问队列，随即试着问出去（`SPEC.FEAT.CONN.12`，裁决 D13②）。
+    ///
+    /// 取走状态机那份队列只做并入：分流在 `ask_clipboard_read`，因为「按闸门现档处置」这件事有
+    /// 两个触发点（帧边界、上一条答完），而 `Allow` / `Ask` / `Deny` 三档都必有一条回写（判据 ③⑤），
+    /// 所以这里没有「先收下、以后再说」的第四档。
+    auto drain_clipboard_reads() -> void;
+
+    /// @brief 按闸门现档排待问队列：非 `Ask` 即整批当场答掉，`Ask` 则把头一条交给确认接缝。
+    ///
+    /// 只有帧边界一个入口：答完一条之后**不在此递归**，因为确认回调是从对话框（或装配层的弹层）
+    /// 内容里那枚按钮的点击链上跑下来的，就地再问会走到 `set_content` 而把当前还在栈上的那份内容
+    /// 摘掉。剩下的排在下一帧，每条各有它自己的回写。
+    ///
+    /// 无宿主可问即按拒绝答——粘贴那一路是「不问就不发」（宁可不作为），这一路反过来是
+    /// 「问不出去也要回话」，因为沉默会让远端一直等。
+    auto ask_clipboard_read() -> void;
+
+    /// @brief 答复一条读请求：许可即读本地剪贴板交 `ClipboardOutbox::answer_read`，拒绝交空内容。
+    /// @param request 待答请求（回显其 Pc）。
+    /// @param granted 用户是否许可（`Allow` 档恒为真）。
+    auto answer_clipboard_read(const term::ClipboardReadRequest &request, bool granted) -> void;
+
+    /// @brief 授权一问的默认呈现：宿主的模态对话框（`au::Dialog` + `au::confirm`）。
+    ///
+    /// 与 `ask_multiline_warning` 同一套组合，差别在**没有宿主也要答**：那一条是不问就不发，
+    /// 这一条是问不出去也要回话（判据 ③⑤）。
+    auto ask_clipboard_read_dialog(const term::ClipboardReadRequest &request,
+                                   std::function<void(bool)> answer) -> void;
+
     session::Session *session_ = nullptr;  ///< 非拥有。
     PaletteSpec spec_{};
     aurora::Font ref_font_{};
@@ -721,6 +774,15 @@ class TerminalView final : public aurora::LeafWidget {
     bool paste_pending_ = false;  ///< 粘贴已请求、剪贴板读取留到下一帧的 `on_frame` 落地。
     std::optional<term::PastePlan> pending_paste_;  ///< 等用户确认的处置计划（对话框放行才发送）。
     std::vector<aurora::TimerHandle> paste_timers_; ///< 在途的逐块节流任务；析构时统一取消。
+
+    /// @brief `OSC 52` 读方向的四件（`SPEC.FEAT.CONN.12`，裁决 D13②）。
+    ///
+    /// 闸门是装配层那一份 app 级对象的观察指针（未装即 `Deny`）；待问队列与「正在问的那一条」合起来
+    /// 就是「问出去的话一定有人答」这条跨帧承诺的账本——上限由状态机侧那 8 条封住，本控件不再另设。
+    const term::ClipboardGate *clipboard_gate_ = nullptr;
+    std::vector<term::ClipboardReadRequest> clipboard_reads_waiting_;  ///< 排队待问的其余请求（登记序）。
+    std::optional<term::ClipboardReadRequest> clipboard_read_asking_;  ///< 已问出去、还没答的那一条。
+    std::shared_ptr<aurora::Dialog> clipboard_read_dialog_;            ///< 懒建的授权一问对话框。
 
     /// @brief dead-session 浮层（`SPEC.FEAT.WS.05`）：装配层注入的重启钩子，未装即不画按钮。
     std::function<void()> restart_hook_;

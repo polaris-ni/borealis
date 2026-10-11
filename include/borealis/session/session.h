@@ -211,6 +211,27 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// 在帧边界取走并落地（架构 §3.2、§3.4）。
     auto take_clipboard_write() -> std::optional<std::u32string>;
 
+    /// @brief 把 app 级 `OSC 52` 读方向闸门接到本会话的状态机（`SPEC.FEAT.CONN.12`，裁决 D2①）。
+    ///
+    /// 转发给状态机那枚非持有观察指针：闸门全 app 一份，装配层担保生命周期，故每会话只接一次，
+    /// 之后改档不必再回本层。**漏接线即 `Deny`**（fail-closed），本函数不改变那条缺省。
+    /// @param gate 授权闸门；传 nullptr 即摘除（回到 `Deny`）。
+    auto set_clipboard_gate(const term::ClipboardGate *gate) noexcept -> void;
+
+    /// @brief 取走待答的 `OSC 52` 读请求（`SPEC.FEAT.CONN.12` 的读方向，主线程帧边界调用）。
+    ///
+    /// 转发状态机那份有界队列：锁内只换走，读剪贴板与弹窗都在调用方（架构 §3.4）。登记序即应答序。
+    /// @return 自上次取走以来的待答请求；无待答请求时为空。
+    auto take_clipboard_reads() -> std::vector<term::ClipboardReadRequest>;
+
+    /// @brief 把一条 `OSC 52` 读应答写给连接（`SPEC.FEAT.CONN.12`，正文由 `ClipboardOutbox` 拼好）。
+    ///
+    /// 走 `flush` 那条与读线程应答共用的出口（编码 + 一处行尾折算），不另开一条写腿。**刻意不挂
+    /// `pending_responses_`**：那条缓冲只在读线程喂入时才被冲出去，而「用户点了允许」多半发生在
+    /// 会话空闲时——挂进去就是让远端等下一次输出。
+    /// @param response 完整应答串（`ESC ] 52 ; <Pc> ; <base64> BEL`）。
+    auto answer_clipboard_read(std::u32string_view response) -> void;
+
     /// @brief 在短临界区内读权威网格、光标与模式（架构 §3.4：锁内只取值，不绘制）。
     ///
     /// 网格以**可变**引用交出：取用方（主线程）按本帧提交把脏列区间 `[dirty_left, dirty_right)`

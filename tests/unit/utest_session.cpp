@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "borealis/grid/storage.h"
+#include "borealis/session/clipboard_outbox.h"
 #include "borealis/session/session.h"
 #include "borealis/term/keymap.h"
 #include "borealis/term/paste.h"
@@ -426,6 +427,59 @@ AURORA_TEST_CASE(osc_52_read_request_answers_through_write_channel) {
     fixture.connection->deliver("\x1B]52;c;?\x07");
     AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\x1B]52;c;\x07"));
     AURORA_TEST_CHECK_FALSE(fixture.session->take_clipboard_write().has_value());
+}
+
+AURORA_TEST_CASE(allowed_osc_52_reads_are_queued_and_answered_on_the_same_channel) {
+    // 闸门接上 `Allow` 之后，读查询不再当场回空响应：一个字节都不写，改为把请求留给主线程
+    // （`SPEC.FEAT.CONN.12` 的判据 ②——远端等的是内容，不是一句「不给」）。
+    auto fixture = make_session();
+    const borealis::term::ClipboardGate gate{borealis::term::ClipboardReadPolicy::Allow};
+    fixture.session->set_clipboard_gate(&gate);
+
+    fixture.connection->deliver("\x1B]52;p;?\x07\x1B]52;c;?\x07");
+    AURORA_TEST_CHECK(fixture.connection->written.empty());
+
+    const auto pending = fixture.session->take_clipboard_reads();
+    AURORA_TEST_REQUIRE_EQ(pending.size(), 2U);
+    AURORA_TEST_CHECK(pending[0].pc == U"p");  // Pc 原样留下（D8① 的回显口径）
+    AURORA_TEST_CHECK(pending[1].pc == U"c");
+    AURORA_TEST_CHECK(fixture.session->take_clipboard_reads().empty());  // 取走即清空
+
+    // 应答走的是与查询应答同一条出口：编码腿与行尾折算都不另开一份。
+    fixture.session->answer_clipboard_read(U"\x1B]52;p;aGVsbG8=\x07");
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\x1B]52;p;aGVsbG8=\x07"));
+}
+
+AURORA_TEST_CASE(the_outbox_turns_one_read_request_into_exactly_one_answer) {
+    // 一条一答（D4①）与三档降级：正文、空内容、`nullopt`、超限四条各有自己的回写，而三个降级档
+    // 回的都是既有那条空响应——逐字节不变是判据 ③ 的底线，也是 `utest_terminal_osc` 那条旧证人。
+    auto fixture = make_session();
+    const borealis::term::ClipboardGate gate{borealis::term::ClipboardReadPolicy::Allow};
+    fixture.session->set_clipboard_gate(&gate);
+    fixture.connection->deliver("\x1B]52;c;?\x07");
+    const auto pending = fixture.session->take_clipboard_reads();
+    AURORA_TEST_REQUIRE_EQ(pending.size(), 1U);
+    auto &target = *fixture.session;
+
+    AURORA_TEST_CHECK(session::ClipboardOutbox::answer_read(target, pending[0], "hello"));
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\x1B]52;c;aGVsbG8=\x07"));
+
+    fixture.connection->written.clear();
+    AURORA_TEST_CHECK_FALSE(
+        session::ClipboardOutbox::answer_read(target, pending[0], std::optional<std::string_view>{}));
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\x1B]52;c;\x07"));
+
+    fixture.connection->written.clear();
+    AURORA_TEST_CHECK_FALSE(
+        session::ClipboardOutbox::answer_read(target, pending[0], std::string_view{""}));
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\x1B]52;c;\x07"));
+
+    // 超限降级只留一条诊断（D7①）：几 MB 的剪贴板不该变成一条会话写请求。
+    fixture.connection->written.clear();
+    const std::string oversize(session::kMaxClipboardResponseBytes + 1U, 'a');
+    AURORA_TEST_CHECK_FALSE(
+        session::ClipboardOutbox::answer_read(target, pending[0], std::string_view{oversize}));
+    AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\x1B]52;c;\x07"));
 }
 
 AURORA_TEST_CASE(frame_wake_fires_once_per_batch_whatever_the_commit_count) {

@@ -119,7 +119,7 @@
   <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
   <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
   <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
-  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">远端发 ESC ] 52 ; c ; ? ST 的那一刻：现读闸门三态分派 → 主线程帧边界逐条答（左：ask 档的模态一问 · 中：分派 · 右：任何出口都回写）</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">远端发 ESC ] 52 ; c ; ? ST 的那一刻：现读闸门三态分派 → 主线程帧边界逐条答（左：ask 档的模态一问 · 中：分派 · 右：三条出口各回写一条）</text>
   <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ×</text>
   <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
 
@@ -131,16 +131,16 @@
     <text x="14" y="52" font-size="11" fill="#62728A">#(tmux 探测本机剪贴板：OSC 52 ; c ; ?)</text>
     <text x="14" y="70" font-size="11" fill="#F8F8F2" font-family="monospace">lab@router:~$ _</text>
     <rect x="60" y="92" width="390" height="196" rx="8" fill="#21222C" stroke="#FFB86C" stroke-width="1.5"/>
-    <text x="80" y="120" font-size="13" fill="#F8F8F2" font-weight="700">远端请求读取本机剪贴板</text>
-    <text x="80" y="146" font-size="11.5" fill="#FFB86C">本会话收到 OSC 52 读请求（选择位 c）。拒绝会回送一条空响应，</text>
-    <text x="80" y="164" font-size="11.5" fill="#FFB86C">远端不会挂起；允许则把当前剪贴板内容交给它。</text>
-    <text x="80" y="186" font-size="10.5" fill="#62728A">正文走词条；au::confirm 只吃一条 message ⇒ 两句合一行（G14）</text>
+    <text x="80" y="120" font-size="13" fill="#F8F8F2" font-weight="700">远端请求读取剪贴板</text>
+    <text x="80" y="146" font-size="11.5" fill="#FFB86C">远端程序想读取本地剪贴板的内容并发回会话（选择位 c）。</text>
+    <text x="80" y="164" font-size="11.5" fill="#FFB86C">允许吗？拒绝会回送一条空响应，远端不会挂起。</text>
+    <text x="80" y="186" font-size="10.5" fill="#62728A">标题与正文走词条；按钮标签是框架字面量 Yes / No（au::confirm）</text>
     <text x="80" y="204" font-size="10.5" fill="#62728A">内容恒取系统剪贴板：框架只有一格（G8 已由 strace 坐实）</text>
     <rect x="228" y="216" width="100" height="30" rx="6" fill="#BD93F9"/>
-    <text x="278" y="236" font-size="12" fill="#1E1F29" font-weight="700" text-anchor="middle">允许</text>
+    <text x="278" y="236" font-size="12" fill="#1E1F29" font-weight="700" text-anchor="middle">Yes</text>
     <rect x="336" y="216" width="100" height="30" rx="6" fill="none" stroke="#4D4F63"/>
-    <text x="386" y="236" font-size="12" fill="#62728A" text-anchor="middle">拒绝</text>
-    <text x="430" y="112" font-size="13" fill="#FF5555">×</text>
+    <text x="386" y="236" font-size="12" fill="#62728A" text-anchor="middle">No</text>
+    <text x="80" y="268" font-size="10.5" fill="#FF5555">无关闭叉、遮罩不答 ⇒ 「不答」的出口是关标签（视口析构补空响应）</text>
     <g transform="translate(0,300)">
       <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
       <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">4</text>
@@ -149,7 +149,7 @@
     <g transform="translate(0,326)">
       <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
       <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">5</text>
-      <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 5 · 关框 ✕ / 遮罩 / 拒绝 —— 任何出口都回写一条</text>
+      <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 5 · 答是 / 答否 / 一直不答 —— 三条出口各回写一条</text>
     </g>
   </g>
 
@@ -188,19 +188,19 @@
   <g transform="translate(1006,52)">
     <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">③ 主线程帧边界：一问 → 一读 → 一答</text>
     <rect x="0" y="12" width="474" height="250" rx="6" fill="#12131A" stroke="#4D4F63"/>
-    <text x="14" y="34" font-size="10.5" fill="#F8F8F2">set_on_frame 对全部标签每个会话排一次（G7 同一条腿）</text>
+    <text x="14" y="34" font-size="10.5" fill="#F8F8F2">每只视口的 on_frame 尾部排本会话（D13② ⇒ 问与答闭在视口里）</text>
     <text x="14" y="56" font-size="10.5" fill="#8BE9FD" font-family="monospace">session.take_clipboard_reads()</text>
-    <text x="14" y="76" font-size="10.5" fill="#62728A">├ ask 档 ⇒ confirm_clipboard_read(钩子, answer)</text>
-    <text x="14" y="94" font-size="10.5" fill="#62728A">└ allow 档 ⇒ 直接读</text>
+    <text x="14" y="76" font-size="10.5" fill="#62728A">├ 现读闸门 Ask ⇒ confirm 钩子（一次一问，下一条排下一帧）</text>
+    <text x="14" y="94" font-size="10.5" fill="#62728A">└ Allow 整批直接答 · Deny / 摘除 整批当场拒</text>
     <text x="14" y="116" font-size="10.5" fill="#F8F8F2">ClipboardOutbox::read()  一次子进程往返</text>
     <text x="14" y="136" font-size="10.5" fill="#BD93F9">encode_base64(utf8)  ← 本棒补的那半件（G4）</text>
     <text x="14" y="156" font-size="10.5" fill="#62728A" font-family="monospace">"ESC]52;&lt;Pc&gt;;&lt;b64&gt;BEL"</text>
     <text x="14" y="176" font-size="10.5" fill="#F8F8F2" font-family="monospace">session.answer_clipboard_read(resp)</text>
     <text x="14" y="196" font-size="10.5" fill="#62728A">仍走 ResponseSink → pending_responses_ → 出锁 flush（G5）</text>
-    <text x="14" y="220" font-size="10.5" fill="#FFB86C">出口穷举：答是⇒正文 · 答否⇒空响应 · 关框⇒空响应 ·</text>
-    <text x="14" y="238" font-size="10.5" fill="#FFB86C">读不到⇒空响应 · 超 64 KiB⇒空响应 + WARN（D7①）</text>
+    <text x="14" y="220" font-size="10.5" fill="#FFB86C">出口穷举：答是⇒正文 · 答否⇒空响应 ·</text>
+    <text x="14" y="238" font-size="10.5" fill="#FFB86C">不答⇒视口析构补空响应 · 读不到 / 超 64 KiB⇒空响应 + WARN（D7①）</text>
     <text x="0" y="284" font-size="11" fill="#62728A">延后到下一帧（16 ms 量级）对「等回应的远端」无感 —— D3① 的代价面</text>
-    <text x="0" y="304" font-size="11" fill="#62728A">没有宿主就问不了：钩子留空即回落默认（G14 那档），未经确认不替用户按</text>
+    <text x="0" y="304" font-size="11" fill="#62728A">没有宿主也要答：问不出去即当场按拒绝回写（与粘贴的「不问就不发」相反，判据 ③⑤）</text>
   </g>
 </g>
 
@@ -259,7 +259,7 @@
     <text x="12" y="52" font-size="10.5" fill="#F8F8F2">allow  │ 有内容 ──────► ESC]52;&lt;Pc&gt;;&lt;base64&gt;BEL</text>
     <text x="12" y="70" font-size="10.5" fill="#F8F8F2">       │ 读不到 / 空 / 超限 ──────► ESC]52;&lt;Pc&gt;;BEL + WARN</text>
     <text x="12" y="88" font-size="10.5" fill="#F8F8F2">ask    │ 答是 ─► 同 allow · 答否 ─► 空响应</text>
-    <text x="12" y="106" font-size="10.5" fill="#FF5555">       │ 不答即关框 / 遮罩 ─► 空响应（判据 ③⑤ 的那一格）</text>
+    <text x="12" y="106" font-size="10.5" fill="#FF5555">       │ 一直不答 → 视口析构 ─► 空响应（判据 ③⑤ 的那一格）</text>
     <text x="12" y="130" font-size="10.5" fill="#62728A">每格断言：该会话写出的字节里「恰有一条」，既不静默也不重复</text>
   </g>
 </g>

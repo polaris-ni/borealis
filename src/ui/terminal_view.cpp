@@ -13,6 +13,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <iterator>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -238,6 +240,20 @@ TerminalView::~TerminalView() {
     for (const aurora::TimerHandle &handle : paste_timers_) {
         handle.cancel();
     }
+    // 读方向的跨帧承诺在这里结账（`SPEC.FEAT.CONN.12` 判据 ⑤）：问出去的那一条与排队没问的，
+    // 本控件散场时都要各有一条回写，否则远端等的是永远不会来的答复。会话此刻若已关，写腿自己
+    // 丢弃（四条连接的 `write` 都有 closing 闸），故这里不需要先看一眼 `alive()`。
+    if (clipboard_read_dialog_) {
+        clipboard_read_dialog_->close();
+    }
+    if (clipboard_read_asking_.has_value()) {
+        const auto held = *clipboard_read_asking_;
+        clipboard_read_asking_.reset();
+        answer_clipboard_read(held, false);
+    }
+    for (const auto &request : std::exchange(clipboard_reads_waiting_, {})) {
+        answer_clipboard_read(request, false);
+    }
 }
 
 TerminalView::TerminalView(session::Session &session, PaletteSpec palette, aurora::Font ref_font,
@@ -289,6 +305,10 @@ auto TerminalView::set_search_dependencies(aurora::ShortcutRegistry &shortcuts, 
 auto TerminalView::context_menu() const noexcept -> const aurora::Popup * { return menu_.get(); }
 
 auto TerminalView::multiline_warning() const noexcept -> const aurora::Dialog * { return multiline_warning_.get(); }
+
+auto TerminalView::clipboard_read_dialog() const noexcept -> const aurora::Dialog * {
+    return clipboard_read_dialog_.get();
+}
 
 auto TerminalView::set_presentation(Presentation presentation) -> void {
     presentation_ = std::move(presentation);
@@ -405,6 +425,9 @@ auto TerminalView::on_frame() -> void {
     compensate_search_drift();
     flush_copy_request();
     flush_paste_request();
+    // 读方向的 `OSC 52` 排在同一处帧边界（`SPEC.FEAT.CONN.12`）：读剪贴板是主线程 IO，既不能进
+    // 网格锁也不能进事件回调（AGENTS.md §4.5 第 25 条），而「问出去的那一条」要跨帧等用户点。
+    drain_clipboard_reads();
     // 发送侧一次性提示在**帧边界**取走 latch（裁决 7.104 的 D5①）：取走是消费动作，放进绘制路径就
     // 破坏「同一帧重绘画出同一张卡」那条幂等前提；会话已退时取走了也不挂卡——那时 dead-session 那一层
     // 已经在同一片居中区域落笔（本件排在它下面一层），而提示的对象是一个活着的会话。
@@ -1584,6 +1607,92 @@ auto TerminalView::send_paste_plan(const term::PastePlan &plan) -> void {
         }
         paste_timers_.push_back(scheduler->set_timeout(elapsed, [this, text]() -> void { session_->send_text(text); }));
     }
+}
+
+auto TerminalView::drain_clipboard_reads() -> void {
+    auto pending = session_->take_clipboard_reads();
+    clipboard_reads_waiting_.insert(clipboard_reads_waiting_.end(),
+                                    std::make_move_iterator(pending.begin()),
+                                    std::make_move_iterator(pending.end()));
+    ask_clipboard_read();
+}
+
+auto TerminalView::ask_clipboard_read() -> void {
+    if (clipboard_read_asking_.has_value() || clipboard_reads_waiting_.empty()) {
+        return;  // 已经问出去一条：一次一问（D5②），其余等这一条答完
+    }
+    // 现读闸门（D2①）：从登记到此刻之间用户可能已经改档（面板写盘即改同一个对象），
+    // 答的是**现在**这一档而不是登记那一档。
+    const auto policy = clipboard_gate_ == nullptr ? term::ClipboardReadPolicy::Deny
+                                                   : clipboard_gate_->policy();
+    if (policy != term::ClipboardReadPolicy::Ask) {
+        const bool granted = policy == term::ClipboardReadPolicy::Allow;
+        // 登记之后闸门才关小（含摘除）的那一批也要有回写：留着的只会是远端等不到的请求。
+        const auto batch = std::exchange(clipboard_reads_waiting_, {});
+        for (const auto &request : batch) {
+            answer_clipboard_read(request, granted);
+        }
+        return;
+    }
+    clipboard_read_asking_ = clipboard_reads_waiting_.front();
+    clipboard_reads_waiting_.erase(clipboard_reads_waiting_.begin());
+    const auto request = *clipboard_read_asking_;
+    // 答一次即作废账本，重复放行不再答第二遍（形态照 `flush_paste_request` 里那支 answer 闭包）。
+    // 下一条排在**下一帧**问，不在这里递归：本回调是从对话框内容里那枚按钮的点击链上跑下来的，
+    // 再问一次就会走到 `set_content`——它摘掉的正是当前还在栈上的那份内容（含本回调自身）。
+    auto answer = [this](bool granted) -> void {
+        if (!clipboard_read_asking_.has_value()) {
+            return;
+        }
+        const auto held = *clipboard_read_asking_;
+        clipboard_read_asking_.reset();
+        answer_clipboard_read(held, granted);
+        mark_needs_paint();  // 让下一帧赶上来，待问的那一条不至于等到下一次随机排帧
+    };
+    if (presentation_.confirm_clipboard_read) {
+        presentation_.confirm_clipboard_read(request, std::move(answer));
+        return;
+    }
+    ask_clipboard_read_dialog(request, std::move(answer));
+}
+
+auto TerminalView::answer_clipboard_read(const term::ClipboardReadRequest &request, bool granted) -> void {
+    // 许可之后才读：读早一步就会把「用户没点头的那一段时间」里的内容当成他给的内容。
+    std::optional<std::string> text;
+    if (granted) {
+        text = presentation_.clipboard_read ? presentation_.clipboard_read() : session::ClipboardOutbox::read();
+    }
+    static_cast<void>(session::ClipboardOutbox::answer_read(
+        *session_, request, text.has_value() ? std::optional<std::string_view>{*text} : std::nullopt));
+}
+
+auto TerminalView::ask_clipboard_read_dialog(const term::ClipboardReadRequest &request,
+                                             std::function<void(bool)> answer) -> void {
+    if (host_ == nullptr) {
+        // 没有宿主就问不出去。粘贴那一路的口径是「不问就不发」（宁可不作为），这一路反过来：
+        // 问不出去也要回话，沉默等于让远端一直等（判据 ③⑤）。
+        clipboard_read_asking_.reset();
+        answer_clipboard_read(request, false);
+        return;
+    }
+    if (!clipboard_read_dialog_) {
+        clipboard_read_dialog_ = std::make_shared<aurora::Dialog>();
+        static_cast<void>(
+            host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(clipboard_read_dialog_)}));
+    }
+    std::string pc{"c"};  // 选择位的展示串：取不到合法字符即按系统剪贴板那一位说
+    if (request.pc.size() == 1U && request.pc.front() < 128U) {
+        pc.assign(1, static_cast<char>(static_cast<unsigned char>(request.pc.front())));
+    }
+    clipboard_read_dialog_->set_content(aurora::confirm(
+        settings_label("terminal.clipboard_read.title"),
+        settings_label("terminal.clipboard_read.body", {aurora::LocalizedString{pc}}),
+        [this, answer = std::move(answer)](bool granted) -> void {
+            clipboard_read_dialog_->close();
+            answer(granted);
+        }));
+    clipboard_read_dialog_->show();
+    mark_needs_paint();
 }
 
 auto TerminalView::on_right_click(aurora::MouseEvent &e) -> void {
