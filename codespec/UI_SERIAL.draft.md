@@ -1,8 +1,8 @@
 # 串口终端 UI 与连接腿设计稿（`SPEC.FEAT.CONN.05`）
 
-> **状态**：**待评审**（2026-10-11 出稿）。§3 的 D1–D13 逐条给了推荐档，等人裁决；收口动作＝本稿 §3 改「已裁决」+ 并入 `codespec/SPECIFICATIONS.md` §7 新裁决 + `codespec/CHANGELOG.md` 记版本 + `codespec/PLAN.md` 的 CONN.05 行回写，然后按 §4 布局落 `src/`。
+> **状态**：**评审已收口（2026-10-11）**——§3 的 D1–D13 经人裁决为**全按推荐档**（一句「按你推荐的来」收口，无一条改判），并入 `codespec/SPECIFICATIONS.md` §7 裁决 **7.110**，据此转实现（§4 布局落 `src/`，按批 1 纯逻辑与平台腿 → 批 2 连接腿 → 批 3 UI 与装配三批走）。
 > **配套高保真草图**：`codespec/UI_SERIAL.draft.svg`（本稿 §2 的 1–7 标号判据即图中圈号，各贴在所属屏旁；SVG 为事实来源，后续改图直接改 SVG）。
-> **本稿不碰代码**：裁决前不动 `src/`（AGENTS §4.1 第 2 条）；UI 件先出稿评审（AGENTS §4.4 第 33 条前的 UI 件节奏）。
+> **出稿时不碰代码**（AGENTS §4.1 第 2 条的 UI 件节奏：先出稿评审再实现）；2026-10-11 裁决落地后转实现，实现期若与稿面口径分叉，按 AGENTS §4.2 第 12 条以**代码运行时**为准回写本稿。
 > **上游依据**：`SPEC.FEAT.CONN.05` 原文（枚举 / 波特率·数据位·停止位·校验·流控完整配置 / 断开重连 / 连接中热改波特率 / 默认编码 GB18030 / 发送行尾可配 CR·LF·CRLF 默认 LF / 十六进制视图与行首时间戳＝延后子项）、裁决 7.6（串口缺省 GB18030）、7.16（双向编码）、7.33⑥（`term::LineEnding` 是串口行尾的代码侧形态）、7.99（`session::CloseReason` 与重连分类表）、7.103（`term::SessionEncoding` 已具备）。
 
 ---
@@ -63,7 +63,7 @@
 
 ---
 
-## 3 裁决（D1–D13，待逐条裁决；「推荐」＝本稿作者的判断，人可改判）
+## 3 裁决（D1–D13，2026-10-11 收口：**全按推荐档，无一条改判**）
 
 | # | 待决 | 选项 | 结论（推荐） | 理由与代价 |
 |---|---|---|---|---|
@@ -174,8 +174,8 @@ UI（connection_wizard 字段集 / serial_format 文案 / serial.set_baud 对话
 
 ---
 
-## 8 评审待决汇总与探针复现
+## 8 裁决记录与探针复现
 
-- D1–D13 逐条推荐如上；若均按推荐裁决，收口动作见本稿抬头的四条回写。
-- **最需要人判的三条**：D5（入口藏在命令面板可不可接受）、D7（串口 EOF 归 `LinkLost` 而**不**新增枚举档；不可自愈类落 `Unknown` 即不重拨）、D11（折算点放 `Session` 写出侧，一处影响三路发送路径）。
+- **2026-10-11 收口**：D1–D13 经人裁为**全按推荐档**（无一条改判），入册 `SPECIFICATIONS.md` §7 裁决 **7.110**、`CHANGELOG.md` v0.110，`PLAN.md` 的 M3–M5 行与本稿状态同步改口。实现按 §4 布局分三批走：批 1＝档案模型 + `conn::serial_model` + `platform::serial` 两腿 + `flow` 键；批 2＝`conn::serial_connection` + `Session` 行尾折算 + 替身设备 `itest`；批 3＝向导第三型 + `ui::serial_format` + `main.cpp` 装配。
+- **收口时点最需人判、已按推荐落定的三条**（留此备查，实现期若手感不合一律按 AGENTS §4.2 第 12 条以运行时为准回写）：D5（入口＝命令 `serial.set_baud`，藏在命令面板）、D7（串口 EOF 归 `LinkLost` 而**不**新增 `CloseReason` 枚举档；不可自愈类落 `Unknown` 即不重拨）、D11（折算点放 `Session` 写出侧一处，一处影响三路发送）。
 - 探针复现口径（一次性脚本，不入仓）：§0 的 F1–F9 由 `probe_serial.py` / `probe_serial2.py` 两趟跑出（`os.getgroups()`、`/sys/class/tty/*/type`、`pty.openpty()` slave 路径重开 + `termios.tcsetattr` 逐档、`fcntl.ioctl(TIOCGSERIAL/TIOCMGET)`、写读环回与 EOF/EIO 分档）。**读数只在本沙箱成立**，换机器（真串口、`dialout` 组成员）后 F1/F5 两档须重取并回写本稿。
