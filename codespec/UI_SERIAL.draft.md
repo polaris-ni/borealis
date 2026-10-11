@@ -3,6 +3,7 @@
 > **状态**：**评审已收口（2026-10-11）**——§3 的 D1–D13 经人裁决为**全按推荐档**（一句「按你推荐的来」收口，无一条改判），并入 `codespec/SPECIFICATIONS.md` §7 裁决 **7.110**，据此转实现（§4 布局落 `src/`，按批 1 纯逻辑与平台腿 → 批 2 连接腿 → 批 3 UI 与装配三批走）。
 > **配套高保真草图**：`codespec/UI_SERIAL.draft.svg`（本稿 §2 的 1–7 标号判据即图中圈号，各贴在所属屏旁；SVG 为事实来源，后续改图直接改 SVG）。
 > **出稿时不碰代码**（AGENTS §4.1 第 2 条的 UI 件节奏：先出稿评审再实现）；2026-10-11 裁决落地后转实现，实现期若与稿面口径分叉，按 AGENTS §4.2 第 12 条以**代码运行时**为准回写本稿。
+> **实现进度**：批 1（档案模型 + `conn/serial_model` + `platform/serial` 两腿 + `flow` 键）**已落**，POSIX 腿在 pty 替身设备上有证人（`utest_posix_serial_platform`，14 档速率回读逐档相符）；Win32 腿按 F10 只到「写完未编译验证」。两处与稿面的出入见 §4（`flow` 行随批 1 进核对表、串口档案往返落在 `utest_config`）。批 2（连接腿 + 写出侧行尾折算）与批 3（向导第三型 + 装配 + 六行改判）未落；落完仍欠真设备 `etest_serial_device`（F1 挡住）与 §6 六条真机走查。
 > **上游依据**：`SPEC.FEAT.CONN.05` 原文（枚举 / 波特率·数据位·停止位·校验·流控完整配置 / 断开重连 / 连接中热改波特率 / 默认编码 GB18030 / 发送行尾可配 CR·LF·CRLF 默认 LF / 十六进制视图与行首时间戳＝延后子项）、裁决 7.6（串口缺省 GB18030）、7.16（双向编码）、7.33⑥（`term::LineEnding` 是串口行尾的代码侧形态）、7.99（`session::CloseReason` 与重连分类表）、7.103（`term::SessionEncoding` 已具备）。
 
 ---
@@ -111,13 +112,23 @@ src/main.cpp                           修改 —— 装配：serial.set_baud �
 include/borealis/config/settings.h     修改 —— SerialDefaults 增 flow（D3）
 include/borealis/term/session.h        修改 —— Session 构造吃「本连接行尾」（D11；与 SessionEncoding 同注入口径）
 src/config/store.cpp                   修改 —— serial 域读写增 flow 键 + profiles 的 serial 子结构
-src/ui/settings_catalog.cpp            修改 —— connection.serial.* 六行 Absent→Wired，增 flow 行
+src/ui/settings_catalog.cpp            修改 —— connection.serial.* 六行 Absent→Wired（批 3），
+                                                flow 行已随批 1 进表：写出的 schema 键必须逐行有控件，
+                                                该闸是 `utest_settings_catalog.table_covers_exactly_
+                                                the_written_schema_keys`，故行不能押到批 3
 src/CMakeLists.txt                     修改 —— 上述 .cpp 编入 borealis_core（显式源列表）
 tests/unit/utest_serial_model.cpp      新增 —— 折算表 / 取值域 / 行尾拼接 / 枚举投影 / 档位常量
 tests/integration/itest_serial_connection.cpp 新增 —— 替身设备调用序与回读（POSIX-only 编入）
-tests/unit/utest_profile_serial.cpp    新增 —— 串口档案 JSON 往返 + validate_draft 串口四档
+tests/unit/utest_posix_serial_platform.cpp 新增（批 1 落点）—— 平台腿本身的替身证人：十四档
+                                                set_baud 回读相符（F4）、无码速率报 ConfigRejected、
+                                                双向字节与超时档、关掉写端后的 EOF（F9）、
+                                                枚举非空且含不可达项（F1/F2）；文件名带 `_posix_`
+                                                走 `cmake/BorealisTests.cmake` 的平台过滤
+tests/unit/utest_config.cpp            修改 —— flow 键往返 + 串口档案 JSON 往返与坏字段逐项落回
+                                                （原列 `utest_profile_serial` 的往返腿在此落：`utest_profile.cpp`
+                                                头注已写明「落盘往返由 utest_config 守」，不另起一份；
+                                                validate_draft 的串口四档仍随批 3 的 ProfileDraft 扩字段出）
 tests/integration/itest_connection_wizard.cpp 修改 —— 类型卡三张与串口字段集真点击
-tests/unit/utest_config.cpp            修改 —— flow 键往返
 ```
 
 > 不改既有公共头的可见性与既有成员顺序（AGENTS §4.1 第 6 条）。框架侧**不预登记新缺口**：向导所需控件（`Dialog`/`Column`/`Dropdown`/`Button`/`TextInput`）与命令面板族全部有已落地的消费先例；若实现期撞到新的框架形态限制，按 AGENTS §5.1 类别分流另立 G 号并出任务书，不在本稿预写。

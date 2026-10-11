@@ -5,6 +5,8 @@
 // ------------------------------------------------------------
 // M3 的 `SPEC.FEAT.CONN.03`（SSH 档案管理：分组/收藏/搜索/quick connect/
 // `~/.ssh/config` 只读导入）与 `SPEC.FEAT.CONN.09`（凭据安全存储）的纯逻辑数据模型。
+// M4 的 `SPEC.FEAT.CONN.05`（串口终端）按裁决 7.110 D1① 追加同域一档 `Serial` 与
+// `SerialProfile`：类型域是追加式扩型，既有成员与可见性不动。
 //
 // 本头只含标准类型，不含 Aurora 类型与任何平台 API（与 `local_terminal.h` 同口径：
 // 纯逻辑、可独立单测，AGENTS.md §4.4 第 20 条）。序列化进出 `au::json::Value` 落在
@@ -34,10 +36,11 @@
 
 namespace borealis::conn {
 
-/// @brief 连接类型（档案本体按它分流到 local / ssh 子结构）。
+/// @brief 连接类型（档案本体按它分流到 local / ssh / serial 子结构）。
 enum class ConnectionType : std::uint8_t {
-    Local,  ///< 本地终端（走 `LocalProfile`）。
-    Ssh,    ///< SSH（走 `SshProfile`）。
+    Local,   ///< 本地终端（走 `LocalProfile`）。
+    Ssh,     ///< SSH（走 `SshProfile`）。
+    Serial,  ///< 串口（走 `SerialProfile`，`SPEC.FEAT.CONN.05` 裁决 7.110 D1①）。
 };
 
 /// @brief 凭据句柄的两种形态（CONN.09 的核心枚举）。
@@ -113,6 +116,26 @@ struct SshProfile {
     [[nodiscard]] auto operator==(const SshProfile &) const noexcept -> bool = default;
 };
 
+/// @brief 串口档案（`SPEC.FEAT.CONN.05`，裁决 7.110 D1①/D4①）。
+///
+/// 全部字段是**具体值**而不是「跟随默认」的引用：新建时由装配层把
+/// `settings.connection.serial` 灌进来（D4①），之后档案独立——「这个会话此刻跑什么参数」
+/// 只有一处答案。取值口径与设置域同一份表（`parity`/`flow`/`line_ending` 的合法名收在
+/// `conn/serial_model.h`，那里同时是校验源与平台折算源）。串口没有登录凭据，
+/// 因此本结构天然通过 `SPEC.FEAT.CONN.09` 的明文凭据审计。
+struct SerialProfile {
+    std::string device_path;             ///< 设备节点或 COM 口名，原样交给平台腿。
+    int baud{115200};                    ///< 波特率；档位表见 `conn/serial_model.h`（F4 实测十四档）。
+    int data_bits{8};                    ///< 数据位 5..8。
+    int stop_bits{1};                    ///< 停止位 1..2。
+    std::string parity{"none"};          ///< none / even / odd。
+    std::string flow{"none"};            ///< none / hardware / software（裁决 7.110 D3① 新增键）。
+    std::string line_ending{"LF"};       ///< LF / CR / CRLF（写出侧折算点见 `session::Session`，D11①）。
+    std::string encoding{"GB18030"};     ///< 会话编码；串口缺省 GB18030（裁决 7.6）。
+
+    [[nodiscard]] auto operator==(const SerialProfile &) const noexcept -> bool = default;
+};
+
 /// @brief 一条连接档案（CONN.03 的统一外壳）。
 struct Profile {
     std::string id;                  ///< 稳定唯一 id；quick connect 与 ssh config 导入用确定性生成。
@@ -123,6 +146,7 @@ struct Profile {
     bool favorite{false};              ///< 收藏（置顶/快捷入口用）。
     LocalProfile local{};              ///< type==Local 时生效。
     SshProfile ssh{};                  ///< type==Ssh 时生效。
+    SerialProfile serial{};            ///< type==Serial 时生效（CONN.05）。
 
     [[nodiscard]] auto operator==(const Profile &) const noexcept -> bool = default;
 };

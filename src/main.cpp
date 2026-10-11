@@ -1004,6 +1004,11 @@ auto main() -> int {
             open_local_profile_tab(profile);
             return;
         }
+        if (profile.type == borealis::conn::ConnectionType::Serial) {
+            // TODO(SPEC.FEAT.CONN.05): 串口连接腿与装配分两批落（稿 §4 的批 2/批 3）；
+            // 这里先按类型拦住，免得一条串口档案被当成 SSH 档案去问凭据。
+            return;
+        }
         const auto ask = borealis::conn::secret_ask_for(
             borealis::conn::normalized_auth_method(profile.ssh));
         if (ask == borealis::conn::SecretAsk::None) {

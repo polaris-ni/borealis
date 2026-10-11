@@ -96,6 +96,8 @@ auto validate_draft(const ProfileDraft &draft) -> DraftIssue {
 }
 
 auto draft_to_profile(const ProfileDraft &draft, std::string id) -> Profile {
+    // TODO(SPEC.FEAT.CONN.05): `ProfileDraft` 尚无串口字段，故 Serial 型在这里会落进
+    // SSH 分支；三向分派随批 3 的向导串口字段集一起补（稿 §4）。
     auto profile = Profile{};
     profile.id = std::move(id);
     profile.name = draft.name;

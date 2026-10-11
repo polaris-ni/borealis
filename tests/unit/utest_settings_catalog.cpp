@@ -287,7 +287,8 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // 双向：落盘里有而表里没有 = 面板漏画控件；表里有而落盘里没有 = 面板画了存不回去的控件。
     AURORA_TEST_CHECK_MSG(leaves == keys, "leaves=[" + join(leaves) + "] table=[" + join(keys) + "]");
     AURORA_TEST_CHECK_EQ(leaves.size(), keys.size());
-    AURORA_TEST_CHECK_EQ(keys.size(), 62U);
+    // 63 行＝写出的全部偏好键；串口侧第七键 `connection.serial.flow` 随裁决 7.110 D3① 进表。
+    AURORA_TEST_CHECK_EQ(keys.size(), 63U);
 }
 
 AURORA_TEST_CASE(keys_are_unique_and_rows_are_addressable) {
@@ -542,9 +543,11 @@ AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
         }
     }
     // 含 WS.05 的自动重连三键已随实现批 3 接线（装配层搬运 + 浮层两态），TERM.09 的
-    // `terminal.encoding` 也随编码腿接线（会话构造期按名建解码器），故本行回到 27：
+    // `terminal.encoding` 也随编码腿接线（会话构造期按名建解码器），故本行停在 28：
     // 少的那几条正是已接线的，再往回跳就是某个消费方被摘掉了而面板还留着控件。
-    AURORA_TEST_CHECK_EQ(rows_with_consumer(ConsumerStatus::Absent).size(), 27U);
+    // 28 里含串口七键（`SPEC.FEAT.CONN.05`）：批 1 只落了模型与落盘，运行时消费方在批 2/批 3，
+    // 新增的 `connection.serial.flow` 也按同一口径先记 Absent（裁决 7.110 D3①）。
+    AURORA_TEST_CHECK_EQ(rows_with_consumer(ConsumerStatus::Absent).size(), 28U);
 }
 
 }  // namespace borealis::test_cases::utest_settings_catalog

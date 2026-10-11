@@ -16,6 +16,7 @@ add_library(borealis_core STATIC
         conn/profile.cpp
         conn/profile_views.cpp
         conn/reconnect.cpp
+        conn/serial_model.cpp
         conn/sftp_client.cpp
         conn/sftp_model.cpp
         conn/ssh_connection.cpp
@@ -80,6 +81,7 @@ if (WIN32)
             platform/win/conpty_connection.cpp
             platform/win/file_secure.cpp
             platform/win/local_terminal.cpp
+            platform/win/serial.cpp
             platform/win/tcp.cpp
             platform/win/user_dir.cpp
             platform/win/win_text.cpp)
@@ -88,6 +90,7 @@ elseif (UNIX)
             platform/posix/file_secure.cpp
             platform/posix/forkpty_connection.cpp
             platform/posix/local_terminal.cpp
+            platform/posix/serial.cpp
             platform/posix/tcp.cpp
             platform/posix/user_dir.cpp)
     # forkpty 需要链接 libutil（某些发行版如 Debian/Ubuntu 需要显式指定）。

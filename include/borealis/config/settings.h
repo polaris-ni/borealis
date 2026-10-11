@@ -189,6 +189,8 @@ struct SerialDefaults {
     int data_bits{8};           ///< 取值 5..8。
     int stop_bits{1};           ///< 取值 1..2。
     std::string parity{"none"}; ///< 取值：none / even / odd。
+    std::string flow{"none"};   ///< 取值：none / hardware / software（裁决 7.110 D3① 新增键；
+                                ///  既有 `borealis.json` 缺该键即回本缺省，不升 schema_version）。
     std::string line_ending{"LF"};   ///< `SPEC.FEAT.CONN.05` 明写默认 LF（发错设备无响应）。
     std::string encoding{"GB18030"}; ///< 串口默认编码（裁决 7.6）。
 

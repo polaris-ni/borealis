@@ -324,6 +324,14 @@ namespace {
                                {"none", "even", "odd"},
                                ConsumerStatus::Absent,
                                EffectLevel::NextSession));
+    // `connection.serial.flow` 是裁决 7.110 D3① 追加的第七键：键一旦进 schema 就必须有行，
+    // 「表＝写出键全集」由 utest_settings_catalog 守。消费方是批 2 的串口连接腿，故状态先记
+    // Absent（本行只是把它摆上设置页，运行时还没人读它）。
+    catalog.push_back(dropdown("connection.serial.flow",
+                               SettingsPage::Connection,
+                               {"none", "hardware", "software"},
+                               ConsumerStatus::Absent,
+                               EffectLevel::NextSession));
     catalog.push_back(dropdown("connection.serial.line_ending",
                                SettingsPage::Connection,
                                {"LF", "CR", "CRLF"},

@@ -149,6 +149,7 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     next.connection.serial.data_bits = 7;
     next.connection.serial.stop_bits = 2;
     next.connection.serial.parity = "even";
+    next.connection.serial.flow = "hardware";
     next.connection.serial.line_ending = "CRLF";
     next.connection.serial.encoding = "ISO-8859-1";
     next.connection.session_logging = true;
@@ -592,6 +593,9 @@ AURORA_TEST_CASE(defaults_are_the_first_launch_shape) {
     AURORA_TEST_CHECK_EQ(defaults.connection.ssh.reconnect_attempts, reconnect_fallback.max_attempts);
     AURORA_TEST_CHECK_EQ(defaults.connection.serial.line_ending, "LF");
     AURORA_TEST_CHECK_EQ(defaults.connection.serial.encoding, "GB18030");
+    // 流控是裁决 7.110 D3① 追加的第七键：既有 `borealis.json` 缺该键必须回落到 none，
+    // 而不是把整份配置判坏（缺键即默认是裁决 7.26④ 的宽容口径）。
+    AURORA_TEST_CHECK_EQ(defaults.connection.serial.flow, "none");
     AURORA_TEST_CHECK_FALSE(defaults.connection.session_logging);  // 裁决 7.9
 
     AURORA_TEST_CHECK_TRUE(defaults.shortcuts.overrides.empty());
@@ -730,6 +734,66 @@ AURORA_TEST_CASE(chain_entries_drop_individually_not_wholesale) {
     const Store broken{broken_file};
     AURORA_TEST_CHECK_TRUE(broken.settings().appearance.font_fallback_chain.empty());
     AURORA_TEST_CHECK_TRUE(holds(broken.report().rejected_keys, "appearance.font_fallback_chain"));
+}
+
+AURORA_TEST_CASE(a_serial_profile_round_trips_and_bad_fields_drop_individually) {
+    // `SPEC.FEAT.CONN.05` 的 profiles 子结构（裁决 7.110 D1①）：一条全填的串口档案原样回来，
+    // 一条满是坏值的档案**逐项**回落结构初值——档案存的是具体值（D4①），故这里没有 defaults
+    // 可回落，回落目标就是 `conn::SerialProfile` 自己的成员初值。
+    const auto file = make_path("serial_profile.json");
+    write_file(file, R"({
+  "schema_version": 1,
+  "profiles": {"items": [
+    {"id":"serial-1","name":"Board","type":"serial","favorite":true,
+     "serial":{"device_path":"/dev/ttyUSB0","baud":9600,"data_bits":7,"stop_bits":2,
+               "parity":"odd","flow":"software","line_ending":"CRLF","encoding":"GB18030"}},
+    {"id":"serial-2","name":"Broken","type":"serial",
+     "serial":{"device_path":"/dev/ttyS0","baud":0,"data_bits":4,"stop_bits":3,
+               "parity":"mark","flow":"xonxoff","line_ending":"LFCR","encoding":"UTF-8"}}
+  ]}
+})");
+
+    const Store store{file};
+    AURORA_TEST_CHECK_TRUE(store.report().outcome == LoadOutcome::Loaded);
+    const auto &profiles = store.settings().profiles;
+    AURORA_TEST_REQUIRE_EQ(profiles.size(), 2U);
+
+    AURORA_TEST_CHECK_TRUE(profiles[0].type == conn::ConnectionType::Serial);
+    AURORA_TEST_CHECK_TRUE(profiles[0].favorite);
+    AURORA_TEST_CHECK_EQ(profiles[0].serial.device_path, "/dev/ttyUSB0");
+    AURORA_TEST_CHECK_EQ(profiles[0].serial.baud, 9600);
+    AURORA_TEST_CHECK_EQ(profiles[0].serial.data_bits, 7);
+    AURORA_TEST_CHECK_EQ(profiles[0].serial.stop_bits, 2);
+    AURORA_TEST_CHECK_EQ(profiles[0].serial.parity, "odd");
+    AURORA_TEST_CHECK_EQ(profiles[0].serial.flow, "software");
+    AURORA_TEST_CHECK_EQ(profiles[0].serial.line_ending, "CRLF");
+    AURORA_TEST_CHECK_EQ(profiles[0].serial.encoding, "GB18030");
+
+    const conn::SerialProfile fallback{};
+    AURORA_TEST_CHECK_EQ(profiles[1].serial.device_path, "/dev/ttyS0");
+    AURORA_TEST_CHECK_EQ(profiles[1].serial.baud, fallback.baud);
+    AURORA_TEST_CHECK_EQ(profiles[1].serial.data_bits, fallback.data_bits);
+    AURORA_TEST_CHECK_EQ(profiles[1].serial.stop_bits, fallback.stop_bits);
+    AURORA_TEST_CHECK_EQ(profiles[1].serial.parity, fallback.parity);
+    AURORA_TEST_CHECK_EQ(profiles[1].serial.flow, fallback.flow);
+    AURORA_TEST_CHECK_EQ(profiles[1].serial.line_ending, fallback.line_ending);
+    // 编码名不做取值表限制（`SPEC.FEAT.TERM.09` 的族表在 term 侧判），故 UTF-8 照收。
+    AURORA_TEST_CHECK_EQ(profiles[1].serial.encoding, "UTF-8");
+    for (std::string_view key : {"profiles.items[1].baud", "profiles.items[1].data_bits",
+                                 "profiles.items[1].stop_bits", "profiles.items[1].parity",
+                                 "profiles.items[1].flow", "profiles.items[1].line_ending"}) {
+        AURORA_TEST_CHECK_MSG(holds(store.report().rejected_keys, key), std::string{key});
+    }
+
+    // 写侧再走一遍：串口档案落盘后读回必须与内存态逐字段等值（`type` 三向分派的另一头）。
+    const auto wanted = store.settings();
+    const auto other = make_path("serial_profile-write.json");
+    {
+        Store writer{other};
+        AURORA_TEST_CHECK_FALSE(writer.replace(wanted).has_value());
+    }
+    const Store reloaded{other};
+    AURORA_TEST_CHECK_TRUE(reloaded.settings() == wanted);
 }
 
 AURORA_TEST_CASE(key_dirs_domain_is_verbatim_and_is_not_a_credential_name) {

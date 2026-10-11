@@ -414,6 +414,7 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"connection.serial.data_bits", "数据位"},
     {"connection.serial.stop_bits", "停止位"},
     {"connection.serial.parity", "校验位"},
+    {"connection.serial.flow", "流控"},
     {"connection.serial.line_ending", "行尾符"},
     {"connection.serial.encoding", "串口编码"},
     {"connection.session_logging", "会话日志"},

@@ -42,6 +42,7 @@
 #include "borealis/ui/color_text.h"
 #include "borealis/ui/palette.h"
 
+#include "conn/serial_model.h"
 #include "schema_names.h"
 
 namespace borealis::config {
@@ -62,10 +63,11 @@ constexpr std::array<std::string_view, 7> kDomainKeys{
 
 constexpr std::array<std::string_view, 4> kSshAuthMethods{"password", "privatekey", "agent", "keyboard-interactive"};
 
-/// @brief 连接类型 ↔ JSON 名（`SPEC.FEAT.CONN.03`）。
-constexpr std::array<EnumName, 2> kConnectionTypeNames{
+/// @brief 连接类型 ↔ JSON 名（`SPEC.FEAT.CONN.03`；`serial` 一档见 CONN.05 裁决 7.110 D1①）。
+constexpr std::array<EnumName, 3> kConnectionTypeNames{
     EnumName{"local", static_cast<std::int64_t>(conn::ConnectionType::Local)},
-    EnumName{"ssh", static_cast<std::int64_t>(conn::ConnectionType::Ssh)}};
+    EnumName{"ssh", static_cast<std::int64_t>(conn::ConnectionType::Ssh)},
+    EnumName{"serial", static_cast<std::int64_t>(conn::ConnectionType::Serial)}};
 
 /// @brief 已知主机策略 ↔ JSON 名（`SPEC.FEAT.CONN.03`）。
 constexpr std::array<EnumName, 4> kKnownHostsPolicyNames{
@@ -85,9 +87,11 @@ constexpr std::array<EnumName, 3> kTunnelKindNames{
     EnumName{"remote", static_cast<std::int64_t>(conn::TunnelKind::Remote)},
     EnumName{"dynamic", static_cast<std::int64_t>(conn::TunnelKind::Dynamic)}};
 
-constexpr std::array<std::string_view, 3> kSerialParities{"none", "even", "odd"};
-
-constexpr std::array<std::string_view, 3> kSerialLineEndings{"LF", "CR", "CRLF"};
+/// @brief 串口取值表：直接引用 `conn/serial_model.h` 里的那一份（裁决 7.110 D4①——
+///        档位与合法名只有一处定义，配置侧不再复制一张表，以免落盘判据与校验判据分叉）。
+constexpr auto &kSerialParities = conn::kSerialParityNames;
+constexpr auto &kSerialFlows = conn::kSerialFlowNames;
+constexpr auto &kSerialLineEndings = conn::kSerialLineEndingNames;
 
 /// @brief JSON 值 → 色值：非字符串或形态不合都算解析失败。
 ///
@@ -518,6 +522,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     put(serial, "data_bits", connection.serial.data_bits);
     put(serial, "stop_bits", connection.serial.stop_bits);
     put(serial, "parity", connection.serial.parity);
+    put(serial, "flow", connection.serial.flow);
     put(serial, "line_ending", connection.serial.line_ending);
     put(serial, "encoding", connection.serial.encoding);
     node.set("serial", std::move(serial));
@@ -587,6 +592,24 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return node;
 }
 
+/// @brief 写串口档案块（`SPEC.FEAT.CONN.05`，裁决 7.110 D1①/D4①）。
+///
+/// 全字段无条件写：档案存的是**具体值**而不是「跟随默认」的引用，写全之后读侧
+/// 无需版本分叉，回看一条档案也不必再去解析设置域。串口无凭据，本块天然过
+/// `SPEC.FEAT.CONN.09` 的明文凭据审计。
+[[nodiscard]] auto serial_profile_to_json(const conn::SerialProfile &serial) -> Value {
+    auto node = Value::object();
+    put(node, "device_path", serial.device_path);
+    put(node, "baud", serial.baud);
+    put(node, "data_bits", serial.data_bits);
+    put(node, "stop_bits", serial.stop_bits);
+    put(node, "parity", serial.parity);
+    put(node, "flow", serial.flow);
+    put(node, "line_ending", serial.line_ending);
+    put(node, "encoding", serial.encoding);
+    return node;
+}
+
 [[nodiscard]] auto profiles_to_json(const std::vector<conn::Profile> &profiles) -> Value {
     auto node = Value::object();
     auto items = Value::array();
@@ -608,6 +631,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
         put(item, "favorite", profile.favorite);
         if (profile.type == conn::ConnectionType::Local) {
             item.set("local", local_profile_to_json(profile.local));
+        } else if (profile.type == conn::ConnectionType::Serial) {
+            item.set("serial", serial_profile_to_json(profile.serial));
         } else {
             item.set("ssh", ssh_profile_to_json(profile.ssh));
         }
@@ -795,6 +820,9 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     connection.serial.stop_bits =
         static_cast<int>(serial.integer("stop_bits", defaults.connection.serial.stop_bits, 1, 2));
     connection.serial.parity = serial.one_of("parity", defaults.connection.serial.parity, kSerialParities);
+    // `flow` 是裁决 7.110 D3① 追加的第七键：既有配置缺它即回缺省 none，不升 schema_version
+    // （缺键回默认是裁决 7.26④ 的宽容口径）。
+    connection.serial.flow = serial.one_of("flow", defaults.connection.serial.flow, kSerialFlows);
     connection.serial.line_ending =
         serial.one_of("line_ending", defaults.connection.serial.line_ending, kSerialLineEndings);
     connection.serial.encoding = serial.text("encoding", defaults.connection.serial.encoding);
@@ -920,6 +948,61 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return ssh;
 }
 
+/// @brief 读串口档案块（`SPEC.FEAT.CONN.05`，裁决 7.110 D1①/D4①）。
+///
+/// 字段缺省取结构自身的初值而不是设置域：档案存具体值（D4①），已落盘的串口档案
+/// 不因设置页改默认而变——故本函数不接 `defaults`。取值域外的数与表外的名一律
+/// 记进 `rejected_keys` 并保留初值，坏值不静默留存。
+[[nodiscard]] auto read_serial_profile(const Value *node, LoadReport &report, std::string_view path)
+    -> conn::SerialProfile {
+    conn::SerialProfile serial{};
+    if ((node == nullptr) || !node->is_object()) {
+        return serial;
+    }
+    const auto reject = [&report, path](std::string_view key) -> void {
+        report.rejected_keys.push_back(std::string{path} + "." + std::string{key});
+    };
+    const auto device_path = text_of(node->at("device_path"));
+    if (device_path) {
+        serial.device_path = std::string{*device_path};
+    }
+    const auto bounded_int = [&](std::string_view key, int fallback, int low, int high) -> int {
+        const Value *held = node->at(key);
+        if (held == nullptr) {
+            return fallback;
+        }
+        const auto parsed = held->as_int();
+        if (!parsed || *parsed < low || *parsed > high) {
+            reject(key);
+            return fallback;
+        }
+        return static_cast<int>(*parsed);
+    };
+    serial.baud = bounded_int("baud", serial.baud, 1, 4000000);
+    serial.data_bits = bounded_int("data_bits", serial.data_bits, 5, 8);
+    serial.stop_bits = bounded_int("stop_bits", serial.stop_bits, 1, 2);
+    const auto named = [&](std::string_view key, const std::string &fallback,
+                           std::span<const std::string_view> allowed) -> std::string {
+        const auto value = text_of(node->at(key));
+        if (!value) {
+            return fallback;
+        }
+        if (std::ranges::find(allowed, *value) == allowed.end()) {
+            reject(key);
+            return fallback;
+        }
+        return std::string{*value};
+    };
+    serial.parity = named("parity", serial.parity, kSerialParities);
+    serial.flow = named("flow", serial.flow, kSerialFlows);
+    serial.line_ending = named("line_ending", serial.line_ending, kSerialLineEndings);
+    const auto encoding = text_of(node->at("encoding"));
+    if (encoding) {
+        serial.encoding = std::string{*encoding};
+    }
+    return serial;
+}
+
 /// @brief 读连接档案域（`SPEC.FEAT.CONN.03`）：顶层 `{ "items": [...] }`。
 [[nodiscard]] auto read_profiles(const Value *domain, LoadReport &report) -> std::vector<conn::Profile> {
     std::vector<conn::Profile> out;
@@ -982,6 +1065,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
         const std::string base = "profiles.items[" + std::to_string(index) + "]";
         if (profile.type == conn::ConnectionType::Local) {
             profile.local = read_local(item->at("local"));
+        } else if (profile.type == conn::ConnectionType::Serial) {
+            profile.serial = read_serial_profile(item->at("serial"), report, base);
         } else {
             profile.ssh = read_ssh(item->at("ssh"), report, base);
         }
