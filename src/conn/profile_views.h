@@ -49,7 +49,8 @@ struct ProfileDraft {
     // Local 型字段。
     std::string command_line{};     ///< 空＝默认 shell。
     std::string working_directory{};
-    // SSH 型字段。
+    // SSH 型字段。`host`/`port` 两枚同时服务 Telnet 型（裁决 7.112 D2① 的字段集只有
+    // 展示名/主机/端口三行，草稿里没有第二份主机字段）。
     std::string host{};
     int port{22};
     std::string user{};
@@ -73,7 +74,7 @@ struct ProfileDraft {
 enum class DraftIssue : std::uint8_t {
     None,                ///< 通过。
     EmptyName,           ///< 展示名必填。
-    EmptyHost,           ///< SSH 型主机必填。
+    EmptyHost,           ///< SSH / Telnet 型主机必填（Telnet 复用同一档，零新增问题码）。
     PortOutOfRange,      ///< 端口须在 1..65535。
     UnknownAuthMethod,   ///< 认证方式必须是四档之一。
     EmptyDevice,         ///< 串口型必填设备节点名（稿 §2 标号 4）。

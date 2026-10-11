@@ -6,7 +6,8 @@
 // M3 的 `SPEC.FEAT.CONN.03`（SSH 档案管理：分组/收藏/搜索/quick connect/
 // `~/.ssh/config` 只读导入）与 `SPEC.FEAT.CONN.09`（凭据安全存储）的纯逻辑数据模型。
 // M4 的 `SPEC.FEAT.CONN.05`（串口终端）按裁决 7.110 D1① 追加同域一档 `Serial` 与
-// `SerialProfile`：类型域是追加式扩型，既有成员与可见性不动。
+// `SerialProfile`，`SPEC.FEAT.CONN.06`（Telnet）按裁决 7.112 D1① 再追加一档 `Telnet` 与
+// `TelnetProfile`：类型域是追加式扩型，既有成员与可见性不动。
 //
 // 本头只含标准类型，不含 Aurora 类型与任何平台 API（与 `local_terminal.h` 同口径：
 // 纯逻辑、可独立单测，AGENTS.md §4.4 第 20 条）。序列化进出 `au::json::Value` 落在
@@ -36,11 +37,12 @@
 
 namespace borealis::conn {
 
-/// @brief 连接类型（档案本体按它分流到 local / ssh / serial 子结构）。
+/// @brief 连接类型（档案本体按它分流到 local / ssh / serial / telnet 子结构）。
 enum class ConnectionType : std::uint8_t {
     Local,   ///< 本地终端（走 `LocalProfile`）。
     Ssh,     ///< SSH（走 `SshProfile`）。
     Serial,  ///< 串口（走 `SerialProfile`，`SPEC.FEAT.CONN.05` 裁决 7.110 D1①）。
+    Telnet,  ///< Telnet（走 `TelnetProfile`，`SPEC.FEAT.CONN.06` 裁决 7.112 D1①）。
 };
 
 /// @brief 凭据句柄的两种形态（CONN.09 的核心枚举）。
@@ -136,6 +138,20 @@ struct SerialProfile {
     [[nodiscard]] auto operator==(const SerialProfile &) const noexcept -> bool = default;
 };
 
+/// @brief Telnet 档案（`SPEC.FEAT.CONN.06`，裁决 7.112 D1①/D2）。
+///
+/// 只有主机与端口：Telnet 没有认证协议，登录提示由远端程序给，「存进档案的口令」没有
+/// 消费方（D2①——那要造一条自动敲 `login:`/`Password:` 的脚本链，需求原文没有）。编码走
+/// 全局档 `terminal.encoding`（D5①，裁决 7.6 的 Telnet 缺省＝UTF-8），发送行尾由装配层给
+/// 固定 CRLF（D8①），两者都不入档案。端口缺省 23 与向导里硬编码的 SSH 22 是同一条口径。
+/// 本结构无凭据字段，天然通过 `SPEC.FEAT.CONN.09` 的明文凭据审计。
+struct TelnetProfile {
+    std::string host;      ///< 主机名或 IP；`tcp_connect` 的 hints 钉死 AF_INET（裁决 7.96）。
+    int port{23};          ///< 端口 1..65535；向导留空即折成 23。
+
+    [[nodiscard]] auto operator==(const TelnetProfile &) const noexcept -> bool = default;
+};
+
 /// @brief 一条连接档案（CONN.03 的统一外壳）。
 struct Profile {
     std::string id;                  ///< 稳定唯一 id；quick connect 与 ssh config 导入用确定性生成。
@@ -147,6 +163,7 @@ struct Profile {
     LocalProfile local{};              ///< type==Local 时生效。
     SshProfile ssh{};                  ///< type==Ssh 时生效。
     SerialProfile serial{};            ///< type==Serial 时生效（CONN.05）。
+    TelnetProfile telnet{};            ///< type==Telnet 时生效（CONN.06）。
 
     [[nodiscard]] auto operator==(const Profile &) const noexcept -> bool = default;
 };

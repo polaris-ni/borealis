@@ -214,6 +214,62 @@ AURORA_TEST_CASE(serial_draft_round_trips_without_touching_the_other_two_types) 
     AURORA_TEST_CHECK_TRUE(ssh_profile.serial.device_path.empty());
 }
 
+AURORA_TEST_CASE(telnet_draft_reuses_the_existing_issue_codes) {
+    using conn::ConnectionType;
+    using conn::DraftIssue;
+
+    auto draft = conn::ProfileDraft{};
+    draft.type = ConnectionType::Telnet;
+    // 裁决 7.112 D2①：Telnet 型**零新增问题码**——展示名必填、主机必填、端口区间，三档全是既有码。
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::EmptyName);
+    draft.name = "board-console";
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::EmptyHost);
+    draft.host = "192.168.1.1";
+    draft.port = 0;
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::PortOutOfRange);
+    draft.port = 65536;
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::PortOutOfRange);
+    draft.port = 23;
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::None);
+    // 认证字段不参与 Telnet 的校验：向导的 Telnet 型不画那三栏（D2①），表外的 auth_method
+    // 不该把这条腿挡下——否则「编辑一条老档案」会因为一个屏幕上根本没有的字段而存不回去。
+    draft.auth_method = "not-a-method";
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::None);
+}
+
+AURORA_TEST_CASE(telnet_draft_round_trips_without_touching_the_other_three_types) {
+    using conn::ConnectionType;
+
+    auto draft = conn::ProfileDraft{};
+    draft.name = "console";
+    draft.type = ConnectionType::Telnet;
+    draft.host = "gw.example.com";
+    draft.port = 2323;
+
+    const auto profile = conn::draft_to_profile(draft, "p-telnet");
+    AURORA_TEST_CHECK_TRUE(profile.type == ConnectionType::Telnet);
+    AURORA_TEST_CHECK_TRUE(profile.telnet.host == "gw.example.com");
+    AURORA_TEST_CHECK_TRUE(profile.telnet.port == 2323);
+    // 四向分派不串台：Telnet 档案既不写 SSH 段也不写串口段——凭据询问计划因此不会误触发。
+    AURORA_TEST_CHECK_TRUE(profile.ssh.host.empty());
+    AURORA_TEST_CHECK_TRUE(profile.ssh.credential == conn::SecretHandle{});
+    AURORA_TEST_CHECK_TRUE(profile.serial == conn::SerialProfile{});
+    AURORA_TEST_CHECK_TRUE(profile.local.command_line.empty());
+
+    const auto back = conn::profile_to_draft(profile);
+    AURORA_TEST_CHECK_TRUE(back.type == ConnectionType::Telnet);
+    AURORA_TEST_CHECK_TRUE(back.host == draft.host);
+    AURORA_TEST_CHECK_TRUE(back.port == draft.port);
+
+    // 反过来：SSH 草稿不落 telnet 段（telnet 初值就是档案初值，逐字段全等）。
+    auto ssh_draft = conn::ProfileDraft{};
+    ssh_draft.name = "gw";
+    ssh_draft.type = ConnectionType::Ssh;
+    ssh_draft.host = "gw.example.com";
+    const auto ssh_profile = conn::draft_to_profile(ssh_draft, "p-ssh");
+    AURORA_TEST_CHECK_TRUE(ssh_profile.telnet == conn::TelnetProfile{});
+}
+
 AURORA_TEST_CASE(secret_ask_plan_follows_auth_method) {
     using conn::SecretAsk;
     AURORA_TEST_CHECK_TRUE(conn::secret_ask_for("password") == SecretAsk::Password);

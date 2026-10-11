@@ -110,12 +110,20 @@ AURORA_TEST_CASE(profile_store_search_is_case_insensitive) {
     b.name = "Web";
     b.type = ConnectionType::Ssh;
     b.ssh.host = "web.internal";
+    Profile c;
+    c.id = "c";
+    c.name = "Board console";
+    c.type = ConnectionType::Telnet;
+    c.telnet.host = "10.0.0.9";
     store.add(a);
     store.add(b);
+    store.add(c);
 
     AURORA_TEST_CHECK_EQ(store.search("gate").size(), 1u);
     AURORA_TEST_CHECK_EQ(store.search("INFRA").size(), 1u);   // 标签，大小写不敏感
     AURORA_TEST_CHECK_EQ(store.search("web.internal").size(), 1u);  // 主机
+    // Telnet 档案按主机可搜（裁决 7.112 D1①：进模型就要和 SSH 一样能被侧栏找到）。
+    AURORA_TEST_CHECK_EQ(store.search("10.0.0.9").size(), 1u);
     AURORA_TEST_CHECK_EQ(store.search("").size(), 0u);        // 空查询不命中
     AURORA_TEST_CHECK_EQ(store.search("zzz").size(), 0u);
 }

@@ -63,11 +63,13 @@ constexpr std::array<std::string_view, 7> kDomainKeys{
 
 constexpr std::array<std::string_view, 4> kSshAuthMethods{"password", "privatekey", "agent", "keyboard-interactive"};
 
-/// @brief 连接类型 ↔ JSON 名（`SPEC.FEAT.CONN.03`；`serial` 一档见 CONN.05 裁决 7.110 D1①）。
-constexpr std::array<EnumName, 3> kConnectionTypeNames{
+/// @brief 连接类型 ↔ JSON 名（`SPEC.FEAT.CONN.03`；`serial` 一档见 CONN.05 裁决 7.110 D1①，
+///        `telnet` 一档见 CONN.06 裁决 7.112 D1①）。
+constexpr std::array<EnumName, 4> kConnectionTypeNames{
     EnumName{"local", static_cast<std::int64_t>(conn::ConnectionType::Local)},
     EnumName{"ssh", static_cast<std::int64_t>(conn::ConnectionType::Ssh)},
-    EnumName{"serial", static_cast<std::int64_t>(conn::ConnectionType::Serial)}};
+    EnumName{"serial", static_cast<std::int64_t>(conn::ConnectionType::Serial)},
+    EnumName{"telnet", static_cast<std::int64_t>(conn::ConnectionType::Telnet)}};
 
 /// @brief 已知主机策略 ↔ JSON 名（`SPEC.FEAT.CONN.03`）。
 constexpr std::array<EnumName, 4> kKnownHostsPolicyNames{
@@ -610,6 +612,17 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return node;
 }
 
+/// @brief 写一条 Telnet 档案块（`SPEC.FEAT.CONN.06`，裁决 7.112 D1①/D2/D5①）。
+///
+/// 只有两键：编码不入档案（走全局档 `terminal.encoding`，D5①）、行尾不入档案（装配层给固定
+/// CRLF，D8①）、口令不入档案（Telnet 无认证协议，D2①）。全字段无条件写，读侧无需版本分叉。
+[[nodiscard]] auto telnet_profile_to_json(const conn::TelnetProfile &telnet) -> Value {
+    auto node = Value::object();
+    put(node, "host", telnet.host);
+    put(node, "port", telnet.port);
+    return node;
+}
+
 [[nodiscard]] auto profiles_to_json(const std::vector<conn::Profile> &profiles) -> Value {
     auto node = Value::object();
     auto items = Value::array();
@@ -633,6 +646,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
             item.set("local", local_profile_to_json(profile.local));
         } else if (profile.type == conn::ConnectionType::Serial) {
             item.set("serial", serial_profile_to_json(profile.serial));
+        } else if (profile.type == conn::ConnectionType::Telnet) {
+            item.set("telnet", telnet_profile_to_json(profile.telnet));
         } else {
             item.set("ssh", ssh_profile_to_json(profile.ssh));
         }
@@ -1003,6 +1018,32 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return serial;
 }
 
+/// @brief 读 Telnet 档案块（`SPEC.FEAT.CONN.06`，裁决 7.112 D1①）。
+///
+/// 与串口那条同口径：初值取结构自身而不接 `defaults`（档案存具体值），端口越界或非整数
+/// 记进 `rejected_keys` 并保留 23——坏值不静默留存。
+[[nodiscard]] auto read_telnet_profile(const Value *node, LoadReport &report, std::string_view path)
+    -> conn::TelnetProfile {
+    conn::TelnetProfile telnet{};
+    if ((node == nullptr) || !node->is_object()) {
+        return telnet;
+    }
+    const auto host = text_of(node->at("host"));
+    if (host) {
+        telnet.host = std::string{*host};
+    }
+    const Value *port = node->at("port");
+    if (port != nullptr) {
+        const auto parsed = port->as_int();
+        if (parsed && *parsed >= 1 && *parsed <= 65535) {
+            telnet.port = static_cast<int>(*parsed);
+        } else {
+            report.rejected_keys.push_back(std::string{path} + ".port");
+        }
+    }
+    return telnet;
+}
+
 /// @brief 读连接档案域（`SPEC.FEAT.CONN.03`）：顶层 `{ "items": [...] }`。
 [[nodiscard]] auto read_profiles(const Value *domain, LoadReport &report) -> std::vector<conn::Profile> {
     std::vector<conn::Profile> out;
@@ -1067,6 +1108,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
             profile.local = read_local(item->at("local"));
         } else if (profile.type == conn::ConnectionType::Serial) {
             profile.serial = read_serial_profile(item->at("serial"), report, base);
+        } else if (profile.type == conn::ConnectionType::Telnet) {
+            profile.telnet = read_telnet_profile(item->at("telnet"), report, base);
         } else {
             profile.ssh = read_ssh(item->at("ssh"), report, base);
         }

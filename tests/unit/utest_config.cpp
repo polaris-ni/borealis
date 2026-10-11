@@ -796,6 +796,50 @@ AURORA_TEST_CASE(a_serial_profile_round_trips_and_bad_fields_drop_individually) 
     AURORA_TEST_CHECK_TRUE(reloaded.settings() == wanted);
 }
 
+AURORA_TEST_CASE(a_telnet_profile_round_trips_and_bad_port_drops_to_default) {
+    // `SPEC.FEAT.CONN.06` 的 profiles 子结构（裁决 7.112 D1①）：只有 host/port 两键——
+    // 编码走全局档（D5①）、行尾由装配层给固定 CRLF（D8①）、口令不入档案（D2①），
+    // 故这里没有第三键可写，也不该有。坏端口逐项回落 `TelnetProfile` 自己的初值 23。
+    const auto file = make_path("telnet_profile.json");
+    write_file(file, R"({
+  "schema_version": 1,
+  "profiles": {"items": [
+    {"id":"telnet-1","name":"Board console","type":"telnet","favorite":true,
+     "telnet":{"host":"192.168.1.1","port":2323}},
+    {"id":"telnet-2","name":"Broken","type":"telnet","telnet":{"host":"gw.example.com","port":0}},
+    {"id":"telnet-3","name":"NoBlock","type":"telnet"}
+  ]}
+})");
+
+    const Store store{file};
+    AURORA_TEST_CHECK_TRUE(store.report().outcome == LoadOutcome::Loaded);
+    const auto &profiles = store.settings().profiles;
+    AURORA_TEST_REQUIRE_EQ(profiles.size(), 3U);
+
+    AURORA_TEST_CHECK_TRUE(profiles[0].type == conn::ConnectionType::Telnet);
+    AURORA_TEST_CHECK_TRUE(profiles[0].favorite);
+    AURORA_TEST_CHECK_EQ(profiles[0].telnet.host, "192.168.1.1");
+    AURORA_TEST_CHECK_EQ(profiles[0].telnet.port, 2323);
+    // 档案存具体值：telnet 块缺字段时回落结构初值，而不是设置域（本棒不新增键，D5①）。
+    const conn::TelnetProfile fallback{};
+    AURORA_TEST_CHECK_EQ(profiles[1].telnet.host, "gw.example.com");
+    AURORA_TEST_CHECK_EQ(profiles[1].telnet.port, fallback.port);
+    AURORA_TEST_CHECK_MSG(holds(store.report().rejected_keys, "profiles.items[1].port"),
+                          "profiles.items[1].port");
+    AURORA_TEST_CHECK_TRUE(profiles[2].telnet.host.empty());
+    AURORA_TEST_CHECK_EQ(profiles[2].telnet.port, fallback.port);
+
+    // 写侧再走一遍：`type` 的四向分派与 telnet 块都要原样回来。
+    const auto wanted = store.settings();
+    const auto other = make_path("telnet_profile-write.json");
+    {
+        Store writer{other};
+        AURORA_TEST_CHECK_FALSE(writer.replace(wanted).has_value());
+    }
+    const Store reloaded{other};
+    AURORA_TEST_CHECK_TRUE(reloaded.settings() == wanted);
+}
+
 AURORA_TEST_CASE(key_dirs_domain_is_verbatim_and_is_not_a_credential_name) {
     // 缺省空是「只扫 ~/.ssh」的哨兵，不是「一个目录都不扫」（裁决 7.106 D2③ 细则⑵）：
     // 补齐那一步归 conn::normalize_key_dirs()，落盘侧只保证原样往返。

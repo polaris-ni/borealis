@@ -94,6 +94,16 @@ auto validate_draft(const ProfileDraft &draft) -> DraftIssue {
             return DraftIssue::UnknownAuthMethod;
         }
     }
+    if (draft.type == ConnectionType::Telnet) {
+        // Telnet 型**零新增问题码**（裁决 7.112 D2①）：主机必填与端口区间都复用 SSH 那两档，
+        // 向导的字段集只有三行（展示名/主机/端口），没有认证字段可校验。
+        if (draft.host.empty()) {
+            return DraftIssue::EmptyHost;
+        }
+        if (draft.port < 1 || draft.port > 65535) {
+            return DraftIssue::PortOutOfRange;
+        }
+    }
     if (draft.type == ConnectionType::Serial) {
         // 串口四档（稿 §2 标号 4）：判据来自 `conn/serial_model.h` 的那一份档位表与取值区间，
         // 不在这里现编数字。
@@ -123,6 +133,9 @@ auto draft_to_profile(const ProfileDraft &draft, std::string id) -> Profile {
         profile.local.working_directory = draft.working_directory;
     } else if (draft.type == ConnectionType::Serial) {
         profile.serial = draft.serial;
+    } else if (draft.type == ConnectionType::Telnet) {
+        profile.telnet.host = draft.host;
+        profile.telnet.port = draft.port;
     } else {
         profile.ssh.host = draft.host;
         profile.ssh.port = draft.port;
@@ -144,6 +157,9 @@ auto profile_to_draft(const Profile &profile) -> ProfileDraft {
         draft.working_directory = profile.local.working_directory;
     } else if (profile.type == ConnectionType::Serial) {
         draft.serial = profile.serial;
+    } else if (profile.type == ConnectionType::Telnet) {
+        draft.host = profile.telnet.host;
+        draft.port = profile.telnet.port;
     } else {
         draft.host = profile.ssh.host;
         draft.port = profile.ssh.port;

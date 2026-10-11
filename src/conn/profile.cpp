@@ -129,8 +129,12 @@ auto InMemoryCredentialStore::retrieve(const SecretHandle &handle) -> std::optio
     }
     for (const auto &profile : items_) {
         const bool hit_name = to_lower(profile.name).find(needle) != std::string::npos;
-        const bool hit_host = (profile.type == ConnectionType::Ssh) &&
-                              (to_lower(profile.ssh.host).find(needle) != std::string::npos);
+        // 主机命中只对有 host 字段的两种类型成立（SSH 与 Telnet）；串口没有主机概念。
+        const bool hit_host =
+            ((profile.type == ConnectionType::Ssh) &&
+             (to_lower(profile.ssh.host).find(needle) != std::string::npos)) ||
+            ((profile.type == ConnectionType::Telnet) &&
+             (to_lower(profile.telnet.host).find(needle) != std::string::npos));
         bool hit_tag = false;
         for (const auto &tag : profile.tags) {
             if (to_lower(tag).find(needle) != std::string::npos) {
