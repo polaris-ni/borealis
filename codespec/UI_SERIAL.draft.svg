@@ -1,0 +1,256 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="2260" viewBox="0 0 1560 2260" font-family="'Noto Sans CJK SC',sans-serif">
+<rect x="0" y="0" width="1560" height="2260" fill="#eef0f5"/>
+<text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">串口终端：档案型九字段 + 设备下拉 + 热改波特率 + 掉线重连（SPEC.FEAT.CONN.05）</text>
+<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_SERIAL.draft.svg · 高保真草图（待评审）· 1 dp == 1 px @100% · 判据 1–7 对应 UI_SERIAL.draft.md §2，D1–D13 见该稿 §3 · 底部实测口径见 §0（F1–F10）</text>
+<g transform="translate(30,78)">
+  <rect x="-1" y="-1" width="1502" height="662" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 新建连接（向导 步骤 2/2）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="626" fill="#12131a" opacity="0.6"/>
+  <rect x="380" y="64" width="740" height="566" rx="8" fill="#282A36" stroke="#4D4F63"/>
+  <text x="402" y="94" font-size="14" fill="#F8F8F2" font-weight="700">新建连接 · 串口（SerialProfile）</text>
+  <text x="1098" y="94" font-size="11.5" fill="#62728A" text-anchor="end">Escape 取消</text>
+  <rect x="402" y="110" width="216" height="50" rx="6" fill="#22232E" stroke="#4D4F63" stroke-width="1"/>
+  <text x="416" y="131" font-size="12" fill="#62728A" font-weight="600">本地终端</text>
+  <text x="416" y="149" font-size="10.5" fill="#62728A">平台默认 shell</text>
+  <rect x="632" y="110" width="216" height="50" rx="6" fill="#22232E" stroke="#4D4F63" stroke-width="1"/>
+  <text x="646" y="131" font-size="12" fill="#62728A" font-weight="600">SSH</text>
+  <text x="646" y="149" font-size="10.5" fill="#62728A">libssh 会话</text>
+  <rect x="862" y="110" width="216" height="50" rx="6" fill="#342B47" stroke="#BD93F9" stroke-width="2"/>
+  <text x="876" y="131" font-size="12" fill="#F8F8F2" font-weight="600">串口</text>
+  <text x="876" y="149" font-size="10.5" fill="#62728A">COM / ttyS / ttyUSB</text>
+<g transform="translate(1136,134)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">1</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">D1/D2：串口型无 host/port/user/认证栏</text>
+</g>
+  <g transform="translate(402,184)">
+<text x="0" y="18" font-size="11.5" fill="#F8F8F2">展示名</text>
+<rect x="132" y="0" width="360" height="26" rx="5" fill="#22232E" stroke="#4D4F63"/>
+<text x="144" y="17" font-size="11.5" fill="#62728A">板子 A · ttyUSB0</text>
+<text x="0" y="52" font-size="11.5" fill="#F8F8F2">设备</text>
+<rect x="132" y="34" width="120" height="26" rx="5" fill="#282A36" stroke="#BD93F9"/>
+<text x="144" y="51" font-size="11.5" fill="#F8F8F2">/dev/ttyUSB0</text>
+<rect x="260" y="34" width="56" height="26" rx="5" fill="#22232E" stroke="#4D4F63"/>
+<text x="272" y="51" font-size="11.5" fill="#62728A">自定义…</text>
+  <rect x="360" y="34" width="72" height="26" rx="5" fill="#22232E" stroke="#4D4F63"/>
+  <text x="396" y="51" font-size="11" fill="#62728A" text-anchor="middle">刷新</text>
+<text x="0" y="86" font-size="11.5" fill="#F8F8F2">波特率</text>
+<rect x="132" y="68" width="200" height="26" rx="5" fill="#282A36" stroke="#4D4F63"/>
+<text x="142" y="85" font-size="11.5" fill="#F8F8F2">115200</text>
+<text x="321" y="85" font-size="10" fill="#62728A" text-anchor="end">◍</text>
+<text x="344" y="85" font-size="10.5" fill="#62728A">循环按钮</text>
+<text x="430" y="85" font-size="10.5" fill="#50FA7B">十四档，F4 实测可回读</text>
+<text x="0" y="120" font-size="11.5" fill="#F8F8F2">数据位</text>
+<rect x="132" y="102" width="200" height="26" rx="5" fill="#282A36" stroke="#4D4F63"/>
+<text x="142" y="119" font-size="11.5" fill="#F8F8F2">8</text>
+<text x="321" y="119" font-size="10" fill="#62728A" text-anchor="end">◍</text>
+<text x="344" y="119" font-size="10.5" fill="#62728A">循环按钮</text>
+<text x="0" y="154" font-size="11.5" fill="#F8F8F2">停止位</text>
+<rect x="132" y="136" width="200" height="26" rx="5" fill="#282A36" stroke="#4D4F63"/>
+<text x="142" y="153" font-size="11.5" fill="#F8F8F2">1</text>
+<text x="321" y="153" font-size="10" fill="#62728A" text-anchor="end">◍</text>
+<text x="344" y="153" font-size="10.5" fill="#62728A">循环按钮</text>
+<text x="0" y="188" font-size="11.5" fill="#F8F8F2">校验</text>
+<rect x="132" y="170" width="200" height="26" rx="5" fill="#282A36" stroke="#4D4F63"/>
+<text x="142" y="187" font-size="11.5" fill="#F8F8F2">none</text>
+<text x="321" y="187" font-size="10" fill="#62728A" text-anchor="end">◍</text>
+<text x="344" y="187" font-size="10.5" fill="#62728A">循环按钮</text>
+<text x="0" y="222" font-size="11.5" fill="#F8F8F2">流控</text>
+<rect x="132" y="204" width="200" height="26" rx="5" fill="#282A36" stroke="#4D4F63"/>
+<text x="142" y="221" font-size="11.5" fill="#F8F8F2">none</text>
+<text x="321" y="221" font-size="10" fill="#62728A" text-anchor="end">◍</text>
+<text x="344" y="221" font-size="10.5" fill="#62728A">循环按钮</text>
+<text x="430" y="221" font-size="10.5" fill="#FF5555">新键（D3）</text>
+<text x="0" y="256" font-size="11.5" fill="#F8F8F2">发送行尾</text>
+<rect x="132" y="238" width="200" height="26" rx="5" fill="#282A36" stroke="#4D4F63"/>
+<text x="142" y="255" font-size="11.5" fill="#F8F8F2">LF</text>
+<text x="321" y="255" font-size="10" fill="#62728A" text-anchor="end">◍</text>
+<text x="344" y="255" font-size="10.5" fill="#62728A">循环按钮</text>
+<text x="430" y="255" font-size="10.5" fill="#50FA7B">默认 LF（需求原文）</text>
+<text x="0" y="290" font-size="11.5" fill="#F8F8F2">编码</text>
+<rect x="132" y="272" width="200" height="26" rx="5" fill="#282A36" stroke="#4D4F63"/>
+<text x="142" y="289" font-size="11.5" fill="#F8F8F2">GB18030</text>
+<text x="321" y="289" font-size="10" fill="#62728A" text-anchor="end">◍</text>
+<text x="344" y="289" font-size="10.5" fill="#62728A">循环按钮</text>
+<text x="430" y="289" font-size="10.5" fill="#50FA7B">裁决 7.6 缺省档</text>
+<g transform="translate(450,47)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">2</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">D2：下拉 + 刷新 + 自定义三件套</text>
+</g>
+  </g>
+  <rect x="402" y="526" width="696" height="30" rx="5" fill="#2A1C22" stroke="#FF5555" stroke-dasharray="3 2"/>
+  <text x="414" y="546" font-size="11.5" fill="#FF5555">校验走 validate_draft 的串口分支：首个问题折成一行文案，不静默置灰保存钮</text>
+<g transform="translate(1136,542)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">4</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">D4：设备必填 · 波特率在表内 · 5≤数据位≤8</text>
+</g>
+  <rect x="848" y="572" width="130" height="30" rx="6" fill="#BD93F9"/>
+  <text x="913" y="592" font-size="12" fill="#1E1F29" font-weight="700" text-anchor="middle">保存并连接</text>
+  <rect x="986" y="572" width="112" height="30" rx="6" fill="none" stroke="#4D4F63"/>
+  <text x="1042" y="592" font-size="12" fill="#62728A" text-anchor="middle">取消</text>
+  <text x="402" y="506" font-size="10.5" fill="#62728A">新建时这八项由 settings.connection.serial 灌成具体值（D4①），此后档案独立</text>
+</g>
+<g transform="translate(30,780)">
+  <rect x="-1" y="-1" width="1502" height="342" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 设备下拉展开（枚举快照，UI 线程零目录 IO）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="306" fill="#1E1F29"/>
+  <rect x="420" y="54" width="640" height="248" rx="8" fill="#282A36" stroke="#4D4F63"/>
+  <text x="436" y="74" font-size="10.5" fill="#62728A">枚举源＝/sys/class/tty 目录（有 type 文件即串口类候选，F2）· 本机无 /dev/serial/by-id（F3）</text>
+  <rect x="436" y="84" width="608" height="26" rx="4" fill="#22232E"/>
+  <text x="448" y="101" font-size="11.5" fill="#F8F8F2">/dev/ttyUSB0</text>
+  <text x="586" y="101" font-size="11" fill="#62728A">CP2102 USB UART</text>
+  <text x="1032" y="101" font-size="10.5" fill="#50FA7B" text-anchor="end">可达</text>
+  <rect x="436" y="114" width="608" height="26" rx="4" fill="#282A36"/>
+  <text x="448" y="131" font-size="11.5" fill="#F8F8F2">/dev/ttyACM0</text>
+  <text x="586" y="131" font-size="11" fill="#62728A">STM32 serial (builtin)</text>
+  <text x="1032" y="131" font-size="10.5" fill="#50FA7B" text-anchor="end">可达</text>
+  <rect x="436" y="144" width="608" height="26" rx="4" fill="#282A36"/>
+  <text x="448" y="161" font-size="11.5" fill="#F8F8F2">/dev/ttyS0</text>
+  <text x="586" y="161" font-size="11" fill="#62728A">type=4 · 16550A · irq=4</text>
+  <text x="1032" y="161" font-size="10.5" fill="#50FA7B" text-anchor="end">可达</text>
+  <rect x="436" y="174" width="608" height="26" rx="4" fill="#282A36"/>
+  <text x="448" y="191" font-size="11.5" fill="#62728A">/dev/ttyS1</text>
+  <text x="586" y="191" font-size="11" fill="#62728A">type=0 · PORT_UNKNOWN</text>
+  <text x="1032" y="191" font-size="10.5" fill="#F1FA8C" text-anchor="end">无权限 ⇒ 置灰</text>
+  <rect x="436" y="204" width="608" height="26" rx="4" fill="#282A36"/>
+  <text x="448" y="221" font-size="11.5" fill="#62728A">/dev/ttyS4</text>
+  <text x="586" y="221" font-size="11" fill="#62728A">type=0 · irq=0</text>
+  <text x="1032" y="221" font-size="10.5" fill="#F1FA8C" text-anchor="end">暂时打不开</text>
+  <line x1="436" y1="240" x2="1044" y2="240" stroke="#3A3C4C"/>
+  <text x="448" y="260" font-size="11" fill="#62728A">不可达项照列 + 归因（D9）：本机 16 个 ttyS 节点全在而全不可开（F1 EACCES），过滤掉就成空列表</text>
+  <text x="448" y="282" font-size="11" fill="#62728A">只在「开行 / 点刷新 / 启动取一次」重取（D8）：不轮询，不改一张正在点着的表</text>
+<g transform="translate(1080,150)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">3</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 3：设备名 + 友好名 + 可达性（D2/D9）</text>
+</g>
+</g>
+<g transform="translate(30,1160)">
+  <rect x="-1" y="-1" width="1502" height="332" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — serial.set_baud（命令面板呼出，不绑键位）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="296" fill="#1E1F29"/>
+  <rect x="120" y="56" width="620" height="212" rx="8" fill="#282A36" stroke="#4D4F63"/>
+  <text x="142" y="80" font-size="13" fill="#F8F8F2" font-weight="700">热改波特率 · 会话「板子 A · ttyUSB0」</text>
+  <rect x="142" y="96" width="134" height="30" rx="6" fill="#22232E" stroke="#4D4F63"/>
+  <text x="209" y="115" font-size="11.5" fill="#62728A" text-anchor="middle">9600</text>
+  <rect x="288" y="96" width="134" height="30" rx="6" fill="#22232E" stroke="#4D4F63"/>
+  <text x="355" y="115" font-size="11.5" fill="#62728A" text-anchor="middle">19200</text>
+  <rect x="434" y="96" width="134" height="30" rx="6" fill="#22232E" stroke="#4D4F63"/>
+  <text x="501" y="115" font-size="11.5" fill="#62728A" text-anchor="middle">38400</text>
+  <rect x="580" y="96" width="134" height="30" rx="6" fill="#22232E" stroke="#4D4F63"/>
+  <text x="647" y="115" font-size="11.5" fill="#62728A" text-anchor="middle">57600</text>
+  <rect x="142" y="134" width="134" height="30" rx="6" fill="#22232E" stroke="#4D4F63"/>
+  <text x="209" y="153" font-size="11.5" fill="#62728A" text-anchor="middle">115200</text>
+  <rect x="288" y="134" width="134" height="30" rx="6" fill="#282A36" stroke="#BD93F9"/>
+  <text x="355" y="153" font-size="11.5" fill="#F8F8F2" text-anchor="middle">230400</text>
+  <rect x="434" y="134" width="134" height="30" rx="6" fill="#22232E" stroke="#4D4F63"/>
+  <text x="501" y="153" font-size="11.5" fill="#62728A" text-anchor="middle">460800</text>
+  <rect x="580" y="134" width="134" height="30" rx="6" fill="#22232E" stroke="#4D4F63"/>
+  <text x="647" y="153" font-size="11.5" fill="#62728A" text-anchor="middle">921600</text>
+  <text x="142" y="196" font-size="10.5" fill="#62728A">十四档全列表走内部 Scroll，这里只画八档示意</text>
+  <text x="142" y="216" font-size="11" fill="#50FA7B">已切到 230400：setattr 后 getattr 回读相符才算成功</text>
+  <text x="142" y="236" font-size="11" fill="#FF5555" opacity="0.9">回读不符 ⇒ 「设备侧拒绝：230400」，界面回到原档位（不假装成功）</text>
+  <rect x="800" y="56" width="580" height="212" rx="8" fill="#282A36" stroke="#4D4F63"/>
+  <text x="822" y="80" font-size="13" fill="#F8F8F2" font-weight="700">焦点不是串口会话时</text>
+  <text x="822" y="110" font-size="11.5" fill="#F1FA8C">当前会话不是串口（本地终端 / SSH 没有「波特率」这一档）</text>
+  <text x="822" y="134" font-size="11" fill="#62728A">提示一句即返回：不改档案、不改在途会话参数、不投任何 IO</text>
+  <text x="822" y="164" font-size="11" fill="#62728A">「档案波特率」与「会话当前波特率」是两个量，须分开显示</text>
+  <rect x="1250" y="200" width="110" height="30" rx="6" fill="none" stroke="#4D4F63"/>
+  <text x="1305" y="220" font-size="12" fill="#62728A" text-anchor="middle">知道了</text>
+<g transform="translate(822,300)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">5</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">D5：入口＝命令 serial.set_baud（命令面板呼出）</text>
+</g>
+<g transform="translate(120,300)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">6</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">D6：生效判据＝setattr 后 getattr 回读相符</text>
+</g>
+</g>
+<g transform="translate(30,1500)">
+  <rect x="-1" y="-1" width="1502" height="422" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 串口会话在途（掉线归因 + 重连浮层）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="38" fill="#21222C"/>
+  <rect x="14" y="38" width="168" height="34" rx="6" fill="#282A36"/>
+  <line x1="16" y1="70" x2="180" y2="70" stroke="#BD93F9" stroke-width="3"/>
+  <text x="26" y="59" font-size="11.5" fill="#F8F8F2">串口 板子 A</text>
+  <rect x="190" y="38" width="168" height="34" rx="6" fill="#22232E"/>
+  <text x="202" y="59" font-size="11.5" fill="#62728A">本地终端</text>
+  <line x1="0" y1="72" x2="1500" y2="72" stroke="#3A3C4C"/>
+  <rect x="0" y="72" width="1500" height="348" fill="#282A36"/>
+  <text x="24" y="104" font-size="12.5" fill="#F8F8F2" font-family="monospace">login: root</text>
+  <text x="24" y="128" font-size="12.5" fill="#F8F8F2" font-family="monospace">Password: *******</text>
+  <text x="24" y="152" font-size="12.5" fill="#F8F8F2" font-family="monospace">BusyBox v1.36.0 () built-in shell (ash)</text>
+  <text x="24" y="176" font-size="12.5" fill="#F8F8F2" font-family="monospace"># cat /proc/cpuinfo | head -2</text>
+  <text x="24" y="200" font-size="12.5" fill="#F8F8F2" font-family="monospace">processor       : 0</text>
+  <text x="24" y="224" font-size="12.5" fill="#F8F8F2" font-family="monospace">model name      : ARMv7 Processor rev 5 (v7l)</text>
+  <text x="24" y="248" font-size="12.5" fill="#F8F8F2" font-family="monospace"># stty -F /dev/ttyS1 460800 raw</text>
+  <text x="24" y="272" font-size="12.5" fill="#F8F8F2" font-family="monospace">▮</text>
+  <text x="1476" y="104" font-size="11" fill="#62728A" text-anchor="end">115200 8N1 · flow none · 行尾 LF · GB18030</text>
+  <text x="1476" y="124" font-size="11" fill="#8BE9FD" text-anchor="end">档案 115200 ｜ 当前 115200（两个量，热改只动后者）</text>
+  <rect x="470" y="238" width="620" height="152" rx="8" fill="#2A1C22" stroke="#FF5555"/>
+  <text x="492" y="264" font-size="12.5" fill="#F8F8F2" font-weight="700">串口掉线：设备消失（读侧 EIO）</text>
+  <text x="492" y="288" font-size="11.5" fill="#F1FA8C">第 2 / 3 回自动重拨 · 2 s 后重试（重开设备并按档案重新置参）</text>
+  <text x="492" y="310" font-size="11" fill="#62728A">串口没有「远端进程正常结束」这一档：EOF 也归 LinkLost（D7）</text>
+  <text x="492" y="330" font-size="11" fill="#62728A">EACCES / ENODEV 落 Unknown ⇒ 不进重拨环（保守不可重拨，裁决 7.99 D2①）</text>
+  <rect x="940" y="356" width="128" height="26" rx="6" fill="#BD93F9"/>
+  <text x="1004" y="374" font-size="11.5" fill="#1E1F29" text-anchor="middle">立即重试</text>
+  <rect x="802" y="356" width="128" height="26" rx="6" fill="none" stroke="#4D4F63"/>
+  <text x="866" y="374" font-size="11.5" fill="#62728A" text-anchor="middle">停止重连</text>
+<g transform="translate(1112,252)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">7</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 7：浮层两态沿用 UI_RECONNECT 已裁形态</text>
+</g>
+</g>
+<g transform="translate(30,1960)">
+  <rect x="-1" y="-1" width="1502" height="192" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 侧栏（串口档案）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="360" height="156" fill="#21222C"/>
+  <rect x="16" y="50" width="328" height="26" rx="5" fill="#282A36" stroke="#4D4F63"/>
+  <text x="28" y="67" font-size="11" fill="#62728A">搜索档案 / 设备</text>
+  <rect x="16" y="84" width="328" height="26" rx="5" fill="#282A36"/>
+  <text x="28" y="101" font-size="11.5" fill="#F8F8F2">板子 A · ttyUSB0</text>
+  <text x="332" y="101" font-size="11" fill="#FFB86C" text-anchor="end">★</text>
+  <rect x="16" y="114" width="328" height="26" rx="5" fill="#21222C"/>
+  <text x="28" y="131" font-size="11.5" fill="#F8F8F2">路由器串口 · ttyS0</text>
+  <text x="332" y="131" font-size="11" fill="#FFB86C" text-anchor="end">★</text>
+  <rect x="16" y="144" width="328" height="26" rx="5" fill="#21222C"/>
+  <text x="28" y="161" font-size="11.5" fill="#F8F8F2">本地终端</text>
+  <text x="332" y="161" font-size="11" fill="#62728A" text-anchor="end">☆</text>
+  <text x="376" y="101" font-size="11" fill="#62728A">类型徽标本棒不加（D12：图标随 SPEC.FEAT.WS.04 余腿单开）⇒ 识别靠档案名</text>
+  <text x="376" y="125" font-size="11" fill="#62728A">「连接」走档案的串口参数；编辑走同一张向导（open_edit 回填串口字段集）</text>
+  <text x="376" y="149" font-size="11" fill="#62728A">临时连接（不入库）：向导「保存并连接」之外另有一档，设备 + settings.connection.serial 默认值直连（D4 的灌入路径）</text>
+</g>
+<text x="30" y="2182" font-size="12.5" font-weight="700" fill="#1b1f28">实测口径（UI_SERIAL.draft.md §0）：F1 真设备节点存在但 open 回 EACCES ｜ F4 十四档波特率替身可回读 ｜ F5 帧格式（CS6/CS7/单独 PARENB）替身直接 EINVAL ⇒ 不判</text>
+<text x="30" y="2204" font-size="12.5" font-weight="700" fill="#1b1f28">F7 TIOCMGET ENOTTY ⇒ 不做线状态 ｜ F8 设备规程不改写 CR/LF ⇒ 行尾由本仓拼 ｜ F9 替身掉线形态是 EOF 而非 EIO ｜ F10 Win32 腿本机不可编译 ⇒ 推断 / 未验证</text>
+<text x="30" y="2234" font-size="12" fill="#5a6070">本图为草图：尺寸与文案以实现为准；SVG 为事实来源，改图直接改 SVG。评审收口后按 §4 文件布局落 src/。</text>
+</svg>
