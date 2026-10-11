@@ -28,6 +28,7 @@
 
 #include "borealis/session/connection.h"
 #include "borealis/session/damage_queue.h"
+#include "borealis/session/session_log.h"
 #include "borealis/term/codec.h"
 #include "borealis/term/paste.h"
 #include "borealis/term/terminal.h"
@@ -163,6 +164,31 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// @return 待提示的那一批（个数 + 实际生效腿名）；无待提示内容时为 `std::nullopt`。
     auto take_unrepresentable_notice() -> std::optional<UnrepresentableNotice>;
 
+    /// @brief 开始记录本会话的输出到文件（`SPEC.FEAT.CONN.11`，裁决 7.116）。
+    ///
+    /// 运行期动作而不是构造入参：会话构造点有八处，而开启是用户逐会话点出来的（需求那句
+    /// 「默认关闭 + 开启须显式动作」）。只在 UI 线程调用——confirm、正则编译与这唯一一次建文件
+    /// IO 同在开启动作那一刻（裁决 7.116⑤）；此后重复发生的写点全在该会话的读线程上。
+    /// @param spec 路径与三档（时间戳、打码器、上限的测试注入档），由装配层算好交进来。
+    /// @return 见 `LogOutcome`：`CannotOpen` 时会话保持未记录，界面上不得显示「记录中」。
+    auto enable_logging(LogSpec spec) -> LogOutcome;
+
+    /// @brief 停止记录并把末段 flush 出去（右键那条两态文案的「停止会话日志」腿）。
+    ///
+    /// 只停笔、不销毁落盘件——读线程可能正在同轮 `append` 里；一次性提示也要留到主线程取走。
+    /// 幂等：未记录时空转。
+    auto disable_logging() -> void;
+
+    /// @brief 本会话当前是否在记录中（右键菜单两态文案与命令面板标题的取数点，D6①）。
+    ///
+    /// 现读不缓存：UI 侧「记录中」的显示必须跟着会话走，重启会话＝新对象＝回到未记录（D11①）。
+    [[nodiscard]] auto logging_enabled() const -> bool;
+
+    /// @brief 取走「写失败并已自我禁用」那一条一次性提示（帧边界调用，形态照
+    ///        `take_unrepresentable_notice`：锁内只留存，弹窗是主线程的 IO）。
+    /// @return 待提示的日志文件路径；无待提示内容时回 `std::nullopt`。
+    auto take_logging_notice() -> std::optional<std::string>;
+
     /// @brief VT 解析器未知序列计数（`SPEC.NF.RELI.01` 调试面板）。
     ///
     /// 与 `decode_stats` 同走一次短临界区：计数在读线程喂入时推进，主线程只在面板打开那一刻取。
@@ -271,9 +297,17 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// 一批」不会重弹。不复用 `notice_.has_value()`——取走会把 latch 清空，那判据就退化成「每批次
     /// 都上弦」，而粘贴分块一次就产出若干批。
     bool notice_armed_ = false;
+    /// 会话日志落盘件（`SPEC.FEAT.CONN.11`）：`enable_logging` 造、`disable_logging` 只停笔。
+    /// 用 shared_ptr 而不是 unique_ptr 的唯一理由：读线程在锁内取走它的副本、出锁才写（D5①），
+    /// 而 UI 线程可能在这之间换掉或析构——副本让「在途的那一轮」始终对着一个活对象。
+    std::shared_ptr<SessionLog> log_;
+    /// 「是否处于记录态」只由 `log_->is_logging()` 一处回答，会话侧不再存第二份旗标：写失败那次
+    /// 自我禁用发生在落盘件内部，另存一份就会说出「菜单显示记录中、文件里没有新字节」的谎话。
     DamageQueue damage_queue_;
     std::u32string pending_responses_;
     std::u32string decode_buffer_;  ///< 解码产物缓冲：只由读线程触达，留容量免得逐块重新分配。
+    /// 待交日志的那一份码点（与状态机同源，D2①）：只由读线程触达，同 `decode_buffer_`。
+    std::u32string log_pending_;
 };
 
 }  // namespace borealis::session

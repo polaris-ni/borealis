@@ -60,7 +60,12 @@ Session::~Session() {
 
 auto Session::start() -> void { connection_->start(*this); }
 
-auto Session::close() -> void { connection_->close(); }
+auto Session::close() -> void {
+    connection_->close();
+    // 连接侧 join 了读线程之后才停笔：反过来会让「末段 flush」与仍在途的一轮 append 抢同一把
+    // io_mutex_，而末段完整性正是 `SPEC.FEAT.CONN.11` 要的那条判据（标签关闭 ⇒ 末段已落盘）。
+    disable_logging();
+}
 
 auto Session::set_frame_wake(std::function<void()> wake) -> void {
     const std::lock_guard lock{mutex_};
@@ -133,6 +138,57 @@ auto Session::take_unrepresentable_notice() -> std::optional<UnrepresentableNoti
     return notice;
 }
 
+auto Session::enable_logging(LogSpec spec) -> LogOutcome {
+    // 未记录时先答「已在记录中」再建文件：反过来会让一次多余的点按在磁盘上留下一份零字节文件，
+    // 而需求那句「取消 ⇒ 什么都不创建」靠的就是「没确认就别碰文件系统」。
+    {
+        const std::lock_guard lock{mutex_};
+        if (log_ && log_->is_logging()) {
+            return LogOutcome::AlreadyActive;
+        }
+    }
+    // 构造期做一次建文件 IO，且**不在锁内**（架构 §3.4）：开启动作来自 UI 线程的显式点击，
+    // 与 confirm / 正则编译同在那一刻（裁决 7.116⑤），量级是一次 open，不是每帧的 IO。
+    auto candidate = std::make_shared<SessionLog>(std::move(spec));
+    if (!candidate->is_open()) {
+        return LogOutcome::CannotOpen;  // 父目录缺失或权限不足：会话保持未记录，界面不得显示「记录中」
+    }
+    std::shared_ptr<SessionLog> previous;
+    {
+        const std::lock_guard lock{mutex_};
+        previous = std::move(log_);  // 上一次记录留下的旧件：出锁后随本函数返回析构（停笔 + 关文件）
+        log_ = std::move(candidate);
+    }
+    return LogOutcome::Started;
+}
+
+auto Session::disable_logging() -> void {
+    std::shared_ptr<SessionLog> target;
+    {
+        const std::lock_guard lock{mutex_};
+        if (!log_ || !log_->is_logging()) {
+            return;  // 幂等：未记录（含已因写失败自我禁用）时连末段 flush 都不做
+        }
+        target = log_;  // 只停笔不销毁：读线程可能正握着同一份副本在 append
+    }
+    target->stop();  // 出锁才做 IO：末段 flush 是文件系统动作
+}
+
+auto Session::logging_enabled() const -> bool {
+    const std::lock_guard lock{mutex_};
+    return log_ && log_->is_logging();
+}
+
+auto Session::take_logging_notice() -> std::optional<std::string> {
+    std::shared_ptr<SessionLog> target;
+    {
+        const std::lock_guard lock{mutex_};
+        target = log_;
+    }
+    // 取走语义与 BEL / 剪贴板 / 不可表示字符同构（架构 §3.2）：锁内只留存，弹窗是主线程的 IO。
+    return target ? target->take_write_failure() : std::nullopt;
+}
+
 auto Session::parse_stats() const -> vt::ParseStats {
     const std::lock_guard lock{mutex_};
     return terminal_.parse_stats();
@@ -174,6 +230,7 @@ auto Session::on_closed() -> void {
 auto Session::ingest(std::span<const std::byte> bytes, bool end_of_stream) -> void {
     std::vector<Damage> damage;
     std::u32string responses;
+    std::shared_ptr<SessionLog> log_target;
     {
         const std::lock_guard lock{mutex_};
         decode_buffer_.clear();
@@ -184,6 +241,16 @@ auto Session::ingest(std::span<const std::byte> bytes, bool end_of_stream) -> vo
             decoder_->feed(bytes, sink);
         }
         terminal_.feed(decode_buffer_);
+        // 会话日志吃的是**同一份**入向码点（`SPEC.FEAT.CONN.11`，裁决 7.116 D2①）：既不是网格
+        // 屏行（没有软换行标志，还原会把远端一行长输出记成多条换行），也不是解码前的字节。
+        // 锁内只拷贝、不做 IO（架构 §3.4），落盘在出锁之后同轮进行（D5①）。
+        // WHY 这条腿不会跑到主线程上：唯一在主线程喂字节的反例是设置页预览会话（稿 §0 的 F4），
+        // 而装配层从不给它注入 `LogSpec`，钩子未注入即无入口（F17）——将来加「预览也记日志」
+        // 就是在主线程写盘，别改这里，去改装配层那条注入。
+        if (log_ && log_->is_logging()) {
+            log_target = log_;  // 取副本出锁再用：UI 线程可能在这之间停笔换件，副本保证不悬垂
+            log_pending_.assign(decode_buffer_.begin(), decode_buffer_.end());
+        }
         damage = collect_damage();
         responses.swap(pending_responses_);
     }
@@ -199,6 +266,9 @@ auto Session::ingest(std::span<const std::byte> bytes, bool end_of_stream) -> vo
     }
     if (!damage.empty()) {
         wake_frame();  // 一轮批量输入只唤醒一次，且必须在队列已成型之后（否则唤醒的那帧取不到提交）
+    }
+    if (log_target) {
+        log_target->append(log_pending_);  // 排在唤醒之后：一次写盘的耗时不该压在帧调度的前面
     }
 }
 
