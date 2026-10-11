@@ -3,7 +3,7 @@
 <text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">剪贴板读授权：OSC 52 读方向三态闸（默认禁止 · 被拒必回空响应）—— SPEC.FEAT.CONN.12</text>
 <text x="30" y="56" font-size="12.5" fill="#5a6070">UI_CLIPBOARD.draft.svg · 高保真草图（D1–D12 按人已授权的推荐档自决收口，改判位见稿 §3）· 1 dp == 1 px @100% · 圈号 1–6 对应 UI_CLIPBOARD.draft.md §2 的判据标号 · 底部读数＝稿 §0 的 G1–G17</text>
 
-<!-- ============ 屏 A：设置页终端页那一行 + 组顶旁注 ============ -->
+<!-- ============ 屏 A：设置页终端页那一行 + 该行上方的旁注 ============ -->
 <g transform="translate(30,78)">
   <rect x="-1" y="-1" width="1502" height="626" rx="10" fill="#f7f8fb" stroke="#c6cbd8"/>
   <rect x="0" y="0" width="1500" height="38" rx="10" fill="#e9ecf4"/>
@@ -28,18 +28,18 @@
     <text x="14" y="218" font-size="10.5" fill="#5a6070">· schema 键 + 落盘名</text>
     <text x="14" y="234" font-size="10.5" fill="#5a6070">· 表单一枚 Binding</text>
     <text x="14" y="250" font-size="10.5" fill="#5a6070">· 目录一行 dropdown</text>
-    <text x="14" y="266" font-size="10.5" fill="#5a6070">· 词条 + 组顶旁注</text>
+    <text x="14" y="266" font-size="10.5" fill="#5a6070">· 词条 + 该行上方旁注</text>
     <text x="14" y="290" font-size="10.5" fill="#c2410c">核对表总数 64 → 65</text>
     <text x="14" y="306" font-size="10.5" fill="#c2410c">Absent 19 不变</text>
     <text x="14" y="322" font-size="10.5" fill="#c2410c">NextSession 名单不变</text>
   </g>
 
-  <!-- 组顶旁注 -->
+  <!-- 该行上方的旁注 -->
   <g transform="translate(190,58)">
     <rect x="0" y="0" width="1294" height="60" rx="8" fill="#fff6e5" stroke="#FFB86C"/>
-    <text x="14" y="22" font-size="11.5" fill="#8a5a00" font-weight="700">组顶旁注（settings_panel.cpp 的 kGroupNotes 追加这一行 —— D9① 的赔付处：拒绝档静默，界面上得把话说清）</text>
-    <text x="14" y="42" font-size="11.5" fill="#5a4010">「远端读取剪贴板」控制的是 OSC 52 的读方向：默认禁止。选「每次询问」时每条读请求都会问一次；改动即刻对所有在途会话生效。</text>
-    <text x="14" y="56" font-size="10.5" fill="#8a5a00">写方向（远端往本机剪贴板写）不在这道闸里 —— 那是 SPEC.FEAT.TERM.07 已落的口径，D10① 明确不并管，故措辞只写「读取」。</text>
+    <text x="14" y="22" font-size="11.5" fill="#8a5a00" font-weight="700">那一行上方的旁注（settings_panel.cpp 的 kGroupNotes 追加一行，挂在 terminal.clipboard_read 自己那行上方而不是终端页组顶 —— D9① 的赔付处：拒绝档静默，界面上得把话说清）</text>
+    <text x="14" y="42" font-size="11.5" fill="#5a4010">三态各档的后果：deny 与超限都只回送一条空响应，不弹提示、屏上也查不到；改档即刻对所有在途标签生效；ask 档每条读请求各问一次（同一会话最多同时挂 8 条，超出当场按 deny 答）。</text>
+    <text x="14" y="56" font-size="10.5" fill="#8a5a00">写方向（远端往本机剪贴板写）不在这道闸里 —— 那是 SPEC.FEAT.TERM.07 已落的口径，D10① 明确不并管。旁注里的三档名照上屏候选原文写（批 3 实测：下拉不做本地化）。</text>
   </g>
 
   <!-- 行表 -->
@@ -58,24 +58,25 @@
 
     <text x="14" y="98" font-size="12" fill="#1b1f28">远端读取剪贴板（OSC 52）</text>
     <rect x="360" y="82" width="230" height="24" rx="4" fill="#ffffff" stroke="#7c3aed" stroke-width="1.6"/>
-    <text x="372" y="99" font-size="11.5" fill="#5b21b6" font-weight="700">禁止</text>
+    <text x="372" y="99" font-size="11.5" fill="#5b21b6" font-weight="700">deny</text>
     <text x="578" y="99" font-size="11" fill="#7c3aed" text-anchor="end">▾</text>
     <text x="610" y="99" font-size="10.5" fill="#7c3aed" font-family="monospace">terminal.clipboard_read</text>
     <g transform="translate(-4,120)">
       <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
       <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">1</text>
-      <text x="16" y="4" font-size="11.5" fill="#1b1f28">判据 1 · D1①：缺省选中位＝「禁止」</text>
+      <text x="16" y="4" font-size="11.5" fill="#1b1f28">判据 1 · D1①：缺省选中位＝deny（禁止）</text>
     </g>
 
-    <!-- 展开的下拉 -->
+    <!-- 展开的下拉：候选就是落盘名， shipped 形态（批 3 实测，见下那行红字） -->
     <rect x="360" y="108" width="230" height="100" rx="6" fill="#ffffff" stroke="#7c3aed" stroke-dasharray="4 3"/>
     <rect x="362" y="110" width="226" height="26" rx="4" fill="#f2ecfd"/>
-    <text x="374" y="128" font-size="11.5" fill="#5b21b6">禁止</text>
-    <text x="576" y="128" font-size="10" fill="#7c3aed" text-anchor="end">deny ●缺省</text>
-    <text x="374" y="154" font-size="11.5" fill="#1b1f28">允许</text>
-    <text x="576" y="154" font-size="10" fill="#8a90a0" text-anchor="end">allow</text>
-    <text x="374" y="180" font-size="11.5" fill="#1b1f28">每次询问</text>
-    <text x="576" y="180" font-size="10" fill="#8a90a0" text-anchor="end">ask</text>
+    <text x="374" y="128" font-size="11.5" fill="#5b21b6" font-family="monospace">deny</text>
+    <text x="576" y="128" font-size="10" fill="#7c3aed" text-anchor="end">●缺省＝禁止</text>
+    <text x="374" y="154" font-size="11.5" fill="#1b1f28" font-family="monospace">allow</text>
+    <text x="576" y="154" font-size="10" fill="#8a90a0" text-anchor="end">＝允许</text>
+    <text x="374" y="180" font-size="11.5" fill="#1b1f28" font-family="monospace">ask</text>
+    <text x="576" y="180" font-size="10" fill="#8a90a0" text-anchor="end">＝每次询问</text>
+    <text x="374" y="200" font-size="9.5" fill="#c2410c">批 3 实测：候选就是落盘名，面板不做本地化（right_click / paste_newlines 同例）</text>
     <g transform="translate(-4,232)">
       <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
       <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">2</text>

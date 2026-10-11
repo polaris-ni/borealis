@@ -219,6 +219,14 @@ namespace {
                                {"context_menu", "paste", "copy_on_select"},
                                ConsumerStatus::Wired,
                                EffectLevel::Immediate));
+    // 读方向的授权档（`SPEC.FEAT.CONN.12`，裁决 D2①）：行序紧随同族的 `right_click`，终端页其余
+    // 行序不动。效果档是 **Immediate** 而不是 `NextSession`——这一档关掉的是「远端能不能读你的
+    // 剪贴板」，延后生效等于给安全闸留一个跨标签的洞；落法是 app 级一份闸门被现读，不扩广播。
+    catalog.push_back(dropdown("terminal.clipboard_read",
+                               SettingsPage::Terminal,
+                               {"deny", "allow", "ask"},
+                               ConsumerStatus::Wired,
+                               EffectLevel::Immediate));
     catalog.push_back(toggle(
         "terminal.copy_on_select", SettingsPage::Terminal, ConsumerStatus::Wired, EffectLevel::Immediate));
     catalog.push_back(toggle(

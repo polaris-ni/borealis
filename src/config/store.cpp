@@ -495,6 +495,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
              static_cast<std::int64_t>(terminal.unrepresentable));
     put_enum(node, "paste_newlines", kPasteNewlineNames, static_cast<std::int64_t>(terminal.paste_newlines));
     put_enum(node, "right_click", kRightClickNames, static_cast<std::int64_t>(terminal.right_click));
+    put_enum(node, "clipboard_read", kClipboardReadNames,
+             static_cast<std::int64_t>(terminal.clipboard_read));
     put(node, "copy_on_select", terminal.copy_on_select);
     put(node, "trim_pasted_trailing_space", terminal.trim_pasted_trailing_space);
     put(node, "smart_line_join", terminal.smart_line_join);
@@ -790,6 +792,10 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
         "paste_newlines", kPasteNewlineNames, static_cast<std::int64_t>(defaults.terminal.paste_newlines)));
     terminal.right_click = static_cast<RightClickAction>(
         scope.enumerated("right_click", kRightClickNames, static_cast<std::int64_t>(defaults.terminal.right_click)));
+    // 读方向的授权档：缺省取 `defaults` 那份（即 `Deny`），故「配置里没有这一行」与「显式写着 deny」
+    // 同档——判据 ① 要的是「没配过就不给读」，而不是「没配过就按上一次记住的给」。
+    terminal.clipboard_read = static_cast<term::ClipboardReadPolicy>(scope.enumerated(
+        "clipboard_read", kClipboardReadNames, static_cast<std::int64_t>(defaults.terminal.clipboard_read)));
     terminal.copy_on_select = scope.boolean("copy_on_select", defaults.terminal.copy_on_select);
     terminal.trim_pasted_trailing_space =
         scope.boolean("trim_pasted_trailing_space", defaults.terminal.trim_pasted_trailing_space);

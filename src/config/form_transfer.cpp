@@ -292,6 +292,13 @@ auto assign_shortcuts(Settings &settings, const FormValue &value) -> void {
         Binding{"terminal.right_click",
                 [](const Settings &s) -> FormValue { return enumerated(s.terminal.right_click, kRightClickNames); },
                 [](Settings &s, const FormValue &v) { assign_enum(s.terminal.right_click, v, kRightClickNames); }},
+        Binding{"terminal.clipboard_read",
+                [](const Settings &s) -> FormValue {
+                    return enumerated(s.terminal.clipboard_read, kClipboardReadNames);
+                },
+                [](Settings &s, const FormValue &v) {
+                    assign_enum(s.terminal.clipboard_read, v, kClipboardReadNames);
+                }},
         Binding{"terminal.copy_on_select",
                 [](const Settings &s) -> FormValue { return FormValue::boolean(s.terminal.copy_on_select); },
                 [](Settings &s, const FormValue &v) { assign(s.terminal.copy_on_select, v); }},

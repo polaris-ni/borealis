@@ -763,6 +763,18 @@ AURORA_TEST_CASE(a_wired_immediate_change_persists_once_and_broadcasts_once) {
     AURORA_TEST_CHECK_TRUE(probe.broadcast[0].terminal.right_click == borealis::ui::RightClickAction::Paste);
     AURORA_TEST_CHECK_FALSE(panel.form().has_unsaved_changes());
     AURORA_TEST_CHECK_TRUE(panel.form().apply_scope("terminal.right_click") == ApplyScope::PersistAndApplyNow);
+
+    // 第二枚即时档：`SPEC.FEAT.CONN.12` 的读方向授权档。本例只证「这一行在表里是已接线 ∧ 即时」，
+    // 即改档会走广播而不是攒到下次会话——闸门的现读语义由 `itest_clipboard_read` 那侧判。
+    probe.reset_counters();
+    AURORA_TEST_REQUIRE_EQ(panel.commit("terminal.clipboard_read", FormValue::text("ask")), CommitIssue::None);
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 1U);
+    AURORA_TEST_CHECK_TRUE(probe.persisted.back().terminal.clipboard_read ==
+                           borealis::term::ClipboardReadPolicy::Ask);
+    AURORA_TEST_CHECK_TRUE(probe.broadcast.back().terminal.clipboard_read ==
+                           borealis::term::ClipboardReadPolicy::Ask);
+    AURORA_TEST_CHECK_TRUE(panel.form().apply_scope("terminal.clipboard_read") == ApplyScope::PersistAndApplyNow);
 }
 
 AURORA_TEST_CASE(a_persist_only_change_writes_but_does_not_broadcast) {
@@ -2258,8 +2270,9 @@ AURORA_TEST_CASE(a_real_click_below_the_enclosing_row_picks_the_option_under_it_
 /// 契约，故这里只认「提交确实走完了表单与落盘」那一段，键名交给既有的按键用例去守。
 ///
 /// 滚轮落点取终端页第 0 行那枚步进器：外观页在 #114 之后被两个区段（主题卡 + 16 格色板）把通用控件行整体
-/// 下推，offset 0 的可见带里根本没有开关，而本例要的开关在终端页只往下滚几档就在带内。落点本身要的是
-/// 「确实落在行区内」这一条，故由 `row_scroll()` 在派发链上现问而不是猜一个坐标。
+/// 下推，offset 0 的可见带里根本没有开关，而本例要的开关在终端页往下滚若干档就在带内——档数不写死，逐档滚到
+/// 找着为止（写死就等于把判据挂在内容高度上，批 3-A 新增的一行下拉 + 一行旁注正是这样把它打红的）。
+/// 落点本身要的是「确实落在行区内」这一条，故由 `row_scroll()` 在派发链上现问而不是猜一个坐标。
 AURORA_TEST_CASE(a_row_control_still_commits_after_the_row_area_has_been_scrolled) {
     borealis::ui::install_settings_strings();
     Harness h;
@@ -2275,16 +2288,21 @@ AURORA_TEST_CASE(a_row_control_still_commits_after_the_row_area_has_been_scrolle
     AURORA_TEST_REQUIRE(area != nullptr);
     AURORA_TEST_REQUIRE_EQ(area->offset_y(), 0.0F);
 
-    // 先把开关送进可见带（八档 × 16 dp ＝ 内容上移 128 dp），再按本例的判据往下走。
-    for (int notch = 0; notch < 8; ++notch) {
-        h.scroll(anchor.x, anchor.y, -1.0F);
-    }
-    h.render();
-    const HitSpot spot = h.find_first(
-        "Switch", 0.0F, [](au::Widget *widget) -> bool {
+    // 先把开关送进可见带。档数**不写死**：本行上方新增的下拉行与旁注会改内容高度，而本例的契约是
+    // 文件头那句「只认滚完之后确实命中一枚关闭态开关，不去赌排版算出来的偏移」——故逐档滚到找着为止，
+    // 上限只防「滚到底也没有」那种真回归（终端页有四枚关闭态开关，滚满必然经过它们）。
+    auto first_closed_switch = [&h]() -> HitSpot {
+        return h.find_first("Switch", 0.0F, [](au::Widget *widget) -> bool {
             auto *sw = dynamic_cast<au::Switch *>(widget);
             return sw != nullptr && !sw->value();
         });
+    };
+    HitSpot spot = first_closed_switch();
+    for (int notch = 0; notch < 40 && spot.widget == nullptr; ++notch) {
+        h.scroll(anchor.x, anchor.y, -1.0F);
+        h.render();
+        spot = first_closed_switch();
+    }
     AURORA_TEST_REQUIRE(spot.widget != nullptr);
 
     // 三档 × 框架缺省 `step` 16 dp ＝ 内容上移 48 dp（负 `delta_y` 是往下滚，符号约定同 `ScrollViewport`）。
@@ -2297,11 +2315,7 @@ AURORA_TEST_CASE(a_row_control_still_commits_after_the_row_area_has_been_scrolle
     // 少了这一句，本例就只是「读到一个非零偏移」而没有证到派发面跟着挪。
     AURORA_TEST_REQUIRE(h.hit(spot.x, spot.y) != spot.widget);
 
-    const HitSpot moved = h.find_first(
-        "Switch", 0.0F, [](au::Widget *widget) -> bool {
-            auto *sw = dynamic_cast<au::Switch *>(widget);
-            return sw != nullptr && !sw->value();
-        });
+    const HitSpot moved = first_closed_switch();
     AURORA_TEST_REQUIRE(moved.widget != nullptr);
     auto *toggle = dynamic_cast<au::Switch *>(moved.widget);
     AURORA_TEST_REQUIRE(toggle != nullptr);
@@ -2328,6 +2342,9 @@ AURORA_TEST_CASE(a_row_control_still_commits_after_the_row_area_has_been_scrolle
 /// 判它会把正确实现读成红）；步进器与开关两腿放在**终端页**，因为外观页 #114 的两个区段把第 8 行以后的
 /// 通用控件推出了可见带，而终端页第一行就是步进器。开关在那一页也排在第 8 行之后，故先真滚若干档再探——
 /// 判据只认「滚完之后确实命中一枚关闭态开关」，不去赌排版算出来的偏移。
+///
+/// 下拉那一腿因此放在**滚之前**：「盒内靠上避开字形」只在可达框**未被视口裁切**时成立，裁过之后同一个
+/// 分数就落到标签字形上（批 3-A 给终端页加了一行下拉与一行旁注，可见带随之移位，实测读到近白的文本色）。
 AURORA_TEST_CASE(the_editable_controls_paint_the_chrome_colors_not_the_light_defaults) {
     borealis::ui::install_settings_strings();
     Harness h;
@@ -2358,28 +2375,35 @@ AURORA_TEST_CASE(the_editable_controls_paint_the_chrome_colors_not_the_light_def
     AURORA_TEST_REQUIRE(spin_spot.widget != nullptr);
     AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(spin_spot, 0.5, 0.12)));
 
-    // 开关关闭态轨道：缺省 {180,180,180} 是全部浅色缺省里最低的一档，仍必须被这条线抓住。
-    // 往下滚 8 档（框架缺省 `step` 16 dp ＝ 内容上移 128 dp）把终端页第 8 行那四枚开关送进可见带。
-    au::Scroll *area = h.row_scroll(spin_spot.x, spin_spot.y);
-    AURORA_TEST_REQUIRE(area != nullptr);
-    for (int notch = 0; notch < 8; ++notch) {
-        h.scroll(spin_spot.x, spin_spot.y, -1.0F);
-    }
-    h.render();
-    AURORA_TEST_CHECK_GT(area->offset_y(), 0.0F);
-    const HitSpot toggle_spot = h.find_first(
-        "Switch", 0.0F, [](au::Widget *widget) -> bool {
-            auto *sw = dynamic_cast<au::Switch *>(widget);
-            return sw != nullptr && !sw->value();
-        });
-    AURORA_TEST_REQUIRE(toggle_spot.widget != nullptr);
-    AURORA_TEST_CHECK_EQ(static_cast<int>(toggle_spot.widget->paint_bounds().size.height), 24);
-    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(toggle_spot, 0.8, 0.5)));
-
     // 下拉主框（选项面板与主框共用同一份 `box_color_`，故主框这一读也守住了展开的那一片）。
+    // 取在**滚之前**：本腿按框内分数 (0.5, 0.12) 采的是主框顶边那条无字带，而 `find_first` 量出的可达框
+    // 是**被视口裁过**的那一段——内容一滚，第一枚下拉的可见框只剩 17 dp，同一个分数就落到标签字形上
+    // （实测读到 {243,243,238}，正是本件的文本色：红得对，但判的已经不是 chrome）。offset 0 时终端页
+    // 第 2 行那枚下拉完整可见，取点与「滚了几档」无关；下面那腿非滚不可，故两腿不再共用一次滚动。
     const HitSpot dropdown_spot = h.find_first("Dropdown");
     AURORA_TEST_REQUIRE(dropdown_spot.widget != nullptr);
     AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(dropdown_spot, 0.5, 0.12)));
+
+    // 开关关闭态轨道：缺省 {180,180,180} 是全部浅色缺省里最低的一档，仍必须被这条线抓住。
+    // 档数同样不写死（理由与本文件上一条用例一致：内容高度随表长，契约只是「滚到一枚关闭态开关」）。
+    au::Scroll *area = h.row_scroll(spin_spot.x, spin_spot.y);
+    AURORA_TEST_REQUIRE(area != nullptr);
+    auto closed_switch_in_band = [&h]() -> HitSpot {
+        return h.find_first("Switch", 0.0F, [](au::Widget *widget) -> bool {
+            auto *sw = dynamic_cast<au::Switch *>(widget);
+            return sw != nullptr && !sw->value();
+        });
+    };
+    HitSpot toggle_spot = closed_switch_in_band();
+    for (int notch = 0; notch < 40 && toggle_spot.widget == nullptr; ++notch) {
+        h.scroll(spin_spot.x, spin_spot.y, -1.0F);
+        h.render();
+        toggle_spot = closed_switch_in_band();
+    }
+    AURORA_TEST_CHECK_GT(area->offset_y(), 0.0F);
+    AURORA_TEST_REQUIRE(toggle_spot.widget != nullptr);
+    AURORA_TEST_CHECK_EQ(static_cast<int>(toggle_spot.widget->paint_bounds().size.height), 24);
+    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(toggle_spot, 0.8, 0.5)));
 }
 
 /// @brief G28 的接货复验：按钮标签交回框架的 i18n 查表，本件不再预先解析成 `std::string`。

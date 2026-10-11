@@ -48,6 +48,7 @@ using borealis::config::Store;
 using borealis::config::TabNamePriority;
 using borealis::config::theme_palette;
 using borealis::term::AmbiguousWidth;
+using borealis::term::ClipboardReadPolicy;
 using borealis::term::CursorShape;
 using borealis::ui::kDefaultMonospaceFamily;
 using borealis::ui::RgbaColor;
@@ -126,6 +127,9 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     next.terminal.encoding = "GBK";
     next.terminal.paste_newlines = PasteNewlinePolicy::Convert;
     next.terminal.right_click = RightClickAction::Paste;
+    // 读方向授权档刻意取「询问」而非「允许」：缺省是 `Deny`，只有离缺省最远的那一档才同时判得出
+    // 「写侧漏键」和「读侧把缺省当显式值回落」（`SPEC.FEAT.CONN.12` 判据 ① 的三档都在表里）。
+    next.terminal.clipboard_read = ClipboardReadPolicy::Ask;
     next.terminal.copy_on_select = true;
     next.terminal.trim_pasted_trailing_space = true;
     next.terminal.smart_line_join = true;
@@ -568,6 +572,8 @@ AURORA_TEST_CASE(defaults_are_the_first_launch_shape) {
     AURORA_TEST_CHECK_TRUE(defaults.terminal.long_line == LongLinePolicy::Truncate);
     AURORA_TEST_CHECK_EQ(defaults.terminal.encoding, "UTF-8");
     AURORA_TEST_CHECK_TRUE(defaults.terminal.right_click == RightClickAction::ContextMenu);
+    // 读方向缺省禁止是判据 ① 的第一道闸：首启即「远端读不到本地剪贴板」，放开必须由用户显式改档。
+    AURORA_TEST_CHECK_TRUE(defaults.terminal.clipboard_read == ClipboardReadPolicy::Deny);
     AURORA_TEST_CHECK_FALSE(defaults.terminal.copy_on_select);
 
     // 缺省界定符是 ASCII 可见标点全集（裁决 7.38③）。判据取其不变量而不是逐字符抄一遍默认值：

@@ -56,6 +56,14 @@ inline constexpr std::array<EnumName, 3> kRightClickNames{{
     {"copy_on_select", static_cast<std::int64_t>(RightClickAction::CopyOnSelect)},
 }};
 
+// 读方向的授权档（`SPEC.FEAT.CONN.12`）：三档的名字就是需求判据 ①② 里那三个词，而 `deny` 排在
+// 首位不是枚举顺序的巧合——落盘名是对外契约，改档名等于让老配置里那一行读不回来。
+inline constexpr std::array<EnumName, 3> kClipboardReadNames{{
+    {"deny", static_cast<std::int64_t>(term::ClipboardReadPolicy::Deny)},
+    {"allow", static_cast<std::int64_t>(term::ClipboardReadPolicy::Allow)},
+    {"ask", static_cast<std::int64_t>(term::ClipboardReadPolicy::Ask)},
+}};
+
 inline constexpr std::array<EnumName, 2> kTabNamePriorityNames{{
     {"manual_wins", static_cast<std::int64_t>(TabNamePriority::ManualWins)},
     {"osc_wins", static_cast<std::int64_t>(TabNamePriority::OscWins)},

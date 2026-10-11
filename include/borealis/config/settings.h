@@ -26,6 +26,7 @@
 #include "borealis/conn/profile.h"
 #include "borealis/conn/tunnel.h"
 #include "borealis/grid/storage.h"
+#include "borealis/term/clipboard_read.h"
 #include "borealis/term/codec.h"
 #include "borealis/term/paste.h"
 #include "borealis/term/terminal.h"
@@ -149,6 +150,14 @@ struct TerminalSettings {
 
     PasteNewlinePolicy paste_newlines{PasteNewlinePolicy::AsIs};
     RightClickAction right_click{RightClickAction::ContextMenu};
+    /// @brief 远端 `OSC 52` 读本地剪贴板的授权档（`SPEC.FEAT.CONN.12`，裁决 D1①／D2①）。
+    ///
+    /// 缺省 `Deny` 是判据 ①而不是保守：需求原文把「默认禁止」写进了验收。标识域是 CONN 而键落在
+    /// `terminal` 域（同 `terminal.encoding` 服务四条腿那条先例），因为读它的是终端状态机。
+    /// 生效口径是**现读**——装配层把这一档写进一份 app 级 `term::ClipboardGate`，而不是像
+    /// `TerminalDefaults` 那样取构造期快照：这一档关掉的是「远端能不能读你的剪贴板」，
+    /// 改档延后生效等于留一个跨标签的洞。
+    term::ClipboardReadPolicy clipboard_read{term::ClipboardReadPolicy::Deny};
     bool copy_on_select{false};             ///< 选中即复制（`SPEC.FEAT.INTERACT.03` 明确默认关闭）。
     bool trim_pasted_trailing_space{false}; ///< 复制三项开关之一，默认关闭以保留原样。
     bool smart_line_join{false};            ///< 跨行反斜杠续行智能合并。

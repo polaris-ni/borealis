@@ -35,6 +35,7 @@ using borealis::config::apply_form;
 using borealis::config::Settings;
 using borealis::config::Store;
 using borealis::term::AmbiguousWidth;
+using borealis::term::ClipboardReadPolicy;
 using borealis::term::CursorShape;
 using borealis::ui::ControlKind;
 using borealis::ui::FormEntry;
@@ -91,6 +92,9 @@ constexpr std::size_t kPaletteSlots = 16U;
     settings.terminal.encoding = "GB18030";
     settings.terminal.paste_newlines = borealis::config::PasteNewlinePolicy::Convert;
     settings.terminal.right_click = borealis::config::RightClickAction::Paste;
+    // 读方向授权档（`SPEC.FEAT.CONN.12`）取离缺省最远的「询问」：`deny` 恰是缺省档，Binding 把
+    // 这行接到任何别的成员上都只会读出 `deny`，唯有非缺省值能现形。
+    settings.terminal.clipboard_read = ClipboardReadPolicy::Ask;
     settings.terminal.copy_on_select = true;
     settings.terminal.smart_line_join = true;
     settings.terminal.word_delimiters = "!?";

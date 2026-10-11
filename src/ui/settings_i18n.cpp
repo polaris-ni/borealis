@@ -396,6 +396,16 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"session.log.alert.write_failed", "日志写入失败，已停止记录"},
     {"settings.note.session_log",
      "能力闸：开启后仍需逐会话显式点「开启会话日志」。日志目录里的旧文件本期不清理、不轮转。"},
+    // 读方向那道闸的旁注（`SPEC.FEAT.CONN.12`，裁决 D9① 的**赔付处**）：拒绝档是刻意静默的——
+    // 远端程序安装脚本与 `viminfo` 探测都会常规地读一次剪贴板，逐条弹提示就成了弹窗骚扰；而那一族
+    // 计数住在 `OscState` 里、调试面板本期不渲染 OSC 那一行（G17），于是屏幕上**查不到**任何痕迹。
+    // 「界面上把话说清」因此不是措辞偏好而是唯一可用的赔付：把三档各自的后果一次讲完。
+    // 三档名**照上屏的候选原文写**（`deny` / `allow` / `ask`）而不是译成「禁止 / 允许 / 每次询问」：
+    // 面板的下拉直接把落盘名交给 `aurora::Dropdown`（批 3 实测，`right_click` 与 `paste_newlines` 同例），
+    // 旁注若改用另一套中文名，用户就在框里找不到旁注所说的那一档——赔付就成了新的困惑源。
+    {"settings.note.clipboard_read",
+     "三态各档的后果：deny 与超限都只回送一条空响应，不弹提示、屏上也查不到；改档即刻对所有在途"
+     "标签生效；ask 档每条读请求各问一次（同一会话最多同时挂 8 条，超出当场按 deny 答）。"},
 
     // ---- 命令面板（`SPEC.FEAT.WS.07`，判据文 `codespec/UI_WORKSPACE.draft.md` §4）----
     // 占位符与空态两条的 **key 由框架命名**（`CommandPalette::AURORA_DEFAULT_*_KEY`，G38 / G39 回货形
@@ -457,6 +467,11 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"terminal.unrepresentable", "不可表示字符处置"},
     {"terminal.paste_newlines", "粘贴换行处理"},
     {"terminal.right_click", "右键行为"},
+    // 该行标签（`SPEC.FEAT.CONN.12`，裁决 D1① 把键放在 `terminal` 域而标识属连接域）。措辞按 D10①
+    // 收窄到「读取」：写方向是 `TERM.07` 已落的「默认允许」，不归这道闸管，写成「剪贴板授权」就是
+    // 让一行设置涵盖它没做的事。三档候选不在这里——面板的下拉直接吃落盘名（`aurora::Dropdown`
+    // 收 `choices` 原样显示，同族的 `right_click` / `paste_newlines` 一样没有候选词条）。
+    {"terminal.clipboard_read", "远端读取剪贴板"},
     // 读方向的授权一问（`SPEC.FEAT.CONN.12`）：这两句不是设置项标签，而是视口那枚模态框的标题与
     // 正文，走同一张表是为了让「上屏文案只在词条表一处」这条纪律不被破例。正文那一句「拒绝会回送
     // 一条空响应」不是修辞：裁决 D5 要框里说清「不给会怎样」，而 `Dialog` 没有关闭叉、遮罩不答，

@@ -361,6 +361,9 @@ struct GroupNote {
 constexpr GroupNote kGroupNotes[] = {
     {"appearance.status_bar.show_connection", "settings.note.status_bar"},
     {"connection.session_logging", "settings.note.session_log"},
+    // 读方向那道闸的旁注挂在**它自己那一行**上方而不是终端页组顶：这一行讲的是三态各自的后果，
+    // 与同页其它行（回滚、编码、右键行为）无关，放在组顶就成了「一段话管不着下面十几行」。
+    {"terminal.clipboard_read", "settings.note.clipboard_read"},
     {"connection.ssh.port", "settings.note.ssh"},
     {"connection.serial.baud", "settings.note.serial"},
     {"shortcuts.overrides", "settings.note.shortcuts"},

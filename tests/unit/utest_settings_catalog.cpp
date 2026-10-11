@@ -287,9 +287,10 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // 双向：落盘里有而表里没有 = 面板漏画控件；表里有而落盘里没有 = 面板画了存不回去的控件。
     AURORA_TEST_CHECK_MSG(leaves == keys, "leaves=[" + join(leaves) + "] table=[" + join(keys) + "]");
     AURORA_TEST_CHECK_EQ(leaves.size(), keys.size());
-    // 64 行＝写出的全部偏好键；串口侧第七键 `connection.serial.flow` 随裁决 7.110 D3① 进表，
-    // CONN.11 的追加敏感正则 `connection.session_log_pattern` 随裁决 7.116 D10 改判进表。
-    AURORA_TEST_CHECK_EQ(keys.size(), 64U);
+    // 65 行＝写出的全部偏好键；串口侧第七键 `connection.serial.flow` 随裁决 7.110 D3① 进表，
+    // CONN.11 的追加敏感正则 `connection.session_log_pattern` 随裁决 7.116 D10 改判进表，
+    // CONN.12 的读方向授权档 `terminal.clipboard_read` 随裁决 D1① 进表（键在终端域、标识属连接域）。
+    AURORA_TEST_CHECK_EQ(keys.size(), 65U);
 }
 
 AURORA_TEST_CASE(keys_are_unique_and_rows_are_addressable) {
