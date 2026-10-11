@@ -173,7 +173,7 @@
     <text x="238" y="164" font-size="10.5" fill="#62728A">问不问由主线程定</text>
 
     <text x="0" y="196" font-size="11" fill="#F8F8F2">队列有界 8（D4① 逐条答，不照写方向合并 —— 读是「别人在等自己那一条」）</text>
-    <text x="0" y="214" font-size="11" fill="#62728A">第 9 条丢最旧并计数 ⇒ 判据 ⑥「本地资源不被无限抽走」的第一道闸</text>
+    <text x="0" y="214" font-size="11" fill="#62728A">第 9 条当场回空响应、前 8 条留队 ⇒ 判据 ⑥ 的第一道闸</text>
     <text x="0" y="236" font-size="11" fill="#8BE9FD">Pc 回显（D8①）：52;c;p;? 回显首段 c；52;? 无 Pc 段回显 c</text>
     <text x="0" y="254" font-size="11" fill="#62728A">不做选择位分离：s/p/0–7 在框架侧无处可取（G8）⇒ §7 在册</text>
 

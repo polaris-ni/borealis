@@ -65,9 +65,9 @@
 | 1 | 默认禁止 | 屏 A 下拉的缺省选中位 | `utest_config` 缺省档 + `utest_terminal_osc` 的 deny 分派 |
 | 2 | 三态可配、可开启 | 屏 A 三个候选 | `utest_settings_catalog`（行数 +1）+ `utest_form_transfer`（该键往返）|
 | 3 | 被拒 ⇒ 回写空响应而非静默 | 屏 B 的「拒绝」按钮与屏 C 的降级三档 | `utest_session`（既有那条 G2 扩成三态矩阵）+ `itest_clipboard_read` |
-| 4 | 允许 ⇒ 真的把内容给出去（base64 且逐字节可还原） | 屏 B 的「允许」按钮 | `utest_term_base64`（编码件逐档）+ `itest_clipboard_read`（经替身剪贴板断回写串） |
+| 4 | 允许 ⇒ 真的把内容给出去（base64 且逐字节可还原） | 屏 B 的「允许」按钮 | `utest_term_clipboard_read`（`encode_base64` 逐档 + 与解码件往返互逆，D11 已并件）+ `itest_clipboard_read`（经替身剪贴板断回写串） |
 | 5 | 询问档不挂起：任何出口都回写 | 屏 B 的关闭叉与遮罩点击 | `itest_clipboard_read` 的「未答即关 ⇒ 空响应」「取消 ⇒ 空响应」 |
-| 6 | 本地资源不被无限抽走 | 屏 C 的上限留痕 | `utest_term_clipboard_read` 的小上限覆盖档 |
+| 6 | 本地资源不被无限抽走 | 屏 C 的上限留痕 | `utest_term_clipboard_read` 的满档当场回绝档 |
 
 ---
 
@@ -78,7 +78,7 @@
 | **D1** | 键放哪个域 | ① `terminal.clipboard_read`（终端页）；② `connection.clipboard_read`（连接页）；③ 把 `appearance.status_bar.show_clipboard_policy` 那格扩成三态 | **①** | 读它的是 `term` 层的状态机（G1），同族的交互三态（`right_click`、`paste_newlines`）都在终端页（G10），而 `UI_SETTINGS` 稿的脚注位置也写的就是终端页。② 会让 `term`/`session` 反向依赖连接域；③ 把「显示位」当「授权档」用，是把两格语义并成一层。**代价**：需求标识属连接域（CONN.12）而键在 `terminal` 域——这条「标识域 ≠ schema 域」的先例已有（`terminal.encoding` 同时服务串口/SSH/Telnet），在裁决与核对表注释里写明即可 |
 | **D2** | 改档什么时候生效 | ① **现读**（改档即刻对全部在途会话生效）；② `NextSession`（照 `TerminalDefaults` 的构造期快照） | **①** | 这一档关掉的是「远端能不能读你的剪贴板」。② 的后果是用户在 A 标签点了「禁止」而 B 标签的远端照样能读——那不是延迟生效，是安全洞；而 G15 证明装配层的广播**本来就只到当前标签**，走② 还得先把广播扩到全部标签（一处既有语义的改动）。① 的落法不新增广播：闸门是一份**跨会话共享的原子值**，状态机在 `apply_clipboard` 里现读（读一枚 atomic 不是 IO，不违反 §3.4）。**代价**：`term` 层多一枚非持有指针（先例是 `set_response_sink` 的同款裸观察指针，生命周期由装配层保证）；未接线即 fail-closed 按 `deny`——这正是想要的失败方向 |
 | **D3** | 谁去读剪贴板、在哪儿回写 | ① 状态机只**登记**待答请求，主线程帧边界经 `ClipboardOutbox` 读＋编码＋`Session::send_text` 回写；② 状态机直接读（锁内 IO） | **①** | ② 直接违反架构 §3.4 与 AGENTS §4.5 第 25 条，而 G9 说这次读是**一次子进程往返**——把它放进网格锁等于让一次 `xsel` 阻塞该会话的解码与另一线程的取网格。① 与写方向同构（G7），装配层已有的「每帧对全部标签每个会话排一次 `outbox`」那条腿就是它的位置（G7）。**代价**：应答延后到下一帧（本仓帧口径 16 ms 量级），对「等回应的远端程序」而言无感 |
-| **D4** | 同一帧内多条读请求怎么办 | ① 逐条答（按登记序回写，队列有界，超出即丢弃并计数）；② 合并成最后一份（照写方向 `take_clipboard_write`） | **①**，上限 `kMaxClipboardReadRequests = 8` | 写方向能合并是因为它落的是**本地资源**（同一格剪贴板，后写覆盖前写）；读方向是**别人在等自己的那一条**——`52;c;?` 与 `52;p;?` 问的不是同一格（G8 之后我们答的是同一份内容，但 Pc 段回显不同），合并就是让先问的那条永远收不到回应。8 条上限定的是「远端拿一条输出把我们的写腿喷满」的下限。**代价**：`term` 层要一张小队列而不是 `optional` |
+| **D4** | 同一帧内多条读请求怎么办 | ① 逐条答（按登记序回写，队列有界，满档那一条**当场回空响应**并计数）；② 合并成最后一份（照写方向 `take_clipboard_write`） | **①**，上限 `kMaxClipboardReadRequests = 8`；**实现后改口**：原写「超出丢最旧并计数」，与判据 ③「被拒 ⇒ 有回写」直接冲突（悄悄丢掉＝让先问的那条远端一直等），故满档走拒绝路径而非淘汰路径 写方向能合并是因为它落的是**本地资源**（同一格剪贴板，后写覆盖前写）；读方向是**别人在等自己的那一条**——`52;c;?` 与 `52;p;?` 问的不是同一格（G8 之后我们答的是同一份内容，但 Pc 段回显不同），合并就是让先问的那条永远收不到回应。8 条上限定的是「远端拿一条输出把我们的写腿喷满」的下限。**代价**：`term` 层要一张小队列而不是 `optional` |
 | **D5** | `ask` 档的界面形态 | ① 视口内非模态卡（照 TERM.09 的一次性提示卡）；② 模态 `au::confirm` 浮层，逐条一问；③ 全局一问 +「记住」写回设置 | **②** | ② 的异步 answer 形状在仓里已有先例（G14 的 `confirm_multiline`：留空即回落默认、可脱界面用替身断言），而本判据要的正是「不答就什么都不能发生」。① 的非模态卡服务的是「通知」（TERM.09 那次），授权决定不该在用户没看时被下一次点击顺带吃掉。③ 的「记住」是跨会话状态，本期没有它的判据（`§7` 在册）。**代价**：模态一问＝该窗口内其它操作在用户点之前停住；远端连发多条时会话级最多问 8 次（D4 的上限同时是骚扰上限） |
 | **D6** | 未答／关框／超时怎么兜底 | ① 一直等到用户答（**任何出口**都回写一条，关框＝拒绝档空响应）；② 5 s 超时按拒绝回写（照 TERM.09 的自收档）；③ 不回写，静等 | **①** | 需求判据 ③ 的原话是「避免远端程序挂起」——真正的挂起风险在「问完就把这一条吞了」（③ 档），而不是「多等一会儿」。② 的 5 s 对一次通知合适，对「要不要把剪贴板交给它」这种决定太短，而且会让「用户去泡了杯茶回来」变成一次静默拒绝＋远端拿到空内容，比弹窗骚扰更难诊断。会话析构那一档无需补写：连接同时断了。**代价**：`ask` 档下远端的读请求会停在框前直到用户答——这是**授权语义本身**，写进草屏 B 的那句说明与走查第 ⑵ 条 |
 | **D7** | 回写内容有上限吗 | ① 有界：`kMaxClipboardResponseBytes = 64 KiB`（UTF-8 字节数），超限按拒绝档回写空响应 + 诊断留痕；② 不设限 | **①** | 剪贴板里可能是几 MB 的日志（复制一次 `cat` 输出就有），base64 再乘 4/3，一条 `send_text` 就是把这份东西喷进该会话的写腿；而远端只问了「给不给」，没承诺收多少。**代价**：超限那一档对用户是「点了允许却没内容」，必须留痕（屏 C 那一档：诊断日志 `AURORA_LOG_WARN` 一条 + `OscState` 计数；调试面板那一行本期没有落点，G17 在册），措辞走词条；上限是文件级常量而非键（会话日志那棒的 D9① 同档取向：能不加键就不加） |
@@ -86,7 +86,7 @@
 | **D9** | 拒绝要不要上屏提示 | ① `deny` 档静默回空响应 + 计数进 `OscState`；② 每次拒绝弹一条提示 | **①** | ② 会被远端程序的安装脚本/`viminfo` 探测一类的常规查询打成弹窗骚扰，而「禁止」本就是用户显式选的缺省态（判据 ①）。计数进 `OscState`（与 `clipboard_write_requests`、`unhandled_count` 同族）够排障用，但要把话说准：**这一族计数本期不上屏**——`SPEC.NF.RELI.01` 的调试面板只渲染 parse/decode/encode/queue 四族，`DebugSessionSnapshot` 里没有任何 OSC 字段（G17），既有的 `clipboard_write_requests` 也一样只活在结构体里；`SPEC.NF.RELI.01` 那句「可观测」在本棒由**诊断日志 + 用例断言**承担，面板补 OSC 那一行按 §7 在册。**代价**：用户第一次遇到「tmux 复制没反应」时不会想到是这道闸，而且在屏幕上**查不到** ⇒ 靠设置页那句组顶旁注赔付 |
 | **D10** | 写方向纳入同一把闸吗 | ① 不纳入（本棒只管读）；② 扩成「读/写各一枚三态」 | **①** | 写方向「默认允许」是 `SPEC.FEAT.TERM.07` + 裁决 7.21③ 已落并有用例的既成口径（G16 三条），改它需要新需求裁决而不是顺手扩面（AGENTS §4.1 第 3 条）。**代价**：界面上那一行只说「读取」，措辞不能写成「剪贴板授权」这种涵盖写的样子——词条按 D10 收窄 |
 | **D11** | 文件布局与批次 | — | 见 §4 | 三批切法：批 1＝`term` 层纯逻辑（枚举 + 闸门 + 待答队列 + `encode_base64`）与其 utest；批 2＝`Session`/`ClipboardOutbox` 的应答腿 + 询问钩子 + `itest`；批 3＝新键六处同步 + 面板行 + 装配接线 + 文档回写 |
-| **D12** | 验证形态 | — | 三层：① `utest_term_clipboard_read`（三态分派 × Pc 回显 × 队列上限 × 超限）＋ `utest_term_base64`（编码逐档）；② `itest_clipboard_read`（替身剪贴板经 `Presentation` 钩子注入 ⇒ 断回写串逐字节；含未答即关、取消、超限三档降级）；③ 真机走查（有桥机器、真 tmux/vim 发读请求、Win 腿——本机 `xsel`/`xclip` 双双不在位，只能走缺桥那一档，G9）。`etest_` 那条不新写：`etest_osc_clipboard` 已把「桥可用性显式探测」的口径立住（G9），本棒批 3 给它补一条**读方向**的现场腿（真 shell 发 `printf '\033]52;c;?\a'` ⇒ 断我们回写的字节），Windows 腿投放条件不变 | — |
+| **D12** | 验证形态 | — | 三层：① `utest_term_clipboard_read`（三态分派 × Pc 回显 × 队列上限 × 超限 × `encode_base64` 逐档——base64 那半件的宿主文件就是 `src/term/clipboard_read.cpp`，不为一枚纯函数另立 TU）；② `itest_clipboard_read`（替身剪贴板经 `Presentation` 钩子注入 ⇒ 断回写串逐字节；含未答即关、取消、超限三档降级）；③ 真机走查（有桥机器、真 tmux/vim 发读请求、Win 腿——本机 `xsel`/`xclip` 双双不在位，只能走缺桥那一档，G9）。`etest_` 那条不新写：`etest_osc_clipboard` 已把「桥可用性显式探测」的口径立住（G9），本棒批 3 给它补一条**读方向**的现场腿（真 shell 发 `printf '\033]52;c;?\a'` ⇒ 断我们回写的字节），Windows 腿投放条件不变 | — |
 
 ---
 
@@ -104,7 +104,7 @@ include/borealis/term/clipboard_read.h      新增 —— 纯逻辑件的契约�
                                                   `encode_base64(std::span<const std::byte>) -> std::string`
                                                   （**纯函数**，补 G4 缺的那半：与 `osc::decode_base64` 互逆、标准字母表、
                                                   含 `=` 填充）
-src/term/clipboard_read.cpp                 新增 —— 同一件的落地腿：闸门读写 + 待答队列（D4：有界 8、超出丢最旧并计数）
+src/term/clipboard_read.cpp                 新增 —— 同一件的落地腿：闸门读写 + `encode_base64`；待答队列住在 `Terminal`（D4：有界 8、满档当场回空响应并计数）
                                                   + `encode_base64`
 include/borealis/term/osc.h                 修改 —— `OscState` 追加两枚计数：`clipboard_read_requests`、
                                                   `clipboard_read_denied`（D9①；与既有 `clipboard_write_requests` 同族，
@@ -153,11 +153,11 @@ src/CMakeLists.txt                          修改 —— `src/term/clipboard_re
                                                   （只有 tests 走 GLOB；漏这一行即链接期 undefined reference，
                                                   Telnet 批 2 与会话日志批 1 的同一处坑）
 tests/unit/utest_term_clipboard_read.cpp     新增 —— 三态分派逐档 × Pc 回显（含 `52;c;p;?` 与 `52;?` 两档，G3）×
-                                                  队列上限（第 9 条丢最旧并计数）× 闸门未接线即 Deny ×
+                                                  队列上限（第 9 条当场回空响应、前 8 条留队）× 闸门未接线即 Deny ×
                                                   `encode_base64` 逐档（空、1/2/3 字节余数、CJK 字节序、与
                                                   `osc::decode_base64` 往返互逆）
-tests/unit/utest_terminal_osc.cpp            修改 —— 既有那条「读查询回空响应」按三态改口（Deny 档逐字节不变），
-                                                  另补 `clipboard_read_requests/denied` 两枚计数的断言
+tests/unit/utest_terminal_osc.cpp            不改 —— 既有那条「读查询回空响应」在批 1 后逐字节保持绿，它就是
+                                                  D9① 的回归底线；两枚新计数的断言归新 TU，不在旧 TU 重述
 tests/unit/utest_session.cpp                 修改 —— G2 那条既有用例保持（Deny 档），新增「`answer_clipboard_read` 走
                                                   同一写通道」与「`Allow` 档经 outbox 折算出的字节」两条
 tests/integration/itest_clipboard_read.cpp   新增 —— 替身剪贴板 + 替身确认钩子接进 `Presentation`（G14 的接缝就是为
@@ -211,11 +211,11 @@ tests/e2e/etest_osc_clipboard.cpp            修改 —— 补一条**读方向*
 - **三态可配（判据 ②）**：`utest_settings_catalog` 锁总数 64→65；`utest_form_transfer` + `utest_config` 锁该键三档落盘名的往返；`itest_settings_panel` 锁终端页那一行画得出、选得中、改得动（该页行序不变）。
 - **被拒 ⇒ 空响应而非静默（判据 ③）**：`itest_clipboard_read` 三档——答否、不答即关框、超限——都断「该会话写出的字节里恰有一条空响应，且没有第二条」。
 - **允许 ⇒ 真给得出且可还原（判据 ④）**：`utest_term_clipboard_read` 锁 `encode_base64` 与 `osc::decode_base64` 往返互逆（含 CJK 与余数三档）；`itest_clipboard_read` 锁「替身剪贴板里那句文本 base64 之后原样出现在回写字节里」。**证人分层要说清**：本沙箱 `xsel`/`xclip` 均不在位（G9，两条命令都 127），⇒「真把系统剪贴板交出去」那一档在这里**只有替身证人**，现场腿要等有桥的机器（走查第 ⒋ 条）。
-- **询问不挂起（判据 ⑤）**：同上「不答即关框」那一档；另在 `utest_term_clipboard_read` 锁「第 9 条请求被丢弃并计数，前 8 条都在队列里」，避免远端一条输出把我们的待答队列撑爆。
-- **上限（判据 ⑥）**：`utest_term_clipboard_read` 用小上限（测试入参覆盖，非常量，会话日志那棒同一手法）锁「超限退回空响应 + 计数 + 一条 warn」。
-- **Pc 回显（D8①）**：`utest_terminal_osc` 与 `utest_term_clipboard_read` 各锁一档：`52;c;p;?` 回显 `c`（首段）而**不是**丢掉整段、`52;?` 无 Pc 段回显 `c`。
+- **询问不挂起（判据 ⑤）**：同上「不答即关框」那一档；另在 `utest_term_clipboard_read` 锁「第 9 条当场回空响应并计数，前 8 条仍在待答队列里」，避免远端一条输出把我们的待答队列撑爆。
+- **上限（判据 ⑥）**：两处上限分开走。**待答队列上限**取文件级常量 `kMaxClipboardReadRequests = 8`（不做测试入参覆盖：8 条本身就是判据要的形状，喂 9 条即可锁），`utest_term_clipboard_read` 锁「第 9 条当场回空响应 + `clipboard_read_denied` +1 + 腾出位置后能再登记」。**应答内容上限**（`kMaxClipboardResponseBytes = 64 KiB`，D7①）在批 2 的 outbox 腿，由 `itest_clipboard_read` 锁「超限 ⇒ 空响应 + 一条 warn」。
+- **Pc 回显（D8①）**：`utest_term_clipboard_read` 一次锁齐七档（`c`/`p`/`0`/`*` 各回显自身、`52;c;p;?` 回显**首段** `c` 而非末段、`52;?` 无 Pc 段回显 `c`、`zz` 与 64 字长段归一到 `c`）——归一是承重件：Pc 来自不可信输入，原样回写等于替远端把任意字节喷回它自己。
 - **既有判据不受影响**：`utest_terminal_osc` 那三条写方向用例（空载荷合法清空、非法载荷不写、多段只留最后载荷）逐条保持绿；G16 是本棒的回归面而不是新功能面。
-- **测试读数口径**：结项以 `ctest --preset linux -E etest_` 的**项数**与 `borealis_test_runner` 的**全案数**结项（AGENTS §4.4 第 21 条）；基线是会话日志棒结项的 **81 项／1019 案**（本棒新增两件测试 TU ⇒ 项数 +2）。变异注入按第 22 条逐则给「注入点 ⇒ 哪条用例转红」，装配那几处（闸门接线、广播后刷新、帧边界排请求）无自动化证人（裁决 7.83 同档）按会话日志棒 §8.1 的手法如实登记。
+- **测试读数口径**：结项以 `ctest --preset linux -E etest_` 的**项数**与 `borealis_test_runner` 的**全案数**结项（AGENTS §4.4 第 21 条）；基线是会话日志棒结项的 **81 项／1019 案**（本棒新增两件测试 TU ⇒ 项数 +2）。**批 1 已跑，读数如下**：`82 项／1031 案`全绿（新增 TU `utest_term_clipboard_read` 12 案）。变异注入四则全部变红、还原复绿：M1 去掉拒绝档的空响应回写 ⇒ 4 案红；M2 Pc 不归一（原样吐出首段）⇒ 1 案红；M3 满档不再当场回绝 ⇒ 1 案红；M4 base64 填充位错一档 ⇒ 2 案红（`+/8=`、`AAEC` 那两条 RFC 向量）。变异注入按第 22 条逐则给「注入点 ⇒ 哪条用例转红」，装配那几处（闸门接线、广播后刷新、帧边界排请求）无自动化证人（裁决 7.83 同档）按会话日志棒 §8.1 的手法如实登记。
 - **真机走查**（AGENTS §4.4 第 33 条，未走查不得称「可用」）：⑴ `ask` 档下真 tmux / vim 发读请求，问框出现时该窗口其它操作的手感（D5 的代价面）；⑵ 「去泡杯茶回来」这一档会不会被误认为卡死（D6 的代价面）；⑶ 复制一段几 MB 的文本再让远端读 ⇒ 超限那一档的留痕读不读得懂；⑷ **本机就是缺桥那一档**（G9 实测 `xsel`/`xclip` 双双回 127）：三态各自的表现须是「远端拿到一条空响应 / 一次询问」而不是挂起；有桥机器的对照档另找一台再走；⑸ Win32 腿：`OpenClipboard` 那侧的读、粘贴板占用、以及 64 KiB 档；⑹ 从「禁止」改到「允许」后**别的标签**立刻能读——这一条是 D2① 的正面判据，也是 G15 那条限制的唯一现场证人。
 
 ---

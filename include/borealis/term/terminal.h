@@ -31,6 +31,7 @@
 #include "borealis/grid/cell.h"
 #include "borealis/grid/storage.h"
 #include "borealis/term/charset.h"
+#include "borealis/term/clipboard_read.h"
 #include "borealis/term/osc.h"
 #include "borealis/term/width.h"
 #include "borealis/vt/parser.h"
@@ -203,6 +204,21 @@ class Terminal final : public vt::SequenceSink {
     /// @return 待写文本；无待写请求时为 `std::nullopt`（空文本是合法请求，故用 has_value 判别）。
     auto take_clipboard_write() -> std::optional<std::u32string>;
 
+    /// @brief 挂上 OSC 52 读方向的授权闸门（`SPEC.FEAT.CONN.12`；会话层在构造后接线）。
+    ///
+    /// 与 `set_response_sink` 同一套观察指针形态：闸门是 app 级一份，生命周期由装配层担保。
+    /// **不接线即按 `Deny` 处置**（fail-closed）：漏接线的后果是远端读不到剪贴板，而不是谁都读得到。
+    /// 状态机在每次读查询那一刻现读它，故改档即刻对所有已接线会话生效。
+    /// @param gate 授权闸门；传 nullptr 即摘除（回到 `Deny`）。
+    auto set_clipboard_gate(const ClipboardGate *gate) noexcept -> void { clipboard_gate_ = gate; }
+
+    /// @brief 取走待答的 OSC 52 读请求（`SPEC.FEAT.CONN.12`，主线程帧边界调用）。
+    ///
+    /// 状态机只登记：一次剪贴板读在主线程那边是一次子进程往返，算进网格锁等于让子进程阻塞解码
+    /// （架构 §3.4）。取走即清空；登记序即应答序——读方向**不合并**，每条都有远端在等自己那一条。
+    /// @return 自上次取走以来的全部待答请求，按到达次序排列；无待答请求时为空。
+    auto take_clipboard_reads() -> std::vector<ClipboardReadRequest>;
+
     /// @brief 变更视口尺寸（PTY 尺寸同步下发，`SPEC.FEAT.XFER.01`）。
     ///
     /// 主备屏同步改尺寸：列宽变更不 reflow（裁决 7.5），行数变更只移动窗口边界、
@@ -307,6 +323,10 @@ class Terminal final : public vt::SequenceSink {
     grid::HyperlinkId next_hyperlink_id_ = 1;
     grid::HyperlinkId current_hyperlink_ = grid::kNoHyperlink;  ///< 笔上挂着的链接（`OSC 8` 区间）。
     std::optional<std::u32string> clipboard_write_;  ///< 待写剪贴板文本：锁内留存、主线程取走落地。
+    /// 读方向的授权闸门（app 级一份，装配层担保生命周期；未接线即 `Deny`，见 `clipboard_read.h`）。
+    const ClipboardGate *clipboard_gate_ = nullptr;
+    /// 待答读请求，登记序即应答序；有界 `kMaxClipboardReadRequests`，满档当场回空响应而非丢弃。
+    std::vector<ClipboardReadRequest> clipboard_read_pending_;
     bool pending_wrap_ = false;  ///< 已在行末落字、下一个可打印字符须先换行（DECAWM 的延迟换行）。
     bool full_screen_dirty_ = false;
     bool bell_triggered_ = false;  ///< BEL 触发标记：主线程每帧取走后清零。

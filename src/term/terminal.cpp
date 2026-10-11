@@ -82,6 +82,23 @@ auto append_decimal(std::u32string &out, std::size_t value) -> void {
     }
 }
 
+/// @brief 把 `OSC 52` 的首段 Pc 归一成**单个**可回显的选择位。
+///
+/// 只回显一个字符是刻意的：Pc 段来自不可信输入，原样回写等于把远端给的任意字节再喷回它自己
+/// （长度无界）。域外取值回落 `c` 而不是拒绝整条请求——问的是剪贴板，编号写错不该让它读不到。
+/// @param head `52;` 之后、末段载荷之前的整段（可含多段编号，如 `c;p`）。
+/// @return 单字符选择位串；缺段、多字符或字母表外一律 `c`。
+[[nodiscard]] auto clipboard_pc_of(std::u32string_view head) -> std::u32string {
+    const auto fields = osc::split_first(head, U';');
+    const std::u32string_view segment = fields.found ? fields.head : head;
+    static constexpr std::u32string_view kSelectionLetters{U"csp012345678+-*"};
+    if (segment.size() != 1U ||
+        kSelectionLetters.find(segment.front()) == std::u32string_view::npos) {
+        return std::u32string{U'c'};
+    }
+    return std::u32string{segment.front()};
+}
+
 }  // namespace
 
 Terminal::Terminal(std::size_t columns, std::size_t rows, std::size_t scrollback_limit,
@@ -828,11 +845,24 @@ auto Terminal::apply_clipboard(std::u32string_view args) -> void {
     const auto fields = osc::split_last(args, U';');
     const auto payload = fields.found ? fields.tail : args;
     if (payload == U"?") {
-        // 读方向默认禁止（`SPEC.FEAT.CONN.12`）：回写空响应而非静默无响应，否则远端程序等不到
-        // 答复会一直挂着。
-        // TODO(SPEC.FEAT.CONN.12): 三态授权（禁止/允许/每次询问）落地后，「允许」档在此把本地
-        // 剪贴板内容回写成 `OSC 52 ; <Pc> ; <base64>`。
-        emit_response(U"\x1B]52;c;\x07");
+        // 读方向三态闸（`SPEC.FEAT.CONN.12`）：闸门现读，故设置里改档即刻对所有已接线会话生效。
+        ++osc_state_.clipboard_read_requests;
+        const auto pc = clipboard_pc_of(fields.found ? fields.head : std::u32string_view{});
+        const bool denied_by_policy =
+            clipboard_gate_ == nullptr || clipboard_gate_->policy() == ClipboardReadPolicy::Deny;
+        // 待答队列有界：满档时当场按拒绝处理，而不是把某一条悄悄丢掉——「被拒 ⇒ 有回写」是判据 ③，
+        // 静默丢弃会让先问的那条远端一直等下去。
+        const bool denied_by_backlog = clipboard_read_pending_.size() >= kMaxClipboardReadRequests;
+        if (denied_by_policy || denied_by_backlog) {
+            // 空响应恒以 `c` 回显：这一串是既有判据（写方向默认禁止那一档的产物），逐字节不许动；
+            // Pc 回显只服务「真给得出内容」那一腿，归 `ClipboardOutbox` 拼应答时处理。
+            ++osc_state_.clipboard_read_denied;
+            emit_response(U"\x1B]52;c;\x07");
+            return;
+        }
+        // 锁内只登记：读剪贴板是主线程的 IO（POSIX 腿还是一次子进程往返），应答归取走方拼。
+        // `Allow` 与 `Ask` 在状态机侧同处登记，差别在装配层问不问——闸门由那边再读一次。
+        clipboard_read_pending_.push_back(ClipboardReadRequest{.pc = pc});
         return;
     }
     const auto text = osc::decode_base64(payload);
@@ -887,6 +917,13 @@ auto Terminal::take_clipboard_write() -> std::optional<std::u32string> {
     auto text = std::move(clipboard_write_);
     clipboard_write_.reset();
     return text;
+}
+
+auto Terminal::take_clipboard_reads() -> std::vector<ClipboardReadRequest> {
+    // 整批换走而不是逐条弹出：调用方在帧边界，换完即空，下一批登记从头计数。
+    auto pending = std::vector<ClipboardReadRequest>{};
+    pending.swap(clipboard_read_pending_);
+    return pending;
 }
 
 auto Terminal::write_cell(char32_t code_point, std::uint8_t width) -> void {
@@ -1081,6 +1118,7 @@ auto Terminal::reset_to_default() -> void {
     next_hyperlink_id_ = 1;  // 网格已清空，标识可以从头分配
     current_hyperlink_ = grid::kNoHyperlink;
     clipboard_write_.reset();
+    clipboard_read_pending_.clear();
     pending_wrap_ = false;
     parser_.reset();
     set_tab_stops_default();

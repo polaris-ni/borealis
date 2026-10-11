@@ -43,6 +43,10 @@ struct OscState {
     std::int32_t command_exit_code = 0;  ///< `133;D;<code>` 的退出码；未收到 `D` 时为 0。
     std::size_t clipboard_write_requests =
         0;  ///< `OSC 52` 写方向请求总数（含被合并进同一待写值的）
+    std::size_t clipboard_read_requests =
+        0;  ///< `OSC 52` 读方向请求总数（`SPEC.FEAT.CONN.12`；三态各自都计）
+    std::size_t clipboard_read_denied =
+        0;  ///< 读方向当场按拒绝处理掉条数：闸门禁止、待答队列已满（判据 ③ 的回写不静默）
     std::size_t unhandled_count = 0;  ///< 未消费的 `OSC` 命令号次数（架构 §5.5 的降级留痕）
 };
 
