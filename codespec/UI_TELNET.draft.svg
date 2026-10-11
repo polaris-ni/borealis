@@ -1,0 +1,338 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="2300" viewBox="0 0 1560 2300" font-family="'Noto Sans CJK SC',sans-serif">
+<rect x="0" y="0" width="1560" height="2300" fill="#eef0f5"/>
+<text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">Telnet：向导第四型 + IAC 协商状态机 + 环回可证连接腿（SPEC.FEAT.CONN.06）</text>
+<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_TELNET.draft.svg · 高保真草图（待评审）· 1 dp == 1 px @100% · 判据 1–7 对应 UI_TELNET.draft.md §2，D1–D12 见该稿 §3 · 底部实测口径见 §0（F1–F13）</text>
+<g transform="translate(30,78)">
+  <rect x="-1" y="-1" width="1502" height="562" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 新建连接（向导 步骤 2/2 · Telnet 型）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="526" fill="#12131a" opacity="0.6"/>
+  <rect x="330" y="60" width="840" height="462" rx="8" fill="#282A36" stroke="#4D4F63"/>
+  <text x="352" y="90" font-size="14" fill="#F8F8F2" font-weight="700">新建连接 · Telnet（TelnetProfile）</text>
+  <text x="1148" y="90" font-size="11.5" fill="#62728A" text-anchor="end">Escape 取消</text>
+  <rect x="350" y="106" width="188" height="50" rx="6" fill="#22232E" stroke="#4D4F63" stroke-width="1"/>
+  <text x="363" y="127" font-size="12" fill="#62728A" font-weight="600">本地终端</text>
+  <text x="363" y="145" font-size="10.5" fill="#62728A">平台默认 shell</text>
+  <rect x="550" y="106" width="188" height="50" rx="6" fill="#22232E" stroke="#4D4F63" stroke-width="1"/>
+  <text x="563" y="127" font-size="12" fill="#62728A" font-weight="600">SSH</text>
+  <text x="563" y="145" font-size="10.5" fill="#62728A">libssh 会话</text>
+  <rect x="750" y="106" width="188" height="50" rx="6" fill="#22232E" stroke="#4D4F63" stroke-width="1"/>
+  <text x="763" y="127" font-size="12" fill="#62728A" font-weight="600">串口</text>
+  <text x="763" y="145" font-size="10.5" fill="#62728A">COM / ttyS</text>
+  <rect x="950" y="106" width="188" height="50" rx="6" fill="#342B47" stroke="#BD93F9" stroke-width="2"/>
+  <text x="963" y="127" font-size="12" fill="#F8F8F2" font-weight="600">Telnet</text>
+  <text x="963" y="145" font-size="10.5" fill="#62728A">TCP 23 · IAC 协商</text>
+<g transform="translate(1186,130)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">1</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">D1/D2：类型卡四张</text>
+</g>
+  <g transform="translate(352,180)">
+<text x="0" y="18" font-size="11.5" fill="#F8F8F2">展示名</text>
+<rect x="112" y="0" width="340" height="26" rx="5" fill="#22232E" stroke="#4D4F63"/>
+<text x="124" y="17" font-size="11.5" fill="#62728A">板子控制台 · 192.168.1.1</text>
+<text x="0" y="52" font-size="11.5" fill="#F8F8F2">主机</text>
+<rect x="112" y="34" width="340" height="26" rx="5" fill="#22232E" stroke="#4D4F63"/>
+<text x="124" y="51" font-size="11.5" fill="#62728A">192.168.1.1 或主机名（IPv4，F10）</text>
+<text x="0" y="86" font-size="11.5" fill="#F8F8F2">端口</text>
+<rect x="112" y="68" width="340" height="26" rx="5" fill="#22232E" stroke="#4D4F63"/>
+<text x="124" y="85" font-size="11.5" fill="#62728A">留空＝23</text>
+<text x="466" y="85" font-size="10.5" fill="#50FA7B">硬编码口径同 SSH 的 22（D5①）</text>
+  <text x="0" y="122" font-size="11" fill="#62728A">编码不入档案：会话吃全局 terminal.encoding（D5①，裁决 7.6 的 Telnet 缺省＝UTF-8）</text>
+  <text x="0" y="142" font-size="11" fill="#62728A">发送行尾不入档案：装配层给 Telnet 会话传固定 CRLF 档（D8①，折算点是已落的那一处）</text>
+  <text x="0" y="162" font-size="11" fill="#62728A">没有 user / 口令 / known_hosts 三栏：Telnet 没有认证协议（D2①，凭据链在此无消费方）</text>
+  <text x="0" y="182" font-size="11" fill="#62728A">类型卡自此四张（D1①）：Telnet 型既不画 SSH 那三栏，也不画串口那九栏</text>
+<g transform="translate(0,216)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">2</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">D2：三行字段集 · 校验零新增问题码</text>
+</g>
+  </g>
+  <rect x="352" y="418" width="796" height="30" rx="5" fill="#2A1C22" stroke="#FF5555" stroke-dasharray="3 2"/>
+  <text x="364" y="438" font-size="11.5" fill="#FF5555">校验走 validate_draft 的第四腿：EmptyName / EmptyHost / PortOutOfRange 三档，首个问题上屏，不静默置灰保存钮</text>
+  <rect x="898" y="464" width="130" height="30" rx="6" fill="#BD93F9"/>
+  <text x="963" y="484" font-size="12" fill="#1E1F29" font-weight="700" text-anchor="middle">保存并连接</text>
+  <rect x="1036" y="464" width="112" height="30" rx="6" fill="none" stroke="#4D4F63"/>
+  <text x="1092" y="484" font-size="12" fill="#62728A" text-anchor="middle">取消</text>
+</g>
+<g transform="translate(30,660)">
+  <rect x="-1" y="-1" width="1502" height="472" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 上线协商（本端 ⇄ 对端；字节序列是实测形态 F5/F6/F7）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="436" fill="#1E1F29"/>
+  <text x="40" y="66" font-size="12" fill="#8BE9FD" font-weight="700">本端（TelnetConnection + telnet_negotiation）</text>
+  <text x="1460" y="66" font-size="12" fill="#8BE9FD" font-weight="700" text-anchor="end">对端（环回假服务端 / 真 telnetd）</text>
+  <line x1="360" y1="80" x2="360" y2="424" stroke="#3A3C4C"/>
+  <line x1="1200" y1="80" x2="1200" y2="424" stroke="#3A3C4C"/>
+  <text x="372" y="90" font-size="10.5" fill="#62728A">本端发起（连上即发，各 3 字节）</text>
+  <line x1="360" y1="106" x2="1192" y2="106" stroke="#50FA7B" stroke-width="1.6"/>
+  <path d="M 1192 106 l8 -4 l0 8 z" fill="#50FA7B"/>
+<rect x="376" y="96" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="390.2" y="111" font-size="10.5" fill="#50FA7B" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="409.4" y="96" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="423.59999999999997" y="111" font-size="10.5" fill="#50FA7B" text-anchor="middle" font-family="monospace">FD</text>
+<rect x="442.79999999999995" y="96" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="456.99999999999994" y="111" font-size="10.5" fill="#50FA7B" text-anchor="middle" font-family="monospace">01</text>
+  <text x="488.19999999999993" y="111" font-size="10.5" fill="#50FA7B" font-family="monospace">IAC DO ECHO</text>
+  <line x1="360" y1="144" x2="1192" y2="144" stroke="#50FA7B" stroke-width="1.6"/>
+  <path d="M 1192 144 l8 -4 l0 8 z" fill="#50FA7B"/>
+<rect x="376" y="134" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="390.2" y="149" font-size="10.5" fill="#50FA7B" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="409.4" y="134" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="423.59999999999997" y="149" font-size="10.5" fill="#50FA7B" text-anchor="middle" font-family="monospace">FD</text>
+<rect x="442.79999999999995" y="134" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="456.99999999999994" y="149" font-size="10.5" fill="#50FA7B" text-anchor="middle" font-family="monospace">03</text>
+  <text x="488.19999999999993" y="149" font-size="10.5" fill="#50FA7B" font-family="monospace">IAC DO SGA</text>
+  <text x="372" y="166" font-size="10.5" fill="#62728A">对端答 WILL，并反问 TTYPE</text>
+  <line x1="1200" y1="182" x2="368" y2="182" stroke="#F1FA8C" stroke-width="1.6"/>
+  <path d="M 368 182 l-8 -4 l0 8 z" fill="#F1FA8C"/>
+<rect x="760" y="172" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="774.2" y="187" font-size="10.5" fill="#F1FA8C" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="793.4" y="172" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="807.6" y="187" font-size="10.5" fill="#F1FA8C" text-anchor="middle" font-family="monospace">FB</text>
+<rect x="826.8" y="172" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="841.0" y="187" font-size="10.5" fill="#F1FA8C" text-anchor="middle" font-family="monospace">01</text>
+  <text x="872.1999999999999" y="187" font-size="10.5" fill="#F1FA8C" font-family="monospace">IAC WILL ECHO</text>
+  <line x1="1200" y1="220" x2="368" y2="220" stroke="#F1FA8C" stroke-width="1.6"/>
+  <path d="M 368 220 l-8 -4 l0 8 z" fill="#F1FA8C"/>
+<rect x="760" y="210" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="774.2" y="225" font-size="10.5" fill="#F1FA8C" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="793.4" y="210" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="807.6" y="225" font-size="10.5" fill="#F1FA8C" text-anchor="middle" font-family="monospace">FD</text>
+<rect x="826.8" y="210" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="841.0" y="225" font-size="10.5" fill="#F1FA8C" text-anchor="middle" font-family="monospace">18</text>
+  <text x="872.1999999999999" y="225" font-size="10.5" fill="#F1FA8C" font-family="monospace">IAC DO TTYPE</text>
+  <text x="372" y="242" font-size="10.5" fill="#62728A">本端答 + 子协商（被动，D3①）</text>
+  <line x1="360" y1="258" x2="1192" y2="258" stroke="#8BE9FD" stroke-width="1.6"/>
+  <path d="M 1192 258 l8 -4 l0 8 z" fill="#8BE9FD"/>
+<rect x="376" y="248" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="390.2" y="263" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="409.4" y="248" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="423.59999999999997" y="263" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">FB</text>
+<rect x="442.79999999999995" y="248" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="456.99999999999994" y="263" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">18</text>
+  <text x="488.19999999999993" y="263" font-size="10.5" fill="#8BE9FD" font-family="monospace">IAC WILL TTYPE</text>
+  <line x1="360" y1="296" x2="1192" y2="296" stroke="#8BE9FD" stroke-width="1.6"/>
+  <path d="M 1192 296 l8 -4 l0 8 z" fill="#8BE9FD"/>
+<rect x="376" y="286" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="390.2" y="301" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="409.4" y="286" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="423.59999999999997" y="301" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">FA</text>
+<rect x="442.79999999999995" y="286" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="456.99999999999994" y="301" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">18</text>
+<rect x="476.19999999999993" y="286" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="490.3999999999999" y="301" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">00</text>
+<rect x="509.5999999999999" y="286" width="21.2" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="520.1999999999999" y="301" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">…</text>
+<rect x="535.8" y="286" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="550.0" y="301" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="569.1999999999999" y="286" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="583.4" y="301" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">F0</text>
+  <text x="614.5999999999999" y="301" font-size="10.5" fill="#8BE9FD" font-family="monospace">IAC SB TTYPE IS &quot;XTERM&quot; IAC SE</text>
+  <text x="372" y="318" font-size="10.5" fill="#62728A">表外一律拒绝（D4①）</text>
+  <line x1="360" y1="334" x2="1192" y2="334" stroke="#FF5555" stroke-width="1.6"/>
+  <path d="M 1192 334 l8 -4 l0 8 z" fill="#FF5555"/>
+<rect x="376" y="324" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="390.2" y="339" font-size="10.5" fill="#FF5555" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="409.4" y="324" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="423.59999999999997" y="339" font-size="10.5" fill="#FF5555" text-anchor="middle" font-family="monospace">FC</text>
+<rect x="442.79999999999995" y="324" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="456.99999999999994" y="339" font-size="10.5" fill="#FF5555" text-anchor="middle" font-family="monospace">63</text>
+  <text x="488.19999999999993" y="339" font-size="10.5" fill="#FF5555" font-family="monospace">IAC DONT 99 (unknown option)</text>
+  <text x="372" y="356" font-size="10.5" fill="#62728A">重复问不再答（防协商风暴）</text>
+  <line x1="360" y1="372" x2="1192" y2="372" stroke="#FF5555" stroke-width="1.6"/>
+  <path d="M 1192 372 l8 -4 l0 8 z" fill="#FF5555"/>
+<rect x="376" y="362" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="390.2" y="377" font-size="10.5" fill="#FF5555" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="409.4" y="362" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="423.59999999999997" y="377" font-size="10.5" fill="#FF5555" text-anchor="middle" font-family="monospace">FE</text>
+<rect x="442.79999999999995" y="362" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="456.99999999999994" y="377" font-size="10.5" fill="#FF5555" text-anchor="middle" font-family="monospace">03</text>
+  <text x="488.19999999999993" y="377" font-size="10.5" fill="#FF5555" font-family="monospace">IAC WONT SGA (once per stance)</text>
+  <text x="40" y="400" font-size="11" fill="#62728A">TTYPE 报的 "XTERM" 是 telnet_negotiation 里的一枚常量：本仓没有 TERM 类型设置域，需求也只要求「协商覆盖 TTYPE」（§7 登记代价）</text>
+  <text x="40" y="420" font-size="11" fill="#62728A">NAWS(31) 不在本期（D10①）：resize() 是有意的空操作 ⇒ 远端全屏程序按 80×24 重排，走查第 ⑷ 条实测</text>
+<g transform="translate(1240,110)">
+  <circle cx="0" cy="0" r="11" fill="#50FA7B"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">3</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 3：上线发起两条 DO</text>
+</g>
+<g transform="translate(1240,260)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">4</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 4：应答表 + 只答一次</text>
+</g>
+</g>
+<g transform="translate(30,1150)">
+  <rect x="-1" y="-1" width="1502" height="362" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 分片与转义：判据全部与「一次读到几字节」无关（F5/F6/F7）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="326" fill="#1E1F29"/>
+  <rect x="40" y="60" width="700" height="150" rx="8" fill="#282A36" stroke="#4D4F63"/>
+  <text x="58" y="84" font-size="12" fill="#F8F8F2" font-weight="700">一条命令跨三次 read（实测 F6：[FF] [FB] [01]）</text>
+<rect x="58" y="96" width="50.0" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="83.0" y="111" font-size="10.5" fill="#62728A" text-anchor="middle" font-family="monospace">recv1</text>
+<rect x="58" y="120" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="72.2" y="135" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="148" y="96" width="50.0" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="173.0" y="111" font-size="10.5" fill="#62728A" text-anchor="middle" font-family="monospace">recv2</text>
+<rect x="148" y="120" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="162.2" y="135" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">FB</text>
+<rect x="238" y="96" width="50.0" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="263.0" y="111" font-size="10.5" fill="#62728A" text-anchor="middle" font-family="monospace">recv3</text>
+<rect x="238" y="120" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="252.2" y="135" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">01</text>
+  <text x="58" y="160" font-size="11" fill="#62728A">状态机可暂停/续跑：未凑齐的 0xFF/0xFB 绝不进网格（否则解码成乱码格）</text>
+  <text x="58" y="182" font-size="11" fill="#50FA7B">⇒ 事件：ECHO = WILL（服务端回显），净数据段 0 字节</text>
+  <rect x="780" y="60" width="680" height="150" rx="8" fill="#282A36" stroke="#4D4F63"/>
+  <text x="798" y="84" font-size="12" fill="#F8F8F2" font-weight="700">一次 read 混排三命令 + 文本（实测 F5）</text>
+<rect x="798" y="96" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="812.2" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="831.4" y="96" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="845.6" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">FB</text>
+<rect x="864.8" y="96" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="879.0" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">01</text>
+<rect x="898.1999999999999" y="96" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="912.4" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="931.5999999999999" y="96" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="945.8" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">FC</text>
+<rect x="964.9999999999999" y="96" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="979.1999999999999" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">03</text>
+<rect x="998.3999999999999" y="96" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="1012.5999999999999" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="1031.8" y="96" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="1046.0" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">FD</text>
+<rect x="1065.2" y="96" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="1079.4" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">18</text>
+<rect x="1098.6000000000001" y="96" width="21.2" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="1109.2" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">l</text>
+<rect x="1124.8000000000002" y="96" width="21.2" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="1135.4" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">o</text>
+<rect x="1151.0000000000002" y="96" width="21.2" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="1161.6000000000001" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">g</text>
+<rect x="1177.2000000000003" y="96" width="21.2" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="1187.8000000000002" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">i</text>
+<rect x="1203.4000000000003" y="96" width="21.2" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="1214.0000000000002" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">n</text>
+<rect x="1229.6000000000004" y="96" width="21.2" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="1240.2000000000003" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace">:</text>
+<rect x="1255.8000000000004" y="96" width="21.2" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="1266.4000000000003" y="111" font-size="10.5" fill="#F8F8F2" text-anchor="middle" font-family="monospace"> </text>
+  <text x="798" y="160" font-size="11" fill="#62728A">按字节走状态机，不按行/不按块切：前 9 字节是三条命令，之后才是网格数据</text>
+  <text x="798" y="182" font-size="11" fill="#50FA7B">⇒ 网格收到 "login: "（5 字节），无残留</text>
+<g transform="translate(58,236)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">5</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 5：三种喂法（1 字节 / 随机分片 / 整段）净数据与待回字节必须逐字节全等</text>
+</g>
+  <rect x="40" y="248" width="700" height="72" rx="8" fill="#22232E" stroke="#4D4F63"/>
+  <text x="58" y="272" font-size="11.5" fill="#F8F8F2">数据段里的字面 0xFF（实测 F7）</text>
+<rect x="58" y="282" width="21.2" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="68.6" y="297" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">x</text>
+<rect x="84.2" y="282" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="98.4" y="297" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="117.6" y="282" width="28.4" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="131.79999999999998" y="297" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">FF</text>
+<rect x="151.0" y="282" width="21.2" height="22" rx="4" fill="#22232E" stroke="#4D4F63"/>
+<text x="161.6" y="297" font-size="10.5" fill="#8BE9FD" text-anchor="middle" font-family="monospace">y</text>
+  <text x="233.2" y="297" font-size="11" fill="#62728A">⇒ 网格收 "x" 0xFF "y"（两字节 FF 吃掉一个）</text>
+  <rect x="780" y="248" width="680" height="72" rx="8" fill="#22232E" stroke="#4D4F63"/>
+  <text x="798" y="272" font-size="11.5" fill="#F8F8F2">写出侧本仓自己转义（D11 契约的另一半）</text>
+  <text x="798" y="297" font-size="11" fill="#F1FA8C">data 含 FF → 线上写 FF FF；SB 载荷同规则（F7）</text>
+</g>
+<g transform="translate(30,1530)">
+  <rect x="-1" y="-1" width="1502" height="422" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — Telnet 会话在途（编码/行尾 + 掉线两档归因）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="38" fill="#21222C"/>
+  <rect x="14" y="38" width="196" height="34" rx="6" fill="#282A36"/>
+  <line x1="16" y1="70" x2="208" y2="70" stroke="#BD93F9" stroke-width="3"/>
+  <text x="26" y="59" font-size="11.5" fill="#F8F8F2">Telnet 板子控制台</text>
+  <rect x="218" y="38" width="196" height="34" rx="6" fill="#22232E"/>
+  <text x="230" y="59" font-size="11.5" fill="#62728A">串口 板子 A</text>
+  <rect x="422" y="38" width="196" height="34" rx="6" fill="#22232E"/>
+  <text x="434" y="59" font-size="11.5" fill="#62728A">本地终端</text>
+  <line x1="0" y1="72" x2="1500" y2="72" stroke="#3A3C4C"/>
+  <rect x="0" y="72" width="1500" height="348" fill="#282A36"/>
+  <text x="24" y="106" font-size="12.5" fill="#F8F8F2" font-family="monospace">Trying 192.168.1.1 ...</text>
+  <text x="24" y="130" font-size="12.5" fill="#F8F8F2" font-family="monospace">Connected to 192.168.1.1.</text>
+  <text x="24" y="154" font-size="12.5" fill="#F8F8F2" font-family="monospace">Escape character is &#x27;^]&#x27;.</text>
+  <text x="24" y="178" font-size="12.5" fill="#F8F8F2" font-family="monospace">login: admin</text>
+  <text x="24" y="202" font-size="12.5" fill="#F8F8F2" font-family="monospace">Password: </text>
+  <text x="24" y="226" font-size="12.5" fill="#F8F8F2" font-family="monospace">BusyBox v1.36.0 built-in shell (ash)</text>
+  <text x="24" y="250" font-size="12.5" fill="#F8F8F2"># cat /etc/hardware ; 中文型号说明</text>
+  <text x="24" y="274" font-size="12.5" fill="#F8F8F2" font-family="monospace"># </text>
+  <text x="1476" y="106" font-size="11" fill="#62728A" text-anchor="end">192.168.1.1:23 · 编码 UTF-8（全局档，D5①）· 行尾 CRLF（固定档，D8①）</text>
+  <text x="1476" y="126" font-size="11" fill="#8BE9FD" text-anchor="end">ECHO=WILL · SGA=DO · 已发 XTERM</text>
+  <text x="1476" y="146" font-size="11" fill="#F1FA8C" text-anchor="end">NAWS 不协商 ⇒ 远端按 80×24 重排（D10① 的代价面）</text>
+  <rect x="470" y="252" width="530" height="126" rx="8" fill="#26262F" stroke="#4D4F63"/>
+  <text x="490" y="276" font-size="12" fill="#F8F8F2" font-weight="700">读侧 EOF ⇒ RemoteExit</text>
+  <text x="490" y="298" font-size="11" fill="#F1FA8C">远端已退出（会话结束）：不进重拨环，网格保留供回看</text>
+  <text x="490" y="318" font-size="10.5" fill="#62728A">telnetd 在远端进程 exit 后关 TCP 是正常结束（D9①）</text>
+  <text x="490" y="338" font-size="10.5" fill="#62728A">should_reconnect(RemoteExit)==false，分类表零改动</text>
+  <text x="490" y="358" font-size="10.5" fill="#62728A">半关形态同档：recv 得 EOF 而写侧仍成功（F4）⇒ 判据只读侧</text>
+  <rect x="1024" y="252" width="452" height="126" rx="8" fill="#2A1C22" stroke="#FF5555"/>
+  <text x="1044" y="276" font-size="12" fill="#F8F8F2" font-weight="700">读侧 ECONNRESET ⇒ LinkLost</text>
+  <text x="1044" y="298" font-size="11" fill="#F1FA8C">第 2 / 3 回自动重拨 · 2 s 后重试（浮层沿用 UI_RECONNECT 已裁两态）</text>
+  <text x="1044" y="318" font-size="10.5" fill="#62728A">重拨成功即清「已答」状态位，重新发起协商（D4 的代价）</text>
+  <rect x="1300" y="336" width="150" height="26" rx="6" fill="#BD93F9"/>
+  <text x="1375" y="354" font-size="11.5" fill="#1E1F29" text-anchor="middle">立即重试</text>
+  <rect x="1146" y="336" width="146" height="26" rx="6" fill="none" stroke="#4D4F63"/>
+  <text x="1219" y="354" font-size="11.5" fill="#62728A" text-anchor="middle">停止重连</text>
+<g transform="translate(24,268)">
+  <circle cx="0" cy="0" r="11" fill="#50FA7B"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">6</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 6：编码走全局档、Enter 落 CRLF（唯一一处折算点）</text>
+</g>
+<g transform="translate(24,300)">
+  <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+  <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">7</text>
+  <text x="16" y="4" font-size="11.5" fill="#f2f4f8">判据 7：EOF 与 ECONNRESET 两档分开，重拨只走后者</text>
+</g>
+</g>
+<g transform="translate(30,1970)">
+  <rect x="-1" y="-1" width="1502" height="222" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 侧栏与本期边界</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="360" height="186" fill="#21222C"/>
+  <rect x="16" y="50" width="328" height="26" rx="5" fill="#282A36" stroke="#4D4F63"/>
+  <text x="28" y="67" font-size="11" fill="#62728A">搜索档案 / 主机</text>
+  <rect x="16" y="84" width="328" height="26" rx="5" fill="#282A36"/>
+  <text x="28" y="101" font-size="11.5" fill="#F8F8F2">板子控制台 192.168.1.1</text>
+  <text x="332" y="101" font-size="11" fill="#FFB86C" text-anchor="end">★</text>
+  <rect x="16" y="112" width="328" height="26" rx="5" fill="#21222C"/>
+  <text x="28" y="129" font-size="11.5" fill="#F8F8F2">机房跳板 · Telnet</text>
+  <text x="332" y="129" font-size="11" fill="#FFB86C" text-anchor="end">★</text>
+  <rect x="16" y="140" width="328" height="26" rx="5" fill="#21222C"/>
+  <text x="28" y="157" font-size="11.5" fill="#F8F8F2">本地终端</text>
+  <text x="332" y="157" font-size="11" fill="#62728A" text-anchor="end">☆</text>
+  <text x="376" y="67" font-size="11.5" fill="#F8F8F2" font-weight="600">本期边界（稿 §7）</text>
+  <text x="376" y="91" font-size="11" fill="#62728A">TN3270 不做（需求原文即排除）· NAWS/BIN/LFLOW/NEW-ENVIRON 等表外选项一律拒绝（D4①）</text>
+  <text x="376" y="112" font-size="11" fill="#62728A">本地回显不做（D7①）：对端 WONT ECHO 时输入不可见 —— 走查第 ⑶ 条如实实测</text>
+  <text x="376" y="133" font-size="11" fill="#62728A">IPv6 连不上（F10：tcp_connect 钉死 AF_INET，裁决 7.96 的既定收窄）· quick connect 不加 Telnet 语法</text>
+  <text x="376" y="154" font-size="11" fill="#62728A">逐标签类型图标随 SPEC.FEAT.WS.04 余腿单开（口径同 7.110 D12①）⇒ 识别靠档案名</text>
+  <text x="376" y="175" font-size="11" fill="#FF5555" opacity="0.9">真 telnetd 不可得（F1）⇒ etest_telnet_server 在册；未真机走查，本稿不称「可用」（第 33 条）</text>
+</g>
+<text x="30" y="2232" font-size="12.5" font-weight="700" fill="#1b1f28">实测口径（UI_TELNET.draft.md §0）：F2 环回假服务端可逐字节证 ｜ F3 EOF(0 字节) 与 ECONNRESET(104) 两态分明 ｜ F4 半关时写侧仍成功 ⇒ 掉线只从读侧归因 ｜ F5/F6 命令跨 read 断裂</text>
+<text x="30" y="2254" font-size="12.5" font-weight="700" fill="#1b1f28">F1 本机无 telnetd ⇒ etest 在册不写 ｜ F8 参考客户端连上后 2 s 零字节（D3 的根据）｜ F10/F11/F12 IPv6 与 NODELAY 与 Win 腿：推断 / 未验证</text>
+<text x="30" y="2284" font-size="12" fill="#5a6070">本图为草图：尺寸与文案以实现为准；SVG 为事实来源，改图直接改 SVG。§3 的 D1–D12 经人裁决后按 §4 文件布局落 src/（裁决前不动代码）。</text>
+</svg>
