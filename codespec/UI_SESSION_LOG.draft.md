@@ -1,6 +1,8 @@
 # 会话日志设计稿（`SPEC.FEAT.CONN.11`）
 
-> **状态**：**待评审**——§3 的 D1–D13 需人逐条裁决，裁决前不动 `src/`（AGENTS §4.1 第 2 条）。§4 的三批切法与 §6 的判据映射都按「裁决即开工」预备。
+> **状态**：**评审已收口（2026-10-12）**——§3 的 D1–D13 经人逐条裁决：**D1–D9、D11–D13 全按稿面推荐档**（无一条改判），**D10 改判「内置固定词表 + 用户可配追加正则」**（稿面原推荐是只落内置词表、可配延后）。据此并入 `codespec/SPECIFICATIONS.md` §7 裁决 **7.116**，转实现按 §4 布局分三批走。
+> **D10 改判的连带回写**（本稿七处已同步改口）：§1 交付第 6/7 条、§2 判据 7（设置页自此**三行**）、§3 D10 行（含新增键的六处同步与 F8 的三处计数改口）、§4 文件布局多出 schema/store/form_transfer/settings_i18n 四行、§5 多一条「编译点」、§6 多两条验收（可配正则命中 + 非法模式拒绝开启）、§7 把「可配正则」移出「不做」清单。草图屏 C 与屏 A 的对话框注记同步改口。
+> **D10 改判带出的第二条裁决（人已裁）**：用户自带正则**非法**时（F13：`std::regex` 在构造期就抛 `regex_error`）⇒ **拒绝开启并回报错误**，不退回内置词表静默续记。理由：过滤是缓解腿，「用户显式配了而失效」必须可见——「不开日志」比「以为打了码其实没打」安全。
 > **配套高保真草图**：`codespec/UI_SESSION_LOG.draft.svg`（矢量源）/ `codespec/UI_SESSION_LOG.draft.png`（1× 出图）。图中圈号 1–7 即 §2 的判据标号，各贴在所属屏旁；SVG 为事实来源，改图直接改 SVG。
 > **上游依据**：`SPEC.FEAT.CONN.11` 原文（`codespec/SPECIFICATIONS.md` §连接域）、裁决 **7.9**（会话日志默认态：默认关闭 + 开启时风险提示 + 可选敏感输出过滤）、`SPEC.FEAT.CONN.09` 的审计边界（该条原文与 `codespec/ARCHITECTURE.md` §12.1 第 2 条都把**日志文件目录排除在凭据审计之外**，单独标注「用户显式开启、风险自负」）、架构 §7.5 的归属句（`ARCHITECTURE.md`：「会话日志由会话层落盘、路径配置归 `borealis::config`」）、7.104 D1①（一次性提示的每对象上弦形态）、7.41（右键三态与菜单条目族）、7.38⑥（两态不发菜单）、7.99 D4①（构造期快照与在途不重放）、7.26③（配置目录来源）。
 > **既成地基（本棒只消费，不新建）**：`connection.session_logging` / `connection.session_log_dir` 两枚键**已全链路在册而零消费方**（schema `include/borealis/config/settings.h:222-223`、落盘读写 `src/config/store.cpp:532-533` 与 `:846-847`、表单搬运 `src/config/form_transfer.cpp:384-389`、面板词条 `src/ui/settings_i18n.cpp:462-463`、反向核对表两行标 `Absent × NextSession` `src/ui/settings_catalog.cpp:348-357`、默认关这条已有证人 `tests/unit/utest_config.cpp:599`）⇒ 这是一条**有闸可证**的缺口：接线之后核对表必然要求改判，漏判即红。其余现成品见 §0 的 F1–F9。
@@ -44,10 +46,10 @@
 3. **越限覆盖**：单文件字节上限取**文件级常量**，越限时把已写内容的前半丢弃、后半前移到文件头继续写（语义即「覆盖最旧的」）。上限不可配、不轮转多文件（D9，在册）。
 4. **逐会话显式开关 + 默认关闭的兑现**：右键菜单追加一条 `MenuCommand::ToggleSessionLog`，同时注册一条命令面板命令 `session.toggle_logging`——两条入口都**必须**有，因为 `terminal.right_click` 取 `Paste` / `CopyOnSelect` 两态时**根本不发菜单**（裁决 7.38⑥），只挂右键会让一半用户没有入口（D6）。既有两枚键把 `connection.session_logging` 读成**能力闸**：关 ⇒ 菜单项不出现、命令不响；开 ⇒ 仍需逐会话点一次（D1）。
 5. **风险提示**：开启动作那一刻用现成的 `au::confirm` 弹一次「日志可能包含密码 / 令牌」，文案里报出**目标文件的完整路径**；确认后才创建文件（D7）。
-6. **可选敏感输出过滤**：本期落**内置固定词表**（`password|passwd|token|secret|api[_-]?key|authorization`，`ECMAScript | icase`，整行命中即整行替换为 `[redacted]`），正则可配延后（D10）。
-7. **核对表两处改口**：`connection.session_logging` 与 `connection.session_log_dir` 从 `Absent` 改判 `Wired`（消费方＝会话层 + 装配层），`session_logging` 的生效档随之从 `NextSession` 改 `Immediate`（开启动作现读，不重放在途会话）——F8 那三处计数因此同批改口。
+6. **敏感输出过滤**：本期落**内置固定词表**（`password|passwd|token|secret|api[_-]?key|authorization`，`ECMAScript | icase`，整行命中即整行替换为 `[redacted]`）**并叠加用户可配的正则**——新键 `connection.session_log_pattern`（string，缺省空＝只用内置词表），二者是并集关系（D10 改判，人裁）。非法模式 ⇒ **拒绝开启并回报错误**（fail-closed，见状态块第二条）。
+7. **核对表三处改口**：`connection.session_logging` 与 `connection.session_log_dir` 从 `Absent` 改判 `Wired`（消费方＝会话层 + 装配层），`session_logging` 的生效档随之从 `NextSession` 改 `Immediate`（开启动作现读，不重放在途会话）；新键 `session_log_pattern` 自入表起就是 `Wired ∧ NextSession`（编译点在开启那一刻）。F8 那三处计数因此同批改口（63→64、`Absent` 21→19、`Wired ∧ NextSession` 名单 +2）。
 
-**本期不交付**（§7）：带属性的原生存式（自定格式）、按会话记忆的开关（重启程序后不自动续开）、正则可配、跨进程的「已提示过」持久化、日志文件的回放/查看界面、目录级配额与多文件轮转、上限可配、真机走查。
+**本期不交付**（§7）：带属性的原生存式（自定格式）、按会话记忆的开关（重启程序后不自动续开）、跨进程的「已提示过」持久化、日志文件的回放/查看界面、目录级配额与多文件轮转、上限可配、真机走查。（原列在此的「正则可配」随 D10 改判**升为本期交付**。）
 
 **关键前提（口径不是本稿新造的）**：
 
@@ -70,11 +72,11 @@
 | 4 | 落盘形态（`<目录>/session-<TabId>-<起始 epoch 秒>.log`）：一次开启＝一个文件；标签名/档案名**不进文件名**（中文、空格、`/\:*?"<>|` 都要洗，洗名字是新风险，D13），人类可读性由判据 3 那句「将写入：完整路径」承担 | 原文「按会话开关的输出落盘记录」（D13） |
 | 5 | 换行结构按 F10 的读数折算：CRLF（PTY 与 Telnet 的主流形态）与 LF 各折成**一条**换行；孤立 CR（覆盖式进度条）也折成一条换行；**BS 丢弃**——不在日志里模拟回退覆盖，代价是 `progress` 那种一屏刷新的输出会留下一串中间态行（F12 同族）。TAB 保留，其余 C0 丢弃 | 原文「纯文本（剥离 SGR 属性但保留换行结构）」（D2/D3） |
 | 6 | 时间戳前缀按**行**给（不是按字节分片），且只在本件的折算边界上插——分片边界与行边界不等价（F10 一片可含 3.5 行）。开启态若越限：日志文件里出现一次「前段被覆盖」的分界，界两侧时刻仍单调 | 原文「可配时间戳前缀」+「环形覆盖策略」（D8/D9） |
-| 7 | 设置页「连接」页两行的改口形态：`connection.session_logging` 是**能力闸**——行旁注一句「开启后仍需逐会话显式点『开启会话日志』」；`connection.session_log_dir` 留空＝落到 `<配置目录>/borealis-logs`（F19：该目录不含应用子目录，故本仓自带一个有归属的名字），非空＝原样用。两行的徽标从「延后」变「即时」（`session_logging`）与「延后」（`session_log_dir` 保持 `NextSession`：路径在建会话/开启那一刻取用，改它不回溯在途会话的文件位置） | 原文「日志文件路径可在设置中配置」+ 裁决 7.9 的默认关闭（D1/D9） |
+| 7 | 设置页「连接」页自此**三行**有消费方。`connection.session_logging` 是**能力闸**——行旁注一句「开启后仍需逐会话显式点『开启会话日志』」；`connection.session_log_dir` 留空＝落到 `<配置目录>/borealis-logs`（F19：该目录不含应用子目录，故本仓自带一个有归属的名字），非空＝原样用；**新行** `connection.session_log_pattern` 是「追加正则（空＝只用内置词表）」，与内置词表取**并集**。三行的徽标：`session_logging` 从「延后」变「即时」（开启动作现读），`session_log_dir` 与 `session_log_pattern` 保持「延后」（路径与模式都在**开启那一刻**取用，改它不回溯在途会话） | 原文「日志文件路径可在设置中配置」+「按可配正则」+ 裁决 7.9 的默认关闭（D1/D9/D10②） |
 
 ---
 
-## 3 裁决（D1–D13，待人逐条裁；「推荐」列即稿面立场）
+## 3 裁决（D1–D13，2026-10-12 人已逐条裁完；下表「推荐」列即稿面立场，**除 D10 外全部按推荐档收口**，裁决随理由与代价一并入册为 7.116）
 
 | # | 待定项 | 选项 | 推荐 | 理由与代价 |
 |---|---|---|---|---|
@@ -87,7 +89,7 @@
 | **D7** | 风险提示的时机与次数 | ① **开启动作即弹** `au::confirm`，每次开启都问，确认后才建文件；② 严格照原文「首次落盘」时弹 `alert`（需要一个「已落盘」边沿与一次跨线程投递）；③ 弹过一次就持久化不再问（新增 schema 键） | **①** | ③ 要新键，代价是 F8 那一整套（63→64、三处计数、装载、搬运、词条），且「永久不再提示」正削弱裁决 7.9 想买的提醒效果；② 的「首次落盘」在①之下**必然已被满足**（每次开启都问 ⇒ 第一次落盘前一定问过），而它要多造一条边沿投递腿，没有额外收益。① 复用现成品 `ask_multiline_warning` 的形态（F17 同一条「无宿主就不问」），并且提示语里能报出**目标文件的完整路径**——这是原文那句话真正想要的东西。代价：与原文「首次落盘给出」措辞有别 ⇒ 按 AGENTS §4.2 第 11 条回写成裁决，不改需求原文 |
 | **D8** | 时间戳前缀的**档位来源** | ① 会话级参数（开启时由装配层给，形态固定「每行 + 本地秒」），不进 schema；② 新增 schema 键 `connection.session_log_timestamp`（bool）；③ 新增枚举键给多档（关/秒/毫秒/无） | **①** | 需求只说「可配」，而「配」的入口在**开启动作**里就已经成立（SecureCRT/iTerm2 也都是开启时定形）。②/③ 的代价 F8 已经量出来：每枚键都是「schema + store 读写 + 搬运 + 核对表行 + 词条 + 三处计数」六处同步，而本期**没有任何别的消费方**要读它。③ 的三档取值本期没有判据能区分手感。代价：重启程序后时间戳档不保留（回到缺省开）——与「本期不记忆逐会话开关」这条 D11 的口径同档，一并登记；若人裁改②，§4 的文件布局里预留的那一行就是它的位置 |
 | **D9** | 越限「环形覆盖」的实现档与上限 | ① 单文件 + 上限常量，越限**丢弃已写内容的前半、把后半前移到文件头**继续写；② 真环形（两个半区 + 头尾指针，读时拼接）；③ 越限即**停止写入**并投一次性提示；④ 多文件轮转 `.1/.2` | **①** | 原文说「环形覆盖策略」，② 名义最贴但产物**人读不了**（`less` 打开是尾段拼头段，除非再做一个读取器——即 D4③ 那类「没有消费方的格式」）。③ 不覆盖，违背原文；④ 是「轮转」不是「环形」，且目录里凭空多份历史文件。① 语义等价于「覆盖最旧的」而文件始终是正常文本，代价是越限那一刻要做一次「读后半 + 重写」的全量 IO——按上限 8 MiB 计最坏读回 4 MiB，发生在一轮 `ingest` 出锁后的写点上（F14 的量级外推），且**只在越限的那一轮**发生。上限取 `kMaxSessionLogBytes = 8 MiB` 文件级常量、不入 schema（D8 同一条理由），§7 登记为可配延后 |
-| **D10** | 敏感输出过滤的本期形态 | ① **内置固定词表**（`password\|passwd\|token\|secret\|api[_-]?key\|authorization`，icase），整行命中即整行替为 `[redacted]`，正则可配延后；② 本期就加可配正则键（空＝不过滤）；③ 本期不做过滤 | **①** | 原文两截：「提供可选的敏感输出过滤」＋「按可配正则」。① 交付前者，后者进 §7 在册；② 又要一枚键（F8 全套），且**缺省取值**是个陷阱：缺省空＝多数人根本不会去填，等于没有过滤；缺省非空＝把内置词表塞进用户可编辑的字符串里，日后改词表要面对「在档值覆盖新词表」。③ 直接削掉裁决 7.9 点名的这条缓解腿，不取。F13 给了三条落地依据：ASCII 供替选在含 CJK 的 UTF-8 `std::string` 上可直接匹配（**不需要** `search.cpp` 那套 UTF-16 转换）、`.` 不跨 `\r`（行内匹配天然安全）、万行级 13 ms（成本可接受）。代价：词表**硬编码**，遇到 `P@ss` 之类变体不打码——风险提示那句话（D7）因此不能省，两句是一套。① 的另一条口径：**缺省开**（打开日志即打码），因为「默认把口令落进文件」这条设计不能靠用户记得再勾一下 |
+| **D10** | 敏感输出过滤的本期形态 | ① **内置固定词表**（`password\|passwd\|token\|secret\|api[_-]?key\|authorization`，icase），整行命中即整行替为 `[redacted]`，正则可配延后；② 本期就加可配正则键（空＝不过滤）；③ 本期不做过滤 | **①＋② 的并集（人改判，非稿面推荐）** | 稿面原推荐是 ①（F8 量过每枚键的六处同步，而本期看似没有别的消费方要读它），**人裁决改为「内置词表 + 用户可配追加正则」**：内置词表解决「缺省就该有缓解腿」，可配正则解决原文那句「按可配正则匹配 password / token / secret 等行」——只落前者等于把原文那一截推给延后，而这一截正是需求点名的形态，不是「将来才用」的抽象。二者取**并集**：新键 `connection.session_log_pattern` 缺省空＝只用内置词表（避开②原档「缺省空＝多数人根本不会去填，等于没有过滤」那个陷阱，因为内置词表已经在挡），非空＝内置之上叠加。<br>**代价（本条实际吃下的四条）**：① 新增一枚 schema 键 ⇒ F8 那一整套六处同步（schema / `store.cpp` 读写两处 / `form_transfer` / 核对表行 / 词条）+ `utest_settings_catalog` 三处计数改口（63→64、`Absent` 21→19、`Wired ∧ NextSession` 名单 +2）；② 非法模式在 `std::regex` **构造期**就抛 `regex_error`（F13 实测 code=5）⇒ 编译点必须落在「开启那一刻」而不是装载那一刻，并配一条 **fail-closed**（人已裁：**拒绝开启并回报错误**，不退回内置词表静默续记——过滤是缓解腿，「用户显式配了而失效」必须可见）；③ 生效档取 `NextSession`：改它不回溯在途会话的已写与正在打的码（与 `session_log_dir` 同档），故它**进** `Wired ∧ NextSession` 那份逐条名单；④ 词表与用户模式的**并集次序**要写进用例（同一行两侧都命中 ⇒ 只替一次 `[redacted]`，不叠字）。另两条落地依据不变：ASCII 供替选在含 CJK 的 UTF-8 `std::string` 上可直接匹配（**不需要** `search.cpp` 那套 UTF-16 转换）、`.` 不跨 `\r`（行内匹配天然安全）、万行级 13 ms（成本可接受）。③ 档（本期不做过滤）直接削掉裁决 7.9 点名的这条缓解腿，两档都没取 |
 | **D11** | 逐会话开关要不要**跨重启记忆** | ① 不记忆：重启程序后一律回到「未记录」，与默认关闭同一条线；② 记住「这个档案上次开着日志」，下次自动续开 | **①** | ② 与裁决 7.9「默认关闭 + 开启须用户显式动作」的精神相抵（自动续开就是没有显式动作），且要么给档案加字段（第四型档案的 JSON 形态要动）要么给会话身份加持久化映射——两头都是新契约。① 的代价一句话：每次程序启动都要重新点一次，而这正是安全提示想让用户看见的那一次 |
 | **D12** | 验证形态与批次 | 三层：① `utest_session_log`——脱开界面逐条断折算表（D3 的逐档）、时间戳插进行边界（判据 6）、词表打码、越限截断的前后段、路径回落与命名；② `itest_session_logging`——替身连接（`utest_session.cpp:55` 的 `FakeConnection` 那族）喂真字节，断**真实文件内容逐字节**（`isolation::temp_dir()`，F18）、断「取消提示 ⇒ 不建文件」、「能力闸关 ⇒ 无落点」；③ 走查（真 telnetd/真 shell 下的观感、慢盘手感） | 如述 | ①/② 的分工照串口棒与 Telnet 棒的既有切法：纯折算在 utest（不需要文件系统），文件语义在 itest（需要且能给）。**变异注入自证**（AGENTS 第 22 条）在 `src/main.cpp` 那两处不可用（裁决 7.83：装配不编入 runner），故本棒的证人面天生缺一块 ⇒ 按 Telnet 批 3 的同档口径登记为「无自动化证人」，不称覆盖完整。批次：批 1＝折算 + 落盘件 + `Session` 挂钩与 utest/itest（**不含 UI**，界面路径未通 ⇒ 不称可用）；批 2＝菜单项 + 命令 + 提示对话框 + 装配 + 核对表两行改口（界面路径自此可达）；批 3＝文档回写与在册收口 |
 | **D13** | 日志文件命名 | ① `session-<TabId>-<起始 epoch 秒>.log`（名字里**不带**标签名/档案名）；② 带净化后的标签名；③ 带档案 id | **①** | ② 要洗的名字里混着中文、空格、`/ \ : * ? " < > |` 与控制字符，Windows 保留名（`CON`/`NUL`）还要另挡一截——那是一条**平台知识**，AGENTS 第 23 条要求它待在 `src/platform/`，本棒不想为命名新开平台腿（F9 那条腿只教「怎么建」，不教「洗名字」）。③ 的档案 id 对用户同样是不可读串。① 的可读性缺口由判据 3 那句「将写入：`<完整路径>`」补——用户在开启那一刻看到自己点了什么。代价：文件多了以后目录里只有一列时刻与序号，翻找要靠时刻排序（TabId 单调不复用 ⇒ 同目录不撞名，`src/main.cpp:414-416` 的那条纪律正好用得上） |
@@ -98,12 +100,16 @@
 
 ```
 include/borealis/session/session_log.h    新增 —— 会话级落盘件的公共契约（不含 Aurora 类型，架构 §2.3）：
-                                                  `LogFormat`/`LogSpec{path, timestamp, redact}` 一份入参形态、
+                                                  `LogSpec{path, timestamp, user_pattern}` 一份入参形态
+                                                  （`user_pattern` 空＝只用内置词表，D10 改判）、
                                                   `kMaxSessionLogBytes` 上限常量（D9）、
                                                   `fold_to_plain_text(std::u32string_view) -> std::string`
-                                                  （**纯函数**：D3 的折算表，无 IO、可全量单测，AGENTS 第 20 条）
-src/session/session_log.cpp               新增 —— 同一件的落地腿：行缓冲 + 时间戳插行前（判据 6）+ 词表打码
-                                                  （F13 的 icase 供替选）+ `create_private_file` 首建 +
+                                                  （**纯函数**：D3 的折算表，无 IO、可全量单测，AGENTS 第 20 条）、
+                                                  `compile_redactor(user_pattern) -> std::optional<Redactor>`
+                                                  （**纯函数**：内置词表 ∪ 用户模式；非法模式返回 nullopt，
+                                                  即 fail-closed 的判定位，D10 连带口径）
+src/session/session_log.cpp               新增 —— 同一件的落地腿：行缓冲 + 时间戳插行前（判据 6）+ 打码
+                                                  （F13 的 icase 供替选，整行替换）+ `create_private_file` 首建 +
                                                   append + 越限截断重写（D9①）+ 写失败自我禁用并上弦一次性提示
 include/borealis/session/session.h        修改 —— 三枚运行期入口（D5①/D12 批 1）：
                                                   `enable_logging(LogSpec) -> LogOutcome`、`disable_logging()`、
@@ -112,6 +118,10 @@ include/borealis/session/session.h        修改 —— 三枚运行期入口（
                                                   构造点与既有成员**一字不动**（八处构造点见 §1 前提）
 src/session/session.cpp                   修改 —— `ingest` 内**只留一份引用**（锁内 `log_pending_.assign(...)`，
                                                   仅当已挂日志才做，F2：锁内不做 IO），出锁后同轮写（D5①）
+include/borealis/config/settings.h        修改 —— `connection` 域追加 `session_log_pattern`（std::string，
+                                                  缺省空＝只用内置词表）—— **D10 改判带来的唯一新键**（批 2）
+src/config/store.cpp                      修改 —— 该键的读与写两处（缺省值不写盘的既有口径照旧）
+src/config/form_transfer.cpp              修改 —— 设置表单搬运一行（与 `session_log_dir` 同族同形态）
 src/ui/right_click.h                      修改 —— `MenuCommand` 追加 `ToggleSessionLog`（F16 那条头注点名的到货
                                                   消费方）；`plan_right_click` 多收一枚「日志能力 + 当前态」
                                                   入参 —— **本棒唯一一处改既有签名**，理由见 D6 的代价列
@@ -120,20 +130,27 @@ src/ui/right_click.cpp                    修改 —— 计划里第三条条目
 src/ui/terminal_view.{h,cpp}              修改 —— `menu_label` 补两态文案、`on_menu_command` 补一支；
                                                   新增 `set_logging_hooks(...)`（照 `set_restart_hook` 的
                                                   「留空即不画」形态，F17）
-src/ui/settings_catalog.cpp               修改 —— `connection.session_logging` 改判 `Wired ∧ Immediate`、
-                                                  `connection.session_log_dir` 改判 `Wired ∧ NextSession`
-                                                  （F8 的三处计数同批改：`Absent` 21→19；两行都**不进**
-                                                  `Wired ∧ NextSession` 名单的前者那一半，见判据 7）
-src/ui/settings_i18n.cpp                  修改 —— 菜单两态文案、提示对话框两句、命令标题、能力闸旁注
+src/ui/settings_catalog.cpp               修改 —— **三行**：`connection.session_logging` 改判 `Wired ∧ Immediate`、
+                                                  `connection.session_log_dir` 改判 `Wired ∧ NextSession`、
+                                                  新行 `connection.session_log_pattern` 以 `Wired ∧ NextSession`
+                                                  入表（F8 的三处计数同批改：schema 键 63→64、`Absent` 21→19、
+                                                  `Wired ∧ NextSession` 名单 +2；`session_logging` 那一行**不进**
+                                                  名单，见判据 7）
+src/ui/settings_i18n.cpp                  修改 —— 菜单两态文案、提示对话框两句、命令标题、能力闸旁注、
+                                                  新键的标签与占位词条、非法正则的回报错误句
 src/main.cpp                              修改 —— 装配：`session.toggle_logging` 命令、`LogSpec` 的算路径
                                                   （目录回落 `default_config_dir()/borealis-logs`，F19；
-                                                  D13 的名字形态；D8 的时间戳档）、`confirm` 风险提示、
+                                                  D13 的名字形态；D8 的时间戳档；D10 的用户模式现读）、
+                                                  **开启前** `compile_redactor` 一次 ⇒ nullopt 即 `alert` 回报
+                                                  并**不建文件**（fail-closed）、`confirm` 风险提示（D7）、
                                                   能力闸的现读点、`perform_close` 撤账（口径同 serial/telnet 表）
 src/CMakeLists.txt                        修改 —— `src/session/session_log.cpp` 进 `borealis_core` 的**显式**源
                                                   清单（只有 tests 走 GLOB；漏这一行即链接期 undefined reference，
                                                   Telnet 批 2 的同一处坑）
 tests/unit/utest_session_log.cpp          新增 —— D3 折算表逐档（CRLF/LF/孤立 CR/BS/TAB/其余 C0/五类转义）、
-                                                  F12 的整屏重绘样本、时间戳只在行边界插、词表命中与不命中、
+                                                  F12 的整屏重绘样本、时间戳只在行边界插、内置词表命中与不命中、
+                                                  **用户模式与内置词表的并集**（同一行两侧都命中 ⇒ 只替一次）、
+                                                  **非法模式返回 nullopt**（F13 的 `(` 未闭合那一档）、
                                                   越限截断后前后段与时刻单调、目录回落与文件名形态
 tests/integration/itest_session_logging.cpp 新增 —— 替身连接喂字节 ⇒ 真文件逐字节；取消提示 ⇒ 文件不存在；
                                                   能力闸关 ⇒ 无落点；关闭标签 ⇒ 末段已 flush 完整
@@ -141,10 +158,12 @@ tests/unit/utest_right_click.cpp           修改 —— `plan_right_click` 新�
                                                   三态右键 × 有无选区），条目次序
 tests/integration/itest_right_click_paste.cpp 修改 —— 同上一条改口 + 「Paste/CopyOnSelect 两态仍不发菜单」
                                                   这条既有判据不受新条目影响
-tests/unit/utest_settings_catalog.cpp      修改 —— F8 的三处计数与名单改口
+tests/unit/utest_settings_catalog.cpp      修改 —— F8 的三处计数与名单改口（63→64、Absent 21→19、名单 +2）
+tests/unit/utest_config.cpp                修改 —— 新键的往返等值与「缺省空」两档；既有那条「默认关闭」证人
+                                                  （`:599`）不动
 ```
 
-> 不改既有公共头的可见性与既有成员顺序（AGENTS §4.1 第 6 条）；`plan_right_click` 的入参追加是**唯一**一处签名变化，其理由与用例改口在 D6 里已经写明。框架侧不预登记新缺口：对话框、菜单、命令面板、凭据式文件创建、无头文件系统夹具全部有已落地的消费先例（F9/F17/F18）。
+> 不改既有公共头的可见性与既有成员顺序（AGENTS §4.1 第 6 条）；`plan_right_click` 的入参追加是**唯一**一处签名变化，其理由与用例改口在 D6 里已经写明。新键 `connection.session_log_pattern` 是 **D10 改判**吃下的六处同步（F8 那一整套），不是顺手扩面——它兑现的是原文那句「按可配正则」。框架侧不预登记新缺口：对话框、菜单、命令面板、凭据式文件创建、无头文件系统夹具全部有已落地的消费先例（F9/F17/F18）。
 
 ---
 
@@ -158,22 +177,24 @@ tests/unit/utest_settings_catalog.cpp      修改 —— F8 的三处计数与�
                                                   │ 出锁：应答 flush、脏行入队、wake_frame
                                                   │
                                                   └─► SessionLog::append(log_pending_)   ← 读线程同步（D5①）
-                                                        行缓冲 → 时间戳（判据 6）→ 词表打码（D10）
+                                                        行缓冲 → 时间戳（判据 6）→ 打码（内置词表 ∪ 用户模式，D10）
                                                         → UTF-8 → ofstream(app)
                                                         越 8 MiB ⇒ 丢前半、后半前移（D9①）
                                                         写失败 ⇒ 自我禁用 + 上弦一次性提示（F7 同形）
 
 UI 线程（右键 / 命令面板 / 设置面板）
    ├─ plan_right_click(action, has_selection, log_capability_and_state)      （F16/D6）
-   ├─ MenuCommand::ToggleSessionLog ──钩子──► 装配层：读能力闸 → au::confirm 风险提示（D7）
-   │                                             → 算路径（F19/D13）→ Session::enable_logging(LogSpec)
-   └─ 设置页两行：Store.replace 落盘；核对表改判（§4）
+   ├─ MenuCommand::ToggleSessionLog ──钩子──► 装配层：读能力闸 → 读 session_log_pattern 并
+   │        compile_redactor(...) 先编译一次（**开启前**，非装载期）⇒ nullopt 即 alert 回报且**不建文件**
+   │        → au::confirm 风险提示（D7）→ 算路径（F19/D13）→ Session::enable_logging(LogSpec)
+   └─ 设置页三行：Store.replace 落盘；核对表改判（§4）
 ```
 
 - **顺序即文件内容**：所有写点都在该会话自己的读线程上，故分片顺序天然是到达顺序，不需要队列也不需要重排——这是 D5① 相对 F15 那两条丢弃型队列的全部优势。
 - **锁的持有面**：`mutex_` 内只做一次码点拷贝（`std::u32string::assign`），文件 IO 全在出锁之后。这与 `pending_responses_` 的「锁内登记、出锁才写」是同一形态（F2）；日志关闭时这份拷贝不发生（一个 `bool` 早退），故既有会话的字节一寸不动。
 - **唯一的主线程反例已被结构挡在外面**：F4 那条预览腿在主线程呼 `on_bytes`。本稿不打算「容忍」它，也不给它加线程判断——预览会话由 `SettingsPreview` 自己构造，装配层从不给它 `LogSpec`，而 F17 那条「钩子未注入即无入口」保证预览视口里连菜单项都没有。这一条要写成注释钉在挂钩处，否则后人加「预览也开日志」时会静默在主线程写盘。
 - **慢盘的形态**：D5① 明确接受的代价——磁盘越慢，该会话的输入到达越慢（读线程被自己的写点拖住），而 UI 线程不受影响。本沙箱 F14 的读数只覆盖 NVMe 本地盘，NFS/慢盘属**推断／未验证**，走查第 ⑸ 条实测后回写。
+- **正则的编译点只有一次，且在开启那一刻**：`compile_redactor` 把内置词表与用户模式并成**一个** `std::regex`（供替选并联，不是逐行跑两遍），在装配层呼 `enable_logging` **之前**编译一次、随 `LogSpec` 移交给该会话的 `SessionLog`。故读线程每行只做一次 `regex_search`（F13：万行 13 ms），装载期与设置页输入框里都不编译——用户在表单里逐字符敲的模式不是要执行的东西。非法模式 ⇒ 返回 `nullopt` ⇒ 装配层 `alert` 回报并**不建文件、不改开关态**（D10 连带的 fail-closed 档）。
 - **关闭与撤账**：`Session` 析构即关文件（`ofstream` 随成员析构 flush）；标签关闭走既有 `perform_close` 的撤账纪律；重启会话＝新 `Session` 对象＝新文件且回到未记录态（D11① 的自然结果，与一次性提示的 latch 同档口径）。
 
 ---
@@ -185,21 +206,23 @@ UI 线程（右键 / 命令面板 / 设置面板）
 - **整屏重绘的语义**（F12）：同件锁「40 次清屏归位样本 ⇒ 43 行」，把这条**不是缺陷的形态**钉在用例名里，防止后人当 bug 修。
 - **时间戳前缀**：`utest_session_log` 锁「一条分片含 3.5 行 ⇒ 每行一条前缀、分片边界不产生前缀」，以及「CRLF 折一条 ⇒ 只有一条时间戳」。
 - **环形覆盖**：`utest_session_log` 用**小上限**（测试入参覆盖，非常量）锁「越限后前半消失、后半保留、后续字节接在上文之后」与「不越限时逐字节不变」。
-- **敏感过滤**：`utest_session_log` 锁命中词表的行整行替为 `[redacted]`、大小写与 CJK 混排行都命中（F13 的第一条读数）、不含关键词的行**逐字节不变**（打码不是改写）。
+- **敏感过滤（内置词表）**：`utest_session_log` 锁命中词表的行整行替为 `[redacted]`、大小写与 CJK 混排行都命中（F13 的第一条读数）、不含关键词的行**逐字节不变**（打码不是改写）。
+- **敏感过滤（用户可配正则，D10 改判）**：同件另锁三条——① 用户模式**独立**命中而内置词表不命中的行也被打码（证明并集不是装饰）；② 同一行两侧都命中 ⇒ 只替**一次** `[redacted]`，不叠字；③ 非法模式（F13 的 `(password|token` 那一档）⇒ `compile_redactor` 返回 `nullopt`，且 `itest_session_logging` 锁「nullopt 这条路走下来**文件不存在**、开关态不变」（fail-closed 的界面侧半段）。缺省空模式的「只用内置词表」另锁一条，防并集实现把空模式折成 `()` 之类匹配一切的东西。
 - **默认关闭 + 风险提示**：默认关这条的既有证人 `utest_config.cpp:599` 不动；`itest_session_logging` 锁「取消提示 ⇒ 路径上不存在文件（含不创建零字节文件）」与「确认 ⇒ 文件即建」；提示文案里含完整路径。
 - **0600 与不覆盖**：`itest_session_logging` 锁首建走 `create_private_file` 的返回档（`Created` vs `AlreadyExists` ⇒ append 而非 truncate）。**POSIX-only**；Win 腿的权限语义按 F9 标推断，走查第 ⑷ 条实测。
 - **测试读数口径**：交付时以 `ctest --preset linux -E etest_` 的**项数**与 `borealis_test_runner` 的**全案数**结项（AGENTS 第 21 条不认「应该更快了」，本棒同样不认「测了很多」）；变异注入按第 22 条逐则给「注入点 ⇒ 哪条用例转红」，装配那两处**无证人**（裁决 7.83）按 Telnet 批 3 同档如实登记。
-- **真机走查**（AGENTS 第 33 条，未走查不得称「可用」）：⑴ 真 SSH/本地 shell 下开日志的观感，`ls --color` 的产物在常见编辑器里是不是干净文本；⑵ 开 `top`/`vim` 之后日志里那一堆重绘行**读起来是否可解释**（F12/判据 6 那句话够不够）；⑶ 口令提示与打码的实际效果（`ssh` 口令、`passwd` 交互各试一次）；⑷ Win32 腿：文件权限、路径分隔、`borealis-logs` 的落点与编辑器关联；⑸ 大输出（`cat` 一个几百 MB 文件）时的手感与输入迟滞（D5① 的代价面）；⑹ 两道开关（能力闸 + 逐会话）点起来的直觉，以及旁注那句话读不读得懂（D1 的代价面）。
+- **真机走查**（AGENTS 第 33 条，未走查不得称「可用」）：⑴ 真 SSH/本地 shell 下开日志的观感，`ls --color` 的产物在常见编辑器里是不是干净文本；⑵ 开 `top`/`vim` 之后日志里那一堆重绘行**读起来是否可解释**（F12/判据 6 那句话够不够）；⑶ 口令提示与打码的实际效果（`ssh` 口令、`passwd` 交互各试一次），并**在设置里填一条自己的正则**（含一条非法的）看回报与生效面（D10 改判的新增走查面）；⑷ Win32 腿：文件权限、路径分隔、`borealis-logs` 的落点与编辑器关联；⑸ 大输出（`cat` 一个几百 MB 文件）时的手感与输入迟滞（D5① 的代价面）；⑹ 两道开关（能力闸 + 逐会话）点起来的直觉，以及旁注那句话读不读得懂（D1 的代价面）。
 
 ---
 
 ## 7 本期不做（延后 / 在册）
 
 - **带属性的原生存式（自定格式）**：需求原文那一腿本期只落纯文本档（D4①）。延后的真实理由不是「难」，而是**没有消费方**：写出来的东西需要一个读法，否则违反 `right_click.h:36-40` 那条「不留点了什么也不发生的空位」的纪律。
-- **可配正则**：内置词表之上的「用户自带正则」延后（D10①），届时按 F8 那一整套加一枚键，并先解决「缺省值即陷阱」那条。
+- **多条用户模式（字符串数组）与设置页的「试打一把文本」预览**：本期只落**一枚** `connection.session_log_pattern`（单条模式，与内置词表取并集）。「一组模式」要新键形态（数组装载与往返守卫）、「即时预览」要新交互面，两者本期都没有判据可验收 ⇒ 延后。
+  **同时登记 D10 改判吃下的代价**：本棒**多了一枚 schema 键**——F8 量过的那一整套六处同步（schema / `store.cpp` 读写两处 / `form_transfer` / 核对表行 / 词条）加 `utest_settings_catalog` 三处计数改口（63→64、`Absent` 21→19、`Wired ∧ NextSession` 名单 +2）。稿面原推荐档（只落内置词表）本可避开这笔账，人裁改判即接过它，并换来原文那句「按可配正则」本期落地。
 - **逐会话开关的记忆、上限的可配、目录级配额与清理**：D9/D11/D8 三条的同一族延后。目录里的旧日志**不清理不轮转**（本期只管单文件不越限），长期堆积由用户自清——这条要在风险提示的旁注里可见，不能静默。
 - **真机走查全部六条**（§6 末）：未做 ⇒ **本棒结项不称「可用」**（AGENTS 第 33 条）。
-- **装配两处无自动化证人**（`src/main.cpp` 的算路径与能力闸现读，裁决 7.83 同档）：登记为在册缺口，与 Telnet 批 3 那三处分流同档处理。
+- **装配三处无自动化证人**（`src/main.cpp` 的算路径、能力闸现读、**开启前的正则编译与拒绝档**，裁决 7.83 同档）：登记为在册缺口，与 Telnet 批 3 那三处分流同档处理。其中「非法模式 ⇒ 不建文件」这半段在 `compile_redactor` 侧有证人（utest 锁 nullopt），无证人的是装配层拿到 nullopt 之后**不弹 confirm、不建文件、不改态**那条分支。
 - **Win32/MSVC 腿的一切说法**（0600 的实际生效、`borealis-logs` 的落点、编辑器打开 .log 的形态）：本沙箱无 MSVC，标**推断／未验证**（AGENTS 第 11 条）。
 - **日志的搜索/回放界面**：属新需求面，本稿不预建，也不写进 SPECIFICATIONS。
 
@@ -215,4 +238,4 @@ UI 线程（右键 / 命令面板 / 设置面板）
 - **F5/F3/F7/F16/F17（代码事实）**：直接读源码确认——网格头文件无 `wrap`/`soft` 字样、`Session` 成员表无身份字段、`take_unrepresentable_notice` 的一次性 latch、`MenuCommand` 头注里点名的待入列项、`ask_multiline_warning` 与 `set_restart_hook` 两处「无宿主/留空即不动作」。
 - **待补**：慢盘/NFS 的写成本（D5① 的外推边界）、Win32 侧 `create_private_file` 的权限语义（F9 只 WARN）——两者都要真机，走查第 ⑸/⑷ 条。
 
-**裁决记录**：D1–D13 待人逐条裁；裁完即按 §4 的批 1 → 批 2 → 批 3 开工，并入册 `SPECIFICATIONS.md` §7 的新裁决号与 `CHANGELOG.md` 的新版本，同步 `PLAN.md` §3 的 `CONN.11` 行与 §8 的 M4 行。
+**裁决记录（2026-10-12 收口）**：D1–D13 经人逐条裁决——**D1–D9、D11–D13 全按稿面推荐档**（无一条改判），**D10 改判「内置固定词表 + 用户可配追加正则」**（原推荐是只落内置词表、可配延后），并连带裁下**非法模式 ⇒ 拒绝开启并回报错误**的 fail-closed 档。据此入册 `codespec/SPECIFICATIONS.md` §7 裁决 **7.116**、`CHANGELOG.md` **v0.116**，`PLAN.md` §3 的 `CONN.11` 行与 §8 的 M4 行同步改口。本稿的七处回写见状态块第二条。实现按 §4 布局分三批走：批 1＝折算件 + 落盘件 + `Session` 挂钩与 utest/itest（不含 UI）；批 2＝菜单项 + 命令 + 提示对话框 + **新键六处同步** + 装配 + 核对表三行改口；批 3＝文档回写与在册收口。
