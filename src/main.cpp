@@ -28,6 +28,7 @@
 #include "borealis/session/clipboard_outbox.h"
 #include "borealis/session/session.h"
 #include "borealis/session/session_log.h"
+#include "borealis/term/clipboard_read.h"
 #include "borealis/term/keymap.h"
 #include "borealis/term/utf8.h"
 #include "borealis/term/width.h"
@@ -382,6 +383,19 @@ auto main() -> int {
     // 控件树都随它消散，会话与宽度判定策略仍活着，控件不会摸到已销毁的会话。
     borealis::config::Store store;  // 面板要 `replace()`，故本对象不再 `const`
     const borealis::config::Settings &settings = store.settings();
+    // OSC 52 读方向的授权闸门（`SPEC.FEAT.CONN.12` 判据 ①②）：全 app 一份，会话状态机与视口各持
+    // 一枚观察指针——同一枚 atomic 同时决定「登记不登记」与「问不问」，分两处就会造出「状态机收了
+    // 一条请求、界面那侧却按另一档答掉」的窗口。声明紧挨 `store` 故**几乎最后析构**：会话线程现读
+    // 它时结构上不可能摸到已消散的对象。初值即已落盘那一档；未接线的会话读不到闸门，于是落在
+    // 「远端读不到剪贴板」那侧——漏接线的后果必须是读不到，不是谁都读得到。
+    borealis::term::ClipboardGate clipboard_gate{settings.terminal.clipboard_read};
+    // 闸门跟着**内存值**走，不跟着落盘成败走：`Store::replace()` 的口径是「内存值总是更新、只有落盘
+    // 可能失败」（`SPEC.FEAT.PREF.07` 的损坏降级线），而广播腿读的也是同一份内存值 ⇒ 若这里以「写盘
+    // 成功」为条件，就会出现「屏上已按新档、闸门还停旧档」那种三向分叉。能改动这一档的入口只有三条
+    // （面板保存、快照回滚、配置导入），其余 `replace()` 调用只搬档案 / 隧道 / 密钥目录那几张表。
+    auto sync_clipboard_gate = [&]() -> void {
+        clipboard_gate.set_policy(settings.terminal.clipboard_read);
+    };
     // 词条必须在任何控件绘制之前装填：查表失败回退空文本，晚装就会让首帧闪一下空标签。
     borealis::ui::install_settings_strings();
 
@@ -417,9 +431,15 @@ auto main() -> int {
     borealis::ui::TabId next_tab_id = 1;
 
     // 每个标签对应一个 WorkspaceView（支持该标签内的分屏）
+    //
+    // 成员次序是**承重的**（`SPEC.FEAT.CONN.12` 批 2 实测）：`sessions` 必须声明在 `workspace` 之前，
+    // 于是它后析构——视口在 `~TerminalView` 里要给挂起的读请求回写撤账空响应，那一笔写要摸到会话。
+    // 旧次序（`workspace` 先）里会话反而先亡，眼下不崩全靠下面两枚闭包**按值**捕获了
+    // `shared_ptr<Session>` 替视口撑住；把那份捕获换成裸指针「更像非拥有接缝」就是 use-after-free，
+    // 而集成用例换不到证人（驱动台的成员次序是它自己的）。次序修正之后那层撑住关系退居第二道保险。
     struct TabWorkspace {
-        std::shared_ptr<borealis::ui::WorkspaceView> workspace;
         std::vector<std::shared_ptr<borealis::session::Session>> sessions;  // 该标签的所有会话（目前单 pane 只有一个）
+        std::shared_ptr<borealis::ui::WorkspaceView> workspace;
     };
     std::map<borealis::ui::TabId, TabWorkspace> tab_workspaces;
 
@@ -484,11 +504,16 @@ auto main() -> int {
         const borealis::ui::TabId id = next_tab_id++;
 
         session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
+        // 两接同一枚闸门（裁决 D13②）：会话那一接决定查询**收不收**（状态机现读，Deny 档当场回空响应），
+        // 视口那一接决定收了之后**问不问**。漏前者即「查询当场被吞、界面永远不问」，漏后者即
+        // 「请求登记了却没人答」——两边都接在同一枚 app 级对象上，改档才能对所有在途标签即刻一致。
+        session->set_clipboard_gate(&clipboard_gate);
         session->start();
 
         // 建视口
         auto view = std::make_shared<borealis::ui::TerminalView>(
             *session, make_appearance(settings, catalog), make_interaction(settings, line_ending));
+        view->set_clipboard_gate(&clipboard_gate);
         // 浮层宿主与搜索依赖在创建那一刻一并挂上（`host` / `app` 已就绪时；首标签由后面统一补挂）。
         if (wire_view) {
             wire_view(*view);
@@ -496,6 +521,9 @@ auto main() -> int {
 
         // 建工作区分屏容器（单 pane 起步）
         borealis::ui::WorkspaceView::Hooks ws_hooks;
+        // 两枚闭包**按值**捕获 `shared_ptr<Session>` 是承重的，不是随手：`WorkspaceView::hooks_`
+        // 声明在该类最前（故最后析构），这份值捕获替视口把会话撑到 `~TerminalView` 之后——
+        // 视口析构那一步要往会话写撤账空响应。见上面 `TabWorkspace` 的成员次序注释。
         ws_hooks.make_pane = [session, view](borealis::ui::PaneId /*pane*/) -> std::shared_ptr<borealis::ui::TerminalView> {
             // 首 pane 复用传入的 view，后续 pane 需要新建会话（暂不支持，返回空）
             return view;
@@ -508,7 +536,7 @@ auto main() -> int {
         };
 
         auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
-        tab_workspaces[id] = TabWorkspace{.workspace = std::move(workspace), .sessions = {session}};
+        tab_workspaces[id] = TabWorkspace{.sessions = {session}, .workspace = std::move(workspace)};
 
         // 加入标签条
         tab_strip.add(id, tab_name);
@@ -770,8 +798,10 @@ auto main() -> int {
     hooks.load = [&store]() -> std::vector<borealis::ui::FormEntry> {
         return borealis::config::form_entries(store.settings());
     };
-    hooks.persist = [&store](const borealis::ui::SettingsForm &form) -> std::optional<std::string> {
-        return store.replace(borealis::config::apply_form(form, store.settings()));
+    hooks.persist = [&store, &sync_clipboard_gate](const borealis::ui::SettingsForm &form) -> std::optional<std::string> {
+        const auto reason = store.replace(borealis::config::apply_form(form, store.settings()));
+        sync_clipboard_gate();
+        return reason;
     };
     hooks.broadcast = [&tab_workspaces, &current_tab_id, &store, &catalog](const borealis::ui::SettingsForm &form) -> void {
         const borealis::config::Settings next = borealis::config::apply_form(form, store.settings());
@@ -849,16 +879,20 @@ auto main() -> int {
         }
         return out;
     };
-    hooks.rollback = [&store](const std::filesystem::path &snapshot) -> std::optional<std::string> {
-        return store.rollback_to(snapshot);
+    hooks.rollback = [&store, &sync_clipboard_gate](const std::filesystem::path &snapshot) -> std::optional<std::string> {
+        const auto reason = store.rollback_to(snapshot);
+        sync_clipboard_gate();
+        return reason;
     };
     hooks.export_config = [&store](const std::filesystem::path &file) -> std::optional<std::string> {
         return store.export_settings(file);
     };
     // 导入与回滚都只是**存储侧动作**：把新落盘的配置广播回视口是面板那条 `reload_from_store()` 的腿
     // （重装载 → 整份广播 → 预览 → 重建浮层），故两条动作共用同一次生效而不各写一遍。
-    hooks.import_config = [&store](const std::filesystem::path &file) -> std::optional<std::string> {
-        return store.import_settings(file);
+    hooks.import_config = [&store, &sync_clipboard_gate](const std::filesystem::path &file) -> std::optional<std::string> {
+        const auto reason = store.import_settings(file);
+        sync_clipboard_gate();
+        return reason;
     };
     hooks.pick_export_path = []() -> std::string { return picked_save_path(); };
     hooks.pick_import_path = []() -> std::string { return picked_open_path(); };
@@ -915,15 +949,20 @@ auto main() -> int {
         it->second.sessions.clear();
 
         session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
+        // 重启腿与新开格同一套两接（见 `create_new_tab_with` 处那句 WHY）：换掉的会话若漏接，
+        // 这一格就从「改档即刻生效」的范围内静默掉出去，而屏上看不出任何区别。
+        session->set_clipboard_gate(&clipboard_gate);
         session->start();
 
         auto view = std::make_shared<borealis::ui::TerminalView>(
             *session, make_appearance(settings, catalog), make_interaction(settings, line_ending));
+        view->set_clipboard_gate(&clipboard_gate);
         if (wire_view) {
             wire_view(*view);
         }
 
         borealis::ui::WorkspaceView::Hooks ws_hooks;
+        // 值捕获 `shared_ptr<Session>` 的承重理由同 `create_new_tab_with` 处那一条注释。
         ws_hooks.make_pane = [session, view](borealis::ui::PaneId) -> std::shared_ptr<borealis::ui::TerminalView> {
             return view;
         };
@@ -934,7 +973,7 @@ auto main() -> int {
 
         auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
         // **同 TabId 覆盖**：`tab_strip` 一格不动，`current_tab_id` 一格不动，仅 `tab_workspaces[id]` 换一份。
-        it->second = TabWorkspace{.workspace = std::move(workspace), .sessions = {std::move(session)}};
+        it->second = TabWorkspace{.sessions = {std::move(session)}, .workspace = std::move(workspace)};
         rebuild_root_children(root_column, tab_workspaces, current_tab_id);
     };
 
@@ -1740,17 +1779,22 @@ auto main() -> int {
             kNominalViewport, settings.terminal.scrollback_limit, width_policy,
             make_terminal_defaults(settings), make_session_encoding(settings));
         session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
+        // 撤销重开这一腿自己建会话与视口，不经上面两处，故闸门两接在这里再写一遍——
+        // 「八处构造点一处不漏」说的就是这一类旁路：漏了就是一格看着正常、实际永远 deny 的标签。
+        session->set_clipboard_gate(&clipboard_gate);
         session->start();
         
         // 建视口
         auto view = std::make_shared<borealis::ui::TerminalView>(
             *session, make_appearance(settings, catalog), make_interaction(settings));
+        view->set_clipboard_gate(&clipboard_gate);
         if (wire_view) {
             wire_view(*view);
         }
         
         // 建工作区分屏容器（单 pane 起步）
         borealis::ui::WorkspaceView::Hooks ws_hooks;
+        // 值捕获 `shared_ptr<Session>` 的承重理由同 `create_new_tab_with` 处那一条注释。
         ws_hooks.make_pane = [session, view](borealis::ui::PaneId /*pane*/) -> std::shared_ptr<borealis::ui::TerminalView> {
             return view;
         };
@@ -1777,7 +1821,7 @@ auto main() -> int {
             return;
         }
         
-        tab_workspaces[id] = TabWorkspace{.workspace = std::move(workspace), .sessions = {session}};
+        tab_workspaces[id] = TabWorkspace{.sessions = {session}, .workspace = std::move(workspace)};
         current_tab_id = id;
         
         // 选中恢复的标签并重建根节点子节点

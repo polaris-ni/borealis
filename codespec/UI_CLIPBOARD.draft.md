@@ -201,16 +201,37 @@ src/ui/settings_i18n.cpp                    修改 —— 该行标签、该行�
 src/ui/settings_panel.cpp                   修改 —— `kGroupNotes` 表追加一行：旁注画在**该行自己上方**而不是
                                                   终端页组顶（这一行只罩它自己那一档，挂组顶会把三档后果说成整组的事）；D9 的赔付处
 src/main.cpp                                修改 —— 装配（D13② 之后只剩接线）：一枚 app 级 `ClipboardGate`
-                                                  （`store.settings()` 折算初值、`hooks.persist` 之后刷新）、**每会话
+                                                  （紧挨 `store` 声明 ⇒ 几乎最后析构，会话线程现读它时结构上
+                                                  摸不到已消散的对象；初值从已落盘那一档折算）、**每会话
                                                   两接**：`Session::set_clipboard_gate(&gate)`（状态机侧那档分派）＋
                                                   视口 `set_clipboard_gate(&gate)`（帧边界的现读）——同一个对象两个
                                                   持有者，这正是裁决 D13② 说的「一枚闸门同时决定登记与询问」。
-                                                  八处构造点 + 预览腿**一处不漏**，漏即 fail-closed（漏会话那一接
-                                                  更是「查询当场被吞、界面永远不问」）。排请求与问答腿都在视口
+                                                  八处构造点**一处不漏**，漏即 fail-closed（漏会话那一接
+                                                  更是「查询当场被吞、界面永远不问」）。三处建壳闭包各自覆盖
+                                                  全部八处：`create_new_tab_with`（新开格，含本地/SSH/串口/Telnet
+                                                  四腿）、`replace_tab_session`（重启腿，含同 TabId 覆盖）、
+                                                  `undo_close_tab` 内联那一份（撤销重开旁路，不经前两处 ⇒
+                                                  「一处不漏」说的就是这类旁路）。**实现后改口（批 3-B 实测）**：
+                                                  ①稿面那句「`hooks.persist` 之后刷新」不够——能改动这一档的入口
+                                                  有三条（面板保存、快照回滚、配置导入），后两条整份换掉 `Settings`
+                                                  而不走 `persist`，只接一条就会出现「回滚后屏上按新档、闸门还停
+                                                  旧档」；落地是一份 `sync_clipboard_gate` 小闭包，三处各调一次。
+                                                  ②刷新跟着**内存值**走、不跟落盘成败走：`Store::replace()` 的口径
+                                                  是「内存值总是更新、只有落盘可能失败」（`SPEC.FEAT.PREF.07`），
+                                                  广播腿读的也是同一份内存值 ⇒ 以「写盘成功」为条件就与广播分叉。
+                                                  ③**预览腿刻意不接**（稿面原先把它列进「一处不漏」）：预览那台
+                                                  会话由 `SettingsPreview` 在面板内部自建自持，装配层拿不到它的
+                                                  会话与视口，而唯一字节源是 `preview_fixture()` 那串常量——里面
+                                                  没有 OSC 52 查询，结构上收不到远端请求。接上去反而更坏：视口
+                                                  没接 `presentation_` 替身，读的是**真系统剪贴板**，`allow` 档就会
+                                                  在帧路径上碰剪贴板（AGENTS §4.5 第 25 条），`ask` 档更会在面板
+                                                  里再叠一枚模态框。不接 ⇒ 该视口的 `clipboard_gate_` 空 ⇒ `Deny`，
+                                                  fail-closed 的方向正是「读不到」。
+                                                  排请求与问答腿都在视口
                                                   `on_frame` 里，装配层不再自持跨帧的待答清单 ⇒ **`perform_close`
                                                   那一路不需要另写撤账**：视口析构就是那条回写的落点（批 2 已把
                                                   这一档做成 itest 的自动证人）。**批 3 有一条承重的析构次序纪律**
-                                                  （批 2 实测所得）：`TabWorkspace` 的成员是 `workspace` 先、
+                                                  （批 2 实测所得）：`TabWorkspace` 的成员原先是 `workspace` 先、
                                                   `sessions` 后 ⇒ `sessions` 反而**先析构**，眼下不崩全靠
                                                   `WorkspaceView::hooks_` 声明在最前（故最后析构）而 `make_pane` /
                                                   `dispatch_grid` 两枚闭包**按值**捕获了 `shared_ptr<Session>`，
@@ -218,7 +239,9 @@ src/main.cpp                                修改 —— 装配（D13② 之后
                                                   写撤账空响应」，这条撑住关系从多余变成**承重**：把那份值捕获换成
                                                   裸指针（看着更像非拥有接缝）就是 use-after-free，而 itest 换不到
                                                   证人（驱动台的次序是它自己的成员）。落地形态：`sessions` 提到
-                                                  `workspace` 之前声明，两枚闭包的捕获处留一句 WHY
+                                                  `workspace` 之前声明（三处 `TabWorkspace{...}` 的指定初始化符
+                                                  随之换序，C++20 要求成员次序一致），两枚闭包的捕获处留一句 WHY；
+                                                  次序修正后那层值捕获退居第二道保险，注释写明不许再摘
 src/CMakeLists.txt                          修改 —— `src/term/clipboard_read.cpp` 进 `borealis_core` 的**显式**源清单
                                                   （只有 tests 走 GLOB；漏这一行即链接期 undefined reference，
                                                   Telnet 批 2 与会话日志批 1 的同一处坑）
@@ -348,7 +371,7 @@ tests/e2e/etest_osc_clipboard.cpp            修改 —— 补一条**读方向*
 - **上限（判据 ⑥）**：两处上限分开走。**待答队列上限**取文件级常量 `kMaxClipboardReadRequests = 8`（不做测试入参覆盖：8 条本身就是判据要的形状，喂 9 条即可锁），`utest_term_clipboard_read` 锁「第 9 条当场回空响应 + `clipboard_read_denied` +1 + 腾出位置后能再登记」。**应答内容上限**（`kMaxClipboardResponseBytes = 64 KiB`，D7①）在批 2 的 outbox 腿，批 2 的证人是脱界面的 `utest_session.the_outbox_turns_one_read_request_into_exactly_one_answer`（喂一份 > 64 KiB 的正文 ⇒ 字节仍是那条空响应、返回 false）与界面的 `itest_clipboard_read.an_oversize_clipboard_degrades_to_the_empty_response`（替身剪贴板给超限内容 ⇒ 回写恰为一条空响应）。**Warn 那一条留痕不在断言里**：框架的日志宏在测试进程内可注 handler，但本仓既有用例（会话日志、Telnet 各腿）都没有注日志的先例，为这一档单开一套断言基础设施不属本棒的判据 ⇒ 措辞与留痕按走查第 ⑶ 条核。
 - **Pc 回显（D8①）**：`utest_term_clipboard_read` 一次锁齐七档（`c`/`p`/`0`/`*` 各回显自身、`52;c;p;?` 回显**首段** `c` 而非末段、`52;?` 无 Pc 段回显 `c`、`zz` 与 64 字长段归一到 `c`）——归一是承重件：Pc 来自不可信输入，原样回写等于替远端把任意字节喷回它自己。
 - **既有判据不受影响**：`utest_terminal_osc` 那三条写方向用例（空载荷合法清空、非法载荷不写、多段只留最后载荷）逐条保持绿；G16 是本棒的回归面而不是新功能面。
-- **测试读数口径**：结项以 `ctest --preset linux -E etest_` 的**项数**与 `borealis_test_runner` 的**全案数**结项（AGENTS §4.4 第 21 条）；基线是会话日志棒结项的 **81 项／1019 案**（本棒新增两件测试 TU ⇒ 项数 +2）。**批 1 已跑**：`82 项／1031 案`全绿（新增 TU `utest_term_clipboard_read` 12 案）。**批 2 已跑**：`83 项／1050 案`全绿——新增 TU `itest_clipboard_read`（17 案，单跑亦全绿）+ `utest_session` 2 案，项数 +1 是因为批 2 只新增一件 integration TU。**批 3-A 已跑**（新键六处同步 + 设置页那一行 + 三件既有用例加断言）：仍是 `83 项／1050 案`全绿——**项数与案数都不变是本棒的口径而不是漏跑**：批 3-A 一个 TU 都没新增，全部证人长在既有用例体内（`utest_settings_catalog` 的总数 64→65 属于改断言，新增用例反而会把「同族键的表就长这样」这条形状拆成两处）。因此这一棒的非空转只能由 §8 的「批 3-A 变异注入」五则自证，案数增长在这里**不是**证据。装配那几处（闸门两接、`store.settings()` 折算初值、`hooks.persist` 之后刷新）仍无自动化证人（裁决 7.83：`src/main.cpp` 不编进 runner），按会话日志棒 §8.1 的手法如实登记，批 3 走查收口。
+- **测试读数口径**：结项以 `ctest --preset linux -E etest_` 的**项数**与 `borealis_test_runner` 的**全案数**结项（AGENTS §4.4 第 21 条）；基线是会话日志棒结项的 **81 项／1019 案**（本棒新增两件测试 TU ⇒ 项数 +2）。**批 1 已跑**：`82 项／1031 案`全绿（新增 TU `utest_term_clipboard_read` 12 案）。**批 2 已跑**：`83 项／1050 案`全绿——新增 TU `itest_clipboard_read`（17 案，单跑亦全绿）+ `utest_session` 2 案，项数 +1 是因为批 2 只新增一件 integration TU。**批 3-A 已跑**（新键六处同步 + 设置页那一行 + 三件既有用例加断言）：仍是 `83 项／1050 案`全绿——**项数与案数都不变是本棒的口径而不是漏跑**：批 3-A 一个 TU 都没新增，全部证人长在既有用例体内（`utest_settings_catalog` 的总数 64→65 属于改断言，新增用例反而会把「同族键的表就长这样」这条形状拆成两处）。因此这一棒的非空转只能由 §8 的「批 3-A 变异注入」六则自证，案数增长在这里**不是**证据。装配那几处（闸门两接、`store.settings()` 折算初值、三条入口共用的一次 `sync_clipboard_gate`）仍无自动化证人（裁决 7.83：`src/main.cpp` 不编进 runner），按会话日志棒 §8.1 的手法如实登记。**批 3-B 已跑**（装配接线 + `TabWorkspace` 成员次序）：仍 `83 项／1050 案`全绿、`ctest` 83 项全绿，另加一次真进程冒烟——`build/src/Borealis` 在 `DISPLAY=:0` 下前台跑 4 s 由 `timeout` 收掉（退出码 124＝被杀而非自崩），建壳闭包与闸门初值折算都在那 4 s 里被执行过一遍。**这一棒的非空转拿不出变异读数**：`src/main.cpp` 不在 runner 的编译单元里，把 `set_clipboard_gate` 那一行删掉测试照绿——这正是 7.83 登记的那条限制的形状，故本棒的证据只有「构建通过 + 全量绿 + 真进程不崩」，行为面由批 2 的 17 案 itest 与 §6 的走查清单承担。走查未做（下面那六条），⇒ 本棒不称「可用」。
 - **真机走查**（AGENTS §4.4 第 33 条，未走查不得称「可用」）：⑴ `ask` 档下真 tmux / vim 发读请求，问框出现时该窗口其它操作的手感（D5 的代价面）；⑵ 「去泡杯茶回来」这一档会不会被误认为卡死（D6 的代价面）——批 2 之后这一条有了具体的走查动作：**不答**、直接关标签，看远端是不是拿到一条空响应而不是永远等（框没有关闭叉，关标签就是那一档的出口）；⑶ 复制一段几 MB 的文本再让远端读 ⇒ 超限那一档的留痕读不读得懂；⑷ **本机就是缺桥那一档**（G9 实测 `xsel`/`xclip` 双双回 127）：三态各自的表现须是「远端拿到一条空响应 / 一次询问」而不是挂起；有桥机器的对照档另找一台再走；⑸ Win32 腿：`OpenClipboard` 那侧的读、粘贴板占用、以及 64 KiB 档；⑹ 从「禁止」改到「允许」后**别的标签**立刻能读——这一条是 D2① 的正面判据，也是 G15 那条限制的唯一现场证人。
 
 ---
@@ -363,7 +386,7 @@ tests/e2e/etest_osc_clipboard.cpp            修改 —— 补一条**读方向*
 - **调试面板补 OSC 族那一行**：F12 那只浮层现在只渲染四族（G17），`clipboard_read_requests` / `clipboard_read_denied` 乃至既有的 `clipboard_write_requests` 都上不了屏。要做就得同时改 `DebugSessionSnapshot`（加字段）、`debug_panel.cpp`（加一行）、装配层取数（`main.cpp` 那份快照）与 `itest_debug_panel` 的行数契约 ⇒ 那是 `SPEC.NF.RELI.01` 的一次扩面，不属 CONN.12 的三句判据 ⇒ 延后并在此在册。
 - **超限的可配、上限的按会话档**：D7① 取文件级常量。与「时间戳档/日志上限同档」并列在册——能不加键就不加键。
 - **Win32/MSVC 腿的一切说法**（`OpenClipboard` 的读语义、64 KiB 档的实际手感、Pc 回显在 PuTTY 类客户端的兼容性）：本沙箱无 MSVC，标**推断／未验证**（AGENTS §4.2 第 11 条）。
-- **真机走查全部六条**（§6 末）：未做 ⇒ 本棒结项**不称「可用」**（AGENTS §4.4 第 33 条）。
+- **真机走查全部六条**（§6 末）：未做 ⇒ 本棒结项**不称「可用」**（AGENTS §4.4 第 33 条）。**批 3-B 实测的沙箱边界**：这台机器上两条走查前置都不成立——没有输入注入工具（`xdotool`/`wtype`/`ydotool`/`xte` 全部 MISSING，裁决 7.31① 那句「锁屏会话下 `SendInput` 静默失效」在 POSIX 腿有同样的形态），截屏侧 `import -window root` 在本 Wayland 会话直接挂住不返回（`grim`/`spectacle`/`gnome-screenshot` 亦 MISSING）。⇒ 这六条需要人在交互桌面手动跑，不是本沙箱能补的自动化。
 
 ---
 
@@ -389,7 +412,7 @@ tests/e2e/etest_osc_clipboard.cpp            修改 —— 补一条**读方向*
 
   **M5 的第一轮是空转的**（同一份注入跑完仍全绿）——根因不在注入点而在证人：那两条查询写在同一次 `feed` 里，一帧就整批取走，「在问的那一条占住账本」这条闸根本没有第二个触发点可露。补了 `a_query_arriving_while_a_question_is_open_waits`（框开着时**再投**一条 ⇒ 询问次数必须仍是 1）之后 M5 才转红。这一条按第 22 条的口径登记：**变异自证证的是证人，不是代码**——首轮「5/6 变红」当时若直接结项，就会把「一次一问」留在无证人状态。同时补的三案（析构批量撤账 / 账本只放行第一次答话 / 装配晚一拍不丢请求）各锁一条稿面承诺。
 
-- **批 3-A 变异注入（五则，全部变红、还原复绿，2026-10-12 实测）**——本棒没有新增 TU，故五则各钉一处「六处同步」里的接缝，逐则给「注入点 ⇒ 哪条用例转红」：
+- **批 3-A 变异注入（六则，全部变红、还原复绿，2026-10-12 实测）**——本棒没有新增 TU，故各则钉住「六处同步」里的接缝，逐则给「注入点 ⇒ 哪条用例转红」：
 
   | 则 | 注入点 | 转红的证人 |
   | --- | --- | --- |
@@ -398,6 +421,9 @@ tests/e2e/etest_osc_clipboard.cpp            修改 —— 补一条**读方向*
   | M3 | `settings_catalog.cpp` 该行 `Immediate` 降为 `NextSession`（生效档位改口） | `utest_settings_catalog.grade_columns_match_the_two_physical_boundaries` + `itest_settings_panel.a_wired_immediate_change_persists_once_and_broadcasts_once`（`apply_scope` 变 `PersistOnly`） |
   | M4 | `form_transfer.cpp` 该枚 `Binding` 的键名拼错一位 | `utest_form_transfer` 5 案（含 `the_bridge_loads_every_catalog_key_and_nothing_else`、`each_key_takes_the_member_it_names`、`writing_the_form_back_rebuilds_that_settings`）+ `itest_settings_panel` 3 案（那一行直接不画了） |
   | M5 | `settings.h` 缺省档 `Deny` 改 `Allow`（判据 ① 被反着写） | `utest_config.defaults_are_the_first_launch_shape`（仅此一条 ⇒ 说明这条断言正是这一档的唯一证人） |
+  | M6 | `form_transfer.cpp` 该枚 `Binding` 的 getter 改读 `s.terminal.right_click`（键名没错、域仍是 Text，只是**接错了成员**） | `utest_form_transfer.each_key_takes_the_member_it_names`（另三案 `writing_the_form_back_rebuilds_that_settings`／`only_the_committed_key_moves`／`every_declared_choice_survives_the_config_file` 同批红） |
+
+  M6 是**批 3-A 结项后补落的那句字面量证人**（`expect("terminal.clipboard_read", FormValue::text("ask"))`）的自证：M4 打的是「键不存在」，而「键在、域对、成员接错」这一档形状网（`the_bridge_loads_every_catalog_key_and_nothing_else` 只比行数与域）结构上看不见 ⇒ 只有按 key 取字面量的那条能红。稿件原先把这句写成「已加」而代码里没有，本棒按 AGENTS §4.2 第 12 条把两处对齐（补齐代码，而不是把稿改口）。
 
   两则是**空转排查**里顺手坐实的：M1 的红蔓延到六条 `utest_config` 用例，是因为该件的往返判据取的是**整结构逐字段等值**——新字段一旦进 `non_default()`，任何一侧漏键都会在每一处以它为素材的用例上现形，这正是 G10 那套「六个同步点」被一张断言网兜住的原因。M5 只红一条则是刻意的对照：缺省档的形状只有 `defaults_are_the_first_launch_shape` 一处证人，所以那一行断言不能省。
 
