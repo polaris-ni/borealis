@@ -126,6 +126,10 @@ constexpr RetryPolicy kFastPolicy{.base_ms = 50, .cap_ms = 100, .max_attempts = 
 /// @brief 连接事件记录的替身：把读线程的投递攒成可比对的快照。
 ///
 /// 读线程与用例线程并发，故接收侧全部经 `mutex_`；断言一律取副本而非引用。
+/// **声明顺序是硬约束**：替身要排在连接之前，替身才比连接活得久——读线程在 `close()` 的
+/// join 之前还会投 `on_closed`／进度，而连接持的是这里的裸指针。顺序倒了不会让通过的用例
+/// 出问题，只会让**失败**的用例在清理时撞上已销毁的替身（实测 `pure virtual method called`
+/// 掀掉整个 runner，红线变成没有读数的崩溃）。
 class Recorder final : public ConnectionEvents {
   public:
     auto on_bytes(std::span<const std::byte> bytes) -> void override {
@@ -239,8 +243,8 @@ AURORA_TEST_CASE(serial_close_reason_table_is_the_single_mapping) {
 AURORA_TEST_CASE(surrogate_link_pumps_bytes_both_ways_and_local_close_is_attributed) {
     SurrogateDevice device;
     AURORA_TEST_REQUIRE_MSG(device.ok(), "openpty surrogate unavailable on this host");
-    SerialConnection connection{profile_for(device.path()), kFastPolicy};
     Recorder recorder;
+    SerialConnection connection{profile_for(device.path()), kFastPolicy};
 
     connection.start(recorder);
     AURORA_TEST_REQUIRE_MSG(wait_for([&] { return connection.alive(); }, 2000),
@@ -274,8 +278,8 @@ AURORA_TEST_CASE(surrogate_link_pumps_bytes_both_ways_and_local_close_is_attribu
 AURORA_TEST_CASE(hot_baud_change_only_updates_when_the_readback_agrees) {
     SurrogateDevice device;
     AURORA_TEST_REQUIRE_MSG(device.ok(), "openpty surrogate unavailable on this host");
-    SerialConnection connection{profile_for(device.path(), 9600), kFastPolicy};
     Recorder recorder;
+    SerialConnection connection{profile_for(device.path(), 9600), kFastPolicy};
     connection.start(recorder);
     AURORA_TEST_REQUIRE_MSG(wait_for([&] { return connection.alive(); }, 2000),
                             "serial leg never came up on the surrogate");
@@ -296,8 +300,8 @@ AURORA_TEST_CASE(hot_baud_change_only_updates_when_the_readback_agrees) {
 AURORA_TEST_CASE(peer_gone_is_link_lost_and_the_loop_redials_from_the_profile) {
     SurrogateDevice device;
     AURORA_TEST_REQUIRE_MSG(device.ok(), "openpty surrogate unavailable on this host");
-    SerialConnection connection{profile_for(device.path()), kFastPolicy};
     Recorder recorder;
+    SerialConnection connection{profile_for(device.path()), kFastPolicy};
     connection.start(recorder);
     AURORA_TEST_REQUIRE_MSG(wait_for([&] { return connection.alive(); }, 2000),
                             "serial leg never came up on the surrogate");
@@ -329,10 +333,10 @@ AURORA_TEST_CASE(peer_gone_is_link_lost_and_the_loop_redials_from_the_profile) {
 }
 
 AURORA_TEST_CASE(an_unopenable_device_never_enters_the_backoff) {
+    Recorder recorder;
     SerialConnection connection{profile_for("/definitely/not/a/device"), RetryPolicy{.base_ms = 50,
                                                                                      .cap_ms = 100,
                                                                                      .max_attempts = 5}};
-    Recorder recorder;
     connection.start(recorder);
     AURORA_TEST_REQUIRE_MSG(wait_for([&] { return recorder.closes() >= 1U; }, 2000), "no on_closed");
 
@@ -349,9 +353,9 @@ AURORA_TEST_CASE(stop_reconnect_ends_a_waiting_backoff_on_the_spot) {
     SurrogateDevice device;
     AURORA_TEST_REQUIRE_MSG(device.ok(), "openpty surrogate unavailable on this host");
     // 首回落回缺省档的 1 s 退避：正因为它长，「停止重连」把环截断才是可观测的。
+    Recorder recorder;
     SerialConnection connection{profile_for(device.path()),
                                 RetryPolicy{.base_ms = 1000, .cap_ms = 2000, .max_attempts = 3}};
-    Recorder recorder;
     connection.start(recorder);
     AURORA_TEST_REQUIRE_MSG(wait_for([&] { return connection.alive(); }, 2000),
                             "serial leg never came up on the surrogate");
