@@ -360,6 +360,7 @@ AURORA_TEST_CASE(each_key_takes_the_member_it_names) {
     expect("terminal.encoding", FormValue::text("GB18030"));
     expect("terminal.paste_newlines", FormValue::text("convert"));
     expect("terminal.right_click", FormValue::text("paste"));
+    expect("terminal.clipboard_read", FormValue::text("ask"));
     expect("terminal.copy_on_select", FormValue::boolean(true));
     expect("terminal.trim_pasted_trailing_space", FormValue::boolean(false));
     expect("terminal.smart_line_join", FormValue::boolean(true));
