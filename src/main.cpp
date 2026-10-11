@@ -42,6 +42,7 @@
 #include "conn/serial_connection.h"
 #include "conn/serial_model.h"
 #include "conn/ssh_connection.h"
+#include "conn/telnet_connection.h"
 #include "conn/tunnel_client.h"
 #include "platform/serial.h"
 #include "platform/user_dir.h"
@@ -67,6 +68,11 @@ namespace {
 /// @brief 会话的名义初始尺寸：真实行列由控件首次布局按自身尺寸派生并下发
 ///        （`SPEC.FEAT.XFER.01` 的 UI 取值腿），这里只要保证状态机与连接一起来有个可用的格。
 constexpr borealis::session::Size kNominalViewport{80U, 24U};
+
+/// @brief Telnet 的发送行尾（裁决 7.112 D8① 的固定档，不可配）：Telnet NVT 的行结束是 CR LF
+///        （RFC 854），故本地/SSH 那一条缺省 `Lf` 在这里不适用。装配层只此一枚常量，会话的写出
+///        折算与视口的粘贴档都读它——两处各写一遍字面量就会分叉。
+constexpr borealis::term::LineEnding kTelnetLineEnding = borealis::term::LineEnding::Crlf;
 
 /// @brief 隧道状态事件汇（裁决 7.97 D6①）：工作线程上只写「最新值」快照，
 ///        UI 线程经 snapshot Hook 逐帧合并——不排队、不积压（AGENTS §25 的
@@ -147,7 +153,8 @@ struct TunnelEntry {
 /// 故搬运点只能在装配层；与外观包同理，广播腿复用同一函数。
 /// @param line_ending 本条连接的发送行尾（裁决 7.110 D11①）：粘贴的 `Convert` 档与键入 Enter
 ///        落地的是同一份折算，故它与 `Session` 的构造入参必须同源——两处各取一份就会出现
-///        「敲回车一个样、粘多行另一个样」。本地/SSH 传缺省 `Lf`，即既有行为逐字节不变。
+///        「敲回车一个样、粘多行另一个样」。本地/SSH 传缺省 `Lf`，即既有行为逐字节不变；
+///        串口传档案里那一档，Telnet 传固定 `Crlf`（`SPEC.FEAT.CONN.06` 的裁决 7.112 D8①）。
 [[nodiscard]] auto make_interaction(const borealis::config::Settings &settings,
                                     borealis::term::LineEnding line_ending =
                                         borealis::term::LineEnding::Lf)
@@ -435,6 +442,12 @@ auto main() -> int {
     };
     std::map<borealis::ui::TabId, SerialTabBinding> serial_by_tab;
 
+    // Telnet 标签的接线数据（`SPEC.FEAT.CONN.06` 批 3）：只存档案，不学串口那张表带一份连接
+    // 裸指针——Telnet 没有在途可改的参数档（热改波特率那一条是串口独有的），「重启按档案」读的
+    // 就是 host 与 port 两个字段。撤账纪律同上：`perform_close` 里随标签同撤；重启重拨用的还是
+    // 同一份档案，故那张表在重启前后不动。
+    std::map<borealis::ui::TabId, borealis::conn::TelnetProfile> telnet_by_tab;
+
     // 每只视口的浮层与搜索依赖接线（宿主与注册表须待 `host` / `app` 建成才取得到，故首标签建得早的
     // 那几只在建成之后统一补挂，见下面赋值处）。缺这两条挂接，右键菜单、多行粘贴确认与搜索浮层
     // **结构上弹不起来**（裁决 7.41③ / 7.81），而集成用例经替身宿主测的是接线而非这里。
@@ -450,12 +463,13 @@ auto main() -> int {
     /// 用户不换标签、对端不改 OSC 标题时根本不动。
     std::string last_window_title;
 
-    // 开标签的两段式：会话构造在外（本地腿 / SSH 腿 / 串口腿各一份，SSH 腿即 CONN.02 的
-    // SshConnection），壳（视口 / 工作区 / 标签条）共用，三处开标签点不再各自复制一遍
+    // 开标签的两段式：会话构造在外（本地腿 / SSH 腿 / 串口腿 / Telnet 腿各一份，SSH 腿即
+    // CONN.02 的 SshConnection），壳（视口 / 工作区 / 标签条）共用，各处开标签点不再各自复制一遍
     // 连接装配。标签名由调用方给——档案连接取档案名，原先那句「首版先给固定措辞」的
     // TODO(SPEC.FEAT.CONN.02) 就此闭合。
-    // `line_ending` 只有串口腿会给非缺省值（裁决 7.110 D11①）：它同时进 `Session` 的写出折算
-    // 与视口的粘贴档，两处同源才不会出现「敲回车与粘多行两个样」，故由开标签那一侧一并传进来。
+    // `line_ending` 只有串口腿与 Telnet 腿会给非缺省值（裁决 7.110 D11①、7.112 D8①）：它同时进
+    // `Session` 的写出折算与视口的粘贴档，两处同源才不会出现「敲回车与粘多行两个样」，故由开标签
+    // 那一侧一并传进来。
     auto create_new_tab_with = [&](std::shared_ptr<borealis::session::Session> session,
                                    const std::u32string &tab_name,
                                    borealis::term::LineEnding line_ending =
@@ -587,6 +601,7 @@ auto main() -> int {
             ssh_secret_by_tab.erase(id);
             // 串口接线同撤：那条连接腿随本格的 Session 一起析构，裸指针不留过夜（批 3）。
             serial_by_tab.erase(id);
+            telnet_by_tab.erase(id);  // Telnet 同撤（CONN.06 批 3）。
         }
         if (current_tab_id.has_value() && current_tab_id.value() == id) {
             // 选下一个或上一个
@@ -996,6 +1011,39 @@ auto main() -> int {
         record_recent(profile.id);
     };
 
+    // ---- Telnet 腿装配（`SPEC.FEAT.CONN.06` 批 3）--------------------------------------------
+    //
+    // 与串口同一条分界（裁决 7.112 D5①/D8①）：编码与发送行尾**不在** `TelnetConnection`，这里
+    // 是这两条口径唯一的接线处。两处取值都刻意不新造：编码吃既有 `make_session_encoding(settings)`
+    // （本地/SSH 同一枚现成件，缺省 UTF-8 由裁决 7.6 定），行尾是 NVT 规程要求的固定 `Crlf`
+    // （RFC 854），**不可配**——档案里没有这一项，故也没有「改设置不回溯在档」那个坑。
+    struct TelnetSessionBundle {
+        std::shared_ptr<borealis::session::Session> session{};
+        borealis::term::LineEnding line_ending{kTelnetLineEnding};
+    };
+    auto make_telnet_session =
+        [&](const borealis::conn::TelnetProfile &telnet) -> TelnetSessionBundle {
+        auto connection =
+            std::make_unique<borealis::conn::TelnetConnection>(telnet, reconnect_policy());
+        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
+        auto session = std::make_shared<borealis::session::Session>(
+            std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
+            width_policy, make_terminal_defaults(settings), make_session_encoding(settings),
+            kTelnetLineEnding);
+        // 折送入参与下面视口粘贴档读的是**同一枚**常量（bundle 的缺省值就是它），不是两处各写一遍
+        // 字面量——各改其一就会出现「敲回车 CRLF、粘多行 CR」。
+        return TelnetSessionBundle{.session = std::move(session)};
+    };
+
+    auto open_telnet_tab = [&](const borealis::conn::Profile &profile) -> void {
+        auto bundle = make_telnet_session(profile.telnet);
+        create_new_tab_with(bundle.session, decode_tab_name(profile.name), bundle.line_ending);
+        if (current_tab_id.has_value()) {
+            telnet_by_tab[current_tab_id.value()] = profile.telnet;
+        }
+        record_recent(profile.id);
+    };
+
     // 设备枚举的 latest-value 快照（稿 §5，AGENTS §4.5 第 25 条）：`serial_list_ports()` 含目录
     // IO 与逐个试开，只能在后台跑；UI 读到的恒是「合成后的最终值」那一份副本，与隧道/密钥快照
     // 同族（可覆盖的量，不排事件队列）。
@@ -1105,6 +1153,14 @@ auto main() -> int {
         }
         if (profile.type == borealis::conn::ConnectionType::Serial) {
             open_serial_tab(profile);  // 串口无凭据可问：档案即全部料（CONN.09 的审计天然过）。
+            return;
+        }
+        // Telnet 同串口那条：没有认证协议、没有材料可要（登录提示是远端程序给的文本，不是
+        // 本仓的凭据链），故它也必须**挡在** `secret_ask_for` 之前。少了这一支不会崩，但会静默
+        // 走错腿：空白 `profile.ssh` 的 `auth_method` 缺省是 "agent" ⇒ `SecretAsk::None` ⇒ 拿一个
+        // 空主机去拨 SSH，标签名却还是 Telnet 档案名——拨号失败的事实被挂到一条不存在的连接上。
+        if (profile.type == borealis::conn::ConnectionType::Telnet) {
+            open_telnet_tab(profile);
             return;
         }
         const auto ask = borealis::conn::secret_ask_for(
@@ -1733,6 +1789,15 @@ auto main() -> int {
             replace_tab_session(id, bundle.session, bundle.line_ending);
             serial->second.connection = bundle.connection;  // 旧腿随旧 Session 析构，这里只改写指针
             AURORA_LOG_INFO("main", "restart: tab ", id, " serial session re-opened by profile");
+            return;
+        }
+        // Telnet 分流（`SPEC.FEAT.CONN.06` 批 3）：判据与形态都照上面那支——在 `telnet_by_tab`
+        // 里有身份就是 Telnet 标签，重启＝按档案重拨。这一支不必改写表里任何东西：那份绑定只有
+        // 档案、没有连接指针，而档案在重启前后是同一份（串口那支改的是裸指针，此处没有可改的）。
+        if (const auto telnet = telnet_by_tab.find(id); telnet != telnet_by_tab.end()) {
+            auto bundle = make_telnet_session(telnet->second);
+            replace_tab_session(id, bundle.session, bundle.line_ending);
+            AURORA_LOG_INFO("main", "restart: tab ", id, " telnet session re-opened by profile");
             return;
         }
         // 分流判据（裁决 7.99 D6）：这一格在 `ssh_profile_by_tab` 里有没有档案身份。有就是 SSH 标签，
