@@ -1,6 +1,7 @@
 # 会话日志设计稿（`SPEC.FEAT.CONN.11`）
 
 > **状态**：**评审已收口（2026-10-12）**——§3 的 D1–D13 经人逐条裁决：**D1–D9、D11–D13 全按稿面推荐档**（无一条改判），**D10 改判「内置固定词表 + 用户可配追加正则」**（稿面原推荐是只落内置词表、可配延后）。据此并入 `codespec/SPECIFICATIONS.md` §7 裁决 **7.116**，转实现按 §4 布局分三批走。
+> **实现落地（2026-10-12，裁决 7.117）**：三批全部落完——批 1＝折算件 + 落盘件 + `Session` 挂钩（`5716ac7`），批 2＝菜单第三条 + 命令面板两态 + 提示对话框 + 新键六处同步 + 装配（`f9bc491`），批 3＝本回写一笔。**界面路径自此可达**：设置页勾上能力闸 ⇒ 右键出第三条 ⇒ 点它弹风险提示 ⇒ 确认后文件真出现（0600）。结项读数 `ctest --preset linux -E etest_` **81 项**、`borealis_test_runner` 全跑 **1019 案**全绿。**但 §6 六条真机走查一条未做 ⇒ 本稿与裁决一律不称「可用」**（AGENTS §4.4 第 33 条）。落地期五处口径**按实现实际改口而不是照抄稿面**，逐条见 §8 的「批 2/3 收账」。
 > **D10 改判的连带回写**（本稿七处已同步改口）：§1 交付第 6/7 条、§2 判据 7（设置页自此**三行**）、§3 D10 行（含新增键的六处同步与 F8 的三处计数改口）、§4 文件布局多出 schema/store/form_transfer/settings_i18n 四行、§5 多一条「编译点」、§6 多两条验收（可配正则命中 + 非法模式拒绝开启）、§7 把「可配正则」移出「不做」清单。草图屏 C 与屏 A 的对话框注记同步改口。
 > **D10 改判带出的第二条裁决（人已裁）**：用户自带正则**非法**时（F13：`std::regex` 在构造期就抛 `regex_error`）⇒ **拒绝开启并回报错误**，不退回内置词表静默续记。理由：过滤是缓解腿，「用户显式配了而失效」必须可见——「不开日志」比「以为打了码其实没打」安全。
 > **配套高保真草图**：`codespec/UI_SESSION_LOG.draft.svg`（矢量源）/ `codespec/UI_SESSION_LOG.draft.png`（1× 出图）。图中圈号 1–7 即 §2 的判据标号，各贴在所属屏旁；SVG 为事实来源，改图直接改 SVG。
@@ -100,8 +101,15 @@
 
 ```
 include/borealis/session/session_log.h    新增 —— 会话级落盘件的公共契约（不含 Aurora 类型，架构 §2.3）：
-                                                  `LogSpec{path, timestamp, user_pattern}` 一份入参形态
-                                                  （`user_pattern` 空＝只用内置词表，D10 改判）、
+                                                  `LogSpec{path, timestamp, redactor}` 一份入参形态
+                                                  （**按实现改口**：稿面原写 `user_pattern` 字符串，实落的是
+                                                  `compile_redactor` 的**产物**——编译点在装配层「开启那一刻」，
+                                                  移交的是已编译件，模式串本身不进会话层，见 §5 那条编译点）、
+                                                  `resolve_log_directory(configured_dir, config_dir)` 与
+                                                  `make_log_file_name(tab_id, start_epoch)`（**批 2 补的两枚纯派生**：
+                                                  稿 §4 只写「装配层算路径」，实落把算路径拆成可独立单测的两枚
+                                                  纯函数，装配只调用——否则 D9①／D13① 那两条形态没有证人）、
+                                                  `kSessionLogDirectoryName`（回落子目录名，D9①）、
                                                   `kMaxSessionLogBytes` 上限常量（D9）、
                                                   `fold_to_plain_text(std::u32string_view) -> std::string`
                                                   （**纯函数**：D3 的折算表，无 IO、可全量单测，AGENTS 第 20 条）、
@@ -115,7 +123,10 @@ include/borealis/session/session.h        修改 —— 三枚运行期入口（
                                                   `enable_logging(LogSpec) -> LogOutcome`、`disable_logging()`、
                                                   `take_logging_notice()`（失败/禁用那一条一次性提示，形态照
                                                   `take_unrepresentable_notice`，session.h:158-164）；
-                                                  构造点与既有成员**一字不动**（八处构造点见 §1 前提）
+                                                  构造点与既有成员**一字不动**（八处构造点见 §1 前提）。
+                                                  **批 2 补第四枚**（按实现回写）：`logging_enabled()`——菜单
+                                                  条目与命令标题的两态都要现读它，而这份态除会话自己没人知道；
+                                                  稿 §4 出稿时只列了三枚
 src/session/session.cpp                   修改 —— `ingest` 内**只留一份引用**（锁内 `log_pending_.assign(...)`，
                                                   仅当已挂日志才做，F2：锁内不做 IO），出锁后同轮写（D5①）
 include/borealis/config/settings.h        修改 —— `connection` 域追加 `session_log_pattern`（std::string，
@@ -127,23 +138,51 @@ src/ui/right_click.h                      修改 —— `MenuCommand` 追加 `To
                                                   入参 —— **本棒唯一一处改既有签名**，理由见 D6 的代价列
 src/ui/right_click.cpp                    修改 —— 计划里第三条条目；能力闸关 ⇒ 该条**不出现在 items**
                                                   （F17：未注入即无入口，而不是灰显）
-src/ui/terminal_view.{h,cpp}              修改 —— `menu_label` 补两态文案、`on_menu_command` 补一支；
-                                                  新增 `set_logging_hooks(...)`（照 `set_restart_hook` 的
-                                                  「留空即不画」形态，F17）
+src/ui/settings_i18n.cpp                  修改 —— 菜单两态文案、提示对话框两句、命令标题、能力闸旁注、
+                                                  非法正则的回报错误句、**既有两条菜单文案换来源入表**
+                                                  （`menu.item.copy` / `menu.item.paste`，见下条按实现改口）。
+                                                  **按实现改口**：稿面那句「新键的标签与占位词条」只落了**标签**
+                                                  一枚——本仓的 `SettingsControl` 没有 per-key placeholder
+                                                  机制（`TextInput` 只在 `OptionalHexInput` 那一档挂「未配」），
+                                                  加占位串要先加一档框架语义，不属本意图
+src/ui/settings_panel.cpp                 修改 —— 组顶旁注表 `kGroupNotes` 追加一行把
+                                                  `settings.note.session_log` 罩在 `connection.session_logging`
+                                                  那一行上方（D1① 那道「两道开关」的理解成本的赔付处）。
+                                                  **此行不在稿 §4 的原清单里**：判据 7 要求的那句旁注是
+                                                  面板侧渲染的，而 §4 出稿时只列了 catalog 与词条两件
+src/ui/terminal_view.{h,cpp}              修改 —— `menu_label` 补两态文案（且三条条目都改从词条表取串）、
+                                                  `on_menu_command` 补一支；新增 `set_logging_hooks(...)`
+                                                  （照 `set_restart_hook` 的「留空即不画」形态，F17）；
+                                                  `on_right_click` **一次按下只呼一次状态钩子**——计划与
+                                                  文案同源，分两次呼就是让次序与措辞来自两个时刻
 src/ui/settings_catalog.cpp               修改 —— **三行**：`connection.session_logging` 改判 `Wired ∧ Immediate`、
                                                   `connection.session_log_dir` 改判 `Wired ∧ NextSession`、
                                                   新行 `connection.session_log_pattern` 以 `Wired ∧ NextSession`
                                                   入表（F8 的三处计数同批改：schema 键 63→64、`Absent` 21→19、
                                                   `Wired ∧ NextSession` 名单 +2；`session_logging` 那一行**不进**
                                                   名单，见判据 7）
-src/ui/settings_i18n.cpp                  修改 —— 菜单两态文案、提示对话框两句、命令标题、能力闸旁注、
-                                                  新键的标签与占位词条、非法正则的回报错误句
 src/main.cpp                              修改 —— 装配：`session.toggle_logging` 命令、`LogSpec` 的算路径
                                                   （目录回落 `default_config_dir()/borealis-logs`，F19；
                                                   D13 的名字形态；D8 的时间戳档；D10 的用户模式现读）、
                                                   **开启前** `compile_redactor` 一次 ⇒ nullopt 即 `alert` 回报
                                                   并**不建文件**（fail-closed）、`confirm` 风险提示（D7）、
-                                                  能力闸的现读点、`perform_close` 撤账（口径同 serial/telnet 表）
+                                                  能力闸的现读点。
+                                                  **按实现补口**（五处，逐条理由见 §8 的「批 2/3 收账」）：
+                                                  ① 一份 `logging_toggle_action` 闭包两处入口（菜单第三条经
+                                                  `wire_view` 的两条钩子、命令面板经命令），不是两份实现；
+                                                  ② 稿面那句「`perform_close` 撤账」**没落成一行**——日志态挂在
+                                                  Session 自己身上，`Session::~Session` 在 join 读线程之后停笔并关文件
+                                                  （那份顺序注释写在 `src/session/session.cpp` 的析构处：反过来会让
+                                                  末段 flush 与在途 append 抢同一把锁），而标签关闭走的是 `tab_workspaces.erase`，
+                                                  装配层没有第二份表可撤；
+                                                  ③ 命令标题两态靠**同 id 整条重注册**（Aurora 侧无 `set_title`），
+                                                  唯一刷新点在 `set_on_frame` 里比较一枚翻面旗标，故写失败自我
+                                                  禁用／切标签／重启三种翻面都跟上，不必在每个建/换会话点补一次；
+                                                  ④ `au::confirm` 只吃**一条** message（Aurora 侧事实），故稿 §5
+                                                  那两句风险提示在装配里合成一行、完整路径拼在正文尾部（D7① 兑现）；
+                                                  ⑤ 每帧对当前标签会话呼一次 `take_logging_notice()`，取到即
+                                                  `AURORA_LOG_WARN` 留痕 + 弹一句无参提示（路径不进界面，AGENTS
+                                                  第 14 条诊断不属中文例外）
 src/CMakeLists.txt                        修改 —— `src/session/session_log.cpp` 进 `borealis_core` 的**显式**源
                                                   清单（只有 tests 走 GLOB；漏这一行即链接期 undefined reference，
                                                   Telnet 批 2 的同一处坑）
@@ -201,16 +240,16 @@ UI 线程（右键 / 命令面板 / 设置面板）
 
 ## 6 验收判据映射
 
-- **按会话开关**：`itest_session_logging` 锁「A 会话开、B 会话不开 ⇒ 只有 A 有文件」；`utest_right_click` 锁能力闸与开关态的四组组合下条目在不在、次序为何；`itest_right_click_paste` 锁「`Paste`/`CopyOnSelect` 两态仍不发菜单」（既有判据不因新条目而变）与「命令面板那条是这两态的唯一入口」。
+- **按会话开关**：`itest_session_logging` 锁「A 会话开、B 会话不开 ⇒ 只有 A 有文件」（`only_the_session_the_user_turned_on_writes_a_file`）；`utest_right_click` 锁能力闸与开关态的四组组合下条目在不在、次序为何；`itest_right_click_paste` 锁「`Paste`/`CopyOnSelect` 两态仍不发菜单」（既有判据不因新条目而变，`direct_right_click_states_stay_menuless_with_logging_wired`）。**按实现改口**：这一条后半句「命令面板那条是这两态的唯一入口」**没有自动化证人**——命令注册在 `src/main.cpp`（裁决 7.83：该 TU 不编入 runner），有证人的只是「这两态拿不到菜单」那半段，见 §8.1。
 - **纯文本剥离 SGR 但保留换行结构**：`utest_session_log` 逐档锁 D3 的表；现场证人用 F10 那份彩色 `ls` 的真实捕获字节（夹具化进 `tests/fixtures/`，AGENTS 第 20 条「转义序列以回放夹具驱动」）——断「可打印率 ≈ 1、目录列表逐行成行、`ESC[0m` 一类一个字节都不留」。
 - **整屏重绘的语义**（F12）：同件锁「40 次清屏归位样本 ⇒ 43 行」，把这条**不是缺陷的形态**钉在用例名里，防止后人当 bug 修。
 - **时间戳前缀**：`utest_session_log` 锁「一条分片含 3.5 行 ⇒ 每行一条前缀、分片边界不产生前缀」，以及「CRLF 折一条 ⇒ 只有一条时间戳」。
 - **环形覆盖**：`utest_session_log` 用**小上限**（测试入参覆盖，非常量）锁「越限后前半消失、后半保留、后续字节接在上文之后」与「不越限时逐字节不变」。
 - **敏感过滤（内置词表）**：`utest_session_log` 锁命中词表的行整行替为 `[redacted]`、大小写与 CJK 混排行都命中（F13 的第一条读数）、不含关键词的行**逐字节不变**（打码不是改写）。
-- **敏感过滤（用户可配正则，D10 改判）**：同件另锁三条——① 用户模式**独立**命中而内置词表不命中的行也被打码（证明并集不是装饰）；② 同一行两侧都命中 ⇒ 只替**一次** `[redacted]`，不叠字；③ 非法模式（F13 的 `(password|token` 那一档）⇒ `compile_redactor` 返回 `nullopt`，且 `itest_session_logging` 锁「nullopt 这条路走下来**文件不存在**、开关态不变」（fail-closed 的界面侧半段）。缺省空模式的「只用内置词表」另锁一条，防并集实现把空模式折成 `()` 之类匹配一切的东西。
-- **默认关闭 + 风险提示**：默认关这条的既有证人 `utest_config.cpp:599` 不动；`itest_session_logging` 锁「取消提示 ⇒ 路径上不存在文件（含不创建零字节文件）」与「确认 ⇒ 文件即建」；提示文案里含完整路径。
+- **敏感过滤（用户可配正则，D10 改判）**：同件另锁三条——① 用户模式**独立**命中而内置词表不命中的行也被打码（证明并集不是装饰）；② 同一行两侧都命中 ⇒ 只替**一次** `[redacted]`，不叠字；③ 非法模式（F13 的 `(password|token` 那一档）⇒ `compile_redactor` 返回 `nullopt`（`illegal_user_pattern_refuses_to_compile`）。**按实现改口**：稿面那句「`itest_session_logging` 锁『nullopt 这条路走下来**文件不存在**、开关态不变』」只落了**相邻的一档**——有证人的是 `a_refused_open_leaves_the_session_unlogged_and_creates_no_file`（打开被拒 ⇒ 不落记录态、不建文件），而「装配层拿到 nullopt 之后不弹 confirm、不建文件、不改态」那半段在 `src/main.cpp`，**无自动化证人**（§8.1）。缺省空模式的「只用内置词表」另锁一条（`empty_user_pattern_keeps_the_builtin_vocabulary_only`），防并集实现把空模式折成 `()` 之类匹配一切的东西。
+- **默认关闭 + 风险提示**：默认关这条的既有证人 `tests/unit/utest_config.cpp` 那条「默认关闭」不动；`itest_session_logging` 锁「从未开启过的会话一个文件都不建」（`a_session_that_never_enabled_logging_creates_nothing`）与「打开被拒 ⇒ 不落记录态、不建文件」（`a_refused_open_leaves_the_session_unlogged_and_creates_no_file`）。**按实现改口**：稿面那两句「取消提示 ⇒ 路径上不存在文件（含不创建零字节文件）」与「确认 ⇒ 文件即建」都落在 `au::confirm` 的答话回调那一侧，即 `src/main.cpp` ⇒ **无自动化证人**，兜底只有编译链接与走查第 ⑵/⑶ 条；本棒能保证的是**顺序**——目录与文件名都在提示之后、`enable_logging` 之前才动手（取消 ⇒ 目录与文件都不出现，见 §8.1 那条 `TODO`）。提示文案里含完整路径（`au::confirm` 只吃一条 message，两句合成一行）。
 - **0600 与不覆盖**：`itest_session_logging` 锁首建走 `create_private_file` 的返回档（`Created` vs `AlreadyExists` ⇒ append 而非 truncate）。**POSIX-only**；Win 腿的权限语义按 F9 标推断，走查第 ⑷ 条实测。
-- **测试读数口径**：交付时以 `ctest --preset linux -E etest_` 的**项数**与 `borealis_test_runner` 的**全案数**结项（AGENTS 第 21 条不认「应该更快了」，本棒同样不认「测了很多」）；变异注入按第 22 条逐则给「注入点 ⇒ 哪条用例转红」，装配那两处**无证人**（裁决 7.83）按 Telnet 批 3 同档如实登记。
+- **测试读数口径**：交付时以 `ctest --preset linux -E etest_` 的**项数**与 `borealis_test_runner` 的**全案数**结项（AGENTS 第 21 条不认「应该更快了」，本棒同样不认「测了很多」）；结项读数 **81 项／1019 案全绿**，变异注入按第 22 条逐则给「注入点 ⇒ 哪条用例转红」，全表见 §8.1；装配那**三处**无证人（裁决 7.83）与一处未裁窗口按 Telnet 批 3 同档如实登记。
 - **真机走查**（AGENTS 第 33 条，未走查不得称「可用」）：⑴ 真 SSH/本地 shell 下开日志的观感，`ls --color` 的产物在常见编辑器里是不是干净文本；⑵ 开 `top`/`vim` 之后日志里那一堆重绘行**读起来是否可解释**（F12/判据 6 那句话够不够）；⑶ 口令提示与打码的实际效果（`ssh` 口令、`passwd` 交互各试一次），并**在设置里填一条自己的正则**（含一条非法的）看回报与生效面（D10 改判的新增走查面）；⑷ Win32 腿：文件权限、路径分隔、`borealis-logs` 的落点与编辑器关联；⑸ 大输出（`cat` 一个几百 MB 文件）时的手感与输入迟滞（D5① 的代价面）；⑹ 两道开关（能力闸 + 逐会话）点起来的直觉，以及旁注那句话读不读得懂（D1 的代价面）。
 
 ---
@@ -239,3 +278,35 @@ UI 线程（右键 / 命令面板 / 设置面板）
 - **待补**：慢盘/NFS 的写成本（D5① 的外推边界）、Win32 侧 `create_private_file` 的权限语义（F9 只 WARN）——两者都要真机，走查第 ⑸/⑷ 条。
 
 **裁决记录（2026-10-12 收口）**：D1–D13 经人逐条裁决——**D1–D9、D11–D13 全按稿面推荐档**（无一条改判），**D10 改判「内置固定词表 + 用户可配追加正则」**（原推荐是只落内置词表、可配延后），并连带裁下**非法模式 ⇒ 拒绝开启并回报错误**的 fail-closed 档。据此入册 `codespec/SPECIFICATIONS.md` §7 裁决 **7.116**、`CHANGELOG.md` **v0.116**，`PLAN.md` §3 的 `CONN.11` 行与 §8 的 M4 行同步改口。本稿的七处回写见状态块第二条。实现按 §4 布局分三批走：批 1＝折算件 + 落盘件 + `Session` 挂钩与 utest/itest（不含 UI）；批 2＝菜单项 + 命令 + 提示对话框 + **新键六处同步** + 装配 + 核对表三行改口；批 3＝文档回写与在册收口。
+
+
+### 8.1 批 2／批 3 收账（2026-10-12，落地期按实现回写；入册为裁决 **7.117** 与 **v0.117**）
+
+**三批落点与读数**。批 1 = `5716ac7`：新增两件测试 TU（`utest_session_log` 20 案、`itest_session_logging` 10 案），`ctest --preset linux -E etest_` 79→**81 项**、`borealis_test_runner` 980→**1010 案**。批 2 = `f9bc491`：**不新增 TU** ⇒ 项数不变，全案数 1010→**1019**（`utest_right_click` 8→11、`itest_right_click_paste` 21→25、`utest_session_log` 20→22——目录回落与文件名形态那两案随 §4 第⑤条的拆件补上）。批 3 = 本节 + `SPECIFICATIONS.md` 的 7.117 与 CONN.11 现状句 + `CHANGELOG.md` v0.117 + `PLAN.md` 两行。结项复核：**81 项全绿、1019 案全绿**。
+
+**变异注入逐条（注入点 ⇒ 转红的用例名；脚本 `$TMPDIR/mutate2.py` 与 `mutate3.py`，一次性、不入仓，AGENTS §4.4 第 22 条）**。
+
+| 把实现改坏的那一句 | 套件 | 转红 |
+| --- | --- | --- |
+| `on_menu_command` 的 `ToggleSessionLog` 那支不回调装配钩子（`if (false)`） | `itest_right_click_paste` | 2：`the_logging_row_lands_below_copy_and_paste`、`the_logging_row_reads_the_start_wording_then_the_stop_wording` |
+| 钩子缺失也放条目（`logging_menu_state` 返回 `available = true`） | `itest_right_click_paste` | 2：`menu_paste_item_reads_the_clipboard_at_the_next_frame`、`the_unwired_view_reads_nothing_about_logging` |
+| `on_right_click` 呼状态钩子两遍 | `itest_right_click_paste` | 1：`the_logging_row_lands_below_copy_and_paste`（`log_state_reads` 从 1 变 2） |
+| 计划里日志条目插在粘贴之前 | `itest_right_click_paste` | 1：`the_logging_row_reads_the_start_wording_then_the_stop_wording` |
+| `plan_right_click` 恒 `if (true)`（能力闸那条判据摘掉） | `utest_right_click` | 3：`context_menu_with_selection_offers_both_commands_enabled`、`context_menu_without_selection_grays_out_only_the_copy_row`、`the_log_row_is_absent_when_the_gate_is_closed_not_grayed_out` |
+| `menu_label` 两态折成一态（`logging ? stop : start` 只留 start） | `itest_right_click_paste` | 1：`the_logging_row_reads_the_start_wording_then_the_stop_wording` |
+| `resolve_log_directory` 不拼子目录名（直接回 config_dir） | `utest_session_log` | 1：`an_empty_configured_directory_falls_back_to_the_named_child_of_config_dir` |
+| `make_log_file_name` 丢了起始秒 | `utest_session_log` | 1：`the_log_file_name_carries_tab_id_and_start_second_only` |
+| `store.cpp` 的 `put(node, "session_log_pattern", …)` 注释掉 | `utest_config` | 6：`every_value_survives_a_write_read_round_trip`、`an_exported_document_imports_back_the_same_settings`、`rollback_restores_a_saved_scene_and_keeps_the_current_one` 等 |
+| `form_transfer.cpp` 的 `Binding` 键名改一个字符 | `utest_form_transfer` | 4：`the_bridge_loads_every_catalog_key_and_nothing_else`、`each_key_takes_the_member_it_names`、`writing_the_form_back_rebuilds_that_settings`、`only_the_committed_key_moves` |
+| 核对表那一行的键名改一个字符 | `utest_settings_catalog` | 2：`table_covers_exactly_the_written_schema_keys`、`grade_columns_match_the_two_physical_boundaries` |
+| `kGroupNotes` 里 `settings.note.session_log` 那一行删除 | `itest_settings_panel` | 1：`the_deferred_status_bar_toggles_are_real_controls_and_only_persist` |
+
+批 1 那九处变异的点位与用例名随该批记在提交 `5716ac7` 的正文里（D3 折算表逐档、越限丢前半、0600 首建、写失败自我禁用、时间戳只在行边界、内置词表命中与不命中、并集只替一次、非法模式 nullopt、末段 flush）。
+
+**一处实测教训，值得留在稿里**。变异脚本还原时若用 `shutil.move(backup, path)`，它**保留备份的旧 mtime** ⇒ ninja 判定「无需重建」⇒ 下一枚变异跑的仍是上一枚变异编译出的对象文件。第一版电池因此有两处读数虚高（「计划里日志条目排在粘贴之前」与「组顶旁注漏挂」各报 2 条，修复后都是 1 条），全量回归也一度停在 17 案转红的假象上。修复＝还原后 `os.utime(path, None)` 把时间戳钉到「现在」，末尾再统一重建一次；上表是**修复后那一版**的读数，跑完 `git diff -- src include` 为空、回归恢复 81 项／1019 案全绿。
+
+**五处口径按实现改口**（稿面 ≠ 落地，逐条已同步进 §4）：① `LogSpec` 移交的是 `compile_redactor` 的产物（`redactor`）而不是模式串——编译点必须落在 UI 线程的「开启那一刻」（7.116⑤），读线程拿到的已是内置与用户并好的一个供替选；② `session.h` 的运行期入口从三枚变**四枚**，多出的 `logging_enabled()` 是菜单条目与命令标题两态的唯一现读点，这份态除会话自己没人知道；③ 稿面那句「新键的标签与**占位词条**」只落了标签——本仓的 `SettingsControl` 没有 per-key placeholder 机制（`TextInput` 只在 `OptionalHexInput` 那一档挂「未配」），加占位串要先加一档框架语义，不属本意图；④ 组顶旁注落在 `src/ui/settings_panel.cpp` 的 `kGroupNotes`，**这一件不在 §4 的原清单里**（判据 7 那句旁注是面板侧渲染的，出稿时只列了 catalog 与词条两件）；⑤ §4 那句「装配层算路径」拆成 `resolve_log_directory` 与 `make_log_file_name` 两枚**纯派生件**放进 `session_log.h`——否则 D9① 的目录回落与 D13① 的名字形态没有 utest 证人（§4.1 第 20 条），装配层只调用。另两处结构性改口：那句「`perform_close` 撤账」**没落成一行**——日志态挂在 `Session` 自己身上，`~Session` 在 join 读线程之后停笔并关文件（`session.cpp` 的头注写明顺序反过来会让末段 flush 与在途 append 抢同一把锁），装配层没有第二份表可撤；命令标题两态靠**同 id 整条覆盖重注册 + 帧边界唯一刷新点**（Aurora 侧 `CommandRegistry::add` 同 id 保持注册序、**没有 `set_title`**），于是写失败自我禁用／切标签／重启会话（D11①）三种翻面都从这一条腿跟上，不必在每个建/换会话点补一次。风险提示那两句因 `au::confirm` 只吃**一条** message 而合成一行、完整路径拼在正文尾部（D7① 的兑现形态）。
+
+**仍然没有自动化证人的三处 + 一处未裁窗口**。`src/main.cpp` 不编入 runner（裁决 7.83 的物理事实）⇒ ①算路径、②能力闸现读、③**正则非法 ⇒ 不弹 confirm／不建文件／不改态**那一条分支（其前半段在 `compile_redactor` 侧有 utest 锁 nullopt，后半段没有）只有编译链接与真机走查兜底。另登记一处**未裁窗口**：`TODO(SPEC.FEAT.CONN.11)` 写在 confirm 的答话回调里——目录与文件名在提示**之前**算定，答话那一刻不重读配置，「对话框开着时改了目录」这一窗口的口径未裁，本棒不自行择一。
+
+**六条真机走查（§6 末）一条未做** ⇒ 本稿与 §3 的十三条裁决、以及上面所有读数一律**不称「可用」**（AGENTS §4.4 第 33 条）。§7 的在册清单在本批之后不变。
