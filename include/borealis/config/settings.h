@@ -219,8 +219,11 @@ struct ConnectionSettings {
     SshDefaults ssh{};
     SerialDefaults serial{};
 
-    bool session_logging{false};   ///< 会话日志默认关闭（裁决 7.9），开启须逐会话显式动作。
-    std::string session_log_dir{}; ///< 空＝未设置；日志路径配置归本域（架构 §7.5）。
+    bool session_logging{false};   ///< 能力闸，默认关闭（裁决 7.9）：开着也不落盘，仍需逐会话显式点一次「开启」。
+    std::string session_log_dir{}; ///< 空＝未设置，回落 `<配置目录>/borealis-logs`；日志路径配置归本域（架构 §7.5）。
+    /// 追加的敏感行正则（`SPEC.FEAT.CONN.11`，裁决 7.116 D10 改判吃下的唯一新键）。空＝只用内置词表；
+    /// 非空时与内置词表取**并集**。编译点在「开启那一刻」而不在装载期，非法即拒绝开启（fail-closed）。
+    std::string session_log_pattern{};
 
     /// @brief 最近连接（最近在前，定长 `kRecentConnectionLimit`）。
     ///

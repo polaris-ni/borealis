@@ -154,6 +154,9 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     next.connection.serial.encoding = "ISO-8859-1";
     next.connection.session_logging = true;
     next.connection.session_log_dir = "log-dir";
+    // 追加敏感正则（`SPEC.FEAT.CONN.11`，裁决 7.116 D10 改判）：刻意带反斜杠与竖线——漏写侧键会让它
+    // 静默回空串（＝只用内置词表），这条往返等值是唯一能看见那一次的证人。
+    next.connection.session_log_pattern = "(otp|secret)[ _-]?\\d+";
 
     next.shortcuts.overrides["terminal.new_tab"] = "Ctrl+T";
     next.shortcuts.overrides["app.settings"] = "Ctrl+Shift+Comma";
@@ -597,6 +600,9 @@ AURORA_TEST_CASE(defaults_are_the_first_launch_shape) {
     // 而不是把整份配置判坏（缺键即默认是裁决 7.26④ 的宽容口径）。
     AURORA_TEST_CHECK_EQ(defaults.connection.serial.flow, "none");
     AURORA_TEST_CHECK_FALSE(defaults.connection.session_logging);  // 裁决 7.9
+    // 裁决 7.116 D10 改判：缺省**空串**不等于「不过滤」——空＝只用内置词表，缺键即默认这条宽容口径
+    // （裁决 7.26④）因此不会把既有配置文件判坏，也不会让首次启动变成「配了而失效」。
+    AURORA_TEST_CHECK_TRUE(defaults.connection.session_log_pattern.empty());
 
     AURORA_TEST_CHECK_TRUE(defaults.shortcuts.overrides.empty());
     // 「`Settings{}` 就是首次启动的那份配置」：与预置表首项同源。

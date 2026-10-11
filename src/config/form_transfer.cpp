@@ -387,6 +387,9 @@ auto assign_shortcuts(Settings &settings, const FormValue &value) -> void {
         Binding{"connection.session_log_dir",
                 [](const Settings &s) -> FormValue { return FormValue::text(s.connection.session_log_dir); },
                 [](Settings &s, const FormValue &v) { assign(s.connection.session_log_dir, v); }},
+        Binding{"connection.session_log_pattern",
+                [](const Settings &s) -> FormValue { return FormValue::text(s.connection.session_log_pattern); },
+                [](Settings &s, const FormValue &v) { assign(s.connection.session_log_pattern, v); }},
 
         // ---- 快捷键 ----
         Binding{"shortcuts.overrides", &shortcut_rows, &assign_shortcuts},

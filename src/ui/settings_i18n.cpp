@@ -375,6 +375,28 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"terminal.notice.unrepresentable.line", "{0} 发不出这一段里的 {1} 个字符"},
     {"terminal.notice.unrepresentable.action", "已按当前处置档发送 · 改档见 设置 › 终端 › 不可表示字符处置"},
 
+    // ---- 右键菜单与「会话日志」一族（`SPEC.FEAT.INTERACT.03` 的三条目 + `SPEC.FEAT.CONN.11`）----
+    // 前两条是既有菜单文案**换来源**而不是换措辞：`menu_label` 自此一族三个条目同走词条表，
+    // 与视口里 dead-session 那几句同一条路径（裁决 7.116 批 2 的口径：新增文案进词条表）。
+    // 风险提示两句合成一行显示（框架的 `au::confirm` 只吃一条 message），路径完整报出是判据 3
+    // 那句「将写入：完整路径」的落点；开启失败的回报两条各自独立，因为「正则非法」与「建不了文件」
+    // 的下一步动作完全不同（改模式 vs 看目录）。
+    {"menu.item.copy", "复制"},
+    {"menu.item.paste", "粘贴"},
+    {"session.log.menu.start", "开启会话日志"},
+    {"session.log.menu.stop", "停止会话日志"},
+    {"session.log.command.start", "会话日志：开启（当前标签）"},
+    {"session.log.command.stop", "会话日志：停止（当前标签）"},
+    {"session.log.confirm.title", "开启会话日志"},
+    {"session.log.confirm.sensitive", "日志可能包含密码、令牌或其他敏感信息。"},
+    {"session.log.confirm.path", "将写入：{0}"},
+    {"session.log.alert.bad_pattern", "追加的正则无法编译，会话日志未开启：{0}"},
+    {"session.log.alert.cannot_open", "无法创建日志文件，会话日志未开启：{0}"},
+    // 写失败那句不带路径：路径是 ASCII 诊断，只进日志（AGENTS §4.3 第 14 条的诊断不属中文例外）。
+    {"session.log.alert.write_failed", "日志写入失败，已停止记录"},
+    {"settings.note.session_log",
+     "能力闸：开启后仍需逐会话显式点「开启会话日志」。日志目录里的旧文件本期不清理、不轮转。"},
+
     // ---- 命令面板（`SPEC.FEAT.WS.07`，判据文 `codespec/UI_WORKSPACE.draft.md` §4）----
     // 占位符与空态两条的 **key 由框架命名**（`CommandPalette::AURORA_DEFAULT_*_KEY`，G38 / G39 回货形
     // 态），本件只登记取值，故这两串 key 不得自创——key 一漂移，面板就静默回落英文（裁决 **7.92**②）。
@@ -461,6 +483,7 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"connection.serial.encoding", "串口编码"},
     {"connection.session_logging", "会话日志"},
     {"connection.session_log_dir", "日志目录"},
+    {"connection.session_log_pattern", "追加敏感正则"},
 
     // ---- 快捷键域 ----
     {"shortcuts.overrides", "键位覆盖表"},

@@ -352,12 +352,15 @@ struct GroupNote {
     std::string_view note_key;
 };
 
-/// @brief 四组「入口先于消费方落地」的组顶说明（判据文 A9-a / C2-a / D3-a）。
+/// @brief 组顶说明：「入口先于消费方落地」那四组，加上会话日志的能力闸旁注（判据文 A9-a / C2-a / D3-a
+///        与 `SPEC.FEAT.CONN.11` 判据 7）。
 ///
-/// 措辞各说清「哪个消费方还没开工」，而不是把这一组重新灰置：人已拍板有键无消费方的行一律可用而只落盘
-/// （裁决 7.68③ 的口径，行尾另挂「延后」角标）。
+/// 前四条措辞各说清「哪个消费方还没开工」，而不是把这一组重新灰置：人已拍板有键无消费方的行一律可用而只落盘
+/// （裁决 7.68③ 的口径，行尾另挂「延后」角标）。第五条不同：它罩的是一组**已开工**的行，要说清的是
+/// 「闸开着也不等于在记录」这道两道开关的理解成本（裁决 7.116 D1① 自己登记的代价面）。
 constexpr GroupNote kGroupNotes[] = {
     {"appearance.status_bar.show_connection", "settings.note.status_bar"},
+    {"connection.session_logging", "settings.note.session_log"},
     {"connection.ssh.port", "settings.note.ssh"},
     {"connection.serial.baud", "settings.note.serial"},
     {"shortcuts.overrides", "settings.note.shortcuts"},

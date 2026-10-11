@@ -17,6 +17,7 @@
 
 #include <chrono>
 #include <ctime>
+#include <filesystem>
 #include <iterator>
 #include <utility>
 
@@ -123,6 +124,22 @@ auto fold_to_plain_text(std::u32string_view text) -> std::string {
     FoldSink sink{out, newline_after_cr};
     parser.feed(text, sink);
     return out;
+}
+
+auto resolve_log_directory(std::string_view configured_dir, std::string_view config_dir) -> std::string {
+    // 非空即原样用：用户写的绝对路径不拼、不规范化、不判相对——相对路径按进程当前目录解释，那是
+    // 宿主的口径而不是本件该猜的事。
+    if (!configured_dir.empty()) {
+        return std::string{configured_dir};
+    }
+    if (config_dir.empty()) {
+        return {};  // 连配置目录都取不到 ⇒ 没有落点，交给装配层拒绝开启
+    }
+    return (std::filesystem::path{std::string{config_dir}} / std::string{kSessionLogDirectoryName}).string();
+}
+
+auto make_log_file_name(std::uint64_t tab_id, std::int64_t start_epoch_seconds) -> std::string {
+    return "session-" + std::to_string(tab_id) + "-" + std::to_string(start_epoch_seconds) + ".log";
 }
 
 SessionLog::SessionLog(LogSpec spec) : spec_{std::move(spec)} {

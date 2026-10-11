@@ -345,15 +345,27 @@ namespace {
                           {},
                           ConsumerStatus::Wired,
                           EffectLevel::NextSession));
-    catalog.push_back(toggle(
-        "connection.session_logging", SettingsPage::Connection, ConsumerStatus::Absent, EffectLevel::NextSession));
+    // 会话日志三行（`SPEC.FEAT.CONN.11`，裁决 7.116）。第一行是**能力闸**：它开着不代表在记录，
+    // 用户还得逐会话点一次「开启会话日志」——生效档因此是即时（开启动作那一刻现读，不回溯在途会话），
+    // 而旁注那句话就是这道「两道开关」的理解成本（D1① 的代价面，见 `settings.note.session_log`）。
+    catalog.push_back(
+        toggle("connection.session_logging", SettingsPage::Connection, ConsumerStatus::Wired, EffectLevel::Immediate));
+    // 目录与模式都在**开启那一刻**取用（改它不动在途会话已在写的文件与已在打的码），故同挂延后角标。
     catalog.push_back(row("connection.session_log_dir",
                           SettingsPage::Connection,
                           ControlKind::TextInput,
                           ValueDomain::FreeText,
                           {},
                           {},
-                          ConsumerStatus::Absent,
+                          ConsumerStatus::Wired,
+                          EffectLevel::NextSession));
+    catalog.push_back(row("connection.session_log_pattern",
+                          SettingsPage::Connection,
+                          ControlKind::TextInput,
+                          ValueDomain::FreeText,
+                          {},
+                          {},
+                          ConsumerStatus::Wired,
                           EffectLevel::NextSession));
 
     // ---- 快捷键页（首版只读，S9）----

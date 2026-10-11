@@ -5,7 +5,7 @@
 ///           F12 的整屏重绘语义（记的是远端发出的行，不是屏上那一屏）、分片边界不得把转义裸字节漏进
 ///           正文、时间戳只在行边界插、内置词表 ∪ 用户模式的打码（含并集次序、CJK 相邻行、
 ///           「非法模式 ⇒ 拒绝编译」的 fail-closed 判定位）、越限丢前半留后半与不越限时的逐字节稳定、
-///           写失败自我禁用 + 一次性提示的取走即空。
+///           写失败自我禁用 + 一次性提示的取走即空、批 2 的两枚纯派生（目录回落与文件名形态）。
 ///
 ///           这一层用真文件（`isolation::temp_dir()`）而不是替身连接：被测事实是「落盘件的字节去向」，
 ///           替身连接那一层归 `itest_session_logging`（稿 §4 的分工：纯折算与文件语义在 utest，
@@ -33,7 +33,10 @@ namespace {
 using borealis::session::compile_redactor;
 using borealis::session::fold_to_plain_text;
 using borealis::session::kMaxSessionLogBytes;
+using borealis::session::kSessionLogDirectoryName;
 using borealis::session::LogSpec;
+using borealis::session::make_log_file_name;
+using borealis::session::resolve_log_directory;
 using borealis::session::SessionLog;
 
 /// 时间戳前缀 `[%Y-%m-%d %H:%M:%S] ` 的长度：`[` + 10 + 空格 + 8 + `]` + 空格。
@@ -392,6 +395,23 @@ AURORA_TEST_CASE(stop_is_idempotent_and_a_reopened_log_appends_instead_of_trunca
     feed(second, "appended\r\n");
     second.stop();
     AURORA_TEST_CHECK_EQ(read_all(path), std::string("kept\nappended\n"));
+}
+
+AURORA_TEST_CASE(an_empty_configured_directory_falls_back_to_the_named_child_of_config_dir) {
+    // 判据 7 的回落腿：留空＝配置目录下一层带归属的名字，非空＝原样（不拼不洗）。两条都空没有落点，
+    // 装配层据此拒绝开启——宁可拒绝也不猜一个当前目录，那会把日志写进用户找不到的地方。
+    const std::string config_dir{aurora::testing::isolation::temp_dir()};
+    AURORA_TEST_CHECK_EQ(resolve_log_directory({}, config_dir),
+                         (std::filesystem::path{config_dir} / std::string{kSessionLogDirectoryName}).string());
+    AURORA_TEST_CHECK_EQ(resolve_log_directory(config_dir, config_dir), config_dir);
+    AURORA_TEST_CHECK_EQ(resolve_log_directory({}, {}), std::string{});
+}
+
+AURORA_TEST_CASE(the_log_file_name_carries_tab_id_and_start_second_only) {
+    // D13①：名字里只有 TabId 与起始 epoch 秒——标签名/档案名进来就要洗名字，那是本该待在
+    // `src/platform/` 的平台知识。这条用例把形态钉死，防止后人「顺手」加一段可读名。
+    AURORA_TEST_CHECK_EQ(make_log_file_name(7U, 1766448000LL), std::string{"session-7-1766448000.log"});
+    AURORA_TEST_CHECK_EQ(make_log_file_name(0U, 0LL), std::string{"session-0-0.log"});
 }
 
 }  // namespace borealis::test_cases::utest_session_log

@@ -3656,13 +3656,16 @@ AURORA_TEST_CASE(the_deferred_status_bar_toggles_are_real_controls_and_only_pers
     // ⑶ 无消费方 ⇒ 没有可广播的对象：落盘一次而广播零次（裁决 7.68③ 的「只落盘」）。
     AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
 
-    // ⑷ 连接页的两组各有自己的说明，且次序＝该页次序（SSH 段在前、串口段在后）而非「按页推出」。
+    // ⑷ 连接页的三组各有自己的说明，且次序＝该页行序（SSH 段在前、串口段在中、日志段在后）而非「按页推出」。
     panel->select_page(SettingsPage::Connection);
     h.render();
     const std::vector<std::string> connection_notes = panel->visible_notes();
-    AURORA_TEST_REQUIRE_EQ(connection_notes.size(), 2U);
+    AURORA_TEST_REQUIRE_EQ(connection_notes.size(), 3U);
     AURORA_TEST_CHECK_EQ(connection_notes[0], borealis::ui::settings_label("settings.note.ssh"));
     AURORA_TEST_CHECK_EQ(connection_notes[1], borealis::ui::settings_label("settings.note.serial"));
+    // 第三条罩的是 `SPEC.FEAT.CONN.11` 那三行（裁决 7.116 D1① 的「能力闸 + 名字里的目录」两道开关，
+    // 旁注那句就是这道理解成本的赔付）。
+    AURORA_TEST_CHECK_EQ(connection_notes[2], borealis::ui::settings_label("settings.note.session_log"));
 }
 
 /// @brief 快捷键页的行源是注册表：注册行照注册序在前，覆盖表**只**贡献「注册表查无此 id」的孤儿行。

@@ -17,8 +17,9 @@
 ///           节流的那一腿需要运行中的 `Scheduler`，此处按「无调度器即按次序一次发完」的退化
 ///           分支断言块序与内容（裁决 7.41⑥）。
 ///
-///           浮层内容盒用 `context_menu()` 取，条目落点按其高度分数算：两条目等高，故 1/4 处
-///           是「复制」、3/4 处是「粘贴」——比照按钮内边距反推尺寸可靠。
+///           浮层内容盒用 `context_menu()` 取，条目落点按其高度分数算：未装日志钩子时两条目等高，
+///           故 1/4 处是「复制」、3/4 处是「粘贴」；装上第三条后三条等高，1/2 仍是「粘贴」而
+///           5/6 是「会话日志」——比照按钮内边距反推尺寸可靠。
 
 #include <algorithm>
 #include <chrono>
@@ -26,6 +27,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -46,6 +48,7 @@
 #include "borealis/ui/right_click.h"
 #include "framework/aurora_test.h"
 // 私有头（裁决 D1①），故按相对路径取用而不给整个测试目标开 `src/` 含目录。
+#include "../../src/ui/settings_i18n.h"
 #include "../../src/ui/terminal_view.h"
 
 namespace borealis::test_cases::itest_right_click_paste {
@@ -216,6 +219,23 @@ class Harness {
         render();
     }
 
+    /// @brief 装上会话日志的两条钩子（`SPEC.FEAT.CONN.11` 的第三条目）：本文件的替身装配。
+    ///
+    /// 与生产的差别只在动作体：真实闭包要做「读闸 → 编译模式 → confirm → 建文件」，替身只把
+    /// `log_toggles` 加一并翻转记录态。断的是**链路**——条目出现、点位命中、点到之后钩子响。
+    auto wire_logging_hooks(bool initially_logging = false) -> void {
+        log_state = initially_logging;
+        view_->set_logging_hooks(
+            [this]() -> std::optional<bool> {
+                ++log_state_reads;
+                return log_state;
+            },
+            [this]() -> void {
+                ++log_toggles;
+                log_state = !log_state;  // 生产的那一份也是翻转，菜单两态靠它
+            });
+    }
+
     /// @brief 在菜单内容盒的竖直分数处单击一次（须经 `render()` 打开菜单后才能调）。
     auto click_menu_item(double fy) -> void {
         const au::Rect box = view_->context_menu()->content_bounds();
@@ -266,7 +286,22 @@ class Harness {
         if (dialog == nullptr) {
             return ButtonSpot{};
         }
-        const au::Rect box = dialog->paint_bounds();
+        return find_button_in(dialog->paint_bounds(), ordinal);
+    }
+
+    /// @brief 上下文菜单第 `ordinal` 枚条目（阅读序，0 基）：与对话框同一套命中链问法。
+    ///
+    /// 认条目不认坐标分数：两态文案那条判据要问的是「这一枚上屏的是哪句」，而分数只能定位不能认字。
+    [[nodiscard]] auto find_menu_button(std::size_t ordinal) -> ButtonSpot {
+        const au::Popup *menu = view_->context_menu();
+        if (menu == nullptr || !menu->is_open()) {
+            return ButtonSpot{};
+        }
+        return find_button_in(menu->content_bounds(), ordinal);
+    }
+
+    /// @brief 在给定盒内按阅读序扫 Button，取第 `ordinal` 枚（起点与步长 4 dp，同 `find_dialog_button`）。
+    [[nodiscard]] auto find_button_in(au::Rect box, std::size_t ordinal) -> ButtonSpot {
         std::vector<au::Widget *> seen;
         for (float y = box.origin.y + 4.0F; y < box.bottom(); y += 4.0F) {
             for (float x = box.origin.x + 4.0F; x < box.right(); x += 4.0F) {
@@ -319,6 +354,9 @@ class Harness {
     std::size_t confirm_calls = 0;
     std::size_t warned_chunks = 0;       ///< 警告里报给用户的待发块数。
     std::function<void(bool)> held_answer;  ///< 替身扣下的确认回调，用例决定何时放行。
+    bool log_state = false;              ///< 替身装配给出的「本会话是否在记录」。
+    std::size_t log_state_reads = 0;     ///< 状态钩子被读了几次（一次右键读一次，不是两次）。
+    std::size_t log_toggles = 0;         ///< 第三条目被点亮的次数。
 
   private:
     [[nodiscard]] static auto make_window() -> au::Window {
@@ -438,6 +476,103 @@ AURORA_TEST_CASE(outside_click_dismisses_the_menu_and_acts_on_nothing) {
     AURORA_TEST_CHECK_EQ(h.write_calls, 0U);
     AURORA_TEST_CHECK(h.written().empty());
     AURORA_TEST_CHECK(h.selected_text().empty());  // 关菜单那一击不该顺手起一个选区
+}
+
+AURORA_TEST_CASE(the_unwired_view_reads_nothing_about_logging) {
+    // F17 的界面侧半段：装配层没装钩子 ⇒ 菜单里只有两条，视口连状态都不问一次。
+    // 「预览视口拿不到日志入口」靠的就是这条结构性纪律，而不是装配代码记得不给它装。
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.clipboard = "clip";
+    h.right_click(1U, 2U);
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.log_state_reads, 0U);
+    // 两条目时代：3/4 处仍是「粘贴」，即第三条目不存在（若存在它会在更下方）。
+    h.click_menu_item(0.75);
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.log_toggles, 0U);
+    AURORA_TEST_CHECK_EQ(h.read_calls, 1U);
+}
+
+AURORA_TEST_CASE(the_logging_row_lands_below_copy_and_paste) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.clipboard = "echo hi";
+    h.wire_logging_hooks(false);
+    h.right_click(1U, 2U);
+    h.render();
+    // 一次按下只读一次状态（计划与文案同源，见 `on_right_click`）。
+    AURORA_TEST_CHECK_EQ(h.log_state_reads, 1U);
+    AURORA_TEST_REQUIRE(h.menu_open());
+    // 三条目等高：1/6 复制、3/6 粘贴、5/6 会话日志。中间那处命中粘贴即证明条目数变了而前两条次序未变。
+    h.click_menu_item(0.5);
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.read_calls, 1U);
+    AURORA_TEST_CHECK_EQ(h.written(), "echo hi");
+    AURORA_TEST_CHECK_EQ(h.log_toggles, 0U);
+
+    h.right_click(1U, 2U);
+    h.render();
+    h.click_menu_item(5.0 / 6.0);
+    h.render();
+    // 第三条直接把动作交回装配层的闭包：视口不碰剪贴板也不碰文件。
+    AURORA_TEST_CHECK_EQ(h.log_toggles, 1U);
+    AURORA_TEST_CHECK_EQ(h.read_calls, 1U);
+    AURORA_TEST_CHECK_EQ(h.write_calls, 0U);
+}
+
+AURORA_TEST_CASE(the_logging_row_reads_the_start_wording_then_the_stop_wording) {
+    // 一条命令两态（裁决 7.116 D6①）在这里证的是**上屏的那句字**：经命中链取回第三枚按钮，读它的
+    // 无障碍标签（与绘制同源，Aurora 侧 G28 回货后的形态）。点位分数只能定位、不能认字。
+    borealis::ui::install_settings_strings();  // 装填幂等，见 `settings_i18n.h` ②
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.wire_logging_hooks(false);
+    h.right_click(1U, 2U);
+    h.render();
+
+    const Harness::ButtonSpot idle = h.find_menu_button(2);
+    AURORA_TEST_REQUIRE(idle.widget != nullptr);
+    auto *idle_button = dynamic_cast<au::Button *>(idle.widget);
+    AURORA_TEST_REQUIRE(idle_button != nullptr);
+    AURORA_TEST_CHECK_EQ(idle_button->accessibility_label(),
+                         borealis::ui::settings_label("session.log.menu.start"));
+    // 头一条不随日志态改措辞（改了就是把「复制」画成别的东西）。
+    const Harness::ButtonSpot copy_item = h.find_menu_button(0);
+    AURORA_TEST_REQUIRE(copy_item.widget != nullptr);
+    auto *copy_button = dynamic_cast<au::Button *>(copy_item.widget);
+    AURORA_TEST_REQUIRE(copy_button != nullptr);
+    AURORA_TEST_CHECK_EQ(copy_button->accessibility_label(), borealis::ui::settings_label("menu.item.copy"));
+
+    h.click_menu_item(5.0 / 6.0);  // 点第三条 ⇒ 替身装配翻转记录态
+    h.render();
+    AURORA_TEST_REQUIRE(h.log_state);
+    h.right_click(1U, 2U);
+    h.render();
+    const Harness::ButtonSpot running = h.find_menu_button(2);
+    AURORA_TEST_REQUIRE(running.widget != nullptr);
+    auto *running_button = dynamic_cast<au::Button *>(running.widget);
+    AURORA_TEST_REQUIRE(running_button != nullptr);
+    AURORA_TEST_CHECK_EQ(running_button->accessibility_label(),
+                         borealis::ui::settings_label("session.log.menu.stop"));
+}
+
+AURORA_TEST_CASE(direct_right_click_states_stay_menuless_with_logging_wired) {
+    // 稿 §6 那条既有判据的另一半：新增条目不改「`Paste`/`CopyOnSelect` 两态不发菜单」，
+    // 这两态因此只剩命令面板一个入口（D6① 要求两条入口都存在的理由）。
+    for (const borealis::ui::RightClickAction action :
+         {borealis::ui::RightClickAction::Paste, borealis::ui::RightClickAction::CopyOnSelect}) {
+        auto options = TerminalView::InteractionOptions{};
+        options.right_click = action;
+        Harness h(options);
+        AURORA_TEST_REQUIRE(h.preflight());
+        h.clipboard = "ls";
+        h.wire_logging_hooks(true);
+        h.right_click(1U, 2U);
+        h.render();
+        AURORA_TEST_REQUIRE(!h.menu_presented());
+        AURORA_TEST_CHECK_EQ(h.log_toggles, 0U);
+    }
 }
 
 AURORA_TEST_CASE(copy_on_select_state_copies_without_a_menu) {

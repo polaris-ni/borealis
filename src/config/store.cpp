@@ -531,6 +531,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
 
     put(node, "session_logging", connection.session_logging);
     put(node, "session_log_dir", connection.session_log_dir);
+    put(node, "session_log_pattern", connection.session_log_pattern);
 
     // 数组而不是「id 作键」的映射：理由同快捷键覆盖表（命令 id 里的点号会被拆成嵌套对象），
     // 且空表也必须留得下来——空对象在装载时会被拍平掉。
@@ -845,6 +846,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
 
     connection.session_logging = scope.boolean("session_logging", defaults.connection.session_logging);
     connection.session_log_dir = scope.text("session_log_dir", defaults.connection.session_log_dir);
+    connection.session_log_pattern = scope.text("session_log_pattern", defaults.connection.session_log_pattern);
     connection.recent = scope.recent_list("recent", defaults.connection.recent);
     scope.collect_unknown();
     return connection;

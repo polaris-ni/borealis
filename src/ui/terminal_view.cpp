@@ -188,14 +188,18 @@ class StringCollector final : public term::CodePointSink {
 
 /// @brief 菜单条目的显示文案。
 ///
-/// CJK-LITERAL: 上屏文案 - 右键菜单是给用户看的界面文案，本仓尚无本地化层（词条表随
-/// `SPEC.FEAT.PREF.02` 的设置面板那一棒再谈），故与视觉稿 F 面板一致用中文而非英文。
-[[nodiscard]] auto menu_label(MenuCommand command) -> std::string_view {
+/// 词条在 `settings_i18n.cpp`（裁决 7.116 的批 2 把菜单两态文案也归到那张表，与本文件里
+/// dead-session 浮层那一句同一条路径），本处不再自持一份中文串——上面那段 CJK-LITERAL 旁注说的是
+/// 「界面文案用中文」这件事，不是「文案只能写在本文件」。
+[[nodiscard]] auto menu_label(MenuCommand command, bool logging) -> std::string {
     switch (command) {
         case MenuCommand::Copy:
-            return "复制";
+            return std::string{settings_label("menu.item.copy")};
         case MenuCommand::Paste:
-            return "粘贴";
+            return std::string{settings_label("menu.item.paste")};
+        case MenuCommand::ToggleSessionLog:
+            // 一条命令两态（D6①）：现读的记录态决定一句「开启」还是一句「停止」。
+            return std::string{settings_label(logging ? "session.log.menu.stop" : "session.log.menu.start")};
     }
     return {};  // 枚举已穷尽：新增命令而忘跟上文案时，空标签比静默复用上一条更醒目
 }
@@ -303,6 +307,26 @@ auto TerminalView::set_restart_hook(std::function<void()> hook) -> void {
 }
 
 auto TerminalView::session_dead() const -> bool { return !session_->alive(); }
+
+auto TerminalView::set_logging_hooks(std::function<std::optional<bool>()> state, std::function<void()> toggle) -> void {
+    // 两条一起装、一起拆：只有状态没有动作会画出点不动的条目，只有动作没有状态则连标签的两态都读不出。
+    logging_state_hook_ = std::move(state);
+    logging_toggle_hook_ = std::move(toggle);
+}
+
+auto TerminalView::logging_menu_state() const -> LogMenuState {
+    // 「未注入即无入口」（F17）：钩子缺失时 `available` 为假 ⇒ 计划里根本不放这条条目，而不是放一条灰显的。
+    // 预览视口正是靠这条结构性纪律拿不到日志入口（装配层从不给它 `LogSpec`）。
+    if (!logging_state_hook_ || !logging_toggle_hook_) {
+        return LogMenuState{};
+    }
+    const auto state = logging_state_hook_();
+    // `nullopt`＝这一侧没有可记录的会话（会话已撤账），与「闸关」同档处理：条目不出现。
+    if (!state.has_value()) {
+        return LogMenuState{};
+    }
+    return LogMenuState{.available = true, .logging = *state};
+}
 
 auto TerminalView::set_search_query(SearchQuery query) -> void {
     if (query == search_query_) {
@@ -1416,7 +1440,7 @@ auto TerminalView::flush_copy_request() -> void {
     session::ClipboardOutbox::write(text);
 }
 
-auto TerminalView::open_context_menu(aurora::Point where, const std::vector<MenuItem> &items) -> void {
+auto TerminalView::open_context_menu(aurora::Point where, const std::vector<MenuItem> &items, LogMenuState log) -> void {
     if (host_ == nullptr) {
         return;  // 没有浮层宿主就发不出菜单：装配层须把场景根换成 `au::OverlayHost`（裁决 7.41③）
     }
@@ -1428,7 +1452,7 @@ auto TerminalView::open_context_menu(aurora::Point where, const std::vector<Menu
     rows.reserve(items.size());
     for (const auto &item : items) {
         auto props = aurora::ButtonProps{};
-        props.label = std::string{menu_label(item.command)};
+        props.label = menu_label(item.command, log.logging);
         props.color = panel;
         props.on_color = to_color(spec_.default_foreground);
         props.font = ref_font_;
@@ -1465,6 +1489,13 @@ auto TerminalView::on_menu_command(MenuCommand command) -> void {
             break;
         case MenuCommand::Paste:
             paste_pending_ = true;
+            break;
+        case MenuCommand::ToggleSessionLog:
+            // 视口不做任何日志判断：算路径、编译脱敏器、风险提示与真正的开关全在装配层那一份闭包里
+            //（与命令面板共用同一条，D6①）。钩子未注入时该条根本不会出现在菜单里（`logging_menu_state`）。
+            if (logging_toggle_hook_) {
+                logging_toggle_hook_();
+            }
             break;
     }
     // 菜单关掉本身就是画面变化（Popup::close 已标脏），但复制/粘贴要落地的那一帧仍由 `on_frame`
@@ -1561,7 +1592,10 @@ auto TerminalView::on_right_click(aurora::MouseEvent &e) -> void {
     }
     // 有没有选区看的是区间表而不是端点是否重合：两端重合即空表（`ui::row_spans` 的口径），
     // 而区间表正是绘制与复制共用的那一张（裁决 7.40①）。
-    const RightClickPlan plan = plan_right_click(options_.right_click, !bands_.empty());
+    // 一次取态、两处用：条目在不在（计划）与标签是「开启」还是「停止」（发菜单）读的是同一个读数，
+    // 分两次呼钩子就是让「条目次序」与「文案」可能来自两个时刻。
+    const LogMenuState log = logging_menu_state();
+    const RightClickPlan plan = plan_right_click(options_.right_click, !bands_.empty(), log);
     switch (plan.intent) {
         case RightClickIntent::None:
             return;  // 交还给宿主：右键本就没有可复制的东西
@@ -1572,7 +1606,7 @@ auto TerminalView::on_right_click(aurora::MouseEvent &e) -> void {
             paste_pending_ = true;
             break;
         case RightClickIntent::Menu:
-            open_context_menu(e.position, plan.items);
+            open_context_menu(e.position, plan.items, log);
             break;
     }
     e.is_handled = true;

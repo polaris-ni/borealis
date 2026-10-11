@@ -27,6 +27,7 @@
 #include "borealis/config/themes.h"
 #include "borealis/session/clipboard_outbox.h"
 #include "borealis/session/session.h"
+#include "borealis/session/session_log.h"
 #include "borealis/term/keymap.h"
 #include "borealis/term/utf8.h"
 #include "borealis/term/width.h"
@@ -459,6 +460,12 @@ auto main() -> int {
     // 首标签那一只视口因此结构上不可能拿到一个空的钩子。
     std::function<void()> restart_current_tab;
 
+    // 会话日志的两条视口钩子（`SPEC.FEAT.CONN.11`，裁决 7.116 的批 2）：与上面那支同一条理由——
+    // 真正的动作在装配层后面那一份闭包里，声明在前只为了让 `wire_view` 能按**引用**捕获，
+    // 首标签那只建得早的视口结构上拿不到空钩子。
+    std::function<std::optional<bool>()> logging_state_probe;
+    std::function<void()> logging_toggle_action;
+
     /// 上一次写到窗口标题栏的串：逐帧都调 `set_title` 就是每帧一次 `WM_SETTEXT`，而这个量在
     /// 用户不换标签、对端不改 OSC 标题时根本不动。
     std::string last_window_title;
@@ -724,7 +731,8 @@ auto main() -> int {
     
     // 视口的两条浮层依赖此刻才取得到，先给已存在的全部视图（首标签那一只）补挂，再交给
     // `create_new_tab` 与撤销重开在创建那一刻调用——两条建视图路径共用同一处接线，结构上不可能分叉。
-    wire_view = [&host, &app, &restart_current_tab](borealis::ui::TerminalView &view) -> void {
+    wire_view = [&host, &app, &restart_current_tab, &logging_state_probe,
+                 &logging_toggle_action](borealis::ui::TerminalView &view) -> void {
         view.set_overlay_host(*host);
         view.set_search_dependencies(app.shortcuts(), app.focus());
         // 视口只持一份可调用体；真正的重启在装配层实现（见下方 `restart_current_tab` 的赋值处）。
@@ -734,6 +742,18 @@ auto main() -> int {
                 restart_current_tab();
             }
         });
+        // 会话日志的第三条目走同一条纪律（`SPEC.FEAT.CONN.11`）：视口不问配置也不碰文件，
+        // 只把「在不在记录」与「点一下就翻面」两件事交回装配层。这一处是**唯一**装钩的地方，
+        // 而设置面板的预览视口不经 `wire_view`（它由 `SettingsPreview` 自建），于是稿 §0 的 F4
+        // 那条主线程反例结构上进不了日志——不是靠人记得不给它装。
+        view.set_logging_hooks([&logging_state_probe]() -> std::optional<bool> {
+                                   return logging_state_probe ? logging_state_probe() : std::nullopt;
+                               },
+                               [&logging_toggle_action]() -> void {
+                                   if (logging_toggle_action) {
+                                       logging_toggle_action();
+                                   }
+                               });
     };
     for (auto &[tab_id, workspace] : tab_workspaces) {
         static_cast<void>(tab_id);
@@ -1959,6 +1979,172 @@ auto main() -> int {
     };
     app.commands().add(std::move(set_serial_baud));
 
+    // ---- 会话日志（`SPEC.FEAT.CONN.11`，裁决 7.116 的批 2：界面路径自此可达）----
+    //
+    // 一份闭包两处入口：右键菜单第三条（经 `wire_view` 装进视口那两条钩子）与命令面板那一条命令，
+    // 两者都调 `logging_toggle_action`。开启动作的五步顺序是裁决本身定的，不是随手排的：
+    //   读能力闸 → 现读模式并**先**编译（非法即回报，不建文件、不改态：D10 的 fail-closed）
+    //   → `confirm` 风险提示（正文带完整路径：D7①）→ 建目录 + 算文件名（取消提示时这两步都不发生，
+    //   稿 §6 那条「不建零字节文件」的判据）→ `Session::enable_logging`。
+    // 一次 `open` 与一次 `mkdir` 落在 UI 线程，是裁决 7.116⑤ 明确接受的代价（量级是一次系统调用，
+    // 而每分片的重复工都在该会话自己的读线程上，见 `session_log.h` 的头注）。
+    auto log_dialog = std::make_shared<au::Dialog>();
+    bool log_dialog_mounted = false;
+    auto log_arg = [](const std::string &text) -> std::vector<au::LocalizedString> {
+        return {au::LocalizedString{text}};
+    };
+    auto show_log_frame = [&](au::Node content) -> void {
+        if (!log_dialog_mounted) {
+            static_cast<void>(host->add_overlay(
+                aurora::Node{std::static_pointer_cast<au::Widget>(log_dialog)}));
+            log_dialog_mounted = true;
+        }
+        log_dialog->set_content(std::move(content));
+        log_dialog->show();
+    };
+    auto show_log_notice = [&](std::string_view key, const std::string &arg) -> void {
+        auto dialog = log_dialog;
+        const std::string message =
+            arg.empty() ? borealis::ui::settings_label(key) : borealis::ui::settings_label(key, log_arg(arg));
+        show_log_frame(au::alert(borealis::ui::settings_label("session.log.confirm.title"), message,
+                                 [dialog]() -> void { dialog->close(); }));
+    };
+    // 当前标签的第一只会话：与 `session.restart` 同一取法（重启之后取到的就是新那只，故「重启回到
+    // 未记录态」这条 D11① 不需要额外接线）。多 pane 到货后这一处要按 pane 取会话，见下面的 TODO。
+    auto current_tab_session = [&tab_workspaces, &current_tab_id]() -> std::shared_ptr<borealis::session::Session> {
+        if (!current_tab_id.has_value()) {
+            return {};
+        }
+        const auto found = tab_workspaces.find(current_tab_id.value());
+        if (found == tab_workspaces.end() || found->second.sessions.empty()) {
+            return {};
+        }
+        return found->second.sessions.front();
+    };
+    // 目录不存在时补建并把权限钉 0700：口径照 `key_store.cpp` 那一条——**只有本次新建且为空**的那一个
+    // 目录才钉，用户已有的目录（哪怕 0777）不在本动作的职权里。
+    auto ensure_log_directory = [](const std::filesystem::path &directory) -> std::optional<std::string> {
+        auto ec = std::error_code{};
+        const bool freshly_made = std::filesystem::create_directories(directory, ec);
+        if (ec || !std::filesystem::is_directory(directory)) {
+            return ec ? ec.message() : std::string{"not a directory"};
+        }
+        if (freshly_made) {
+            auto empty_ec = std::error_code{};
+            if (std::filesystem::is_empty(directory, empty_ec) && !empty_ec) {
+                auto perm_ec = std::error_code{};
+                std::filesystem::permissions(directory, std::filesystem::perms::owner_all,
+                                             std::filesystem::perm_options::replace, perm_ec);
+                if (perm_ec) {
+                    AURORA_LOG_WARN("main", "session log: cannot tighten '", directory.string(), "': ",
+                                    perm_ec.message());
+                }
+            }
+        }
+        return std::nullopt;
+    };
+    // 命令标题的两态：注册表没有「只改标题」的入口（Aurora 侧事实），故整条按同 id 覆盖重注册——
+    // `add` 同 id 保持注册序，命令面板里的位置不会因翻面而跳。唯一的调用点是下面 `set_on_frame` 里的
+    // 一次比较（每帧读一个原子旗标、只在真的翻面时才重注册），于是「写失败自我禁用」那种没有点击
+    // 者的翻面也会跟上，装配层不必在每个动作后面补一次刷新。
+    auto add_logging_command = [&store, &logging_toggle_action, &app](bool logging) -> void {
+        au::Command command;
+        command.id = "session.toggle_logging";
+        command.title =
+            borealis::ui::settings_label(logging ? "session.log.command.stop" : "session.log.command.start");
+        command.category = "terminal";
+        command.action = [&logging_toggle_action]() -> void {
+            if (logging_toggle_action) {
+                logging_toggle_action();
+            }
+        };
+        // 能力闸现读（判据 7 的「即时生效」档）：关着就灰显，开了不必重开程序。
+        command.enabled = [&store]() -> bool { return store.settings().connection.session_logging; };
+        app.commands().add(std::move(command));
+    };
+    add_logging_command(false);
+    // 上一次注册命令标题时用的那一态：逐帧只比一次布尔，翻面才整条覆盖重注册（`set_on_frame` 里那一处）。
+    bool logging_command_shows = false;
+
+    logging_state_probe = [&current_tab_session]() -> std::optional<bool> {
+        const std::shared_ptr session = current_tab_session();
+        if (session == nullptr) {
+            return std::nullopt;  // 这一格没有会话 ⇒ 条目不出现（与闸关同档，F17）
+        }
+        return session->logging_enabled();
+    };
+    logging_toggle_action = [&store, &current_tab_id, &current_tab_session, &log_dialog, &show_log_frame,
+                             &show_log_notice, &ensure_log_directory, &log_arg]() -> void {
+        const std::shared_ptr session = current_tab_session();
+        if (session == nullptr) {
+            return;
+        }
+        if (session->logging_enabled()) {
+            session->disable_logging();
+            return;  // 标题两态由下面 `set_on_frame` 里的那一次比较跟上，装配层只有一个刷新点
+        }
+        if (!store.settings().connection.session_logging) {
+            // 第二道闸：菜单条目在闸关时根本不会出现，而命令、快捷键或后面的入口都可能绕过界面判定，
+            // 落盘这条腿只认配置——默认关闭（裁决 7.9）不能有第三条路。
+            AURORA_LOG_INFO("main", "session log refused: capability gate is off");
+            return;
+        }
+        const borealis::config::Settings &now = store.settings();
+        const auto redactor = borealis::session::compile_redactor(now.connection.session_log_pattern);
+        if (!redactor.has_value()) {
+            // fail-closed：不回退成内置词表静默续记——「用户显式配了而失效」必须可见（D10 连带的档位）。
+            show_log_notice("session.log.alert.bad_pattern", now.connection.session_log_pattern);
+            return;
+        }
+        const std::string directory = borealis::session::resolve_log_directory(
+            now.connection.session_log_dir, store.report().file.parent_path().string());
+        if (directory.empty()) {
+            show_log_notice("session.log.alert.cannot_open", std::string{});
+            return;
+        }
+        const borealis::ui::TabId tab_id = current_tab_id.value();
+        const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
+                               std::chrono::system_clock::now().time_since_epoch())
+                               .count();
+        const std::string path = (std::filesystem::path{directory} /
+                                  borealis::session::make_log_file_name(tab_id, epoch))
+                                     .string();
+        // `au::confirm` 只吃一条 message，故判据 3 那两句（敏感提醒 + 完整路径）合成一行。
+        const std::string body = std::string{borealis::ui::settings_label("session.log.confirm.sensitive")} +
+                                 " " + borealis::ui::settings_label("session.log.confirm.path", log_arg(path));
+        // 答话可能在标签被关掉之后才回来，故这里存 `weak_ptr`：锁不到就什么都不做。
+        const std::weak_ptr<borealis::session::Session> weak_session{session};
+        auto dialog = log_dialog;
+        show_log_frame(au::confirm(
+            borealis::ui::settings_label("session.log.confirm.title"), body,
+            [weak_session, directory, path, redactor, dialog, &show_log_notice,
+             &ensure_log_directory](bool accepted) -> void {
+                dialog->close();
+                if (!accepted) {
+                    return;  // 取消 ⇒ 目录与文件都不出现（稿 §6 那条判据）
+                }
+                const std::shared_ptr target = weak_session.lock();
+                if (target == nullptr) {
+                    return;
+                }
+                // TODO(SPEC.FEAT.CONN.11): 目录与文件名在确认前算定，答话那一刻不再重读配置——
+                //   「对话框开着时改了目录」这一窗口的口径未裁，本棒不自行择一。
+                if (const auto failure = ensure_log_directory(std::filesystem::path{directory});
+                    failure.has_value()) {
+                    show_log_notice("session.log.alert.cannot_open", *failure);
+                    return;
+                }
+                borealis::session::LogSpec spec;
+                spec.path = path;
+                spec.timestamp = true;  ///< D8①：会话级参数，形态固定「每行 + 本地秒」，不进 schema。
+                spec.redactor = redactor;
+                if (target->enable_logging(std::move(spec)) == borealis::session::LogOutcome::CannotOpen) {
+                    show_log_notice("session.log.alert.cannot_open", path);
+                }
+                // 标题的翻面不在这里补一次：本棒只有一个刷新点（下面 `set_on_frame` 里那一次比较）。
+            }));
+    };
+
     // 调试面板（`SPEC.NF.RELI.01`）：F12 开合，打开那一刻对**全部标签的每个会话**取一次计数器快照
     // （解析降级 / 非法字节 / 发送侧不可表示 / 背压水位四族）。快照而非活读：面板只在打开时被填一次，之后不再触碰会话，
     // 于是 `Session` 的四个 stats 取数点只在主线程这一次调用上发生锁竞争。
@@ -2015,8 +2201,9 @@ auto main() -> int {
     }
 
     app.set_on_frame([&tab_workspaces, &current_tab_id, &outbox, &panel, &tab_strip, &app, &settings,
-                      &last_window_title, &has_live_session, &sftp_panel, &tunnel_panel,
-                      &keys_panel]() -> void {
+                      &last_window_title, &has_live_session, &sftp_panel, &tunnel_panel, &keys_panel,
+                      &logging_state_probe, &add_logging_command, &logging_command_shows,
+                      &show_log_notice]() -> void {
         // 排帧范围是**全部标签**每帧都排（含隐藏标签，裁决 7.47⑩）：可见性只影响绘制不影响数据。
         // 只排当前标签的后果是三处静默失灵——别的标签的 `OSC 52` 永远留在队列里（取走语义按会话
         // 记账，裁决 7.21③）、BEL 与活动角标要等用户切过去才补亮、OSC 标题不落进标签名。
@@ -2029,6 +2216,14 @@ auto main() -> int {
             }
             for (auto &tag_session : workspace.sessions) {
                 static_cast<void>(outbox.drain(*tag_session));
+
+                // 会话日志的写失败提示（`SPEC.FEAT.CONN.11`）：会话侧只上弦一次，取走与弹窗都在帧边界，
+                // 形态照上面 `outbox.drain` 与下面 `take_bell_triggered` 那两条（AGENTS §4.5 第 25 条）。
+                if (const auto note = tag_session->take_logging_notice(); note.has_value()) {
+                    // 提示语里的路径是 ASCII 诊断，上屏那句走词条，故日志留原文、界面只报「已停止」。
+                    AURORA_LOG_WARN("main", "session log disabled after a write failure: ", *note);
+                    show_log_notice("session.log.alert.write_failed", {});
+                }
 
                 // BEL 事件传给 TabStrip（`SPEC.FEAT.WS.04`）：取走即清零，不会被下一帧重复点亮
                 if (tag_session->take_bell_triggered()) {
@@ -2072,6 +2267,18 @@ auto main() -> int {
             }
         }
         
+        // 日志命令的两态标题（`SPEC.FEAT.CONN.11`，裁决 7.116 D6①）：注册表没有改标题的入口，故这里
+        // 只在**翻面**时按同 id 整条覆盖重注册（`add` 保序，面板里的位置不动）。逐帧读一次原子旗标
+        // 与一次串比较，不去碰文件也不碰会话锁——这是本棒唯一一处标题刷新点，切换标签、重启会话、
+        // 写失败自我禁用三种翻面都从这一条腿跟上。
+        const std::optional<bool> logging_now =
+            logging_state_probe ? logging_state_probe() : std::optional<bool>{};
+        const bool shows = logging_now.value_or(false);
+        if (shows != logging_command_shows) {
+            logging_command_shows = shows;
+            add_logging_command(shows);
+        }
+
         panel.pump_preview();  // 预览盒是第二个会话，脏行同样按帧排（面板关着即空操作）
         sftp_panel.tick();     // SFTP 面板取件与判活（D8①/D9①；面板关着即空操作）
         tunnel_panel.tick();   // 隧道行表随快照刷新（D6①；面板关着即空操作）

@@ -45,6 +45,12 @@ inline constexpr std::string_view kBuiltinSecretPattern =
 /// @brief 命中行的替换文本（D10①「整行命中即整行替为」，不是局部涂抹）。
 inline constexpr std::string_view kRedactedLineText = "[redacted]";
 
+/// @brief `session_log_dir` 留空时回落目录的名字（判据 7 / F19）。
+///
+/// 配置目录那一层是共享的（`borealis.json` 与凭据句柄同层），日志文件需要自己的归属；名字只在这里
+/// 写一次，用例与装配层都读它，否则「留空落到哪」就有了第二个真值源。
+inline constexpr std::string_view kSessionLogDirectoryName = "borealis-logs";
+
 /// @brief 打码判定位：内置词表 ∪ 用户模式，编译成**一个**供替选。
 ///
 /// 并成一个而不是逐行跑两遍——读线程每行只做一次 `regex_search`（裁决 7.116⑤），且「两侧都命中
@@ -84,6 +90,23 @@ class Redactor final {
 /// @param text 码点流（可以是任意分片；跨调用的序列接续由调用方持有的解析器负责）。
 /// @return UTF-8 文本，行分隔符一律 `\n`。
 [[nodiscard]] auto fold_to_plain_text(std::u32string_view text) -> std::string;
+
+/// @brief 日志目录的落点（判据 7 的回落腿，稿 §0 的 F19）。
+///
+/// `session_log_dir` 留空＝落 `<配置目录>/borealis-logs`（配置目录那层不含应用子目录，故本仓自带一个
+/// 有归属的名字）；非空＝原样用，不拼接也不规范化。**只算名字不建目录**——建目录连同 0700 权限是装配层
+/// 那一条腿（照 `key_store.cpp` 的先例），本件保持无 IO 可全量单测。
+/// @param configured_dir `connection.session_log_dir` 的当前值（空＝未配置）。
+/// @param config_dir 配置目录（`Preferences::default_config_dir()`，即 `borealis.json` 所在那一层）。
+/// @return 分隔符按宿主原生；空输入回空串（装配层据此拒绝开启，不猜一个落点）。
+[[nodiscard]] auto resolve_log_directory(std::string_view configured_dir, std::string_view config_dir) -> std::string;
+
+/// @brief 一次开启一个文件的名字：`session-<TabId>-<起始 epoch 秒>.log`（D13①）。
+///
+/// 标签名/档案名**不进**文件名：洗名字（中文、空格、`/\:*?"<>|`、Windows 保留名）是本该待在
+/// `src/platform/` 的平台知识，本棒不为命名新开平台腿。人类可读性由开启那一刻那句「将写入：完整路径」
+/// 承担。`tab_id` 取 `ui::TabId` 的整型形态（单调不复用 ⇒ 同目录不撞名），会话层不引 UI 头。
+[[nodiscard]] auto make_log_file_name(std::uint64_t tab_id, std::int64_t start_epoch_seconds) -> std::string;
 
 /// @brief 一次开启动作的全部入参（会话级，装配层在 UI 线程算好交进来）。
 ///

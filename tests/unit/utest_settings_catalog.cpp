@@ -287,8 +287,9 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // 双向：落盘里有而表里没有 = 面板漏画控件；表里有而落盘里没有 = 面板画了存不回去的控件。
     AURORA_TEST_CHECK_MSG(leaves == keys, "leaves=[" + join(leaves) + "] table=[" + join(keys) + "]");
     AURORA_TEST_CHECK_EQ(leaves.size(), keys.size());
-    // 63 行＝写出的全部偏好键；串口侧第七键 `connection.serial.flow` 随裁决 7.110 D3① 进表。
-    AURORA_TEST_CHECK_EQ(keys.size(), 63U);
+    // 64 行＝写出的全部偏好键；串口侧第七键 `connection.serial.flow` 随裁决 7.110 D3① 进表，
+    // CONN.11 的追加敏感正则 `connection.session_log_pattern` 随裁决 7.116 D10 改判进表。
+    AURORA_TEST_CHECK_EQ(keys.size(), 64U);
 }
 
 AURORA_TEST_CASE(keys_are_unique_and_rows_are_addressable) {
@@ -518,10 +519,12 @@ AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
     // 一条无运行期接缝的键挂错档就会在这里转红，而不是静默变成「改了没反应」。
     AURORA_TEST_CHECK_MSG(rows_with_consumer(ConsumerStatus::SeamPending).empty(), "seam-pending set drifted");
 
-    // 判据文 §0 的物理边界②：已接线却「下次会话生效」的键是这十一条——三条会话侧的构造期注入
+    // 判据文 §0 的物理边界②：已接线却「下次会话生效」的键是这二十条——三条会话侧的构造期注入
     // （裁决 7.76②）加三条本就取用于建会话那一刻的键，再加 WS.05 的自动重连三键（裁决 7.99 D4①：
     // 装配层在建 SSH 会话那一刻把三键折成 `conn::RetryPolicy` 交进构造参数，在途连接读的是那份快照），
-    // 再加 TERM.09 的编码两键（`term::SessionEncoding` 是构造期值：解码器与发送策略都在建会话这一刻定）。
+    // 再加 TERM.09 的编码两键（`term::SessionEncoding` 是构造期值：解码器与发送策略都在建会话这一刻定），
+    // 再加 CONN.11 的日志目录与追加模式两键（裁决 7.116 判据 7：两者都在**开启那一刻**取用，
+    // 改它不回溯在途会话已写的文件与已在打的码；同域的能力闸 `session_logging` **不在**此列，它即时）。
     // 多一条即面板谎报即时，少一条即运行期入口被判成不存在而白开一条接缝。
     const std::vector<std::string> next_session{"appearance.cursor_blinking",
                                                 "appearance.cursor_shape",
@@ -533,6 +536,8 @@ AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
                                                 "connection.serial.line_ending",
                                                 "connection.serial.parity",
                                                 "connection.serial.stop_bits",
+                                                "connection.session_log_dir",
+                                                "connection.session_log_pattern",
                                                 "connection.ssh.reconnect_attempts",
                                                 "connection.ssh.reconnect_base_delay_ms",
                                                 "connection.ssh.reconnect_max_delay_ms",
@@ -551,9 +556,10 @@ AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
     }
     // 含 WS.05 的自动重连三键已随实现批 3 接线（装配层搬运 + 浮层两态），TERM.09 的
     // `terminal.encoding` 也随编码腿接线（会话构造期按名建解码器），串口七键（`SPEC.FEAT.CONN.05`
-    // 裁决 7.110 D3①/D4①）随批 3 的向导默认值灌入接线，故本行停在 21：
+    // 裁决 7.110 D3①/D4①）随批 3 的向导默认值灌入接线，CONN.11 的日志三键（`session_logging` /
+    // `session_log_dir` / `session_log_pattern`）随裁决 7.116 的批 2 接线，故本行停在 19：
     // 少的那几条正是已接线的，再往回跳就是某个消费方被摘掉了而面板还留着控件。
-    AURORA_TEST_CHECK_EQ(rows_with_consumer(ConsumerStatus::Absent).size(), 21U);
+    AURORA_TEST_CHECK_EQ(rows_with_consumer(ConsumerStatus::Absent).size(), 19U);
 }
 
 }  // namespace borealis::test_cases::utest_settings_catalog

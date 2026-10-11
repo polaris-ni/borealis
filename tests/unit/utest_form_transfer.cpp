@@ -96,6 +96,9 @@ constexpr std::size_t kPaletteSlots = 16U;
     settings.terminal.word_delimiters = "!?";
     settings.connection.local_shell = "pwsh.exe";
     settings.connection.startup_directory = "D:/work";
+    // 会话日志三键里只有这一枚是新加的（`SPEC.FEAT.CONN.11`，裁决 7.116 D10 改判）：给它一个**非空**值，
+    // 因为搬运漏一行时表单里那一格会取 `Settings{}` 的空串——空值断言看不出漏搬。
+    settings.connection.session_log_pattern = "trace-\\d{6}";
     settings.connection.ssh.port = 2222;
     settings.connection.ssh.auth_method = "password";
     settings.connection.ssh.agent_forwarding = true;
@@ -373,6 +376,7 @@ AURORA_TEST_CASE(each_key_takes_the_member_it_names) {
     expect("connection.serial.encoding", FormValue::text("GBK"));
     expect("connection.session_logging", FormValue::boolean(true));
     expect("connection.session_log_dir", FormValue::text("D:/logs"));
+    expect("connection.session_log_pattern", FormValue::text("trace-\\d{6}"));
     expect("shortcuts.overrides",
            FormValue::overrides({ShortcutOverride{"session.copy", "Ctrl+Shift+C"},
                                  ShortcutOverride{"workspace.split.right", "Ctrl+Alt+Right"}}));

@@ -318,6 +318,18 @@ class TerminalView final : public aurora::LeafWidget {
     /// @param hook 重启动作，装配层通常让它复用 `session.restart` 命令的那一支闭包。
     auto set_restart_hook(std::function<void()> hook) -> void;
 
+    /// @brief 装上会话日志的两条接缝（`SPEC.FEAT.CONN.11`，裁决 7.116 D1①／D6①）。
+    ///
+    /// 与 `set_restart_hook` 同一条「留空即不画」纪律，只是这里的不画落在**菜单条目本身**上：
+    /// 两条钩子任一没装、或状态钩子回 `nullopt`（能力闸 `connection.session_logging` 关着），
+    /// 右键菜单里就不出现第三条——不是灰显，而是这个功能在此产品形态里不存在，于是装配未接好的
+    /// 夹具、预览盒（F4 那条主线程喂字节的反例）都天然没有入口，不靠人记住。
+    /// @param state 现读该会话此刻是否在记录；`nullopt`＝能力闸关，条目不出现。
+    ///              回值是「读一份布尔」这一件事，不得在里面做 IO——它在右键按下那一刻的回调里被调。
+    /// @param toggle 开启/停止的动作；装配层让它复用 `session.toggle_logging` 命令的同一份闭包，
+    ///               两条入口同源，故提示对话框、算路径与 fail-closed 只有一份实现。
+    auto set_logging_hooks(std::function<std::optional<bool>()> state, std::function<void()> toggle) -> void;
+
     /// @brief 会话进程是否已退出（`!Session::alive()`）——dead-session 浮层的绘制判据。
     ///
     /// 只读不缓存：`Session::alive()` 是一次短临界区内的原子标志读取（`connection_->alive()`），
@@ -615,10 +627,13 @@ class TerminalView final : public aurora::LeafWidget {
     ///
     /// 框架的 `Modifier::context_menu` 只有状态模型、没有渲染与点击派发，而这一套组合足以在应用侧
     /// 做出可断言的菜单，故按裁决 7.13② 留在本仓而不登记缺口（裁决 7.41③）。
-    auto open_context_menu(aurora::Point where, const std::vector<MenuItem> &items) -> void;
+    auto open_context_menu(aurora::Point where, const std::vector<MenuItem> &items, LogMenuState log) -> void;
 
     /// @brief 菜单条目被点到：先收菜单，再把动作攒到帧边界（与 copy-on-select 同一条 IO 纪律）。
     auto on_menu_command(MenuCommand command) -> void;
+
+    /// @brief 现读日志条目的菜单状态：钩子未装或能力闸关即「条目不出现」。
+    [[nodiscard]] auto logging_menu_state() const -> LogMenuState;
 
     /// @brief 帧边界落地粘贴：读剪贴板 → `term::plan_paste` → 多行先确认 → 按计划排期发送。
     auto flush_paste_request() -> void;
@@ -709,6 +724,9 @@ class TerminalView final : public aurora::LeafWidget {
 
     /// @brief dead-session 浮层（`SPEC.FEAT.WS.05`）：装配层注入的重启钩子，未装即不画按钮。
     std::function<void()> restart_hook_;
+    /// @brief 会话日志的两条接缝（`SPEC.FEAT.CONN.11`）：未装即菜单里没有第三条（见 `set_logging_hooks`）。
+    std::function<std::optional<bool>()> logging_state_hook_;
+    std::function<void()> logging_toggle_hook_;
     /// @brief 本帧画出的「重启」按钮盒（控件本地 dp）；未画即空，指针入口据此判命中。
     ///
     /// 只在 `paint_restart_overlay` 里写、且**每次画都写**（会话已退但无钩子时写空），故读取者
