@@ -13,6 +13,8 @@
 #include <optional>
 #include <utility>
 
+#include "serial_model.h"  // is_supported_baud：向导的速率判据取那一份唯一档位表
+
 namespace borealis::conn {
 
 namespace {
@@ -92,12 +94,26 @@ auto validate_draft(const ProfileDraft &draft) -> DraftIssue {
             return DraftIssue::UnknownAuthMethod;
         }
     }
+    if (draft.type == ConnectionType::Serial) {
+        // 串口四档（稿 §2 标号 4）：判据来自 `conn/serial_model.h` 的那一份档位表与取值区间，
+        // 不在这里现编数字。
+        if (draft.serial.device_path.empty()) {
+            return DraftIssue::EmptyDevice;
+        }
+        if (!is_supported_baud(draft.serial.baud)) {
+            return DraftIssue::BaudNotInTable;
+        }
+        if (draft.serial.data_bits < 5 || draft.serial.data_bits > 8) {
+            return DraftIssue::DataBitsOutOfRange;
+        }
+        if (draft.serial.stop_bits < 1 || draft.serial.stop_bits > 2) {
+            return DraftIssue::StopBitsOutOfRange;
+        }
+    }
     return DraftIssue::None;
 }
 
 auto draft_to_profile(const ProfileDraft &draft, std::string id) -> Profile {
-    // TODO(SPEC.FEAT.CONN.05): `ProfileDraft` 尚无串口字段，故 Serial 型在这里会落进
-    // SSH 分支；三向分派随批 3 的向导串口字段集一起补（稿 §4）。
     auto profile = Profile{};
     profile.id = std::move(id);
     profile.name = draft.name;
@@ -105,6 +121,8 @@ auto draft_to_profile(const ProfileDraft &draft, std::string id) -> Profile {
     if (draft.type == ConnectionType::Local) {
         profile.local.command_line = draft.command_line;
         profile.local.working_directory = draft.working_directory;
+    } else if (draft.type == ConnectionType::Serial) {
+        profile.serial = draft.serial;
     } else {
         profile.ssh.host = draft.host;
         profile.ssh.port = draft.port;
@@ -124,6 +142,8 @@ auto profile_to_draft(const Profile &profile) -> ProfileDraft {
     if (profile.type == ConnectionType::Local) {
         draft.command_line = profile.local.command_line;
         draft.working_directory = profile.local.working_directory;
+    } else if (profile.type == ConnectionType::Serial) {
+        draft.serial = profile.serial;
     } else {
         draft.host = profile.ssh.host;
         draft.port = profile.ssh.port;

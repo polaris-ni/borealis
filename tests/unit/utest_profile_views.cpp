@@ -1,7 +1,8 @@
 /// 测试类型: unit
 /// 目标单元: src/conn/profile_views.h（私有头）纯逻辑视图模型
-/// 测试说明: 守住 CONN.07 侧栏三视图的排序/过滤确定性、向导草稿校验矩阵、
-///           凭据询问计划映射。UI 只画算好的行（设计稿 D7），查询即在此层。
+/// 测试说明: 守住 CONN.07 侧栏三视图的排序/过滤确定性、向导草稿校验矩阵（含 CONN.05 的
+///           串口四档）、三向分派的字段不串台、凭据询问计划映射。UI 只画算好的行
+///           （设计稿 D7），查询即在此层。
 
 #include "conn/profile_views.h"
 
@@ -141,6 +142,76 @@ AURORA_TEST_CASE(draft_round_trips_through_profile_and_back) {
     const auto local_profile = conn::draft_to_profile(local_draft, "p-2");
     AURORA_TEST_CHECK_TRUE(local_profile.local.command_line == "/bin/zsh");
     AURORA_TEST_CHECK_TRUE(local_profile.ssh.host.empty());
+}
+
+AURORA_TEST_CASE(serial_draft_reports_the_four_issues_in_order) {
+    using conn::ConnectionType;
+    using conn::DraftIssue;
+
+    auto draft = conn::ProfileDraft{};
+    draft.name = "board-debug-port";
+    draft.type = ConnectionType::Serial;
+    // 空设备名即第一条：向导不许在没有节点名的情况下交回一份串口档案（稿 §2 标号 4）。
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::EmptyDevice);
+
+    draft.serial.device_path = "/dev/ttyUSB0";
+    // 表外速率：连接腿不判（4800 照样连得上），向导判——档位表是可选项的唯一来源。
+    draft.serial.baud = 4800;
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::BaudNotInTable);
+    draft.serial.baud = 9600;
+
+    draft.serial.data_bits = 4;
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::DataBitsOutOfRange);
+    draft.serial.data_bits = 9;
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::DataBitsOutOfRange);
+    draft.serial.data_bits = 7;
+
+    draft.serial.stop_bits = 3;
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::StopBitsOutOfRange);
+    draft.serial.stop_bits = 2;
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::None);
+
+    // 表内两端都收：50 与 2000000（F4 实测十四档的两端）。
+    draft.serial.baud = 50;
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::None);
+    draft.serial.baud = 2000000;
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::None);
+}
+
+AURORA_TEST_CASE(serial_draft_round_trips_without_touching_the_other_two_types) {
+    using conn::ConnectionType;
+
+    auto draft = conn::ProfileDraft{};
+    draft.name = "console";
+    draft.type = ConnectionType::Serial;
+    draft.serial.device_path = "/dev/ttyS0";
+    draft.serial.baud = 57600;
+    draft.serial.data_bits = 7;
+    draft.serial.stop_bits = 2;
+    draft.serial.parity = "even";
+    draft.serial.flow = "hardware";
+    draft.serial.line_ending = "CRLF";
+    draft.serial.encoding = "UTF-8";
+
+    const auto profile = conn::draft_to_profile(draft, "p-serial");
+    AURORA_TEST_CHECK_TRUE(profile.type == ConnectionType::Serial);
+    AURORA_TEST_CHECK_TRUE(profile.serial == draft.serial);
+    // 三向分派不串台：串口档案的 SSH 段保持模型缺省，SSH 询问计划因此不会误触发。
+    AURORA_TEST_CHECK_TRUE(profile.ssh.host.empty());
+    AURORA_TEST_CHECK_TRUE(profile.ssh.auth_method == "agent");
+    AURORA_TEST_CHECK_TRUE(profile.local.command_line.empty());
+
+    const auto back = conn::profile_to_draft(profile);
+    AURORA_TEST_CHECK_TRUE(back.serial == draft.serial);
+
+    // 反过来：SSH 草稿不落串口段（串口初值就是档案初值，逐字段全等）。
+    auto ssh_draft = conn::ProfileDraft{};
+    ssh_draft.name = "gw";
+    ssh_draft.type = ConnectionType::Ssh;
+    ssh_draft.host = "gw.example.com";
+    const auto ssh_profile = conn::draft_to_profile(ssh_draft, "p-ssh");
+    AURORA_TEST_CHECK_TRUE(ssh_profile.serial == conn::SerialProfile{});
+    AURORA_TEST_CHECK_TRUE(ssh_profile.serial.device_path.empty());
 }
 
 AURORA_TEST_CASE(secret_ask_plan_follows_auth_method) {

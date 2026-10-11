@@ -301,41 +301,41 @@ namespace {
                                    100.0,
                                    ConsumerStatus::Wired,
                                    EffectLevel::NextSession));
+    // 串口七键（`SPEC.FEAT.CONN.05`，裁决 7.110 D3①/D4①）：消费方是向导建串口档案那一刻的默认值
+    // 灌入（`ConnectionWizard::Hooks::serial_defaults`），档案自此独立——故生效档取 NextSession 而非
+    // Immediate：改这里的默认值不回溯已在档的串口档案，也不影响在途会话。
     catalog.push_back(integer_step("connection.serial.baud",
                                    SettingsPage::Connection,
                                    1.0,
                                    4000000.0,
-                                   ConsumerStatus::Absent,
+                                   ConsumerStatus::Wired,
                                    EffectLevel::NextSession));
     catalog.push_back(integer_step("connection.serial.data_bits",
                                    SettingsPage::Connection,
                                    5.0,
                                    8.0,
-                                   ConsumerStatus::Absent,
+                                   ConsumerStatus::Wired,
                                    EffectLevel::NextSession));
     catalog.push_back(integer_step("connection.serial.stop_bits",
                                    SettingsPage::Connection,
                                    1.0,
                                    2.0,
-                                   ConsumerStatus::Absent,
+                                   ConsumerStatus::Wired,
                                    EffectLevel::NextSession));
     catalog.push_back(dropdown("connection.serial.parity",
                                SettingsPage::Connection,
                                {"none", "even", "odd"},
-                               ConsumerStatus::Absent,
+                               ConsumerStatus::Wired,
                                EffectLevel::NextSession));
-    // `connection.serial.flow` 是裁决 7.110 D3① 追加的第七键：键一旦进 schema 就必须有行，
-    // 「表＝写出键全集」由 utest_settings_catalog 守。消费方是批 2 的串口连接腿，故状态先记
-    // Absent（本行只是把它摆上设置页，运行时还没人读它）。
     catalog.push_back(dropdown("connection.serial.flow",
                                SettingsPage::Connection,
                                {"none", "hardware", "software"},
-                               ConsumerStatus::Absent,
+                               ConsumerStatus::Wired,
                                EffectLevel::NextSession));
     catalog.push_back(dropdown("connection.serial.line_ending",
                                SettingsPage::Connection,
                                {"LF", "CR", "CRLF"},
-                               ConsumerStatus::Absent,
+                               ConsumerStatus::Wired,
                                EffectLevel::NextSession));
     catalog.push_back(row("connection.serial.encoding",
                           SettingsPage::Connection,
@@ -343,7 +343,7 @@ namespace {
                           ValueDomain::FreeText,
                           {},
                           {},
-                          ConsumerStatus::Absent,
+                          ConsumerStatus::Wired,
                           EffectLevel::NextSession));
     catalog.push_back(toggle(
         "connection.session_logging", SettingsPage::Connection, ConsumerStatus::Absent, EffectLevel::NextSession));

@@ -39,8 +39,11 @@
 #include "conn/key_push.h"
 #include "conn/key_store.h"
 #include "conn/profile_views.h"
+#include "conn/serial_connection.h"
+#include "conn/serial_model.h"
 #include "conn/ssh_connection.h"
 #include "conn/tunnel_client.h"
+#include "platform/serial.h"
 #include "platform/user_dir.h"
 #include "ui/connection_sidebar.h"
 #include "ui/connection_wizard.h"
@@ -48,6 +51,7 @@
 #include "ui/debug_panel.h"
 #include "ui/keys_format.h"
 #include "ui/keys_panel.h"
+#include "ui/serial_format.h"
 #include "ui/settings_i18n.h"
 #include "ui/settings_panel.h"
 #include "ui/sftp_panel.h"
@@ -141,7 +145,12 @@ struct TunnelEntry {
 ///
 /// 视口刻意不认识 `config`（`config` 含 `ui::PaletteSpec`，反向依赖会成模块环，架构 §2.3），
 /// 故搬运点只能在装配层；与外观包同理，广播腿复用同一函数。
-[[nodiscard]] auto make_interaction(const borealis::config::Settings &settings)
+/// @param line_ending 本条连接的发送行尾（裁决 7.110 D11①）：粘贴的 `Convert` 档与键入 Enter
+///        落地的是同一份折算，故它与 `Session` 的构造入参必须同源——两处各取一份就会出现
+///        「敲回车一个样、粘多行另一个样」。本地/SSH 传缺省 `Lf`，即既有行为逐字节不变。
+[[nodiscard]] auto make_interaction(const borealis::config::Settings &settings,
+                                    borealis::term::LineEnding line_ending =
+                                        borealis::term::LineEnding::Lf)
     -> borealis::ui::TerminalView::InteractionOptions {
     borealis::ui::TerminalView::InteractionOptions interaction;
     interaction.word_delimiters = settings.terminal.word_delimiters;
@@ -153,8 +162,7 @@ struct TunnelEntry {
     };
     interaction.right_click = settings.terminal.right_click;
     interaction.paste.newline = settings.terminal.paste_newlines;
-    // TODO(SPEC.FEAT.CONN.05): 粘贴的 `line_ending` 取连接的行尾设置，本地终端就是缺省 LF；
-    // 串口那一腿到货后由连接的行尾配置搬进来（块间隔同为缺省值，需求未开配置键）。
+    interaction.paste.line_ending = line_ending;  // CONN.05 的行尾设置到此接线（块间隔需求未开键）。
     return interaction;
 }
 
@@ -417,6 +425,16 @@ auto main() -> int {
     std::map<borealis::ui::TabId, borealis::conn::SshProfile> ssh_profile_by_tab;
     std::map<borealis::ui::TabId, std::optional<std::string>> ssh_secret_by_tab;
 
+    // 串口标签的接线数据（`SPEC.FEAT.CONN.05` 批 3）：档案是「重启按档案、热改对话框显示当前档」
+    // 的料源，裸指针指向该格 Session 拥有的那条连接腿（热改呼 `set_baud` 与读 `current_baud`）。
+    // 指针不比连接腿活得久是结构性成立的：`Session` 独占那条 unique_ptr，而本表与格同生死
+    // （`perform_close` 撤账、`restart_current_tab` 换腿时改写），撤账纪律照上面的 SSH 两表。
+    struct SerialTabBinding {
+        borealis::conn::SerialProfile profile{};
+        borealis::conn::SerialConnection *connection{nullptr};
+    };
+    std::map<borealis::ui::TabId, SerialTabBinding> serial_by_tab;
+
     // 每只视口的浮层与搜索依赖接线（宿主与注册表须待 `host` / `app` 建成才取得到，故首标签建得早的
     // 那几只在建成之后统一补挂，见下面赋值处）。缺这两条挂接，右键菜单、多行粘贴确认与搜索浮层
     // **结构上弹不起来**（裁决 7.41③ / 7.81），而集成用例经替身宿主测的是接线而非这里。
@@ -432,12 +450,16 @@ auto main() -> int {
     /// 用户不换标签、对端不改 OSC 标题时根本不动。
     std::string last_window_title;
 
-    // 开标签的两段式：会话构造在外（本地腿 / SSH 腿各一份，SSH 腿即 CONN.02 的
+    // 开标签的两段式：会话构造在外（本地腿 / SSH 腿 / 串口腿各一份，SSH 腿即 CONN.02 的
     // SshConnection），壳（视口 / 工作区 / 标签条）共用，三处开标签点不再各自复制一遍
     // 连接装配。标签名由调用方给——档案连接取档案名，原先那句「首版先给固定措辞」的
     // TODO(SPEC.FEAT.CONN.02) 就此闭合。
+    // `line_ending` 只有串口腿会给非缺省值（裁决 7.110 D11①）：它同时进 `Session` 的写出折算
+    // 与视口的粘贴档，两处同源才不会出现「敲回车与粘多行两个样」，故由开标签那一侧一并传进来。
     auto create_new_tab_with = [&](std::shared_ptr<borealis::session::Session> session,
-                                   const std::u32string &tab_name) -> void {
+                                   const std::u32string &tab_name,
+                                   borealis::term::LineEnding line_ending =
+                                       borealis::term::LineEnding::Lf) -> void {
         const borealis::ui::TabId id = next_tab_id++;
 
         session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
@@ -445,7 +467,7 @@ auto main() -> int {
 
         // 建视口
         auto view = std::make_shared<borealis::ui::TerminalView>(
-            *session, make_appearance(settings, catalog), make_interaction(settings));
+            *session, make_appearance(settings, catalog), make_interaction(settings, line_ending));
         // 浮层宿主与搜索依赖在创建那一刻一并挂上（`host` / `app` 已就绪时；首标签由后面统一补挂）。
         if (wire_view) {
             wire_view(*view);
@@ -563,6 +585,8 @@ auto main() -> int {
             // SFTP 面板接线数据随标签同撤（面板的 ssh_tab_alive 即以此判活，D8①）。
             ssh_profile_by_tab.erase(id);
             ssh_secret_by_tab.erase(id);
+            // 串口接线同撤：那条连接腿随本格的 Session 一起析构，裸指针不留过夜（批 3）。
+            serial_by_tab.erase(id);
         }
         if (current_tab_id.has_value() && current_tab_id.value() == id) {
             // 选下一个或上一个
@@ -841,7 +865,9 @@ auto main() -> int {
     // 就地换掉某一格的会话（`SPEC.FEAT.WS.05` 的重启腿共有的一段）：关旧会话 → 建视口 → 建工作区 →
     // **同 TabId 覆盖**。本地档与按档案档（裁决 7.99 D6）都走它，差别只在交进来的是哪一条传输腿。
     auto replace_tab_session = [&](borealis::ui::TabId id,
-                                   std::shared_ptr<borealis::session::Session> session) -> void {
+                                   std::shared_ptr<borealis::session::Session> session,
+                                   borealis::term::LineEnding line_ending =
+                                       borealis::term::LineEnding::Lf) -> void {
         auto it = tab_workspaces.find(id);
         if (it == tab_workspaces.end() || session == nullptr) {
             AURORA_LOG_WARN("main", "restart: tab id not present in workspace map");
@@ -857,7 +883,7 @@ auto main() -> int {
         session->start();
 
         auto view = std::make_shared<borealis::ui::TerminalView>(
-            *session, make_appearance(settings, catalog), make_interaction(settings));
+            *session, make_appearance(settings, catalog), make_interaction(settings, line_ending));
         if (wire_view) {
             wire_view(*view);
         }
@@ -926,6 +952,79 @@ auto main() -> int {
             make_terminal_defaults(settings), make_session_encoding(settings));
         create_new_tab_with(std::move(session), decode_tab_name(profile.name));
         record_recent(profile.id);
+    };
+
+    // ---- 串口腿装配（`SPEC.FEAT.CONN.05` 批 3）--------------------------------------------
+    //
+    // 连接腿只吃档案：编码与发送行尾**不在** `SerialConnection`，是 `Session` 的构造入参
+    // （裁决 7.110 D10①/D11① 的「折算点在写出侧一处」），故本段是这两条口径唯一的接线处。
+    struct SerialSessionBundle {
+        std::shared_ptr<borealis::session::Session> session{};
+        borealis::conn::SerialConnection *connection{nullptr};
+        borealis::term::LineEnding line_ending{borealis::term::LineEnding::Lf};
+    };
+    auto make_serial_session =
+        [&](const borealis::conn::SerialProfile &serial) -> SerialSessionBundle {
+        // 表外行尾名（手改 JSON）回落到缺省 LF：装载侧按 Choice 域把守，走到这里的表外名
+        // 只可能来自绕过装载侧的构造，回落比让整条连接起不来温和。
+        const auto ending =
+            borealis::conn::serial_line_ending(serial.line_ending)
+                .value_or(borealis::term::LineEnding::Lf);
+        auto connection =
+            std::make_unique<borealis::conn::SerialConnection>(serial, reconnect_policy());
+        auto *raw = connection.get();  // 交进 Session 前留一份：热改波特率与当前档显示都读它。
+        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
+        auto session = std::make_shared<borealis::session::Session>(
+            std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
+            width_policy, make_terminal_defaults(settings),
+            borealis::term::SessionEncoding{
+                .name = serial.encoding,  // 串口缺省 GB18030（裁决 7.6），不吃全局 `terminal.encoding`。
+                .unrepresentable = settings.terminal.unrepresentable,
+            },
+            ending);
+        return SerialSessionBundle{.session = std::move(session), .connection = raw,
+                                   .line_ending = ending};
+    };
+
+    auto open_serial_tab = [&](const borealis::conn::Profile &profile) -> void {
+        auto bundle = make_serial_session(profile.serial);
+        create_new_tab_with(bundle.session, decode_tab_name(profile.name), bundle.line_ending);
+        if (current_tab_id.has_value()) {
+            serial_by_tab[current_tab_id.value()] =
+                SerialTabBinding{.profile = profile.serial, .connection = bundle.connection};
+        }
+        record_recent(profile.id);
+    };
+
+    // 设备枚举的 latest-value 快照（稿 §5，AGENTS §4.5 第 25 条）：`serial_list_ports()` 含目录
+    // IO 与逐个试开，只能在后台跑；UI 读到的恒是「合成后的最终值」那一份副本，与隧道/密钥快照
+    // 同族（可覆盖的量，不排事件队列）。
+    auto ports_mutex = std::make_shared<std::mutex>();
+    auto ports_latest = std::make_shared<std::vector<borealis::conn::SerialPortInfo>>();
+    auto read_ports_snapshot = [ports_mutex,
+                                ports_latest]() -> std::vector<borealis::conn::SerialPortInfo> {
+        const std::lock_guard lock{*ports_mutex};
+        return *ports_latest;
+    };
+    auto fetch_ports = [ports_mutex, ports_latest]() -> bool {
+        auto ports = borealis::platform::serial_list_ports();
+        static_cast<void>(borealis::conn::sort_serial_ports(ports));
+        const std::lock_guard lock{*ports_mutex};
+        *ports_latest = std::move(ports);
+        return true;  // 任务值即「跑完了」：快照才是产物，布尔只把 `Task` 的值类型坐实。
+    };
+    // 启动取一次（裁决 7.110 D8①）：**不带** UI 通知——那一刻 `Application::loop_begin()` 还没跑，
+    // 主线程投递器未装，`.then()` 的回调会落在 worker 线程上；而快照写入已在任务体内锁好，
+    // 热身的产物只等向导来读。
+    static_cast<void>(au::async(fetch_ports));
+    // 向导那两路（开设备行 / 点刷新）都在 run 循环里发起，回投有保证，故可以通知重建下拉。
+    auto request_ports = [&](const std::weak_ptr<borealis::ui::ConnectionWizard> &notify) -> void {
+        auto task = au::async(fetch_ports);
+        static_cast<void>(task.then([notify](const au::Result<bool> &) -> void {
+            if (auto wizard = notify.lock()) {
+                wizard->reload_ports();
+            }
+        }));
     };
 
     // 凭据询问件（CONN.09 降级腿）：本期无 OS 凭据库后端，要材料的认证一律走这里；
@@ -1005,8 +1104,7 @@ auto main() -> int {
             return;
         }
         if (profile.type == borealis::conn::ConnectionType::Serial) {
-            // TODO(SPEC.FEAT.CONN.05): 串口连接腿与装配分两批落（稿 §4 的批 2/批 3）；
-            // 这里先按类型拦住，免得一条串口档案被当成 SSH 档案去问凭据。
+            open_serial_tab(profile);  // 串口无凭据可问：档案即全部料（CONN.09 的审计天然过）。
             return;
         }
         const auto ask = borealis::conn::secret_ask_for(
@@ -1037,7 +1135,27 @@ auto main() -> int {
         }
         static_cast<void>(store.replace(std::move(next)));
     };
+    // 设备枚举回投用的弱句柄：向导自己就是回调的宿主，握强引用会让它永不被释放。
+    std::weak_ptr<borealis::ui::ConnectionWizard> wizard_ref;
+    wizard_hooks.current_ports = read_ports_snapshot;
+    wizard_hooks.refresh_ports = [&request_ports, &wizard_ref]() -> void {
+        request_ports(wizard_ref);
+    };
+    wizard_hooks.serial_defaults = [&settings]() -> borealis::conn::SerialProfile {
+        // D4①：设置域的默认值灌进新建档案那一刻，之后各走各的（档案才是连接的料源）。
+        const auto &d = settings.connection.serial;
+        auto profile = borealis::conn::SerialProfile{};
+        profile.baud = d.baud;
+        profile.data_bits = d.data_bits;
+        profile.stop_bits = d.stop_bits;
+        profile.parity = d.parity;
+        profile.flow = d.flow;
+        profile.line_ending = d.line_ending;
+        profile.encoding = d.encoding;
+        return profile;
+    };
     auto wizard = std::make_shared<borealis::ui::ConnectionWizard>(*host, std::move(wizard_hooks));
+    wizard_ref = wizard;
 
     borealis::ui::ConnectionSidebar::Hooks sidebar_hooks;
     sidebar_hooks.load = [&store]() -> std::vector<borealis::conn::Profile> {
@@ -1607,6 +1725,16 @@ auto main() -> int {
             return;
         }
         const borealis::ui::TabId id = *current_tab_id;
+        // 串口分流（批 3）：这一格在 `serial_by_tab` 里有身份就是串口标签，「重启」＝按档案重开
+        // 设备并重新置参（裁决 7.110 D7①：不改口称「续传」）。少了这一支，串口标签按重启会被
+        // 静默换成本地 shell——判据与分流形态都照 SSH 那条（裁决 7.99 D6）。
+        if (const auto serial = serial_by_tab.find(id); serial != serial_by_tab.end()) {
+            auto bundle = make_serial_session(serial->second.profile);
+            replace_tab_session(id, bundle.session, bundle.line_ending);
+            serial->second.connection = bundle.connection;  // 旧腿随旧 Session 析构，这里只改写指针
+            AURORA_LOG_INFO("main", "restart: tab ", id, " serial session re-opened by profile");
+            return;
+        }
         // 分流判据（裁决 7.99 D6）：这一格在 `ssh_profile_by_tab` 里有没有档案身份。有就是 SSH 标签，
         // 「重启」必须重开 SSH——此前这里固定起本地 shell，标签名却还是档案名，那是已落的生产语义错误。
         const auto owned = ssh_profile_by_tab.find(id);
@@ -1659,6 +1787,112 @@ auto main() -> int {
         au::KeyCombo{au::ModifierKey::Control | au::ModifierKey::Shift, au::KeyCode::R};
     restart_session.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(restart_session));
+
+    // 连接中热改波特率（`SPEC.FEAT.CONN.05` 判据 5/6，裁决 7.110 D5①/D6②）：入口只有命令面板
+    // 这一条，不给默认快捷键——它是低频且不可逆感很强的动作，误按的代价比多按两次大。
+    //
+    // 两只框共用一只 Dialog 换 content（`close_confirm` 与多行粘贴确认的同款形态：实例的生存期
+    // 要跨过 Show→答话那一段）。生效判据是平台腿的 setattr 后 getattr 回读比对：不符就报「设备侧
+    // 拒绝」而**当前档不动**——`current_baud()` 只在回读相符时才前进，所以「界面回原档」这条是
+    // 结构性的，不需要装配层再回滚一遍。
+    auto serial_baud_dialog = std::make_shared<au::Dialog>();
+    bool serial_baud_mounted = false;
+    auto show_serial_baud_frame = [&](au::Node content) -> void {
+        if (!serial_baud_mounted) {
+            static_cast<void>(host->add_overlay(
+                aurora::Node{std::static_pointer_cast<au::Widget>(serial_baud_dialog)}));
+            serial_baud_mounted = true;
+        }
+        serial_baud_dialog->set_content(std::move(content));
+        serial_baud_dialog->show();
+    };
+    auto serial_baud_arg = [](const std::string &text) -> std::vector<au::LocalizedString> {
+        return {au::LocalizedString{text}};
+    };
+    auto show_serial_baud_notice = [&](std::string_view key, const std::string &arg) -> void {
+        const std::string title = borealis::ui::settings_label("serial.set_baud.title");
+        const std::string message =
+            arg.empty() ? borealis::ui::settings_label(key)
+                        : borealis::ui::settings_label(key, serial_baud_arg(arg));
+        auto dialog = serial_baud_dialog;
+        // alert 的 OK 钮不自带关闭：关掉它必须由调用方给回调（`au::alert` 的 on_ok 那一支）。
+        show_serial_baud_frame(au::alert(title, message, [dialog]() -> void { dialog->close(); }));
+    };
+    auto show_serial_baud_picker = [&](borealis::conn::SerialConnection &connection) -> void {
+        const std::string title = borealis::ui::settings_label(
+            "serial.set_baud.current",
+            serial_baud_arg(std::to_string(connection.current_baud())));
+        auto dialog = serial_baud_dialog;
+        auto rows = std::vector<au::Node>{};
+        // 标题行即「当前 {0}」：当前档只有连接腿那一个真值源，框里别处不再重复显示（D6② 的
+        // 「档案值 vs 当前值分开展示」靠这一行与设置页/档案编辑器的分工）。
+        auto head = std::make_shared<au::Text>(au::TextProps{
+            .content = title,
+            .text_color = borealis::ui::settings_chrome().text,
+        });
+        head->modifier.set(au::Modifier{}.fill_max_width());
+        rows.push_back(au::Node{std::static_pointer_cast<au::Widget>(std::move(head))});
+        // 十四档按四列三行半排（稿 §2 C 屏的档位单选框）；当前档不做特殊标记，标题行给的就是它。
+        for (std::size_t start = 0; start < borealis::conn::kSerialBaudRates.size(); start += 4U) {
+            auto cells = std::vector<au::Node>{};
+            for (std::size_t i = start; i < start + 4U && i < borealis::conn::kSerialBaudRates.size();
+                 ++i) {
+                const int rate = borealis::conn::kSerialBaudRates[i];
+                auto cell = std::make_shared<au::Button>(au::ButtonProps{
+                    .label = std::to_string(rate),
+                    .min_width = 84.0F,
+                });
+                cell->set_on_click(
+                    [&connection, dialog, rate, &show_serial_baud_notice]() -> void {
+                        dialog->close();
+                        // 腿未连（含退避期间）时 `set_baud` 恒 false，走的就是「设备侧拒绝」这一支——
+                        // 与「回读不符」同一句措辞，因为对用户而言两者都是「这会儿没改成」。
+                        show_serial_baud_notice(
+                            connection.set_baud(rate) ? "serial.set_baud.applied"
+                                                      : "serial.set_baud.rejected",
+                            std::to_string(rate));
+                    });
+                cells.push_back(au::Node{std::static_pointer_cast<au::Widget>(std::move(cell))});
+            }
+            auto row = std::make_shared<au::Row>(au::RowProps{.children = std::move(cells), .gap = 6.0F});
+            rows.push_back(au::Node{std::static_pointer_cast<au::Widget>(std::move(row))});
+        }
+        auto cancel = std::make_shared<au::Button>(au::ButtonProps{
+            .label = borealis::ui::settings_label("connections.action.cancel"),
+            .min_width = 84.0F,
+        });
+        cancel->set_on_click([dialog]() -> void { dialog->close(); });
+        rows.push_back(au::Node{std::static_pointer_cast<au::Widget>(std::move(cancel))});
+        auto content = std::make_shared<au::Column>(au::ColumnProps{
+            .children = std::move(rows),
+            .gap = 6.0F,
+        });
+        show_serial_baud_frame(
+            au::Node{std::static_pointer_cast<au::Widget>(std::move(content))});
+    };
+
+    // `serial.set_baud` 命令（判据 5）：分流判据是「当前标签在 `serial_by_tab` 里有没有身份」，
+    // 与重启那条同源。非串口会话走 `not_serial` 那一支且**不动任何状态**（稿 §2 标号 5 的
+    // 后半句），故这里不给默认快捷键（D5①）。
+    au::Command set_serial_baud;
+    set_serial_baud.id = "serial.set_baud";
+    set_serial_baud.title = borealis::ui::settings_label("serial.set_baud.title");
+    set_serial_baud.category = "terminal";
+    set_serial_baud.action =
+        [&serial_by_tab, &current_tab_id, &show_serial_baud_picker,
+         &show_serial_baud_notice]() -> void {
+        if (!current_tab_id.has_value()) {
+            show_serial_baud_notice("serial.set_baud.not_serial", {});
+            return;
+        }
+        const auto bound = serial_by_tab.find(current_tab_id.value());
+        if (bound == serial_by_tab.end() || bound->second.connection == nullptr) {
+            show_serial_baud_notice("serial.set_baud.not_serial", {});
+            return;
+        }
+        show_serial_baud_picker(*bound->second.connection);
+    };
+    app.commands().add(std::move(set_serial_baud));
 
     // 调试面板（`SPEC.NF.RELI.01`）：F12 开合，打开那一刻对**全部标签的每个会话**取一次计数器快照
     // （解析降级 / 非法字节 / 发送侧不可表示 / 背压水位四族）。快照而非活读：面板只在打开时被填一次，之后不再触碰会话，

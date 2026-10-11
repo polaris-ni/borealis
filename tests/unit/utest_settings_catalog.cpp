@@ -526,6 +526,13 @@ AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
     const std::vector<std::string> next_session{"appearance.cursor_blinking",
                                                 "appearance.cursor_shape",
                                                 "connection.local_shell",
+                                                "connection.serial.baud",
+                                                "connection.serial.data_bits",
+                                                "connection.serial.encoding",
+                                                "connection.serial.flow",
+                                                "connection.serial.line_ending",
+                                                "connection.serial.parity",
+                                                "connection.serial.stop_bits",
                                                 "connection.ssh.reconnect_attempts",
                                                 "connection.ssh.reconnect_base_delay_ms",
                                                 "connection.ssh.reconnect_max_delay_ms",
@@ -543,11 +550,10 @@ AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
         }
     }
     // 含 WS.05 的自动重连三键已随实现批 3 接线（装配层搬运 + 浮层两态），TERM.09 的
-    // `terminal.encoding` 也随编码腿接线（会话构造期按名建解码器），故本行停在 28：
+    // `terminal.encoding` 也随编码腿接线（会话构造期按名建解码器），串口七键（`SPEC.FEAT.CONN.05`
+    // 裁决 7.110 D3①/D4①）随批 3 的向导默认值灌入接线，故本行停在 21：
     // 少的那几条正是已接线的，再往回跳就是某个消费方被摘掉了而面板还留着控件。
-    // 28 里含串口七键（`SPEC.FEAT.CONN.05`）：批 1 只落了模型与落盘，运行时消费方在批 2/批 3，
-    // 新增的 `connection.serial.flow` 也按同一口径先记 Absent（裁决 7.110 D3①）。
-    AURORA_TEST_CHECK_EQ(rows_with_consumer(ConsumerStatus::Absent).size(), 28U);
+    AURORA_TEST_CHECK_EQ(rows_with_consumer(ConsumerStatus::Absent).size(), 21U);
 }
 
 }  // namespace borealis::test_cases::utest_settings_catalog

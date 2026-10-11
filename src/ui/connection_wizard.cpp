@@ -1,10 +1,12 @@
 // ============================================================
 // 连接新建/编辑向导实现（src/ui/connection_wizard.cpp）
 // ------------------------------------------------------------
-// 步骤 0＝两张类型卡（Local / SSH；D6 灰置未到货类型——不画即不承诺），步骤 1＝
-// 该类型的字段集。认证方式与主机密钥策略用循环按钮（行内不用覆盖绘制不占布局
-// 的控件，settings_panel 文件头那条形态约束同源）。校验失败只在 notice 行给
-// 文案，不弹二级对话框。
+// 步骤 0＝三张类型卡（Local / SSH / Serial，`UI_SERIAL.draft.md` D1①），步骤 1＝
+// 该类型的字段集（串口九行见该稿 §2 标号 2：展示名是输入框、设备行是「下拉 + 刷新 +
+// 自定义」三件套、其余七行一律循环按钮）。参数与主机密钥策略用循环按钮（行内不用覆盖
+// 绘制不占布局的控件，settings_panel 文件头那条形态约束同源；向导里的设备下拉是
+// D2① 明裁的行外控件，同 `itest_settings_panel` 的行内下拉先例）。校验失败只在 notice
+// 行给文案，不弹二级对话框。
 // ============================================================
 
 #include "connection_wizard.h"
@@ -16,6 +18,7 @@
 #include "aurora/widget/containers.h"
 #include "aurora/widget/text.h"
 
+#include "serial_format.h"
 #include "settings_i18n.h"
 #include "settings_panel.h"  // settings_chrome
 
@@ -33,9 +36,72 @@ constexpr std::array<conn::KnownHostsPolicy, 4> kPolicyCycle{
     conn::KnownHostsPolicy::AcceptNew, conn::KnownHostsPolicy::Yes, conn::KnownHostsPolicy::No,
     conn::KnownHostsPolicy::Ask};
 
+/// @brief 数据位/停止位/编码的循环档（与设置域 `ValueDomain` 的区间一致：5..8、1..2）。
+constexpr std::array<int, 4> kDataBitsCycle{5, 6, 7, 8};
+constexpr std::array<int, 2> kStopBitsCycle{1, 2};
+constexpr std::array<std::string_view, 2> kEncodingCycle{"GB18030", "UTF-8"};
+
 [[nodiscard]] auto auth_display(const std::string &method) -> std::string {
     return settings_label("connections.auth." + method);
 }
+
+/// @brief 三个文本参数的循环按钮标签：措辞唯一出自 `serial_format`（本件不 switch 第二套）。
+[[nodiscard]] auto parity_display(const std::string &name) -> std::string {
+    return settings_label(serial_parity_key(name));
+}
+
+[[nodiscard]] auto flow_display(const std::string &name) -> std::string {
+    return settings_label(serial_flow_key(name));
+}
+
+[[nodiscard]] auto line_ending_display(const std::string &name) -> std::string {
+    return settings_label(serial_line_ending_key(name));
+}
+
+[[nodiscard]] auto number_display(int value) -> std::string {
+    return std::to_string(value);  // 波特率/数据位/停止位是数据段，原样上屏（AGENTS §4.3 第 14 条）。
+}
+
+/// @brief 循环推进：命中当前档取下一档；表外值落回 fallback。
+///
+/// 表外值走得进来是因为**档位表只约束可选项、不判档案非法**（`serial_model` 的
+/// `validate_serial_profile` 只查区间）：手工写进 `borealis.json` 的 4800 在设备上照样能设，
+/// 编辑那条档案时循环钮显示原始 4800，点一次即回到表内缺省档。
+template <typename T, std::size_t N>
+[[nodiscard]] auto next_cycling(const std::array<T, N> &table, const T &current, const T &fallback)
+    -> T {
+    for (std::size_t i = 0; i < table.size(); ++i) {
+        if (table[i] == current) {
+            return table[(i + 1) % table.size()];
+        }
+    }
+    return fallback;
+}
+
+/// @brief 设备下拉：不可达行置灰（裁决 7.110 D9①「照列 + 置灰 + 归因」）。
+///
+/// 只改文本色，走的是框架文档化的 `paint_item` 继承扩展点（Aurora 主仓
+/// `codespec/widget/dropdown` 那两条 protected 虚函数），不碰渲染路径本体（AGENTS §5 第 3 条）。
+/// 点击不可达行的否决不在这里——`select()` 不是虚函数，否决落在 `set_on_change` 的回退上。
+class DeviceDropdown final : public aurora::Dropdown {
+  public:
+    DeviceDropdown(std::vector<std::string> options, std::vector<bool> selectable, int initial,
+                   aurora::Color dim_color)
+        : aurora::Dropdown(std::move(options), initial), selectable_{std::move(selectable)},
+          dim_color_{dim_color} {}
+
+  protected:
+    auto paint_item(aurora::Painter &p, std::size_t index, const aurora::Rect &item, bool selected,
+                    const aurora::Font &f, aurora::Color accent, aurora::Color text)
+        -> void override {
+        const bool grayed = index >= selectable_.size() || !selectable_[index];
+        aurora::Dropdown::paint_item(p, index, item, selected, f, accent, grayed ? dim_color_ : text);
+    }
+
+  private:
+    std::vector<bool> selectable_{};
+    aurora::Color dim_color_{};
+};
 
 [[nodiscard]] auto policy_display(conn::KnownHostsPolicy policy) -> std::string {
     switch (policy) {
@@ -61,6 +127,14 @@ constexpr std::array<conn::KnownHostsPolicy, 4> kPolicyCycle{
             return "connections.wizard.issue_port";
         case conn::DraftIssue::UnknownAuthMethod:
             return "connections.wizard.issue_auth";
+        case conn::DraftIssue::EmptyDevice:
+            return "connections.wizard.issue_device";
+        case conn::DraftIssue::BaudNotInTable:
+            return "connections.wizard.issue_baud";
+        case conn::DraftIssue::DataBitsOutOfRange:
+            return "connections.wizard.issue_data_bits";
+        case conn::DraftIssue::StopBitsOutOfRange:
+            return "connections.wizard.issue_stop_bits";
         case conn::DraftIssue::None:
             break;
     }
@@ -118,6 +192,24 @@ auto ConnectionWizard::open_edit(const conn::Profile &profile) -> void {
     draft_ = conn::profile_to_draft(profile);
     editing_id_ = profile.id;
     step_ = 1;  // 编辑直进字段步骤：类型不再改（改类型＝删了重建，语义更清晰）。
+    if (profile.type == conn::ConnectionType::Serial) {
+        request_port_scan();  // D8①：开设备行取一次，不等用户点刷新。
+    }
+    build_and_show();
+}
+
+auto ConnectionWizard::request_port_scan() -> void {
+    if (hooks_.refresh_ports != nullptr) {
+        hooks_.refresh_ports();
+    }
+}
+
+auto ConnectionWizard::reload_ports() -> void {
+    // 枚举回来时向导可能已经关了、也可能正停在别的步骤或手输档；四种情况下都没有要重建的下拉。
+    if (!open_ || step_ != 1 || custom_device_ || draft_.type != conn::ConnectionType::Serial) {
+        return;
+    }
+    collect_draft();  // 就地重建：先收文本字段，别让重建丢掉未提交的输入。
     build_and_show();
 }
 
@@ -132,6 +224,22 @@ auto ConnectionWizard::collect_draft() -> void {
             const auto text = port_input_->value();
             const auto parsed = std::strtol(text.c_str(), nullptr, 10);  // NOLINT: 界面口径宽容
             draft_.port = text.empty() ? 22 : static_cast<int>(parsed);
+        }
+    } else if (draft_.type == conn::ConnectionType::Serial) {
+        // 设备值只从**当前可见的那一行**取（切档时另一份控件已退场）：留着看不见的那串才算说谎，
+        // 清空则让「设备必填」在留痕行上当场说给用户听。循环按钮那七档在点击时就已写进草稿，这里不收钮。
+        if (custom_device_) {
+            if (device_input_ != nullptr) {
+                draft_.serial.device_path = device_input_->value();
+            }
+        } else if (device_dropdown_ != nullptr) {
+            const int index = device_dropdown_->selected_index();
+            const auto port_index = static_cast<std::size_t>(index) - 1U;
+            if (index < 1 || port_index >= ports_.size()) {
+                draft_.serial.device_path.clear();  // 首行＝「请选择设备」；越界行号是旧快照的残留
+            } else {
+                draft_.serial.device_path = ports_[port_index].path;
+            }
         }
     } else {
         draft_.command_line = command_input_ != nullptr ? command_input_->value()
@@ -174,11 +282,11 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(title))});
 
     if (step_ == 0) {
-        // 步骤 0：类型卡（D6：只有 Local / SSH 两张，串口/Telnet 未到货不占位）。
-        auto make_type_card = [&](conn::ConnectionType type) -> aurora::Node {
-            const auto is_ssh = type == conn::ConnectionType::Ssh;
+        // 步骤 0：三张类型卡（裁决 7.110 D1①：串口自此进档案模型，向导自此有第三型）。
+        auto make_type_card = [&](conn::ConnectionType type, std::string_view label_key)
+            -> aurora::Node {
             auto card = std::make_shared<aurora::Button>(aurora::ButtonProps{
-                .label = settings_label(is_ssh ? "connections.type.ssh" : "connections.type.local"),
+                .label = settings_label(label_key),
                 .color = chrome.control_bg,
                 .on_color = chrome.text,
                 .border_color = chrome.accent,
@@ -186,22 +294,31 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
                 .min_width = 120.0F,
                 .min_height = 64.0F,
             });
-            card->set_on_click([this, is_ssh]() -> void {
-                draft_.type = is_ssh ? conn::ConnectionType::Ssh : conn::ConnectionType::Local;
+            card->set_on_click([this, type]() -> void {
+                draft_.type = type;
+                if (type == conn::ConnectionType::Serial) {
+                    // D4①：设置域的串口默认值在「建草稿那一刻」灌进来，档位表仍只有 serial_model
+                    // 那一份；串口型不查凭据库（CONN.09 的明文审计天然过）。
+                    if (hooks_.serial_defaults != nullptr) {
+                        draft_.serial = hooks_.serial_defaults();
+                    }
+                    request_port_scan();
+                }
                 step_ = 1;
                 build_and_show();  // 换步重建：字段集随类型卡变（设计稿标号 5）。
             });
             return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(card))};
         };
         auto card_row = std::make_shared<aurora::Row>(aurora::RowProps{
-            .children = {make_type_card(conn::ConnectionType::Local),
-                         make_type_card(conn::ConnectionType::Ssh)},
+            .children = {make_type_card(conn::ConnectionType::Local, "connections.type.local"),
+                         make_type_card(conn::ConnectionType::Ssh, "connections.type.ssh"),
+                         make_type_card(conn::ConnectionType::Serial, "connections.type.serial")},
             .gap = 12.0F,
         });
         children.push_back(
             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(card_row))});
     } else {
-        // 步骤 1：字段集。名称两型共用；SSH/Local 各自的字段集按类型卡决定。
+        // 步骤 1：字段集。名称三型共用；其余字段按类型卡决定（SSH / Serial / Local 三套）。
         name_input_ = make_input(240.0F);
         name_input_->set_value(draft_.name);
         children.push_back(make_field_row(settings_label("connections.field.name"), aurora::Node{std::static_pointer_cast<aurora::Widget>(name_input_)}));
@@ -246,6 +363,168 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
             identity_input_->set_value(draft_.identity_file);
             children.push_back(
                 make_field_row(settings_label("connections.field.identity"), aurora::Node{std::static_pointer_cast<aurora::Widget>(identity_input_)}));
+        } else if (draft_.type == conn::ConnectionType::Serial) {
+            // 串口字段集（稿 §2 标号 2）：设备行是「下拉 + 刷新 + 自定义」三件套，其余六行
+            // 循环按钮；展示名那行两型共用，已在上面。
+            auto add_cycle_row = [&](std::string_view label_key,
+                                     std::shared_ptr<aurora::Button> &slot, std::string initial,
+                                     std::function<std::string()> advance) -> void {
+                slot = std::make_shared<aurora::Button>(aurora::ButtonProps{
+                    .label = std::move(initial),
+                    .color = chrome.control_bg,
+                    .on_color = chrome.text,
+                    .border_color = chrome.card_line,
+                    .border_width = 1.0F,
+                    .min_width = 160.0F,
+                });
+                auto button = slot;
+                button->set_on_click([this, button, advance = std::move(advance)]() -> void {
+                    collect_draft();  // 先收文本字段，别让循环按钮丢掉未提交的输入（auth_button_ 同口径）。
+                    button->set_label(advance());
+                    button->mark_needs_paint();
+                });
+                children.push_back(make_field_row(
+                    settings_label(label_key),
+                    aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(button))}));
+            };
+
+            ports_ = hooks_.current_ports != nullptr
+                         ? hooks_.current_ports()
+                         : std::vector<conn::SerialPortInfo>{};
+            auto device_controls = std::vector<aurora::Node>{};
+            if (custom_device_) {
+                device_input_ = make_input(200.0F);
+                device_input_->set_value(draft_.serial.device_path);
+                device_controls.push_back(aurora::Node{
+                    std::static_pointer_cast<aurora::Widget>(device_input_)});
+            } else {
+                auto options =
+                    std::vector<std::string>{settings_label("connections.device.placeholder")};
+                auto selectable = std::vector<bool>{true};
+                auto initial = 0;
+                for (std::size_t i = 0; i < ports_.size(); ++i) {
+                    const auto &port = ports_[i];
+                    options.push_back(serial_device_line(
+                        port, settings_label(serial_access_key(port.access))));
+                    selectable.push_back(conn::serial_port_is_selectable(port));
+                    if (port.path == draft_.serial.device_path) {
+                        initial = static_cast<int>(i) + 1;
+                    }
+                }
+                device_dropdown_ = std::make_shared<DeviceDropdown>(std::move(options),
+                                                                    std::move(selectable), initial,
+                                                                    chrome.text_dim);
+                device_dropdown_->set_box_color(chrome.control_bg);
+                device_dropdown_->set_border_color(chrome.card_line);
+                device_dropdown_->set_text_color(chrome.text);
+                device_dropdown_->modifier.set(aurora::Modifier{}.width(240.0F));
+                last_selectable_port_ = initial;
+                // 不可达行的否决：基类 `select()` 不是虚函数，回退只能落在变更回调上
+                // （`vetoing_port_choice_` 防自召——回退本身又会进一次 on_change）。
+                device_dropdown_->set_on_change([this](int index) -> void {
+                    if (vetoing_port_choice_) {
+                        return;
+                    }
+                    const auto port_index = static_cast<std::size_t>(index) - 1U;
+                    if (index == 0 ||
+                        (index >= 1 && port_index < ports_.size() &&
+                         conn::serial_port_is_selectable(ports_[port_index]))) {
+                        last_selectable_port_ = index;  // 首行可选但不产值（校验判「设备必填」）。
+                        return;
+                    }
+                    vetoing_port_choice_ = true;
+                    device_dropdown_->select(last_selectable_port_);
+                    vetoing_port_choice_ = false;
+                });
+                device_controls.push_back(aurora::Node{
+                    std::static_pointer_cast<aurora::Widget>(device_dropdown_)});
+            }
+
+            auto make_side_button = [&](std::string_view label_key, std::function<void()> run)
+                -> aurora::Node {
+                auto button = std::make_shared<aurora::Button>(aurora::ButtonProps{
+                    .label = settings_label(label_key),
+                    .color = chrome.control_bg,
+                    .on_color = chrome.text,
+                    .border_color = chrome.card_line,
+                    .border_width = 1.0F,
+                    .min_width = 72.0F,
+                });
+                button->set_on_click([this, run = std::move(run)]() -> void {
+                    collect_draft();  // 就地重建前先把输入框的值收进草稿。
+                    run();
+                });
+                return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(button))};
+            };
+            device_controls.push_back(make_side_button("connections.action.refresh_devices",
+                                                      [this]() -> void { request_port_scan(); }));
+            device_controls.push_back(make_side_button(
+                custom_device_ ? "connections.action.pick_from_list"
+                               : "connections.action.custom_path",
+                [this]() -> void {
+                    custom_device_ = !custom_device_;
+                    build_and_show();  // 互斥切换需一次就地重建（口径同 keys_panel 的推送框）。
+                }));
+            auto device_row = std::make_shared<aurora::Row>(aurora::RowProps{
+                .children = std::move(device_controls),
+                .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
+                .gap = 6.0F,
+            });
+            children.push_back(make_field_row(
+                settings_label("connections.field.device"),
+                aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(device_row))}));
+
+            add_cycle_row("connections.field.baud", baud_button_,
+                          number_display(draft_.serial.baud), [this]() -> std::string {
+                              draft_.serial.baud = next_cycling(
+                                  conn::kSerialBaudRates, draft_.serial.baud,
+                                  conn::SerialProfile{}.baud);
+                              return number_display(draft_.serial.baud);
+                          });
+            add_cycle_row("connections.field.data_bits", data_bits_button_,
+                          number_display(draft_.serial.data_bits), [this]() -> std::string {
+                              draft_.serial.data_bits = next_cycling(kDataBitsCycle,
+                                                                     draft_.serial.data_bits, 5);
+                              return number_display(draft_.serial.data_bits);
+                          });
+            add_cycle_row("connections.field.stop_bits", stop_bits_button_,
+                          number_display(draft_.serial.stop_bits), [this]() -> std::string {
+                              draft_.serial.stop_bits = next_cycling(kStopBitsCycle,
+                                                                     draft_.serial.stop_bits, 1);
+                              return number_display(draft_.serial.stop_bits);
+                          });
+            add_cycle_row("connections.field.parity", parity_button_,
+                          parity_display(draft_.serial.parity), [this]() -> std::string {
+                              draft_.serial.parity = std::string{next_cycling(
+                                  conn::kSerialParityNames,
+                                  std::string_view{draft_.serial.parity},
+                                  conn::kSerialParityNames[0])};
+                              return parity_display(draft_.serial.parity);
+                          });
+            add_cycle_row("connections.field.flow", flow_button_,
+                          flow_display(draft_.serial.flow), [this]() -> std::string {
+                              draft_.serial.flow = std::string{next_cycling(
+                                  conn::kSerialFlowNames, std::string_view{draft_.serial.flow},
+                                  conn::kSerialFlowNames[0])};
+                              return flow_display(draft_.serial.flow);
+                          });
+            add_cycle_row("connections.field.line_ending", line_ending_button_,
+                          line_ending_display(draft_.serial.line_ending),
+                          [this]() -> std::string {
+                              draft_.serial.line_ending = std::string{next_cycling(
+                                  conn::kSerialLineEndingNames,
+                                  std::string_view{draft_.serial.line_ending},
+                                  conn::kSerialLineEndingNames[0])};
+                              return line_ending_display(draft_.serial.line_ending);
+                          });
+            add_cycle_row("connections.field.encoding", encoding_button_,
+                          draft_.serial.encoding, [this]() -> std::string {
+                              // 编码名是数据段（`term::SessionEncoding` 的入参），原样上屏。
+                              draft_.serial.encoding = std::string{next_cycling(
+                                  kEncodingCycle, std::string_view{draft_.serial.encoding},
+                                  kEncodingCycle[0])};
+                              return draft_.serial.encoding;
+                          });
         } else {
             command_input_ = make_input(240.0F);
             command_input_->set_value(draft_.command_line);
@@ -352,8 +631,21 @@ auto ConnectionWizard::clear_state() -> void {
     identity_input_.reset();
     command_input_.reset();
     workdir_input_.reset();
+    device_input_.reset();
+    device_dropdown_.reset();
     auth_button_.reset();
+    baud_button_.reset();
+    data_bits_button_.reset();
+    stop_bits_button_.reset();
+    parity_button_.reset();
+    flow_button_.reset();
+    line_ending_button_.reset();
+    encoding_button_.reset();
     notice_.reset();
+    ports_.clear();
+    custom_device_ = false;
+    vetoing_port_choice_ = false;
+    last_selectable_port_ = 0;
     step_ = 0;
     open_ = false;
 }

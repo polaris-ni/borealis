@@ -57,15 +57,29 @@ struct ProfileDraft {
     std::string identity_file{};
     bool agent_forwarding{false};
     KnownHostsPolicy known_hosts_policy{KnownHostsPolicy::AcceptNew};
+    // 串口型字段（`SPEC.FEAT.CONN.05`，裁决 7.110 D4①）：直接复用 `SerialProfile` 的形态而不是
+    // 在草稿里重列一遍八个字段——那里的成员初值就是「新建串口档案的字段初值」，而设置域那份
+    // `config::SerialDefaults` 由装配层在建草稿那一刻灌进来（D4①）。草稿与档案同形，
+    // `draft_to_profile` / `profile_to_draft` 的串口腿因此是整段搬运，不存在第二套默认值。
+    SerialProfile serial{};
 };
 
 /// @brief 草稿校验的问题码（UI 把每一档映射成一句可读文案；本层不产文案）。
+///
+/// 串口的四档与 `validate_serial_profile()` 不是同一件事：那条判的是**已落盘档案**能否连
+/// （速率只看区间，手工写进 `borealis.json` 的 4800 照样连得上），这四档判的是**向导能否交回
+/// 一份自证的表单**（速率须在档位表内，稿 §2 标号 4）。于是「编辑一条 4800 的档案」会在
+/// 界面上要求改回表内档，而那条档案直连仍然可用——两条口径各处其位，不互相覆盖。
 enum class DraftIssue : std::uint8_t {
-    None,             ///< 通过。
-    EmptyName,        ///< 展示名必填。
-    EmptyHost,        ///< SSH 型主机必填。
-    PortOutOfRange,   ///< 端口须在 1..65535。
-    UnknownAuthMethod ///< 认证方式必须是四档之一。
+    None,                ///< 通过。
+    EmptyName,           ///< 展示名必填。
+    EmptyHost,           ///< SSH 型主机必填。
+    PortOutOfRange,      ///< 端口须在 1..65535。
+    UnknownAuthMethod,   ///< 认证方式必须是四档之一。
+    EmptyDevice,         ///< 串口型必填设备节点名（稿 §2 标号 4）。
+    BaudNotInTable,      ///< 波特率须在本仓档位表内（`conn::is_supported_baud`）。
+    DataBitsOutOfRange,  ///< 数据位须在 5..8。
+    StopBitsOutOfRange,  ///< 停止位须在 1..2。
 };
 
 /// @brief 校验草稿：返回**首个**问题（顺序即上表），通过为 None。

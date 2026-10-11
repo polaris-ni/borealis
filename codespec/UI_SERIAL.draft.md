@@ -3,7 +3,7 @@
 > **状态**：**评审已收口（2026-10-11）**——§3 的 D1–D13 经人裁决为**全按推荐档**（一句「按你推荐的来」收口，无一条改判），并入 `codespec/SPECIFICATIONS.md` §7 裁决 **7.110**，据此转实现（§4 布局落 `src/`，按批 1 纯逻辑与平台腿 → 批 2 连接腿 → 批 3 UI 与装配三批走）。
 > **配套高保真草图**：`codespec/UI_SERIAL.draft.svg`（本稿 §2 的 1–7 标号判据即图中圈号，各贴在所属屏旁；SVG 为事实来源，后续改图直接改 SVG）。
 > **出稿时不碰代码**（AGENTS §4.1 第 2 条的 UI 件节奏：先出稿评审再实现）；2026-10-11 裁决落地后转实现，实现期若与稿面口径分叉，按 AGENTS §4.2 第 12 条以**代码运行时**为准回写本稿。
-> **实现进度**：批 1（档案模型 + `conn/serial_model` + `platform/serial` 两腿 + `flow` 键）**已落**，POSIX 腿在 pty 替身设备上有证人（`utest_posix_serial_platform`，14 档速率回读逐档相符）；Win32 腿按 F10 只到「写完未编译验证」。两处与稿面的出入见 §4（`flow` 行随批 1 进核对表、串口档案往返落在 `utest_config`）。批 2（`conn/serial_connection` + `Session` 写出侧行尾折算 + 替身设备 `itest_posix_serial_connection`）**已落**，落地时的两条新读数（F11 端口锁的持有面、F12 替身节点消失后的 ENOENT）与三处稿面出入按 AGENTS §4.2 第 12 条回写在本稿 §0/§4/§5/§6/§8。批 3（向导第三型 + `ui::serial_format` + `main.cpp` 装配 + 六行改判）未落；落完仍欠真设备 `etest_serial_device`（F1 挡住）与 §6 六条真机走查。
+> **实现进度**：批 1（档案模型 + `conn/serial_model` + `platform/serial` 两腿 + `flow` 键）**已落**，POSIX 腿在 pty 替身设备上有证人（`utest_posix_serial_platform`，14 档速率回读逐档相符）；Win32 腿按 F10 只到「写完未编译验证」。两处与稿面的出入见 §4（`flow` 行随批 1 进核对表、串口档案往返落在 `utest_config`）。批 2（`conn/serial_connection` + `Session` 写出侧行尾折算 + 替身设备 `itest_posix_serial_connection`）**已落**，落地时的两条新读数（F11 端口锁的持有面、F12 替身节点消失后的 ENOENT）与三处稿面出入按 AGENTS §4.2 第 12 条回写在本稿 §0/§4/§5/§6/§8。批 3（向导第三型＝三张类型卡 + 串口九行字段集 + 设备三件套、`ui::serial_format`、`main.cpp` 的串口会话构造/枚举快照/重启分流/`serial.set_baud` 命令、核对表七行改判）**已落**，`src/main.cpp` 的两条 `TODO(SPEC.FEAT.CONN.05)` 全部闭合；落地期的四处拍板与三处稿面出入按 AGENTS §4.2 第 12 条回写在本稿 §2/§4/§7/§8，入册裁决 **7.111**。**仍欠真设备 `etest_serial_device`（F1 挡住）与 §6 六条真机走查 ⇒ 本稿一律不称「可用」**（第 33 条）。
 > **上游依据**：`SPEC.FEAT.CONN.05` 原文（枚举 / 波特率·数据位·停止位·校验·流控完整配置 / 断开重连 / 连接中热改波特率 / 默认编码 GB18030 / 发送行尾可配 CR·LF·CRLF 默认 LF / 十六进制视图与行首时间戳＝延后子项）、裁决 7.6（串口缺省 GB18030）、7.16（双向编码）、7.33⑥（`term::LineEnding` 是串口行尾的代码侧形态）、7.99（`session::CloseReason` 与重连分类表）、7.103（`term::SessionEncoding` 已具备）。
 
 ---
@@ -57,8 +57,8 @@
 | 标号 | 判据 | 对应需求 |
 |---|---|---|
 | 1 | 向导步骤 0 的类型卡自此三张（Local / SSH / **Serial**）；步骤 1 的字段集由类型卡决定，串口型**不显示** host/port/user/认证四栏 | `CONN.07`「按连接类型分步表单」（D1/D2） |
-| 2 | 串口字段集九行：展示名、设备、波特率、数据位、停止位、校验、流控、发送行尾、编码；设备行是「下拉 + 刷新 + 自定义路径」三件套，其余八行一律**循环按钮**（沿用 `auth_button_` 那枚四档循环件的先例，不在对话框里投行内 `Dropdown`） | `CONN.05`「完整配置」（D2/D4） |
-| 3 | 设备下拉每行＝设备名 + 友好名 + 可达性；不可达项**照常列出但置灰**并带归因（权限 / 暂不可开），绝不在列表里玩「看不见就是没有」 | `CONN.05`「串口枚举」（D8/D9） |
+| 2 | 串口字段集九行：展示名、设备、波特率、数据位、停止位、校验、流控、发送行尾、编码；设备行是「下拉 + 刷新 + 自定义路径」三件套，其余八行一律**循环按钮**（沿用 `auth_button_` 那枚四档循环件的先例，不在对话框里投行内 `Dropdown`）。**批 3 落地补**：三件套的两档互斥，产值只取**当前可见的那一行**（切档即重建、退场那份不留值）⇒ 手输后切回列表＝设备名清空＝保存当场报「设备必填」 | `CONN.05`「完整配置」（D2/D4） |
+| 3 | 设备下拉每行＝设备名 + 友好名 + 可达性；不可达项**照常列出但置灰**并带归因（权限 / 暂不可开），绝不在列表里玩「看不见就是没有」。**批 3 落地补**：置灰经框架文档化的 `paint_item` 覆写（只改文本色），点选否决经 `set_on_change` 回退；颜色对不对眼属绘制判据，无头断不了，留 §6 走查第 ⑵ 条 | `CONN.05`「串口枚举」（D8/D9） |
 | 4 | 校验走 `validate_draft` 的串口分支：新增四档问题码（设备必填、波特率必须在本仓档位表内、数据位 5..8、停止位 1..2），首个问题折成一行可读文案上屏，**不静默置灰保存钮** | `CONN.05`（D3/D4） |
 | 5 | 连接中热改波特率的入口是命令 `serial.set_baud`：焦点 pane 是串口会话⇒单选档位对话框；不是串口会话⇒一句「当前会话不是串口」的提示，**不改任何状态** | `CONN.05`「连接中热改波特率」（D5） |
 | 6 | 热改的回报走**回读比对**：`tcsetattr` 后立刻 `tcgetattr`，档位相符才报「已切到 {0}」，不相符报「设备侧拒绝：{0}」且界面**回到原档位**（不假装成功，AGENTS §4.4 第 21 条的同一条纪律用在单键上） | `CONN.05`（D6，代价见 F5） |
@@ -109,8 +109,15 @@ src/platform/posix/serial.cpp          新增 —— termios 腿（O_NOCTTY|O_NO
 src/platform/win/serial.cpp            新增 —— Win32 COMM 腿（CreateFile/DCB/EscapeCommFunction/BuildCommDCB），
                                                 **未经 MSVC 编译验证**（F10，AGENTS §4.2 第 11 条标推断）
 src/ui/connection_wizard.{h,cpp}       修改 —— 类型卡三张；串口型字段集九行（循环按钮族 + 设备三件套）
+                                                批 3 落地补两条口径：① 设备下拉的产值取**当前可见的那一行**
+                                                （列表档与手输档互斥、切换即重建，退场那份不留值 ⇒
+                                                切回列表＝设备名清空＝当场报「设备必填」）；② 置灰只覆写
+                                                框架文档化的 `paint_item`（改文本色），点选否决落在
+                                                `set_on_change` 的回退上——`select()` 非虚且同 index 不回调
 src/ui/serial_format.{h,cpp}           新增 —— 纯函数小头（无 au::，先例 sftp_format/keys_format）：
                                                 参数→文案、CloseReason→串口文案、置灰归因→文案
+                                                **批 3 落地时第三族不落**（掉线浮层按 `ReconnectStop`
+                                                分档而不按 `CloseReason` 分档，串口侧无该消费方；§7 登记）
 src/main.cpp                           修改 —— 装配：serial.set_baud 命令、枚举 worker 投递与快照、
                                                 串口会话构造吃 encoding/line_ending、消 line_ending 那条 TODO
 include/borealis/config/settings.h     修改 —— SerialDefaults 增 flow（D3）
@@ -135,7 +142,13 @@ tests/unit/utest_config.cpp            修改 —— flow 键往返 + 串口档�
                                                 （原列 `utest_profile_serial` 的往返腿在此落：`utest_profile.cpp`
                                                 头注已写明「落盘往返由 utest_config 守」，不另起一份；
                                                 validate_draft 的串口四档仍随批 3 的 ProfileDraft 扩字段出）
-tests/integration/itest_connection_wizard.cpp 修改 —— 类型卡三张与串口字段集真点击
+tests/integration/itest_connection_wizard.cpp 新增（批 3 落地改口：本仓此前**没有**这一件，稿面原先误记「修改」）
+                                                —— 类型卡三张与串口字段集九行的无头真点击，七条用例
+                                                锁判据 1/2/3/4/5 的界面腿；行文本经框架自带的
+                                                `serialize_props` 读（`Dropdown` 无逐行文本的公共读点，
+                                                不为测试新增产品 API）；`Dropdown` 子类构造**须把
+                                                `initial` 转发给基类**，否则编辑串口档案时下拉恒显占位、
+                                                保存把 `device_path` 清空（批 3 由用例⑥ 抓到的真缺陷）
 ```
 
 > 不改既有公共头的可见性与既有成员顺序（AGENTS §4.1 第 6 条）。框架侧**不预登记新缺口**：向导所需控件（`Dialog`/`Column`/`Dropdown`/`Button`/`TextInput`）与命令面板族全部有已落地的消费先例；若实现期撞到新的框架形态限制，按 AGENTS §5.1 类别分流另立 G 号并出任务书，不在本稿预写。
@@ -177,6 +190,8 @@ UI（connection_wizard 字段集 / serial_format 文案 / serial.set_baud 对话
 - **连接中热改波特率**：`itest_posix_serial_connection` 在替身设备上证「相符⇒更新当前档」与「不相符⇒回报拒绝且当前档不改脏」两分支（D6②）。**界面观测面**（批 3 接线口径）：热改成功后面板取 `current_baud()`；打开成功那一刻当前档＝档案档（`utest_posix_serial_platform` 锁平台腿回读，`itest_posix_serial_connection` 锁传下来的那一份）。
 - **默认编码 GB18030**：串口会话构造吃 `encoding` 缺省 GB18030，`utest` 锁折算；喂进现场的证人已落在 `itest_posix_serial_connection`（对端写 GB18030 两字节「中」⇒网格第 0 格落成 U+4E2D），走的是串口会话自己的解码链，不借 `itest_render_viewport` 的本地腿通道。
 - **发送行尾可配**：`utest_serial_model` 锁三档拼接；`utest_session` 四条锁折算（单个 CR 落地成选定档、已有的 CRLF 不被折成两个行尾、未给档的会话逐字节不动、Enter 的键表面仍产一个 CR ∧ 串口会话落地 CRLF）；`itest_posix_serial_connection` 在替身设备收端锁最后半段。`src/main.cpp:156` 的 `TODO(SPEC.FEAT.CONN.05)` 随批 3 消除。
+- **向导界面腿（判据 1/2/3/4/5）**：`itest_connection_wizard` 七条无头真派发用例——三张类型卡真点且串口型不画 SSH 五栏（1）、设置域七键在建草稿那一刻灌成具体值并原样交回（2 的 D4 半边）、每次开向导只发一次枚举而就地重建不发（2/3 的 D8 半边，断言的是后台取数次数）、不可达行照列且 `select()` 被否决回上一次可选行（3）、列表档与手输档互斥且**可见行产值**（2）、四档问题码逐档上屏且不关框不交档（4）、枚举回投只重建开着的那一行串口设备行（3）。**置灰的颜色本身不在断言面内**（无头无从比色），留在下面走查第 ⑵ 条。
+
 - **测试读数口径**：交付时以 `ctest --test-dir build -E etest_` 的**项数与全案数**结项（AGENTS §4.4 第 21 条不认「应该更快了」，本棒同样不认「测了很多」），变异注入按第 22 条自证非空转。
 - **真机走查**（AGENTS §4.4 第 33 条，未走查不得称「可用」）：⑴ 下拉在真实 USB 口上的友好名好不好认；⑵ 置灰归因文案够不够排障（F1 那种「有节点没权限」）；⑶ 热改拒绝档的手感与「档案值 vs 当前值」两处显示分不分得清；⑷ GB18030 串口会话里中文上屏观感与键入中文发到设备侧的字节（设备端回显，需真板子）；⑸ 拔线掉线与重连浮层的交接感；⑹ 六条 `connection.serial.*` 键在设置页改默认值后新建档案灌入是否合直觉（D4 的代价面）。
 
@@ -192,6 +207,8 @@ UI（connection_wizard 字段集 / serial_format 文案 / serial.set_baud 对话
 - **`POLLHUP`/`POLLERR` 无 `POLLIN` 那种「半开」读数**：平台腿的 `wait_for` 只认请求的那一位，故此类读数按超时档处理，读侧不会因此结束。本沙箱**无从造出这一形态**——替身设备的掉线一律是 EOF（F9），节点消失后重开一律 ENOENT（F12），两条都走得到 `Closed`/`NoNode`。真串口上是否出现「插着但不回话」的形态属**推断／未验证**（AGENTS §4.2 第 11 条），`etest_serial_device` 落地时一并取读数再决定是否给读侧加一档硬错归因；本棒不预建。
 - **逐标签连接类型图标**（D12）：随 `SPEC.FEAT.WS.04` 余腿单开。
 - **RS-485 半双工、Lin/Modem 协议、流控下的吞吐调优**：需求未提，不预建抽象。
+- **`ui::serial_format` 的「`CloseReason`→串口文案」一族不落**（§4 原先列了三族，批 3 只落两族）：掉线浮层是 `codespec/UI_RECONNECT.draft.md` 已裁的通用两态，其措辞按 `session::ReconnectStop` 分档而**不按 `CloseReason` 分档**，串口侧没有「按 `CloseReason` 出文案」的消费方——按 AGENTS §4.1 第 3 条「不加将来才用的抽象」不预建。代价如实登记：若后续要给串口单独一套掉线措辞，届时按到货的消费方新开，而不是现在就写一份没人读的表。
+- **设备行「可见行产值」之外的第二种口径不落**：手输档切回列表档即清空设备名（见 §4 的批 3 补注），不保留「看不见但仍在草稿里」的值。代价：用户在两档之间来回切换要重敲一次路径。
 
 ---
 
@@ -203,3 +220,8 @@ UI（connection_wizard 字段集 / serial_format 文案 / serial.set_baud 对话
 - **2026-10-11 批 2 落地**：`src/conn/serial_connection.{h,cpp}`（读线程 + 归因表 `serial_close_reason()` + 复用 `conn/reconnect.h` 的退避环 + `set_baud`/`current_baud` 两枚热改口，`resize()` 是有意空操作）、`Session` 的写出侧一处折算（`include/borealis/session/session.h` 尾追加 `line_ending` 入参，缺省 `nullopt`＝不折算），替身设备证人 `tests/integration/itest_posix_serial_connection.cpp` 七条，`utest_session` 四条折算用例。结项读数：`ctest --preset linux -E etest_` **75 项全绿**（新增 `itest_posix_serial_connection` 一项），runner **938 案全绿**（基线 927 + 11），该套件 403 ms。
   - 与稿面的三处出入已按 AGENTS §4.2 第 12 条回写：① §4 的 Session 公共头路径（稿写 `term/session.h`，实际在 `include/borealis/session/session.h`）；② §4/§6 的 itest 文件名（要带 `_posix_` 才走平台过滤，故 `cmake/BorealisTests.cmake` 那条过滤加宽成 `(utest|itest)_(posix|win)_`）；③ §5 的 `SerialConnection` 构造式（编码与行尾不在连接腿，是 `Session` 的构造入参）。
   - F11 的复现件：`mutex_probe.cpp`（两线程：持锁 sleep 20 ms × 200 次 vs 另一线程取锁计时）与 `mutex_probe2.cpp`（同形但取锁后立即放，作对照）——两份都在沙箱临时目录，不含本仓代码，跑出来是 2–4 s vs 0 ms。批 2 的实现原先在锁内做 20 ms 定时读，正是踩在这一读数上：整套 itest 从 403 ms 涨到 75–113 s，而 `strace -f` 下同一份代码 204 ms 跑完。
+
+- **2026-10-11 批 3 落地**：`src/ui/connection_wizard.{h,cpp}`（类型卡三张、串口九行＝设备三件套 + 七枚循环按钮、四档问题码上屏、`reload_ports` 的四处空操作闸）、`src/ui/serial_format.{h,cpp}`（新，`connections.serial.*` 词条的唯一产出方）、`src/main.cpp`（串口会话构造吃 `encoding`/`line_ending`、枚举 latest-value 快照与两处投递、重启按档案分流、`serial.set_baud` 命令与两只共用一只 `Dialog` 的热改框）、`src/conn/profile_views.{h,cpp}`（`ProfileDraft.serial` + `DraftIssue` 串口四档 + 三向分派补 Serial 腿）、核对表七行 `Absent`→`Wired`。结项读数：`ctest --preset linux -E etest_` **77 项全绿**（+1＝`itest_connection_wizard`），runner 全跑 **950 案全绿**（批 2 后 938，+12），该套件 1.76 s。入册裁决 **7.111**、`CHANGELOG.md` v0.111。
+  - 与稿面的三处出入已按 AGENTS §4.2 第 12 条回写：① §4 把 `itest_connection_wizard` 记成「修改」，本仓此前**没有这一件**（实为新增，七条用例）；② §4 的 `serial_format` 三族只落两族，「`CloseReason`→串口文案」没有消费方（§7 登记代价）；③ §4 的 `DeviceDropdown` 落地补一条硬口径——子类构造**必须**把 `initial` 转发给基类，否则编辑串口档案时下拉恒显占位、保存把 `device_path` 清空（实现期由用例⑥ 当场抓到的真缺陷，不是稿面口径问题）。
+  - 两条落地期才见分的口径（§2 标号 2/3 与 §4 已回写）：**设备行产值取当前可见的那一行**（互斥切换即重建，退场那份不留值）；**置灰经 `paint_item` 扩展点、否决经 `set_on_change` 回退**——`Dropdown::select()` 非虚且同 index 不回调，所以这不是框架缺口而是应用侧组合（AGENTS §5 第 3 条）。
+  - 一次枚举的闸门经变异判为死重量并删除：`ports_requested_` 整条摘除后七条用例**全绿**（该标志不承载行为），反向把一次发起塞进 `build_content()` 则用例③ 由 1 次涨到 4/5/9 次转红（承重的断言是「重建不得再发后台取数」的计数）。据此按 AGENTS §4.1 第 3 条收掉该抽象。另一处变异：摘掉置灰行的 `set_on_change` 否决 ⇒ 用例④ 转红。
