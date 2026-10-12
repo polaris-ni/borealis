@@ -35,6 +35,7 @@
 #include "borealis/ui/palette.h"
 #include "borealis/ui/right_click.h"
 #include "borealis/ui/tab_strip.h"
+#include "borealis/ui/url.h"
 
 namespace borealis::config {
 
@@ -68,6 +69,13 @@ using ui::RightClickAction;
 /// 取值与语义的唯一定义在 `ui::TabNamePriority`（名称折算发生在标签列表件里），配置侧只作别名，
 /// 与上面两条同口径（裁决 7.43①）。
 using ui::TabNamePriority;
+
+/// @brief 打开一条链接前要不要问（`SPEC.FEAT.INTERACT.05`，OSC 8 与启发式各一枚键）。
+///
+/// 取值与语义的唯一定义在 `ui::LinkConfirmPolicy`（问与不问的处置发生在界面腿的决策件里），
+/// 配置侧只作别名，与上面三条同口径（裁决 7.41 的单一真值源迁移先例）。缺省 `AskOnce` 就是
+/// 需求那句「首次确认并记住同域」。
+using ui::LinkConfirmPolicy;
 
 /// @brief 状态栏各项的开关（裁决 7.25⑧：每项一个开关，缺省全开）。
 ///
@@ -169,6 +177,21 @@ struct TerminalSettings {
     /// 故该键的取值域属用户显式选择而非损坏，装载侧只判类型不判域。
     std::string word_delimiters{"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"};
 
+    /// @brief `OSC 8` 显式超链接打开前的确认档（`SPEC.FEAT.INTERACT.05`，裁决 D8①）。
+    ///
+    /// 两来源各一枚键而不是「一枚全局 + 两枚 bool」：需求那句「信任级别可分别配置」在本产品里
+    /// 能表达的就是「要不要问」的三档，bool 表达不出 `AskAlways`。
+    LinkConfirmPolicy link_osc8{LinkConfirmPolicy::AskOnce};
+    /// @brief 纯文本启发式识别出的链接打开前的确认档；缺省比 OSC 8 更该问，但两枚键**同缺省**。
+    LinkConfirmPolicy link_heuristic{LinkConfirmPolicy::AskOnce};
+    /// @brief 允许识别为「可点」的协议，逗号分隔（缺省 `http,https`）。
+    ///
+    /// 取值域是**装载侧不校验**的那一类（`ControlKind::TextInput × ValueDomain::FreeText`，
+    /// 见 `settings_catalog.h` 那句「只判类型不判域」）：非法或空白 scheme 由纯件在判定时拒绝，
+    /// 面板不拒收，与 `word_delimiters` 同口径。代价是空串表现为「什么都不可以点」，
+    /// 那一档要在旁注里说清而不是在代码里猜。
+    std::string link_schemes{"http,https"};
+
     /// @brief 逐字段全等比较（配置往返断言用）。
     [[nodiscard]] auto operator==(const TerminalSettings &other) const noexcept -> bool = default;
 };
@@ -239,6 +262,13 @@ struct ConnectionSettings {
     /// 与 `SPEC.FEAT.WS.10` 撤销关闭标签的栈是两回事：那条栈记「关掉的会话」，这张表记
     /// 「用过哪些档案」，两者各自维护、互不复用。
     std::vector<RecentConnection> recent{};
+
+    /// @brief 已记住的域（`SPEC.FEAT.INTERACT.05`，裁决 D9①）：`scheme://host[:port]` 形态的字符串数组。
+    ///
+    /// 这是**运行期数据**而不是偏好设置，故它走 `kNonPreferenceLeaves` 那条例外通道：不占核对表的
+    /// 一行、面板不画它（没有查看/清空入口，要清只能改 `borealis.json`——这条代价在稿 §8 在册）。
+    /// 写入方是装配层那份 `TrustedLinkHosts::on_change` 闭包，读取方只有启动灌入那一处。
+    std::vector<std::string> trusted_url_hosts{};
 
     /// @brief 逐字段全等比较（配置往返断言用）。
     [[nodiscard]] auto operator==(const ConnectionSettings &other) const noexcept -> bool = default;

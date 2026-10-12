@@ -299,6 +299,16 @@ auto assign_shortcuts(Settings &settings, const FormValue &value) -> void {
                 [](Settings &s, const FormValue &v) {
                     assign_enum(s.terminal.clipboard_read, v, kClipboardReadNames);
                 }},
+        // 两枚确认档的搬运紧跟 `clipboard_read`：核对表的行序就是 catalog 的行序，两处不同序会让
+        // 「桥逐行覆盖核对表」那条证人直接红（`utest_form_transfer` 的 `the_bridge_loads_…`）。
+        Binding{"terminal.link_osc8",
+                [](const Settings &s) -> FormValue { return enumerated(s.terminal.link_osc8, kLinkConfirmNames); },
+                [](Settings &s, const FormValue &v) { assign_enum(s.terminal.link_osc8, v, kLinkConfirmNames); }},
+        Binding{"terminal.link_heuristic",
+                [](const Settings &s) -> FormValue {
+                    return enumerated(s.terminal.link_heuristic, kLinkConfirmNames);
+                },
+                [](Settings &s, const FormValue &v) { assign_enum(s.terminal.link_heuristic, v, kLinkConfirmNames); }},
         Binding{"terminal.copy_on_select",
                 [](const Settings &s) -> FormValue { return FormValue::boolean(s.terminal.copy_on_select); },
                 [](Settings &s, const FormValue &v) { assign(s.terminal.copy_on_select, v); }},
@@ -316,6 +326,13 @@ auto assign_shortcuts(Settings &settings, const FormValue &value) -> void {
         Binding{"terminal.word_delimiters",
                 [](const Settings &s) -> FormValue { return FormValue::text(s.terminal.word_delimiters); },
                 [](Settings &s, const FormValue &v) { assign(s.terminal.word_delimiters, v); }},
+        // 白名单是一枚自由文本：装载与搬运两侧都不校验域（`ValueDomain::FreeText` 的定义），
+        // 非法或空白 scheme 由识别件在判定时拒绝。空串因此是**合法取值**，表现为「什么都不可以点」。
+        Binding{"terminal.link_schemes",
+                [](const Settings &s) -> FormValue { return FormValue::text(s.terminal.link_schemes); },
+                [](Settings &s, const FormValue &v) { assign(s.terminal.link_schemes, v); }},
+        // `connection.trusted_url_hosts` **不进表单**：它是运行期数据而不是偏好（D9①），面板不画它，
+        // 于是也就没有「搬出—搬回」这条腿。它走 `kNonPreferenceLeaves` 那条例外通道，只被 store 读写。
 
         // ---- 连接 ----
         Binding{"connection.local_shell",

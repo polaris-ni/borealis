@@ -64,6 +64,14 @@ inline constexpr std::array<EnumName, 3> kClipboardReadNames{{
     {"ask", static_cast<std::int64_t>(term::ClipboardReadPolicy::Ask)},
 }};
 
+// 打开一条链接前的确认档（`SPEC.FEAT.INTERACT.05`，两枚键共用）：`ask_once` 排第二就是需求那句
+// 「首次确认并记住同域」的缺省档，而落盘名一旦写下即对外契约——改名等于让老配置里那一行读不回来。
+inline constexpr std::array<EnumName, 3> kLinkConfirmNames{{
+    {"never", static_cast<std::int64_t>(LinkConfirmPolicy::Never)},
+    {"ask_once", static_cast<std::int64_t>(LinkConfirmPolicy::AskOnce)},
+    {"ask_always", static_cast<std::int64_t>(LinkConfirmPolicy::AskAlways)},
+}};
+
 inline constexpr std::array<EnumName, 2> kTabNamePriorityNames{{
     {"manual_wins", static_cast<std::int64_t>(TabNamePriority::ManualWins)},
     {"osc_wins", static_cast<std::int64_t>(TabNamePriority::OscWins)},

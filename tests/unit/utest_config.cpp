@@ -39,6 +39,7 @@ using borealis::config::BellMode;
 using borealis::config::builtin_themes;
 using borealis::config::kDefaultThemeName;
 using borealis::config::kSnapshotRetention;
+using borealis::config::LinkConfirmPolicy;
 using borealis::config::LoadOutcome;
 using borealis::config::LongLinePolicy;
 using borealis::config::PasteNewlinePolicy;
@@ -136,6 +137,12 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     next.terminal.strip_tmux_border_chars = true;
     // 刻意含反斜杠与空格：选词界定符是「原始字符集」形态，转义漏一侧就会在读回时静默变样。
     next.terminal.word_delimiters = "-/. \\";
+    // 链接的三枚新键（`SPEC.FEAT.INTERACT.05`，裁决 D8①）：两枚确认档刻意**取不同档**而不是都写
+    // `ask_always`——「信任级别可分别配置」这句需求能被写坏的最短路径就是两枚键共用一个落盘名，
+    // 各取一档才判得出「读回来的是各自那一行」。白名单刻意含一个非缺省协议与尾随空格。
+    next.terminal.link_osc8 = LinkConfirmPolicy::Never;
+    next.terminal.link_heuristic = LinkConfirmPolicy::AskAlways;
+    next.terminal.link_schemes = "http, https ,ftp";
 
     next.connection.local_shell = "pwsh.exe";
     next.connection.startup_directory = "work-dir";
@@ -205,6 +212,12 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     // 最近连接（`SPEC.FEAT.CONN.07`）：两条非缺省条目，覆盖 connection 域新增表的往返等值。
     next.connection.recent.push_back(config::RecentConnection{"ssh-import:gateway", 1700000000});
     next.connection.recent.push_back(config::RecentConnection{"local:default", 1699999999});
+
+    // 已记住的域（`SPEC.FEAT.INTERACT.05`，裁决 D9①）：三条**有序**、形态各异的串，覆盖这份数据叶子
+    // 的往返等值。刻意不按字典序写——落盘侧**不重排**（排序归 `ui::TrustedLinkHosts::load`），放了有序
+    // 样本就判不出「原样往返」与「顺手折过一遍」。第三条是 IPv6 带端口形态：域里全是冒号与方括号，
+    // 任何「把域当键名写进对象」的实现都会在这一条上被点号/冒号路径语义咬到。
+    next.connection.trusted_url_hosts = {"http://example.com", "http://localhost:8080", "https://[::1]:3000"};
 
     // M3 密钥目录域（`SPEC.FEAT.CONN.10`，裁决 7.106 D2③）：两条互异且**有序**的路径，覆盖
     // key_dirs 域的往返等值守卫。刻意不放重复项——落盘侧**不去重**（规范化归

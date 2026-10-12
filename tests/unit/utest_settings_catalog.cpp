@@ -273,8 +273,10 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // tunnels（CONN.08 隧道集）由隧道面板拥有（裁决 7.97 D1①/D3①），
     // key_dirs（CONN.10 密钥目录表）由密钥面板拥有（裁决 7.106 D2③/D11：录入走系统目录框，
     // 设置页不画它）——面板不画控件，在此登记例外，其余落盘叶子仍须与面板逐一对应。
-    static constexpr std::array<std::string_view, 4> kNonPreferenceLeaves{
-        {"connection.recent", "profiles.items", "tunnels.items", "key_dirs.items"}};
+    // trusted_url_hosts（INTERACT.05 已记住的域，裁决 D9①）同族：它是**运行期数据**而非偏好，
+    // 写入方是装配层那份名单的变化闭包，面板既不散画它也没有查看/清空入口（稿 §8 在册一条代价）。
+    static constexpr std::array<std::string_view, 5> kNonPreferenceLeaves{
+        {"connection.recent", "profiles.items", "tunnels.items", "key_dirs.items", "connection.trusted_url_hosts"}};
 
     auto leaves = written_leaves();
     std::erase_if(leaves, [](const std::string &leaf) {
@@ -287,10 +289,11 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // 双向：落盘里有而表里没有 = 面板漏画控件；表里有而落盘里没有 = 面板画了存不回去的控件。
     AURORA_TEST_CHECK_MSG(leaves == keys, "leaves=[" + join(leaves) + "] table=[" + join(keys) + "]");
     AURORA_TEST_CHECK_EQ(leaves.size(), keys.size());
-    // 65 行＝写出的全部偏好键；串口侧第七键 `connection.serial.flow` 随裁决 7.110 D3① 进表，
+    // 68 行＝写出的全部偏好键；串口侧第七键 `connection.serial.flow` 随裁决 7.110 D3① 进表，
     // CONN.11 的追加敏感正则 `connection.session_log_pattern` 随裁决 7.116 D10 改判进表，
-    // CONN.12 的读方向授权档 `terminal.clipboard_read` 随裁决 D1① 进表（键在终端域、标识属连接域）。
-    AURORA_TEST_CHECK_EQ(keys.size(), 65U);
+    // CONN.12 的读方向授权档 `terminal.clipboard_read` 随裁决 D1① 进表（键在终端域、标识属连接域），
+    // INTERACT.05 的三行（`link_osc8` / `link_heuristic` / `link_schemes`）随裁决 D8① 进表。
+    AURORA_TEST_CHECK_EQ(keys.size(), 68U);
 }
 
 AURORA_TEST_CASE(keys_are_unique_and_rows_are_addressable) {

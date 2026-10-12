@@ -227,6 +227,19 @@ namespace {
                                {"deny", "allow", "ask"},
                                ConsumerStatus::Wired,
                                EffectLevel::Immediate));
+    // 打开链接前的两枚确认档（`SPEC.FEAT.INTERACT.05`，裁决 D8①）：行序紧随同族的 `clipboard_read`，
+    // 终端页其余行序不动。两枚键而不是「一枚全局 + 两枚 bool」是为了让「信任级别可分别配置」这句
+    // 需求真的有独立可改的两档；效果档取 **Immediate**（改完立刻生效，不重开任何会话）。
+    catalog.push_back(dropdown("terminal.link_osc8",
+                               SettingsPage::Terminal,
+                               {"never", "ask_once", "ask_always"},
+                               ConsumerStatus::Wired,
+                               EffectLevel::Immediate));
+    catalog.push_back(dropdown("terminal.link_heuristic",
+                               SettingsPage::Terminal,
+                               {"never", "ask_once", "ask_always"},
+                               ConsumerStatus::Wired,
+                               EffectLevel::Immediate));
     catalog.push_back(toggle(
         "terminal.copy_on_select", SettingsPage::Terminal, ConsumerStatus::Wired, EffectLevel::Immediate));
     catalog.push_back(toggle(
@@ -236,6 +249,16 @@ namespace {
     catalog.push_back(toggle(
         "terminal.strip_tmux_border_chars", SettingsPage::Terminal, ConsumerStatus::Wired, EffectLevel::Immediate));
     catalog.push_back(row("terminal.word_delimiters",
+                          SettingsPage::Terminal,
+                          ControlKind::TextInput,
+                          ValueDomain::FreeText,
+                          {},
+                          {},
+                          ConsumerStatus::Wired,
+                          EffectLevel::Immediate));
+    // 协议白名单（`SPEC.FEAT.INTERACT.05`，D8①）：与 `word_delimiters` 同一族「原样收字符」的域
+    // （`FreeText` 只判类型不判域），非法或空白 scheme 由识别件在判定时拒绝、面板不拒收。
+    catalog.push_back(row("terminal.link_schemes",
                           SettingsPage::Terminal,
                           ControlKind::TextInput,
                           ValueDomain::FreeText,

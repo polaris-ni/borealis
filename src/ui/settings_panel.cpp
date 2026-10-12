@@ -364,6 +364,10 @@ constexpr GroupNote kGroupNotes[] = {
     // 读方向那道闸的旁注挂在**它自己那一行**上方而不是终端页组顶：这一行讲的是三态各自的后果，
     // 与同页其它行（回滚、编码、右键行为）无关，放在组顶就成了「一段话管不着下面十几行」。
     {"terminal.clipboard_read", "settings.note.clipboard_read"},
+    // 链接那两枚确认档共用一条旁注（挂在第一行上方，同 `clipboard_read` 那条「说这一行/这几行」的
+    // 口径），白名单单独一条：它讲的是「填了不等于生效」，与上面两档的「问不问」是两件事。
+    {"terminal.link_osc8", "settings.note.link_confirm"},
+    {"terminal.link_schemes", "settings.note.link_schemes"},
     {"connection.ssh.port", "settings.note.ssh"},
     {"connection.serial.baud", "settings.note.serial"},
     {"shortcuts.overrides", "settings.note.shortcuts"},

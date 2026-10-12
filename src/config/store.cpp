@@ -502,6 +502,11 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     put(node, "smart_line_join", terminal.smart_line_join);
     put(node, "strip_tmux_border_chars", terminal.strip_tmux_border_chars);
     put(node, "word_delimiters", terminal.word_delimiters);
+    // 两枚同型枚举而不是「一枚全局 + 两枚 bool」：需求那句「信任级别可分别配置」能表达的就是
+    // 两来源各一档，而 bool 表达不出 `ask_always`（裁决 D8①）。
+    put_enum(node, "link_osc8", kLinkConfirmNames, static_cast<std::int64_t>(terminal.link_osc8));
+    put_enum(node, "link_heuristic", kLinkConfirmNames, static_cast<std::int64_t>(terminal.link_heuristic));
+    put(node, "link_schemes", terminal.link_schemes);
     return node;
 }
 
@@ -545,6 +550,14 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
         recent.push_back(std::move(entry));
     }
     node.set("recent", std::move(recent));
+
+    // 已记住的域（`SPEC.FEAT.INTERACT.05`，D9①）：同样是数组而不是「域作键」的映射——域里全是点号，
+    // 而框架的持久化模型把点号当路径分隔符（`command_overrides` 那条评论的同一条理由）。空表也要留得下来。
+    auto trusted = Value::array();
+    for (const auto &host : connection.trusted_url_hosts) {
+        trusted.push_back(Value(host));
+    }
+    node.set("trusted_url_hosts", std::move(trusted));
     return node;
 }
 
@@ -803,6 +816,13 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     terminal.strip_tmux_border_chars =
         scope.boolean("strip_tmux_border_chars", defaults.terminal.strip_tmux_border_chars);
     terminal.word_delimiters = scope.text("word_delimiters", defaults.terminal.word_delimiters);
+    // 两枚确认档的缺省都取 `defaults` 那份（即 `ask_once`）：「配置里没有这一行」与「显式写着
+    // ask_once」同档，需求那句「默认首次确认并记住同域」要的就是前者也成立。
+    terminal.link_osc8 = static_cast<LinkConfirmPolicy>(
+        scope.enumerated("link_osc8", kLinkConfirmNames, static_cast<std::int64_t>(defaults.terminal.link_osc8)));
+    terminal.link_heuristic = static_cast<LinkConfirmPolicy>(scope.enumerated(
+        "link_heuristic", kLinkConfirmNames, static_cast<std::int64_t>(defaults.terminal.link_heuristic)));
+    terminal.link_schemes = scope.text("link_schemes", defaults.terminal.link_schemes);
     scope.collect_unknown();
     return terminal;
 }
@@ -854,6 +874,10 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     connection.session_log_dir = scope.text("session_log_dir", defaults.connection.session_log_dir);
     connection.session_log_pattern = scope.text("session_log_pattern", defaults.connection.session_log_pattern);
     connection.recent = scope.recent_list("recent", defaults.connection.recent);
+    // 已记住的域走 `string_list` 那一份读法（坏一项只丢该元素并留痕）：这份表是**数据**而不是偏好，
+    // 面板不画它，故没有表单侧的校验兜底——读回来的每一项都得自己站得住。
+    connection.trusted_url_hosts =
+        scope.string_list("trusted_url_hosts", defaults.connection.trusted_url_hosts);
     scope.collect_unknown();
     return connection;
 }

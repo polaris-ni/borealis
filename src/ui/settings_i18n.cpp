@@ -410,6 +410,14 @@ const std::map<std::string, std::string, std::less<>> kStrings{
      "三态各档的后果：deny 与超限都只回送一条空响应，不弹提示、屏上也查不到；改档即刻对所有在途"
      "标签生效；ask 档每条读请求各问一次（同一会话最多同时挂 8 条，超出当场按 deny 答）。"},
 
+    // 打开链接那三行的两条旁注（判据 5／8）：第一行要说清「两枚键各管一个来源」，否则用户会以为
+    // 改上面那枚就管了全部链接；第二行要说清白名单**不参与校验**——填了不等于生效，空串或全非法的
+    // 表现是「什么都不可以点」，这一档在面板里没有任何别的回执。
+    {"settings.note.link_confirm",
+     "两枚键各管一个来源：osc8 是程序显式声明的目标，heuristic 是按形状猜出来的串。"
+     "ask_once 记住的是协议 + 主机 + 端口，同域第二次不再问，换个端口仍会问。"},
+    {"settings.note.link_schemes", "逗号分隔；白名单外的链接不显示为可点（留空或全是非法词＝什么都不可以点）"},
+
     // ---- 链接打开确认（`SPEC.FEAT.INTERACT.05`，`codespec/UI_URL.draft.md` 判据 4／稿 D11①）----
     // 标题、正文首行与来源两行**逐字沿用**已评审稿面（`codespec/UI_COMMANDS.draft.svg` 屏 4）：判据 4
     // 要的就是「那张稿面落到控件」，措辞自创即破那条对齐。
@@ -508,6 +516,13 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"terminal.smart_line_join", "合并续行"},
     {"terminal.strip_tmux_border_chars", "剥 tmux 细线制表符"},
     {"terminal.word_delimiters", "双击选词断点集"},
+    // 打开链接前的三行（`SPEC.FEAT.INTERACT.05`，裁决 D8①）：两枚确认档的行名要**点明是哪一来源**，
+    // 因为「信任级别可分别配置」这句需求的全部意义就在两来源各走各的闸；写成一枚「链接安全」反而
+    // 把那件事藏起来。白名单那行的行名不叫「协议」而叫「允许打开的协议」：面板里没有第二处解释
+    // 「这一串管什么」，而它管的是识别的入口，不是发送的编码。
+    {"terminal.link_osc8", "显式超链接（OSC 8）打开前"},
+    {"terminal.link_heuristic", "纯文本识别的链接打开前"},
+    {"terminal.link_schemes", "允许打开的协议"},
 
     // ---- 连接域 ----
     {"connection.local_shell", "默认 shell"},
