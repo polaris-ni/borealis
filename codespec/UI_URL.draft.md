@@ -108,10 +108,17 @@
 
 | 路径 | 动作 | 内容 |
 |---|---|---|
-| `include/borealis/ui/url.h` | 新建 | `LinkSource{Osc8, Heuristic}`、`LinkConfirmPolicy{Never, AskOnce, AskAlways}`（**唯一定义处**，`config::LinkConfirmPolicy` 是其别名，与 `term::PasteNewlinePolicy`、`ui::RightClickAction` 同一条单一真值源迁移先例）、`LinkScanOptions{std::vector<std::string> schemes}`、`LinkHit{RowSpan span; std::u32string target; LinkSource source;}`、`TrustedLinkHosts`（`contains` / `add` + 一枚 `std::function<void(std::span<const std::string>)> on_change`，纯内存、不含 IO）、`LinkOpenPlan{intent(Open/Confirm/Refuse), host, reason}`、`find_link_at` / `plan_link_open` / `link_host_of`。全部类型逐字段 `operator==` default（照 `right_click.h` 的断言形态） |
+| `include/borealis/ui/url.h` | 新建 | `LinkSource{Osc8, Heuristic}`、`LinkConfirmPolicy{Never, AskOnce, AskAlways}`（**唯一定义处**，`config::LinkConfirmPolicy` 是其别名，与 `term::PasteNewlinePolicy`、`ui::RightClickAction` 同一条单一真值源迁移先例）、`LinkScanOptions{std::vector<std::string> schemes}`、`LinkHit{RowSpan span; std::string target; LinkSource source;}`（**目标串按 UTF-8 落**，见下方批 1 收口回填①）、`TrustedLinkHosts`（`contains` / `add` / `load` + `set_change_sink`，纯内存、不含 IO）、`LinkOpenPlan{intent(Open/Confirm/Refuse), host, reason}`、`find_link_at` / `plan_link_open` / `link_host_of` / `parse_link_schemes`。全部类型逐字段 `operator==` default（照 `right_click.h` 的断言形态） |
 | `src/ui/url.cpp` | 新建 | 三个纯件实现：OSC 8 游程（跳双宽延续格、F2）、启发式字符表 + 行尾修剪（F4/F22）、scheme 白名单判定、host[:port] 归一与缺省端口折叠 |
 | `src/CMakeLists.txt` | 改 | 在 `borealis_core` 的显式源列表里加 `ui/url.cpp`（该列表非 GLOB，F20 同一条口径适用于 `src/`） |
 | `tests/unit/utest_ui_url.cpp` | 新建 | 判据 1/2/5/7 的全部取值：两来源 × 三档策略 × 白名单内/外 × 已记住/未记住 × 端口折叠 × 大小写归一 × 淘汰标识落回启发式 × 修剪规则逐档。用手工构造的 `grid::Row`（`set_hyperlink` + `set()`）造现场，不需要界面 |
+
+**批 1 收口回填（2026-10-12，AGENTS §4.2 第 12 条：冲突以代码运行时为准）**：
+
+- **① 目标串的编码从 `std::u32string` 改为 UTF-8 `std::string`**。原稿那行写的是码点串，落地按裁决 7.11 那句「公共头一律 UTF-8」改：OSC 8 侧的 `std::u32string`（`Session::hyperlink_target` 的原型）在 `find_link_at` 内**编一次**，此后提示条文案、确认框正文与落盘的域名单同持一份编码，不在三处各转一次。入参 `osc8_target` 仍是 `std::optional<std::u32string>`，那是与 `Session` 的接缝形状，不改它。
+- **② 新增一枚公共件 `parse_link_schemes(std::string_view csv)`**：配置里那枚逗号分隔串拆成小写、去空白、丢空项的表。放在纯件而不是 `src/main.cpp`，是为了让「非法/空白 scheme 由纯件在判定时拒绝、面板不拒收」（稿 D8① 的代价）这一条有证人而不是只有装配语句。
+- **③ `LinkOpenPlan::reason` 落成枚举 `LinkOpenReason{None, HostUnparsable}`** 而不是字符串；白名单不进本调用的入参（识别处已把关，见 §1 第 1 条与判据 5 的形态）。
+- **④ 证人与变异读数**：`utest_ui_url` 22 案全绿（结项读数 84 项 / 1074 案，基线 83 项 / 1052 案）。变异 M-A 摘启发式白名单闸 ⇒ **恰红 1 案**（`only_whitelisted_schemes_become_clickable`）；补一则 **M-A′** 摘 OSC 8 那一侧的同一道闸 ⇒ **恰红 1 案**（`osc8_target_outside_the_whitelist_...`）——两闸的证人在本件里本就是两处调用点，各打各的红，故拆成两则记；M-B 把 OSC 8 那一支短路（启发式先跑）⇒ 红 3 案，三案全部落在**同一条**判据（D1 优先）的不同侧面（目标取声明 / 游程取标识 / 过闸不落回），不是两条判据同源；M-C 让「记住」不落账 ⇒ 红 2 案（「同域第二次不再问」+ 名单件本身，同一条腿的两层）；M-E 把双宽延续格改成按列直取 ⇒ **恰红 1 案**。M-D（上报档让位闸）的证人在批 2 的归属闸上，本批无从注入。
 
 **批 2＝视口（命中、悬停、两条入口、确认框）**
 
