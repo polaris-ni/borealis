@@ -1,0 +1,369 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="3010" viewBox="0 0 1560 3010" font-family="'Noto Sans CJK SC',sans-serif">
+<rect x="0" y="0" width="1560" height="3010" fill="#eef0f5"/>
+<text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">URL 检测与打开：OSC 8 优先 + 启发式补位 + 两条入口一条平台腿（SPEC.FEAT.INTERACT.05）</text>
+<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_URL.draft.svg · 高保真草图 · 本棒是消费方：OSC 8 的来源腿三层早已落地而 UI 侧零消费（F1），故本稿不动 term/grid/session 任何一处 · 1 dp == 1 px @100% · 圈号 1–8 对应 UI_URL.draft.md §2 的判据标号 · 底部「实测口径」是该稿 §0 的 F 读数 · 屏 B 的确认框与 UI_COMMANDS.draft.svg 屏 4 那张已评审稿面逐字对齐</text>
+
+<!-- ============ 屏 A：悬停三态对照 ============ -->
+<g transform="translate(30,78)">
+  <rect x="-1" y="-1" width="1502" height="690" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">A</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 悬停三态对照（左：OSC 8 显式超链接 · 中：纯文本启发式 · 右：鼠标移开）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="654" fill="#1E1F29"/>
+
+  <!-- A-1 OSC 8 -->
+  <g transform="translate(24,58)">
+    <text x="0" y="-8" font-size="12" fill="#8BE9FD" font-weight="700">① OSC 8：屏上写「CI 构建日志」</text>
+    <rect x="0" y="4" width="460" height="330" fill="#282A36" stroke="#4D4F63"/>
+    <text x="14" y="28" font-size="11" fill="#62728A" font-family="monospace">build@ci:~/svc$ deploy --env staging</text>
+    <text x="14" y="50" font-size="11" fill="#F8F8F2">日志见：</text>
+    <text x="64" y="50" font-size="11" fill="#F8F8F2">CI 构建日志</text>
+    <rect x="64" y="54" width="62" height="1.5" fill="#BD93F9"/>
+    <text x="14" y="72" font-size="11" fill="#50FA7B" font-family="monospace">deploy done in 42s</text>
+    <text x="14" y="94" font-size="11" fill="#62728A" font-family="monospace">build@ci:~/svc$ _</text>
+    <rect x="10" y="286" width="440" height="26" rx="4" fill="#21222C" stroke="#BD93F9"/>
+    <text x="20" y="303" font-size="10.5" fill="#8BE9FD" font-family="monospace">https://ci.example.com/builds/4821/logs</text>
+    <g transform="translate(474,50)"><circle r="10" fill="#FFB86C"/><text y="4" font-size="12" font-weight="700" fill="#2A1600" text-anchor="middle">1</text></g>
+    <g transform="translate(474,299)"><circle r="10" fill="#FFB86C"/><text y="4" font-size="12" font-weight="700" fill="#2A1600" text-anchor="middle">3</text></g>
+
+    <text x="0" y="358" font-size="11" fill="#F8F8F2">识别来源＝那一格的 OSC 8 标识：grid::Row 的列粒度侧表 +</text>
+    <text x="0" y="376" font-size="11" fill="#62728A">Session::hyperlink_target（三层齐备，此前无人取用，F1）</text>
+    <text x="0" y="396" font-size="11" fill="#F1FA8C">游程＝同标识的连续列，不是区间表；双宽只挂前半格，</text>
+    <text x="0" y="414" font-size="11" fill="#62728A">按列直取会在任意全角处切断一条 URL（F2）</text>
+    <text x="0" y="434" font-size="11" fill="#FF5555">提示条与确认框显示的是目标全文，不是屏上那段文字</text>
+    <text x="0" y="452" font-size="11" fill="#62728A">——D1①「OSC 8 优先」的代价，就在这两行字里兑现</text>
+    <text x="0" y="472" font-size="11" fill="#F8F8F2">目标条＝视口左下角自绘小条，沿用重连卡那族的「三不」：</text>
+    <text x="0" y="490" font-size="11" fill="#62728A">不铺覆盖带 · 不吃焦点 · 不写命中盒 ⇒ 条下那格照常起选区</text>
+    <text x="0" y="508" font-size="11" fill="#62728A">（F9：paint_unrepresentable_notice 的原样形态）</text>
+    <text x="0" y="528" font-size="11" fill="#FF5555">装不下（窗口过小）整条不画，而不是截断或压掉内容</text>
+    <text x="0" y="548" font-size="11" fill="#62728A">标识已被淘汰（满表 1024，裁决 7.21②）⇒ 该格按「不可点」</text>
+    <text x="0" y="566" font-size="11" fill="#62728A">处理并落回启发式：同一段文字本身仍可能是条 URL</text>
+  </g>
+
+  <!-- A-2 启发式 -->
+  <g transform="translate(520,58)">
+    <text x="0" y="-8" font-size="12" fill="#8BE9FD" font-weight="700">② 纯文本启发式：字符表自带，不读断词符</text>
+    <rect x="0" y="4" width="460" height="330" fill="#282A36" stroke="#4D4F63"/>
+    <text x="14" y="28" font-size="11" fill="#62728A" font-family="monospace">lab@router:~$ curl </text>
+    <text x="139" y="28" font-size="11" fill="#F8F8F2" font-family="monospace">https://example.com/a?b=1</text>
+    <text x="304" y="28" font-size="11" fill="#F8F8F2" font-family="monospace">|jq</text>
+    <rect x="139" y="32" width="165" height="1.5" fill="#BD93F9"/>
+    <text x="14" y="56" font-size="11" fill="#F8F8F2">见 </text>
+    <text x="32" y="56" font-size="11" fill="#F8F8F2">https://a.cn/中文路径</text>
+    <text x="162" y="56" font-size="11" fill="#62728A">。 里的说明</text>
+    <rect x="32" y="60" width="130" height="1.5" fill="#BD93F9"/>
+    <text x="14" y="84" font-size="11" fill="#F8F8F2">详情看 </text>
+    <text x="76" y="84" font-size="11" fill="#F8F8F2" font-family="monospace">www.example.org/docs</text>
+    <text x="208" y="84" font-size="11" fill="#62728A">，谢谢</text>
+    <rect x="56" y="88" width="124" height="1.5" fill="#BD93F9"/>
+    <text x="14" y="112" font-size="11" fill="#62728A" font-family="monospace">lab@router:~$ wget </text>
+    <text x="126" y="112" font-size="11" fill="#F8F8F2" font-family="monospace">ftp://files.example.com/pub</text>
+    <text x="14" y="134" font-size="11" fill="#62728A">（末行无线：白名单外，见屏 B 的 ⑤）</text>
+    <g transform="translate(474,30)"><circle r="10" fill="#FFB86C"/><text y="4" font-size="12" font-weight="700" fill="#2A1600" text-anchor="middle">2</text></g>
+
+    <text x="0" y="358" font-size="11" fill="#F8F8F2">可点段＝scheme:// 起头到第一个「不在允许字符表内」的位置</text>
+    <text x="0" y="376" font-size="11" fill="#62728A">表＝ASCII 字母数字 + -._~:/?#@!$&amp;'()*+,;=% （D3①）</text>
+    <text x="0" y="394" font-size="11" fill="#62728A">行尾修剪：., ; : ! ? ' " 与不配对的右括号一律剔出气</text>
+    <text x="0" y="416" font-size="11" fill="#FF5555">缺省断词符集把 / : ? = . - 全收了进去，而本件不读那枚键</text>
+    <text x="0" y="434" font-size="11" fill="#62728A">F4：https://a/b?c=1 双击只取到 https: ⇒ 复用＝永远残缺。</text>
+    <text x="0" y="452" font-size="11" fill="#62728A">更硬的一条：那枚键用户可改，复用会让「改断词符」静默</text>
+    <text x="0" y="470" font-size="11" fill="#62728A">改掉链接边界——两件事被一根线绑住，谁都不知道（D3 否②③）</text>
+    <text x="0" y="492" font-size="11" fill="#F8F8F2">www. 起头按 http:// 前缀参与白名单判定（D2①）：它是猜的，</text>
+    <text x="0" y="510" font-size="11" fill="#62728A">故确认框的来源副行必须把「纯文本启发式识别」写在脸上</text>
+    <text x="0" y="532" font-size="11" fill="#FF5555">邮箱不认：本机 PS1 本身就含 \u@\h（F22）⇒ 认了＝每一条</text>
+    <text x="0" y="550" font-size="11" fill="#62728A">提示符都可点，而需求没要求 mailto（§7 在册）</text>
+  </g>
+
+  <!-- A-3 移开态 -->
+  <g transform="translate(1016,58)">
+    <text x="0" y="-8" font-size="12" fill="#8BE9FD" font-weight="700">悬停外：无线、无条（与左两栏同一段内容）</text>
+    <rect x="0" y="4" width="460" height="330" fill="#282A36" stroke="#4D4F63"/>
+    <text x="14" y="28" font-size="11" fill="#62728A" font-family="monospace">build@ci:~/svc$ deploy --env staging</text>
+    <text x="14" y="50" font-size="11" fill="#F8F8F2">日志见：CI 构建日志</text>
+    <text x="14" y="72" font-size="11" fill="#50FA7B" font-family="monospace">deploy done in 42s</text>
+    <text x="14" y="94" font-size="11" fill="#62728A" font-family="monospace">lab@router:~$ curl https://example.com/a?b=1|jq</text>
+    <text x="14" y="116" font-size="11" fill="#F8F8F2">见 https://a.cn/中文路径。 里的说明</text>
+    <text x="14" y="138" font-size="11" fill="#F8F8F2">详情看 www.example.org/docs，谢谢</text>
+    <text x="14" y="160" font-size="11" fill="#62728A" font-family="monospace">lab@router:~$ _</text>
+
+    <text x="0" y="358" font-size="11" fill="#F8F8F2">移开 ⇒ 线与条即时消失、无残影：三处入口（Move / Ctrl 击 /</text>
+    <text x="0" y="376" font-size="11" fill="#62728A">右键）各自现扫当前那一条行，判定一律不缓存（D4①）</text>
+    <text x="0" y="398" font-size="11" fill="#F1FA8C">缓存会造出「线还画着、目标已换」的分叉——那才是成本。</text>
+    <text x="0" y="416" font-size="11" fill="#62728A">F16 的诚实读数反过来说：预扫一屏 3.075 µs（帧预算 0.25%），</text>
+    <text x="0" y="434" font-size="11" fill="#62728A">所以「太贵所以不做」在本稿站不住，D4 的论证只压在状态面：</text>
+    <text x="0" y="452" font-size="11" fill="#62728A">区间表要配行号折算 + 上限 + truncated 整套（搜索件为此</text>
+    <text x="0" y="470" font-size="11" fill="#62728A">写了 translate_rows / kMaxSearchMatches / truncated）</text>
+    <text x="0" y="492" font-size="11" fill="#F8F8F2">回看态滚上去的旧行照样可点；滚出可见区即点不到。</text>
+    <text x="0" y="510" font-size="11" fill="#62728A">F3：ScreenMirror 整行拷贝 ⇒ 侧表随行走，悬停不进会话锁；</text>
+    <text x="0" y="528" font-size="11" fill="#62728A">mirror_line_of 回不回 nullptr 就是唯一判据，不需要新代码</text>
+    <text x="0" y="550" font-size="11" fill="#62728A">⇒ 链接天然只覆盖可见区，不做全 scrollback 的链接索引</text>
+  </g>
+
+  <g transform="translate(24,662)">
+    <text x="0" y="0" font-size="11" fill="#62728A">悬停线的落笔＝视口另起一层 fill_rect（accent、1 物理像素、baseline+1、四边吸附物理像素，照 decoration_rects 的口径）：不并入 CellPaint::underline——那会把「鼠标在哪」写进「这个 cell 长什么样」，且线色跟前景走拿不到 accent（F8）。本仓先例：标签条活动下划线 p.fill_rect(underline, accent)。</text>
+    <text x="0" y="18" font-size="11" fill="#FF5555">代价（走查第 8 条）：URL 段本身带 SGR 4 下划线时，悬停线同位覆盖在 baseline+1，线色由前景变 accent——刻意选同位覆盖而不是再画一条，否则两条线重叠会发粗。</text>
+  </g>
+</g>
+
+<!-- ============ 屏 B：三按钮确认 + 白名单外对照 ============ -->
+<g transform="translate(30,792)">
+  <rect x="-1" y="-1" width="1502" height="700" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 打开前的确认（左：三按钮自组，与 UI_COMMANDS 屏 4 已评审稿面逐字对齐 · 右：白名单内外的即时改口）</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="664" fill="#1E1F29"/>
+
+  <g transform="translate(24,58)">
+    <text x="0" y="-8" font-size="12" fill="#8BE9FD" font-weight="700">④ 确认策略缺省档 ask_once：先问，答了才动</text>
+    <rect x="0" y="4" width="760" height="400" fill="#282A36" stroke="#4D4F63"/>
+    <text x="14" y="28" font-size="11" fill="#62728A" font-family="monospace">build@ci:~/svc$ deploy --env staging</text>
+    <text x="14" y="50" font-size="11" fill="#F8F8F2">日志见：CI 构建日志</text>
+    <rect x="120" y="86" width="520" height="262" rx="8" fill="#21222C" stroke="#62728A"/>
+    <text x="140" y="114" font-size="13.5" fill="#F8F8F2" font-weight="700">打开链接？</text>
+    <text x="140" y="144" font-size="11.5" fill="#8BE9FD" font-family="monospace">https://ci.example.com/builds/4821/logs</text>
+    <text x="140" y="170" font-size="11" fill="#F1FA8C">来源：OSC 8 显式超链接（屏上文字是「CI 构建日志」）</text>
+    <text x="140" y="196" font-size="11" fill="#62728A">协议白名单：http / https；信任级别两档分开配置</text>
+    <text x="140" y="216" font-size="11" fill="#62728A">确认策略：首次确认并记住同域（默认）</text>
+    <rect x="140" y="290" width="76" height="28" rx="5" fill="none" stroke="#62728A"/>
+    <text x="178" y="309" font-size="11.5" fill="#F8F8F2" text-anchor="middle">取消</text>
+    <rect x="356" y="290" width="112" height="28" rx="5" fill="#343647" stroke="#8B93A7"/>
+    <text x="412" y="309" font-size="11.5" fill="#F8F8F2" text-anchor="middle">仅本次打开</text>
+    <rect x="478" y="290" width="150" height="28" rx="5" fill="#342B47" stroke="#BD93F9"/>
+    <text x="553" y="309" font-size="11.5" fill="#F8F8F2" text-anchor="middle" font-weight="600">记住该域并打开</text>
+    <text x="140" y="338" font-size="10.5" fill="#62728A">遮罩只吸收点击：点空白处不关闭、不打开（框架实测，本需求里这条在安全侧）</text>
+    <g transform="translate(660,104)"><circle r="10" fill="#FFB86C"/><text y="4" font-size="12" font-weight="700" fill="#2A1600" text-anchor="middle">4</text></g>
+
+    <text x="0" y="428" font-size="11" fill="#FF5555">三按钮不是框架一键给的：au::confirm 只产 Yes / No 两枚（F12）</text>
+    <text x="0" y="446" font-size="11" fill="#62728A">⇒ 照本仓 credential_prompt.cpp 的形态自组：Column + 三枚 Button +</text>
+    <text x="0" y="464" font-size="11" fill="#62728A">settings_label 取文案 + host.add_overlay 记 overlay_index_</text>
+    <text x="0" y="486" font-size="11" fill="#F8F8F2">「问了没答」是一档常态（遮罩不关闭 ⇒ 用户可以什么都不点）。</text>
+    <text x="0" y="504" font-size="11" fill="#50FA7B">这里它恰好是安全的：什么都不打开 ⇒ 本棒不需要 CONN.12 那条</text>
+    <text x="0" y="522" font-size="11" fill="#62728A">析构撤账腿。这一句要写进头注，否则下一棒会照抄那条设计多写一份撤账。</text>
+    <text x="0" y="544" font-size="11" fill="#F8F8F2">「记住该域并打开」⇒ 域＝scheme + host[:port]（host 小写归一、等于</text>
+    <text x="0" y="562" font-size="11" fill="#62728A">该 scheme 缺省端口时折叠），落非偏好数据叶子 connection.trusted_url_hosts</text>
+    <text x="0" y="580" font-size="11" fill="#FF5555">同 host 不同端口第二次仍要问（D9①）：只记 host 等于把 localhost:8080</text>
+    <text x="0" y="598" font-size="11" fill="#62728A">的信任铺满整台机器的所有端口——本需求唯一的风险缓解腿就是这一问</text>
+  </g>
+
+  <g transform="translate(820,58)">
+    <text x="0" y="-8" font-size="12" fill="#8BE9FD" font-weight="700">⑤ 协议白名单：改完立刻可点，不重开任何东西</text>
+    <rect x="0" y="4" width="656" height="150" fill="#282A36" stroke="#4D4F63"/>
+    <text x="14" y="24" font-size="10.5" fill="#62728A">改前：terminal.link_schemes = "http,https"（缺省）</text>
+    <text x="14" y="48" font-size="11" fill="#62728A" font-family="monospace">lab@router:~$ wget </text>
+    <text x="126" y="48" font-size="11" fill="#F8F8F2" font-family="monospace">ftp://files.example.com/pub</text>
+    <text x="14" y="70" font-size="11" fill="#62728A" font-family="monospace">git clone </text>
+    <text x="68" y="70" font-size="11" fill="#F8F8F2" font-family="monospace">ssh://git@github.com/acme/svc</text>
+    <text x="14" y="94" font-size="10.5" fill="#FF5555">这两串底下无线 · 右键菜单无「打开链接」 · Ctrl+左击不响</text>
+    <text x="14" y="114" font-size="10.5" fill="#F8F8F2">http:// · https:// 那两串照常有无线（屏 A）</text>
+    <text x="14" y="134" font-size="10.5" fill="#62728A">⇒「可点」在本产品里只意味着「能打开」</text>
+
+    <rect x="0" y="174" width="656" height="130" fill="#282A36" stroke="#50FA7B"/>
+    <text x="14" y="194" font-size="10.5" fill="#50FA7B">改后：terminal.link_schemes = "http,https,ftp"（面板改完即生效）</text>
+    <text x="14" y="218" font-size="11" fill="#62728A" font-family="monospace">lab@router:~$ wget </text>
+    <text x="126" y="218" font-size="11" fill="#F8F8F2" font-family="monospace">ftp://files.example.com/pub</text>
+    <rect x="139" y="222" width="180" height="1.5" fill="#BD93F9"/>
+    <text x="14" y="242" font-size="10.5" fill="#F8F8F2">同一处立刻变可点：画线、进菜单、Ctrl+左击可开</text>
+    <text x="14" y="262" font-size="10.5" fill="#62728A">即时生效的形态照 UI_SETTINGS §3 B2-a 那一族（三处构造点 +</text>
+    <text x="14" y="280" font-size="10.5" fill="#62728A">hooks.broadcast → apply_interaction_options，F18）</text>
+    <g transform="translate(670,30)"><circle r="10" fill="#FFB86C"/><text y="4" font-size="12" font-weight="700" fill="#2A1600" text-anchor="middle">5</text></g>
+
+    <text x="0" y="326" font-size="11" fill="#FF5555">白名单外的串根本不识别为链接：不画线、不进菜单、Ctrl 击不响。</text>
+    <text x="0" y="344" font-size="11" fill="#62728A">这不是「灰显」而是「不出现」——与 F17 那条「钩子未注入即无入口」同形，</text>
+    <text x="0" y="362" font-size="11" fill="#62728A">也让「能出现在菜单上」与「点了能开」两件事永远不会分家。</text>
+    <text x="0" y="386" font-size="11" fill="#F8F8F2">该键是 FreeText：装载侧只判类型不判域（settings_catalog.h 的定义），</text>
+    <text x="0" y="404" font-size="11" fill="#62728A">非法/空白 scheme 由纯件在判定时拒绝、面板不拒收——与 word_delimiters</text>
+    <text x="0" y="422" font-size="11" fill="#62728A">的「原样收字符」同口径（D8 的代价面）</text>
+    <text x="0" y="446" font-size="11" fill="#FF5555">清空该键 ⇒ 表现为「什么都不可以点」。这一档必须由行旁注解释，</text>
+    <text x="0" y="464" font-size="11" fill="#62728A">否则用户读到的是「链接功能坏了」（判据 8 的旁注那句）</text>
+    <text x="0" y="488" font-size="11" fill="#62728A">本期不做 mailto 与其余 scheme 的缺省识别；不做 ftp 之外的缺省扩项。</text>
+  </g>
+</g>
+
+<!-- ============ 屏 C：右键菜单四条 + 鼠标上报档对照 ============ -->
+<g transform="translate(30,1522)">
+  <rect x="-1" y="-1" width="1502" height="690" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">C</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 菜单自此四条（左）与鼠标上报档的让位边界（右）</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="654" fill="#1E1F29"/>
+
+  <g transform="translate(24,58)">
+    <text x="0" y="-8" font-size="12" fill="#8BE9FD" font-weight="700">⑥ 两条打开入口一条腿：Ctrl+左击 与 菜单「打开链接」</text>
+    <rect x="0" y="4" width="600" height="270" fill="#282A36" stroke="#4D4F63"/>
+    <text x="14" y="26" font-size="11" fill="#62728A" font-family="monospace">lab@router:~$ curl https://example.com/a?b=1|jq</text>
+    <rect x="139" y="30" width="165" height="1.5" fill="#BD93F9"/>
+    <text x="14" y="48" font-size="11" fill="#62728A">（光标停在那一段上，Ctrl+左击 = 打开）</text>
+    <rect x="150" y="64" width="290" height="192" rx="6" fill="#21222C" stroke="#62728A"/>
+    <text x="164" y="86" font-size="11.5" fill="#62728A">复制</text>
+    <text x="430" y="86" font-size="10.5" fill="#62728A" text-anchor="end">置灰（无选区）</text>
+    <line x1="156" y1="96" x2="434" y2="96" stroke="#3A3C4C"/>
+    <text x="164" y="116" font-size="11.5" fill="#F8F8F2">粘贴</text>
+    <line x1="156" y1="126" x2="434" y2="126" stroke="#3A3C4C"/>
+    <rect x="156" y="132" width="278" height="26" rx="4" fill="#342B47"/>
+    <text x="164" y="150" font-size="11.5" fill="#F8F8F2" font-weight="600">打开链接</text>
+    <text x="428" y="150" font-size="10.5" fill="#BD93F9" text-anchor="end">OpenLink</text>
+    <line x1="156" y1="162" x2="434" y2="162" stroke="#3A3C4C"/>
+    <text x="164" y="182" font-size="11.5" fill="#F8F8F2">会话日志</text>
+    <text x="164" y="212" font-size="10.5" fill="#62728A">命中链接时四条；打开链接排在会话日志之前</text>
+    <text x="164" y="230" font-size="10.5" fill="#62728A">未命中时这一条不出现，产出折成三条</text>
+    <text x="164" y="248" font-size="10.5" fill="#62728A">次序与文案与今天逐字节一致：复制 → 粘贴 → 会话日志</text>
+    <g transform="translate(614,150)"><circle r="10" fill="#FFB86C"/><text y="4" font-size="12" font-weight="700" fill="#2A1600" text-anchor="middle">6</text></g>
+
+    <rect x="0" y="294" width="600" height="96" fill="#282A36" stroke="#4D4F63"/>
+    <text x="14" y="314" font-size="10.5" fill="#62728A">对照：同一段文字、鼠标不在链接上时右键 —— 菜单只有三条</text>
+    <rect x="14" y="326" width="272" height="56" rx="6" fill="#21222C" stroke="#62728A"/>
+    <text x="28" y="344" font-size="11" fill="#62728A">复制 · 置灰</text>
+    <text x="28" y="362" font-size="11" fill="#F8F8F2">粘贴</text>
+    <text x="150" y="362" font-size="11" fill="#F8F8F2">会话日志</text>
+
+    <text x="0" y="414" font-size="11" fill="#FF5555">plan_right_click 自此多收第四枚入参 LinkMenuState{bool on_link}</text>
+    <text x="0" y="432" font-size="11" fill="#62728A">——这是该纯件头注声明「本棒唯一一处改签名」之后的第二处（F17）。</text>
+    <text x="0" y="450" font-size="11" fill="#62728A">必须点名写进裁决，否则下一棒会读成「顺手扩面」。选①（再加一枚参数）</text>
+    <text x="0" y="468" font-size="11" fill="#62728A">而不选②（把三枚条件包成 MenuContext）：调用点改动量两者相同，而②是</text>
+    <text x="0" y="486" font-size="11" fill="#62728A">为还不存在的第四枚条件做抽象（AGENTS §4.1 第 3 条）</text>
+    <text x="0" y="508" font-size="11" fill="#62728A">D12③（绘制侧自己 append 这一条）否掉的理由：菜单有几条、哪条灰</text>
+    <text x="0" y="526" font-size="11" fill="#62728A">本来是可全量断言的事，拆两处就拆出了分叉</text>
+    <text x="0" y="548" font-size="11" fill="#F8F8F2">「打开链接」的可用位恒真（能出现就能开）；无选区时「复制」照旧置灰。</text>
+    <text x="0" y="566" font-size="11" fill="#62728A">这一条正是 right_click.h 头注那句「不留点了什么也不发生的空位」的兑现。</text>
+    <text x="0" y="584" font-size="11" fill="#62728A">terminal.right_click 取 Paste / CopyOnSelect 两态时菜单根本不发（7.38⑥）</text>
+    <text x="0" y="602" font-size="11" fill="#FF5555">⇒ 那两档用户只剩 Ctrl+点击一条入口，故③（只做菜单）单独不成立（D7）</text>
+  </g>
+
+  <g transform="translate(680,58)">
+    <text x="0" y="-8" font-size="12" fill="#8BE9FD" font-weight="700">⑦ 鼠标上报档：本棒不新造第二条归属判据</text>
+    <rect x="0" y="4" width="800" height="256" fill="#282A36" stroke="#4D4F63"/>
+    <text x="14" y="24" font-size="10.5" fill="#62728A">唯一分流判据＝既有的 takes_pointer_by_report(e, level)（F6）：非左键恒归本地 · 有在途按下整笔跟随</text>
+    <text x="14" y="40" font-size="10.5" fill="#62728A">Off 或带 Shift 归本地 · 无按下的 Move 只在 ?1003（AnyEvents）档归上报 ⇒ 本棒不新增第二条归属判据</text>
+    <text x="14" y="58" font-size="11" fill="#F8F8F2" font-weight="600">档位</text>
+    <text x="196" y="58" font-size="11" fill="#F8F8F2" font-weight="600">悬停线 + 目标条</text>
+    <text x="410" y="58" font-size="11" fill="#F8F8F2" font-weight="600">Ctrl+左击</text>
+    <text x="600" y="58" font-size="11" fill="#F8F8F2" font-weight="600">菜单「打开链接」</text>
+    <line x1="12" y1="66" x2="788" y2="66" stroke="#3A3C4C"/>
+    <text x="14" y="84" font-size="11" fill="#F8F8F2">无上报（缺省）</text>
+    <text x="196" y="84" font-size="11" fill="#50FA7B">✔ 有</text>
+    <text x="410" y="84" font-size="11" fill="#50FA7B">✔ 打开</text>
+    <text x="600" y="84" font-size="11" fill="#50FA7B">✔ 在</text>
+    <text x="14" y="116" font-size="11" fill="#F8F8F2" font-family="monospace">?1000 / ?1002</text>
+    <text x="196" y="116" font-size="11" fill="#50FA7B">✔ 有（Move 归本地）</text>
+    <text x="410" y="116" font-size="11" fill="#FF5555">✘ 不响（Press 归上报）</text>
+    <text x="600" y="116" font-size="11" fill="#50FA7B">✔ 在（右键恒归本地）</text>
+    <text x="14" y="148" font-size="11" fill="#F8F8F2" font-family="monospace">?1003 AnyEvents</text>
+    <text x="196" y="148" font-size="11" fill="#FF5555">✘ 无（Move 也归上报）</text>
+    <text x="410" y="148" font-size="11" fill="#FF5555">✘ 不响</text>
+    <text x="600" y="148" font-size="11" fill="#50FA7B">✔ 在</text>
+    <text x="14" y="180" font-size="11" fill="#F8F8F2">任一档 + Shift</text>
+    <text x="196" y="180" font-size="11" fill="#50FA7B">✔ 有（整笔让位本地）</text>
+    <text x="410" y="180" font-size="11" fill="#50FA7B">✔ 打开</text>
+    <text x="600" y="180" font-size="11" fill="#50FA7B">✔ 在</text>
+    <text x="14" y="212" font-size="10.5" fill="#62728A">上报腿无条件 is_handled = true，本棒不抢；那一次的 Ctrl 位会被编进 SGR 字节送给远端</text>
+    <text x="14" y="232" font-size="10.5" fill="#62728A">远端 vim / tmux 要的就是那一击 —— 让位是它的正确行为，不是本棒的漏判</text>
+    <g transform="translate(814,60)"><circle r="10" fill="#FFB86C"/><text y="4" font-size="12" font-weight="700" fill="#2A1600" text-anchor="middle">7</text></g>
+
+    <text x="0" y="284" font-size="11" fill="#F8F8F2">普通左击的行为逐字节不变：那一击仍然是选区的起点。</text>
+    <text x="0" y="302" font-size="11" fill="#62728A">本棒两处落点都在既有分支里：本地 Move 那条 !dragging_ 的 return 之前</text>
+    <text x="0" y="320" font-size="11" fill="#62728A">（加扫描与 hover_link_ 更新 + mark_needs_paint），以及左键 Press 分支里</text>
+    <text x="0" y="338" font-size="11" fill="#62728A">takes_pointer_by_report 之后的 Ctrl 档短路。不新增任何事件订阅。</text>
+    <text x="0" y="362" font-size="11" fill="#50FA7B">D13①：任何打开动作都不碰选区 —— Ctrl 击置 is_handled=true 但不</text>
+    <text x="0" y="380" font-size="11" fill="#62728A">extend_selection。否则一次打开顺带改一次选区，随后的 copy-on-select</text>
+    <text x="0" y="398" font-size="11" fill="#62728A">会把 URL 塞进剪贴板，那是用户没要的动作（itest 里用「点完没有新选区」断）</text>
+    <text x="0" y="422" font-size="11" fill="#F1FA8C">层序：悬停线在最上层，但它只覆盖同一基线的 SGR 线、不改底色。</text>
+    <text x="0" y="440" font-size="11" fill="#62728A">UI_SELECTION 的 D4 早裁过「选区盖过命中高亮」——那是底色之间的层序，</text>
+    <text x="0" y="458" font-size="11" fill="#62728A">本条是装饰层，不与既有裁决冲突（写清这句是为了不让下一棒读成改判）</text>
+    <text x="0" y="482" font-size="11" fill="#FF5555">?1003 档下悬停线与 Ctrl+点击都不可得，是 D7① 明说的代价而非边角：</text>
+    <text x="0" y="500" font-size="11" fill="#62728A">修它要把归属判据从「整档」细化到「Ctrl 让位」，那要改 F6 那条既有判据、</text>
+    <text x="0" y="518" font-size="11" fill="#62728A">跨 TERM.06 一棒 ⇒ 本期在册不改</text>
+    <text x="0" y="542" font-size="11" fill="#62728A">Shift 那一档与 ?1003 那一档要分开断言：前者整笔让位故可用，后者</text>
+    <text x="0" y="560" font-size="11" fill="#62728A">是 Move 归上报故不可用（两档同判据的不同分支，各一条证人）</text>
+    <text x="0" y="584" font-size="11" fill="#62728A">本期不扩「广播只覆盖当前标签」那条既有边界：链接档位不是安全闸（§5 第 2 条）。</text>
+  </g>
+</g>
+
+<!-- ============ 屏 D：设置页终端页三行 ============ -->
+<g transform="translate(30,2242)">
+  <rect x="-1" y="-1" width="1502" height="620" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">D</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 设置页「终端」自此三行（全部即时生效；已记住的域不在本页）</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="584" fill="#1E1F29"/>
+
+  <g transform="translate(24,58)">
+    <rect x="0" y="4" width="1452" height="330" fill="#282A36" stroke="#4D4F63"/>
+    <rect x="0" y="4" width="180" height="330" fill="#21222C"/>
+    <line x1="180" y1="4" x2="180" y2="334" stroke="#3A3C4C"/>
+    <text x="16" y="28" font-size="11" fill="#62728A">外观</text>
+    <rect x="8" y="40" width="164" height="24" rx="4" fill="#342B47"/>
+    <text x="16" y="56" font-size="11.5" fill="#F8F8F2" font-weight="600">终端</text>
+    <text x="16" y="84" font-size="11" fill="#62728A">键位与鼠标</text>
+    <text x="16" y="112" font-size="11" fill="#62728A">连接</text>
+    <text x="16" y="140" font-size="11" fill="#62728A">会话与标签</text>
+    <text x="16" y="168" font-size="11" fill="#62728A">高级</text>
+
+    <text x="204" y="28" font-size="12.5" fill="#F8F8F2" font-weight="700">终端 — 链接（SPEC.FEAT.INTERACT.05）</text>
+    <line x1="204" y1="38" x2="1436" y2="38" stroke="#3A3C4C"/>
+
+    <text x="204" y="64" font-size="11.5" fill="#F8F8F2">显式超链接（OSC 8）打开前</text>
+    <rect x="620" y="48" width="300" height="26" rx="5" fill="#21222C" stroke="#62728A"/>
+    <text x="632" y="65" font-size="11.5" fill="#8BE9FD">首次确认并记住同域</text>
+    <text x="906" y="65" font-size="11" fill="#62728A" text-anchor="end">▾</text>
+    <rect x="940" y="50" width="42" height="20" rx="4" fill="#1F3A2B" stroke="#50FA7B"/>
+    <text x="961" y="64" font-size="10" fill="#50FA7B" text-anchor="middle">即时</text>
+    <text x="1000" y="65" font-size="10.5" fill="#62728A">落盘名 never / ask_once / ask_always，缺省 ask_once</text>
+
+    <text x="204" y="106" font-size="11.5" fill="#F8F8F2">纯文本识别的链接打开前</text>
+    <rect x="620" y="90" width="300" height="26" rx="5" fill="#21222C" stroke="#62728A"/>
+    <text x="632" y="107" font-size="11.5" fill="#8BE9FD">首次确认并记住同域</text>
+    <text x="906" y="107" font-size="11" fill="#62728A" text-anchor="end">▾</text>
+    <rect x="940" y="92" width="42" height="20" rx="4" fill="#1F3A2B" stroke="#50FA7B"/>
+    <text x="961" y="106" font-size="10" fill="#50FA7B" text-anchor="middle">即时</text>
+    <text x="1000" y="107" font-size="10.5" fill="#62728A">与上一行分开配置＝需求那句「信任级别可分别配置」</text>
+
+    <text x="204" y="148" font-size="11.5" fill="#F8F8F2">允许打开的协议</text>
+    <rect x="620" y="132" width="300" height="26" rx="5" fill="#21222C" stroke="#62728A"/>
+    <text x="632" y="149" font-size="11.5" fill="#8BE9FD" font-family="monospace">http,https</text>
+    <rect x="940" y="134" width="42" height="20" rx="4" fill="#1F3A2B" stroke="#50FA7B"/>
+    <text x="961" y="148" font-size="10" fill="#50FA7B" text-anchor="middle">即时</text>
+    <text x="1000" y="149" font-size="10.5" fill="#62728A">逗号分隔；白名单外的链接不显示为可点</text>
+    <text x="204" y="170" font-size="10.5" fill="#FFB86C">该框原样收字符、装载侧不校验域（FreeText 的定义）：写错的 scheme 由判定时拒绝，面板不拒收</text>
+
+    <line x1="204" y1="184" x2="1436" y2="184" stroke="#3A3C4C"/>
+    <text x="204" y="206" font-size="11" fill="#62728A">同页既有各行（右键行为、断词符、复制变换、剪贴板读取授权…）位置与文案一律不动</text>
+    <rect x="204" y="222" width="1232" height="96" rx="6" fill="#2A1C22" stroke="#FF5555" stroke-dasharray="3 2"/>
+    <text x="218" y="244" font-size="11" fill="#FF5555">本页没有「查看 / 清空已记住的域」那一行（刻意，不是漏）</text>
+    <text x="218" y="266" font-size="10.5" fill="#F8F8F2">已记住的域是运行期数据而非偏好：connection.trusted_url_hosts 走 kNonPreferenceLeaves</text>
+    <text x="218" y="286" font-size="10.5" fill="#F8F8F2">例外通道（4→5，与 recent / profiles.items / tunnels.items / key_dirs.items 同族）⇒ 不占 65 那枚计数闸、</text>
+    <text x="218" y="306" font-size="10.5" fill="#62728A">面板不画它。要清这份名单目前只能改 borealis.json —— §7 登记为观察项，真人别扭再补那一行</text>
+    <g transform="translate(1466,64)"><circle r="10" fill="#FFB86C"/><text y="4" font-size="12" font-weight="700" fill="#2A1600" text-anchor="middle">8</text></g>
+  </g>
+
+  <g transform="translate(24,412)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">键的六处同步与两处计数闸（F19：加键在本仓不免费）</text>
+    <text x="0" y="24" font-size="11" fill="#F8F8F2">schema（settings.h）· store 读写 · form_transfer 的 Binding · 核对表行 · 面板词条 · make_interaction 搬运</text>
+    <text x="0" y="44" font-size="11" fill="#FF5555">三枚新偏好键自入表起就是 Wired × Immediate ⇒ 写出 schema 叶子 65→68、Absent 保持 19</text>
+    <text x="0" y="64" font-size="11" fill="#62728A">「计数不动」这条本身就是证人：任何一处消费方被摘掉都会让它反弹。三档 × 两来源＝六组全部有 utest 证人。</text>
+    <text x="0" y="86" font-size="11" fill="#F8F8F2">F18：新增交互配置的唯一正确落点是 InteractionOptions（三处视口构造点自动同值、不新增接线），</text>
+    <text x="0" y="106" font-size="11" fill="#62728A">运行期改动照既有 hooks.broadcast → apply_interaction_options 那条腿走；三处构造点一字不动。</text>
+    <text x="0" y="128" font-size="11" fill="#F8F8F2">本期不交付（§7）：mailto 与其余 scheme 的缺省识别 · 已记住名单的查看/清空入口 · gio/kde-open 回落 ·</text>
+    <text x="0" y="148" font-size="11" fill="#62728A">打开成败的回执（双 fork 拿不到退出码）· IDN 的 punycode 归一 · 全选/分屏/重命名/广播组/关闭那五条菜单</text>
+  </g>
+</g>
+
+<!-- ============ 底部实测口径 ============ -->
+<g transform="translate(30,2880)">
+  <text x="0" y="0" font-size="11.5" fill="#5a6070" font-weight="700">实测口径（2026-10-12 本沙箱 POSIX 腿；探针一次性、不入仓，复现见稿 §8）</text>
+  <text x="0" y="20" font-size="11.5" fill="#5a6070">F1 src/ui 目录 grep hyperlink 零命中（有来源无消费）· F4 缺省断词符集把 / : ? = . - 全收进去 · F17 plan_right_click 上一棒刚改过一次签名</text>
+  <text x="0" y="40" font-size="11.5" fill="#5a6070">F10 框架 tooltip 有计时而无 hover 起始调用方与气泡绘制（半成品，绕开）· F11 状态栏件未开工 ⇒ 目标条位置暂定 · F12 au::confirm 只两枚按钮、遮罩点击不触发 on_close</text>
+  <text x="0" y="60" font-size="11.5" fill="#5a6070">F13 双 fork 单次 176.97 µs、200 次后 waitpid(-1) 收 0 条（单 fork 对照组显 Z）· F14 execvp 带分号与 touch 的假参数不生成文件（不经 shell 才封得住注入）</text>
+  <text x="0" y="80" font-size="11.5" fill="#5a6070">F16 扫描成本：单行 120 列 112 ns、全可见区 3.075 µs、10 万行 5.11 ms（对比 full_redraw_ms 1.262）⇒ 成本不是本稿的判据 · F22 本机 PS1 含 \u@\h ⇒ 邮箱识别必然误报</text>
+  <text x="0" y="100" font-size="11.5" fill="#c2410c">未实测即外推（标推断／未验证，AGENTS 第 11 条）：Win32 腿的 ShellExecuteW 返回档、shell32 链接与 URL 里带百分号与 &amp; 的实际行为（本沙箱无 MSVC）</text>
+  <text x="0" y="120" font-size="11.5" fill="#c2410c">真打开浏览器的整条链无自动化证人（D11：一次 xdg-open 探针曾在用户桌面真的开出 Edge 窗口，F15）⇒ 走查九条一条未做，本棒结项不称「可用」</text>
+</g>
+</svg>
