@@ -88,6 +88,7 @@ if (WIN32)
             platform/win/conpty_connection.cpp
             platform/win/file_secure.cpp
             platform/win/local_terminal.cpp
+            platform/win/open_url.cpp
             platform/win/serial.cpp
             platform/win/tcp.cpp
             platform/win/user_dir.cpp
@@ -97,6 +98,7 @@ elseif (UNIX)
             platform/posix/file_secure.cpp
             platform/posix/forkpty_connection.cpp
             platform/posix/local_terminal.cpp
+            platform/posix/open_url.cpp
             platform/posix/serial.cpp
             platform/posix/tcp.cpp
             platform/posix/user_dir.cpp)
@@ -108,8 +110,10 @@ elseif (UNIX)
 endif ()
 
 # Win32 腿的 TCP 转发（platform/win/tcp.cpp，SPEC.FEAT.CONN.08）需要 Winsock2 库。
+# `shell32` 是打开外部 URI 那条腿（platform/win/open_url.cpp，SPEC.FEAT.INTERACT.05）要的
+# `ShellExecuteW` 所在库；**本沙箱无 MSVC，链接面未验证**（AGENTS.md §4.2 第 11 条）。
 if (WIN32)
-    target_link_libraries(borealis_core PRIVATE ws2_32)
+    target_link_libraries(borealis_core PRIVATE ws2_32 shell32)
 endif ()
 
 # SSH 传输腿（`SPEC.FEAT.CONN.02`）：libssh 经 vcpkg 获取，vcpkg 给出的 CMake 目标名是 `ssh`
