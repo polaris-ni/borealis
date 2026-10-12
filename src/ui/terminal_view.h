@@ -147,10 +147,10 @@ class TerminalView final : public aurora::LeafWidget {
         std::function<void(const LinkOpenRequest &, std::function<void(LinkOpenAnswer)> answer)> confirm_open_link;
         /// @brief 把目标串交进系统打开（稿 D10① 的平台腿）；空即只记一条日志、什么都不开。
         ///
-        /// **刻意不做「留空即调生产腿」的回落**（同上面几条字段的口径相反）：批 2 落地时
-        /// `platform::open_url` 还不存在，而这条腿一旦在测试里被默认实现接上，就是每次跑用例开一个
-        /// 浏览器窗口——稿 F15 记的正是这样一次事故。装配层（批 3）装填它，用例装填替身，
-        /// 两条都没有时宁可什么都不发生。
+        /// **刻意不做「留空即调生产腿」的回落**（同上面几条字段的口径相反）：这条腿一旦在测试里被
+        /// 默认实现接上，就是每次跑用例开一个浏览器窗口——稿 F15 记的正是这样一次事故。装填它的
+        /// 只有装配层那一处（`main.cpp` 里 `wire_view` 给 `open_url` 指进 `platform::open_url`），
+        /// 用例装填替身，两条都没有时宁可什么都不发生。
         std::function<void(std::string_view target)> open_url;
     };
 
@@ -822,8 +822,9 @@ class TerminalView final : public aurora::LeafWidget {
 
     /// @brief 把一条已获授权（或策略免问）的目标交进打开接缝。
     ///
-    /// `presentation_.open_url` 为空即只记一条日志：批 2 落地时平台腿还没有，而「装了菜单条目却
-    /// 什么都不发」比「不画条目」更坏——前者是静默失败。装填生产腿是批 3 那条闭包的事。
+    /// `presentation_.open_url` 为空即只记一条日志：「装了菜单条目却什么都不发」比「不画条目」更坏
+    /// ——前者是静默失败，而日志是唯一能看出「授权过了、发没发出去」的地方。装填生产腿的只有装配层
+    /// `wire_view` 那一处。
     auto dispatch_open(std::string_view target) -> void;
 
     /// @brief 答话处置：取消什么都不做，「记住」那一档先写名单再打开，两者之后都不碰选区（稿 D13①）。

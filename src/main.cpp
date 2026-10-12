@@ -8,6 +8,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -37,6 +38,7 @@
 #include "borealis/ui/settings_form.h"
 #include "borealis/ui/tab_strip.h"
 #include "borealis/ui/closed_tab_stack.h"
+#include "borealis/ui/url.h"
 #include "conn/key_model.h"
 #include "conn/key_push.h"
 #include "conn/key_store.h"
@@ -46,6 +48,7 @@
 #include "conn/ssh_connection.h"
 #include "conn/telnet_connection.h"
 #include "conn/tunnel_client.h"
+#include "platform/open_url.h"
 #include "platform/serial.h"
 #include "platform/user_dir.h"
 #include "ui/connection_sidebar.h"
@@ -172,6 +175,13 @@ struct TunnelEntry {
     interaction.right_click = settings.terminal.right_click;
     interaction.paste.newline = settings.terminal.paste_newlines;
     interaction.paste.line_ending = line_ending;  // CONN.05 的行尾设置到此接线（块间隔需求未开键）。
+    // 链接的三枚键在同一次搬运里走完（`SPEC.FEAT.INTERACT.05` 判据 5／稿 D8①）：白名单在**装配层**
+    // 拆一次，视口因此不认识拆串规则，`"http,https"` 那枚缺省串也就只有配置侧一处定义。该键被清空
+    // 的表现是「一切不可点」而不是「未配故放行」——缺省空表就是那个意思，设置页旁注负责把话说清。
+    interaction.link.scan = borealis::ui::LinkScanOptions{
+        .schemes = borealis::ui::parse_link_schemes(settings.terminal.link_schemes)};
+    interaction.link.osc8 = settings.terminal.link_osc8;
+    interaction.link.heuristic = settings.terminal.link_heuristic;
     return interaction;
 }
 
@@ -395,6 +405,34 @@ auto main() -> int {
     // （面板保存、快照回滚、配置导入），其余 `replace()` 调用只搬档案 / 隧道 / 密钥目录那几张表。
     auto sync_clipboard_gate = [&]() -> void {
         clipboard_gate.set_policy(settings.terminal.clipboard_read);
+    };
+    // 「已记住的同域」名单（`SPEC.FEAT.INTERACT.05` 判据 4／稿 D9①）：全 app 一份，声明紧挨 `store`
+    // 因而同样**几乎最后析构**——视口只持观察指针，名单本体不会先于控件消散。它与 `clipboard_gate`
+    // 的差别在落盘归属：这一枚是**运行期数据而非偏好**，设置面板不画它，故面板那三条持久化入口
+    // （保存 / 回滚 / 导入）都搬不到它，只能由它自己的变化回调写 `connection.trusted_url_hosts`
+    // 那枚走 `kNonPreferenceLeaves` 例外通道的数据叶子（`utest_settings_catalog` 计数闸认它）。
+    borealis::ui::TrustedLinkHosts link_hosts;
+    // 灌入既有名单**不触发**回调（`load` 的口径：灌入不是变化），于是启动路径上不写盘——
+    // 与「装载不产生任何写入」（裁决 7.26⑤）同一条纪律。
+    link_hosts.load(settings.connection.trusted_url_hosts);
+    // 走到这一步的唯一时刻是用户在确认框里点了「记住该域并打开」。交回的是**整表快照**而非增量，
+    // 故本闭包不需要知道名单内部怎么排序；落盘是同步小文件写（临时文件 + rename），与面板保存那条腿
+    // 同一档，不属 AGENTS.md §4.5 第 25 条要避让的阻塞 IO。失败的后果只有「内存已记、盘上没记」，
+    // 即重启后同域再问一次——fail-safe 的方向是**多问**，不是少问。
+    link_hosts.set_change_sink([&store](std::span<const std::string> hosts) -> void {
+        borealis::config::Settings next = store.settings();
+        next.connection.trusted_url_hosts.assign(hosts.begin(), hosts.end());
+        static_cast<void>(store.replace(std::move(next)));
+    });
+    // 生产打开腿的装填（稿 §5 第 4 条）：`Presentation::open_url` **刻意没有**「留空即调本腿」的回落
+    //（稿 F15 记的正是「测试里接上生产腿＝每案开一扇浏览器窗口」那次事故），所以这里是指向它的
+    // **唯一**一处。三处建视口都经 `wire_view`，装填也就只有这一处。
+    borealis::ui::TerminalView::Presentation production_presentation;
+    production_presentation.open_url = [](std::string_view target) -> void {
+        // 分档结果不在这里再报一遍：`platform/open_url.h` 那条 `@return` 写明除 `Opened` 外每一档都已在
+        // 实现侧记过日志，调用方重复一条只会让同一件事有两处措辞。本闭包的全部职责就是「把这一指
+        // 向那条腿」，而它返回值在这里没有可处置的对象——「没开成功」的最坏后果就是屏上没反应。
+        static_cast<void>(borealis::platform::open_url(target));
     };
     // 词条必须在任何控件绘制之前装填：查表失败回退空文本，晚装就会让首帧闪一下空标签。
     borealis::ui::install_settings_strings();
@@ -759,10 +797,15 @@ auto main() -> int {
     
     // 视口的两条浮层依赖此刻才取得到，先给已存在的全部视图（首标签那一只）补挂，再交给
     // `create_new_tab` 与撤销重开在创建那一刻调用——两条建视图路径共用同一处接线，结构上不可能分叉。
-    wire_view = [&host, &app, &restart_current_tab, &logging_state_probe,
-                 &logging_toggle_action](borealis::ui::TerminalView &view) -> void {
+    wire_view = [&host, &app, &restart_current_tab, &logging_state_probe, &logging_toggle_action,
+                 &link_hosts, &production_presentation](borealis::ui::TerminalView &view) -> void {
         view.set_overlay_host(*host);
         view.set_search_dependencies(app.shortcuts(), app.focus());
+        // 名单与生产打开腿在这一处一起挂上：三处建视口（新开格 / 重启换会话 / 撤销重开）都经这里，
+        // 「有的格子记不住同域、有的格子点了不开」就结构上进不来（同上面 `set_clipboard_gate` 两接、
+        // 以及稿 §0 的 F4 那条「靠一处装钩而不是靠人记得」的纪律）。
+        view.set_trusted_link_hosts(link_hosts);
+        view.set_presentation(production_presentation);
         // 视口只持一份可调用体；真正的重启在装配层实现（见下方 `restart_current_tab` 的赋值处）。
         // 按引用捕获那支 `std::function`：赋值发生在 `wire_view` 之后、点击之前，钩子里读到的永远是最新那一份。
         view.set_restart_hook([&restart_current_tab]() -> void {
