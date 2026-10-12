@@ -77,6 +77,9 @@
 | `copy_on_select` | 开关 | bool（缺省关闭） | 视口选区状态机 | 即时 |
 | `trim_pasted_trailing_space` / `smart_line_join` / `strip_tmux_border_chars` | 开关 ×3 | 均缺省关闭（需求原文） | `ui::CopyOptions` | 即时 |
 | `word_delimiters` | 文本输入（原始字符） | 装载侧**只判类型不判域**（裁决 7.39④：空串是「只有空格与制表断词」这一合法选择） | `ui::word_span_at` | 即时 |
+| `link_osc8` | 下拉三档 | 落盘名 `never` / `ask_once` / `ask_always`（缺省 `ask_once`），候选**照落盘名原文显示**（与 `clipboard_read` 同一条词条纪律） | `ui::plan_link_open` 的 OSC 8 那一支（裁决 **7.119** D8①） | 即时 |
+| `link_heuristic` | 下拉三档 | 同一张取值表（与上一行**分开配置**是需求那句「信任级别可分别配置」的落点） | `ui::plan_link_open` 的启发式那一支 | 即时 |
+| `link_schemes` | 文本输入（逗号分隔） | `ValueDomain::FreeText`：装载侧只判类型不判域，非法/空白 scheme 由 `ui::find_link_at` 在判定时拒绝、面板**不拒收**（缺省 `http,https`） | `ui::LinkScanOptions::schemes`（装配层 `parse_link_schemes` 拆一次） | 即时 |
 
 **连接域 `connection.*`**（本稿只画默认值；建档表单属屏 2）
 
@@ -87,6 +90,8 @@
 | `ssh.*`（port / auth_method / agent_forwarding / keepalive_interval_sec / connect_timeout_sec） | 表单五项 | port 与两时长为整数、`auth_method` 四取值 | 无消费方（SSH 族未开工） | 延后 |
 | `serial.*`（baud / data_bits / stop_bits / parity / line_ending / encoding） | 表单六项 | baud `[1, 4000000]`、data_bits `[5,8]`、stop_bits `[1,2]`、parity 与 line_ending 各为 `one_of` 白名单 | 无消费方（串口族未开工） | 延后 |
 | `session_logging` / `session_log_dir` | 开关 + 文本输入 | bool / 自由文本 | 无消费方（`SPEC.FEAT.CONN.11` 属 M4） | 延后 |
+
+> 「已记住的同域」不画在本表里：`connection.trusted_url_hosts` 是**运行期数据而不是偏好**（裁决 7.119 D9①），它走 `kNonPreferenceLeaves` 那条例外通道（例外叶 4→5），于是面板**没有查看/清空入口**——要清只能改 `borealis.json`。这一档是刻意排的：补那一行需要一份本仓没有先例的列表编辑控件，而「用户真要管这份名单」尚未成立（稿 §8 在册，真人别扭再补，届时它才占 schema 那一行）。
 
 > 凭据不在本表：`SPEC.FEAT.CONN.09` 的密码与私钥 passphrase 经 OS 凭据库，配置文件里永远不出现明文值（裁决 7.26⑥），面板因此**没有**任何密码输入框，只有「每次询问」这一降级态的说明文案。
 

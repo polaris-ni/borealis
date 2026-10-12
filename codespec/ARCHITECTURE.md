@@ -440,7 +440,12 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 
 ### 10.4 URL 检测
 
-视区内 URL 识别（含 OSC 8）；打开前确认可配；协议白名单默认仅 http/https（`SPEC.FEAT.INTERACT.05`）。
+视区内 URL 识别（含 OSC 8）；打开前确认可配；协议白名单默认仅 http/https（`SPEC.FEAT.INTERACT.05`）。**落地形态（2026-10-12，裁决 7.119）按层分四段**：
+
+- **识别与决策全在纯件**：`ui::url`（`include/borealis/ui/url.h` + `src/ui/url.cpp`）不含界面也不含 IO——`find_link_at` 把「一行 + 落点 + 白名单 + OSC 8 声明目标」折成一条 `LinkHit`（同标识连续游程、跳双宽延续格），`plan_link_open` 把「来源 × 两档策略 × 已记住名单」折成 `Open/Confirm/Refuse`，`link_host_of` 是「什么算同域」的唯一定义处（`scheme://host[:port]`、缺省端口折叠、userinfo 剔除）。**OSC 8 优先于启发式**（声明是意图、形状是猜测），故「屏上文字与目标可以不一致」是设计后果，提示条与确认框一律显示目标全文。
+- **扫描惰性且只吃可见区副本行**：三处入口（悬停 Move / Ctrl+左击 / 右键）各自现扫当前那一条行、判定不缓存；行源是 `ScreenMirror` 的整行拷贝（侧表随行走），滚出可见区即 `nullptr`——链接因此天然只覆盖可见区，不做全 scrollback 索引，也不进会话锁（AGENTS §4.5 第 25 条）。URL 边界**自带一张字符表**而绝不复用 `terminal.word_delimiters`：那枚键用户可改，复用会让「改断词符」静默改掉链接边界。
+- **两份状态在装配层，控件只持观察指针**：三枚偏好键（`terminal.link_osc8` / `link_heuristic` / `link_schemes`）经 `make_interaction()` 折进 `TerminalView::LinkOptions`；「已记住的同域」是**非偏好数据叶** `connection.trusted_url_hosts`（`kNonPreferenceLeaves` 例外通道，面板不画），app 级一份 `ui::TrustedLinkHosts` 由 `wire_view` 一处注入、其 `on_change` 闭包负责写盘。视口不认识 `config`（§2.3 的模块环约束），故这两条腿只能是闭包与接缝。
+- **平台腿与绘制层**：真正发出去的那一次打开是 `platform::open_url`（`fork`/`execv` 与 `ShellExecuteW` 只进 `src/platform/`，AGENTS §4.5 第 23 条），UI 经 `Presentation::open_url` 接缝消费；**该接缝刻意没有「留空即调生产腿」的回落**，装配层 `wire_view` 是全仓唯一从 UI 回调进 `fork/exec` 的地方（事故与判据见 `codespec/UI_URL.draft.md` D11／F15）。悬停视觉由视口**另起一层** `fill_rect`（游程下划线 + 左下目标条），不折进单元格装饰层也不依赖框架 tooltip（后者是半成品）。
 
 ### 10.5 输入法
 
