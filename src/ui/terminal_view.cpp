@@ -29,6 +29,7 @@
 #include "aurora/widget/containers.h"
 #include "aurora/widget/dialog.h"
 #include "aurora/widget/popup.h"
+#include "aurora/widget/text.h"
 #include "borealis/grid/cell.h"
 #include "borealis/grid/row.h"
 #include "borealis/session/clipboard_outbox.h"
@@ -90,6 +91,17 @@ constexpr double kNoticeCardHeightDp = 68.0;
 /// @brief 卡片常驻时长（裁决 7.104 的 D3①）：5 s 后自收，此外只有会话退出清卡。
 ///        明确不是「任意键入即刻收」——触发者就是键入，下一个字符即抹掉＝几乎不可见。
 constexpr std::chrono::milliseconds kNoticeVisibleFor{5000};
+
+/// @brief 链接目标提示条的几何（`SPEC.FEAT.INTERACT.05` 判据 3，稿 D6①）：单行、贴视口左下角，
+///        宽取「min(320, 盒宽 − 2×内缩)」——320 与 dead-session 那张卡同档，最小合法 pane（228 dp）
+///        上仍留得下两侧内缩。高一行字（20）加上下各 2 dp。
+///
+/// 刻意**不写命中盒**：非模态三不（不铺带、不吃焦点、不吃点击）里最硬的一条是「提示条底下那格文字
+/// 照常能起选区」，而一旦把这枚盒交进 `*_button_box_` 那一组，指针入口就会先吃掉这一击。
+constexpr double kLinkNoticeHeightDp = 24.0;
+constexpr double kLinkNoticeInsetDp = 8.0;      ///< 距视口左沿与底沿的内缩。
+constexpr double kLinkNoticePaddingDp = 8.0;    ///< 条内文字距条边的横向留白。
+constexpr double kLinkNoticeStrokeDp = 1.0;     ///< 描边宽（与两张卡同档）。
 
 /// @brief 把滚轮增量折成「档」：一 notch 即一档（Win32 与 X11 给 ±1，高分屏与 GLFW 可给小数）。
 ///        非零增量至少算一档——发零条上报等于吞掉这一事件而不告诉任何人。
@@ -199,11 +211,57 @@ class StringCollector final : public term::CodePointSink {
             return std::string{settings_label("menu.item.copy")};
         case MenuCommand::Paste:
             return std::string{settings_label("menu.item.paste")};
+        case MenuCommand::OpenLink:
+            // 一条命令一态（与会话日志那条「一条命令两态」相对）：能出现就能开，标签不需要随态改词。
+            return std::string{settings_label("menu.item.open_link")};
         case MenuCommand::ToggleSessionLog:
             // 一条命令两态（D6①）：现读的记录态决定一句「开启」还是一句「停止」。
             return std::string{settings_label(logging ? "session.log.menu.stop" : "session.log.menu.start")};
     }
     return {};  // 枚举已穷尽：新增命令而忘跟上文案时，空标签比静默复用上一条更醒目
+}
+
+/// @brief 落点列折算到基础格列：双宽字符的延续格既不承载字符、也不挂 OSC 8 标识。
+///
+/// 这条折算在 `find_link_at` 内部**也有一份**（它自己按基础格取标识与码点），本处那份只为了解析
+/// 「要不要向会话要目标」——指在右半格时若直接取 `hyperlink(column)` 就会拿到 `kNoHyperlink`，
+/// 于是把一条 OSC 8 链接当成启发式重扫，目标串也从「程序声明的那个」变成了「屏上猜的那个」。
+[[nodiscard]] auto link_base_column(const grid::Row &row, std::size_t column) noexcept -> std::size_t {
+    while (column > 0U && row.cell(column).is_wide_continuation()) {
+        --column;
+    }
+    return column;
+}
+
+/// @brief 白名单的展示串：`http / https`（稿面那条旁注的形态，分隔符两侧留空格便于读）。
+///
+/// 取的是**已解析的那份表**而不是配置原串：面板里存的是 `"http,https"`，直接回显会让确认框跟着
+/// 逗号走，而判据 4 那句「协议白名单：http / https」指的是生效值。
+[[nodiscard]] auto link_schemes_display(const std::vector<std::string> &schemes) -> std::string {
+    std::string text;
+    for (const auto &scheme : schemes) {
+        if (!text.empty()) {
+            text += " / ";
+        }
+        text += scheme;
+    }
+    if (text.empty()) {
+        text = "(none)";  // 空白名单是合法档位（一切不可点），显示空串会让人以为漏了词条
+    }
+    return text;
+}
+
+/// @brief 确认策略的展示串（确认框正文第三行回显当前生效的那一档，稿判据 4）。
+[[nodiscard]] auto link_policy_label(LinkConfirmPolicy policy) -> std::string_view {
+    switch (policy) {
+        case LinkConfirmPolicy::Never:
+            return "links.policy.never";
+        case LinkConfirmPolicy::AskOnce:
+            return "links.policy.ask_once";
+        case LinkConfirmPolicy::AskAlways:
+            return "links.policy.ask_always";
+    }
+    return "links.policy.ask_once";  // 枚举已穷尽；这一行只为编译器闭嘴，走到即词条缺配
 }
 
 }  // namespace
@@ -291,7 +349,15 @@ auto TerminalView::apply_appearance(Appearance appearance) -> void {
 }
 
 auto TerminalView::apply_interaction_options(InteractionOptions options) -> void {
+    // 白名单或两档策略换了，就把已经到手的命中作废（判据 5 的即时性）：现值是按**旧**白名单判出来的，
+    // 留着等于「这一串已经不可点了，屏上还画着可点的那条线」，而菜单里那条「打开链接」也还指着它。
+    // 摘掉而不是就地重扫——本函数拿不到指针位置，下一次 Move 自然会按新白名单重扫一遍。
+    const bool link_changed = !(options_.link == options.link);
     options_ = std::move(options);
+    if (link_changed) {
+        clear_hover_link();
+        menu_link_.reset();  // 菜单正开着时换档：这一条退化成点了什么都不做，比按旧名单开出去安全
+    }
 }
 
 auto TerminalView::set_overlay_host(aurora::OverlayHost &host) -> void { host_ = &host; }
@@ -423,6 +489,14 @@ auto TerminalView::on_frame() -> void {
     // 副本并入之后（读数由副本带出），否则高亮与复制文本会跟着旧的行号指着别的内容（裁决 7.38⑤）。
     compensate_selection_drift();
     compensate_search_drift();
+    // 悬停命中随新输出失效（判据 1 的另一半：线指的必须是屏上此刻那段文字）。
+    // 刻意取「本帧有 damage 就整条摘掉」这种保守形态，而不是按 damage 行号点杀：`collect_damage`
+    // 给的是**网格可见行**（session.cpp:303 那个 0..visible_rows 的循环），而 `hover_link_` 存的是
+    // 存储行序，回看态下两者不同源——把前者当后者用会摘错行，而漏摘就等于线指着已被改写的内容。
+    // 代价如实登记：程序持续刷屏时这条线会一直不显形，指针下一次 Move 才恢复。
+    if (!frame.empty()) {
+        clear_hover_link();
+    }
     flush_copy_request();
     flush_paste_request();
     // 读方向的 `OSC 52` 排在同一处帧边界（`SPEC.FEAT.CONN.12`）：读剪贴板是主线程 IO，既不能进
@@ -511,6 +585,9 @@ auto TerminalView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, cons
     }
     paint_cursor(p, bounds, rows);
     paint_scroll_indicator(p, bounds, rows);
+    // 悬停那一段的 accent 线与目标提示条排在正文与指示条之后、两张状态卡之前：线要盖在底色之上才读得出
+    // 是「这一串可点」，而条要**让位**于更重的状态卡——两者同框时先保住「发送侧被拒」或「会话已退出」那条。
+    paint_link_hover(p, bounds);
     // 发送侧一次性提示卡在 dead-session 那一层**之前**画：本卡非模态、不铺带，两者同框时让位于
     // 「会话已退出」那条更重的状态（裁决 7.104 的 D2①，判据文 §1 事实 3）。
     paint_unrepresentable_notice(p, bounds);
@@ -663,6 +740,9 @@ auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
     // 让位是整笔手势让位而不是半笔——见 `takes_pointer_by_report` 的那三条短路。
     const term::TermModes modes = modes_snapshot();
     if (takes_pointer_by_report(e, term::mouse_tracking(modes))) {
+        // 上报档接管这一笔时先摘悬停线（`SPEC.FEAT.INTERACT.05` 判据 7，稿 D7①）：远端要的是这一击
+        // 与这段移动，本控件既不发线也没有 Ctrl+点击可用，留着上一帧的线就是「看起来还能点」。
+        clear_hover_link();
         report_pointer(e, modes);
         return;
     }
@@ -681,6 +761,16 @@ auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
     }
     // 落点是绘制行号，选区存的是存储行序（`ui/selection.h` 的坐标约定），换算量只有副本的窗顶。
     const GridCellPos cell{mirror_.window_top() + hit->row, hit->column};
+    // Ctrl+左击是链接的鼠标入口（`SPEC.FEAT.INTERACT.05` 判据 7，稿 D7①／D13①）：只在**这一击归本地**
+    // 时才走到这里（上报档那条短路在上面），命中即认领这一击且**不碰选区**——顺手把那一词选中会让
+    // 随后的 copy-on-select 把 URL 塞进剪贴板，那是用户没要的动作。没命中则照常起选区。
+    if (e.action == aurora::MouseAction::Press && (e.modifiers & aurora::ModifierKey::Control) != 0U) {
+        if (const auto link = scan_link_at(cell); link.has_value()) {
+            e.is_handled = true;
+            open_link(*link);
+            return;
+        }
+    }
     switch (e.action) {
         case aurora::MouseAction::Press: {
             dragging_ = true;
@@ -694,6 +784,18 @@ auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
             break;
         }
         case aurora::MouseAction::Move: {
+            // 悬停线在拖动之前也要跟着换段：判据是「随移动换段、离开即无」，而拖动中的那一次移动
+            // 同样带着新落点（稿 D4① 的现扫现判，判定不缓存）。
+            // 上报档开着时这一层整个让位（判据 7 的「无下划线、无目标条」半段）：
+            // `takes_pointer_by_report` 按稿 F6 那条实测**不**把无键悬停收进上报（`?1000`/`?1002` 档下
+            // 这一事件落本地），故归属判据表达不出「这一层不该画」。而线 promised 的那次点击在此刻
+            // 恰恰不归本地（Press 全被上报吃掉），画出来就是让一个点不动的东西看起来能点。
+            // 这里只压装饰层，不改事件归属：本地腿照旧不认领这次 Move，选区行为逐字节不变。
+            if (term::mouse_tracking(modes) == term::MouseTracking::Off) {
+                update_hover_link(cell);
+            } else {
+                clear_hover_link();  // 中途开档（远端刚 `?1000h`）：把上一帧留下的线摘掉
+            }
             if (!dragging_) {
                 return;  // 悬停移动不改选区
             }
@@ -1513,6 +1615,13 @@ auto TerminalView::on_menu_command(MenuCommand command) -> void {
         case MenuCommand::Paste:
             paste_pending_ = true;
             break;
+        case MenuCommand::OpenLink:
+            // 指的是**右键那一刻**扫到的那串（`menu_link_`），不是当前悬停：菜单浮层期间指针事件被
+            // 浮层吃掉，本控件收不到 Move，而新输出会按判据摘掉悬停线——留着旧命中才是用户点的那一条。
+            if (menu_link_.has_value()) {
+                open_link(*menu_link_);
+            }
+            break;
         case MenuCommand::ToggleSessionLog:
             // 视口不做任何日志判断：算路径、编译脱敏器、风险提示与真正的开关全在装配层那一份闭包里
             //（与命令面板共用同一条，D6①）。钩子未注入时该条根本不会出现在菜单里（`logging_menu_state`）。
@@ -1695,6 +1804,263 @@ auto TerminalView::ask_clipboard_read_dialog(const term::ClipboardReadRequest &r
     mark_needs_paint();
 }
 
+auto TerminalView::scan_link_at(const GridCellPos &storage_cell) -> std::optional<LinkHit> {
+    const auto *row = mirror_line_of(storage_cell.row);
+    if (row == nullptr) {
+        return std::nullopt;  // 行不在可见窗内：既画不到也点不到，这是回看深一度的天然边界
+    }
+    std::optional<std::u32string> osc8;
+    if (const auto link_id = row->hyperlink(link_base_column(*row, storage_cell.column));
+        link_id != grid::kNoHyperlink) {
+        // 目标现取而不缓存：`hyperlink_target` 自带一次短临界区（与 `modes_snapshot` 同一套「回调里
+        // 读一次会话」的形态），而解不出来的那一档正是裁决 7.21② 说的「标识已被淘汰」——纯件据此
+        // 落回启发式，这里不需要再判一次。
+        osc8 = session_->hyperlink_target(link_id);
+    }
+    return find_link_at(*row, storage_cell, options_.link.scan, osc8);
+}
+
+auto TerminalView::update_hover_link(const GridCellPos &storage_cell) -> void {
+    const auto next = scan_link_at(storage_cell);
+    if (next == hover_link_) {
+        return;  // 在同一串字符里来回移动不重画：命中区间与目标全等即画面全等
+    }
+    hover_link_ = next;
+    mark_needs_paint();
+}
+
+auto TerminalView::clear_hover_link() -> void {
+    if (!hover_link_.has_value()) {
+        return;  // 没挂着就不标脏：上报档的每一次移动都会走到这里
+    }
+    hover_link_.reset();
+    mark_needs_paint();
+}
+
+auto TerminalView::stash_link_at_point(const aurora::MouseEvent &e) -> LinkMenuState {
+    menu_link_.reset();
+    if (mirror_.rows() == 0U || geometry_.columns == 0U) {
+        return {};  // 字体未就绪或窗口最小化：没有格子可扫
+    }
+    const auto hit = cell_at_point(geometry_, e.local_position.x, e.local_position.y);
+    if (!hit) {
+        return {};
+    }
+    auto link = scan_link_at(GridCellPos{mirror_.window_top() + hit->row, hit->column});
+    if (!link.has_value()) {
+        return {};
+    }
+    menu_link_ = std::move(link);
+    return LinkMenuState{.on_link = true};
+}
+
+auto TerminalView::open_link(const LinkHit &hit) -> void {
+    const LinkOpenPlan plan = plan_link_open(hit.source, options_.link.osc8, options_.link.heuristic,
+                                             link_hosts(), hit.target);
+    switch (plan.intent) {
+        case LinkOpenIntent::Open:
+            dispatch_open(hit.target);
+            break;
+        case LinkOpenIntent::Confirm: {
+            const LinkOpenRequest request{.target = hit.target, .source = hit.source, .host = plan.host};
+            // 答话闭包**按值带走 request**：对话框可以留着不答，而本控件可能在答话之前换掉命中。
+            auto answer = [this, request](LinkOpenAnswer choice) -> void {
+                apply_link_answer(request, choice);
+            };
+            if (presentation_.confirm_open_link) {
+                presentation_.confirm_open_link(request, std::move(answer));
+                return;  // 呈现与收起都归替身：装配层与用例换掉的就是「怎么问」这一件事
+            }
+            ask_open_link_dialog(request, std::move(answer));
+            break;
+        }
+        case LinkOpenIntent::Refuse:
+            // 走到这里只剩「host 认不出来」一档（白名单外的串早在识别处就不产命中）。不开也不问：
+            // 确认框上「记住该域并打开」在一个连域都报不出来的串上无从落笔（稿 D9① 的 fail-closed）。
+            AURORA_LOG_WARN("ui", "link not opened, no host can be named in: ", hit.target);
+            break;
+    }
+}
+
+auto TerminalView::dispatch_open(std::string_view target) -> void {
+    if (presentation_.open_url) {
+        presentation_.open_url(target);
+        return;
+    }
+    // TODO(SPEC.FEAT.INTERACT.05: 批 3 的装配层把 `platform::open_url` 装进这条接缝)。
+    // 刻意**不做「留空即调生产腿」的回落**（与上面几条接缝的口径相反）：平台腿落地前这里没有腿可调，
+    // 而落地后一旦默认调它，每次跑用例就会真的开出一个浏览器窗口——稿 F15 记的正是这样一次事故。
+    AURORA_LOG_WARN("ui", "open_url seam not installed, nothing opened for: ", target);
+}
+
+auto TerminalView::apply_link_answer(const LinkOpenRequest &request, LinkOpenAnswer answer) -> void {
+    if (answer == LinkOpenAnswer::Cancel) {
+        return;  // 取消是最便宜的一档：名单不写、目标不开，也没有任何回写欠着
+    }
+    if (answer == LinkOpenAnswer::RememberAndOpen && !request.host.empty()) {
+        // 先记后开：写入即触发装配层那条 `on_change` 闭包落盘（§5.3）。`add` 幂等，故同域重复点
+        // 「记住」不会在名单里存两份，也不会第二次触发回调。
+        static_cast<void>(link_hosts().add(request.host));
+    }
+    dispatch_open(request.target);
+}
+
+auto TerminalView::ask_open_link_dialog(const LinkOpenRequest &request,
+                                        std::function<void(LinkOpenAnswer)> answer) -> void {
+    if (host_ == nullptr) {
+        // 没有宿主就问不出去，而这一路的最坏结果就是「什么都没打开」。读方向那一条在这里要补一次
+        // 回写（沉默会让远端一直等），本条没有等的人，故什么都不做即可（稿 D11① 的那句「不需要
+        // 析构撤账腿」在这就是字面意思：没有任何账要撤）。
+        AURORA_LOG_WARN("ui", "no overlay host, the link question was not asked: ", request.target);
+        return;
+    }
+    if (!link_open_dialog_) {
+        link_open_dialog_ = std::make_shared<aurora::Dialog>();
+        static_cast<void>(
+            host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(link_open_dialog_)}));
+    }
+    const auto chrome = settings_chrome();
+    auto line = [this, &chrome](std::string_view key, std::vector<aurora::LocalizedString> args,
+                                const aurora::Color &color) -> aurora::Node {
+        auto text = std::make_shared<aurora::Text>(aurora::TextProps{
+            .content = settings_text(key, std::move(args)),
+            .text_color = color,
+        });
+        text->modifier.set(aurora::Modifier{}.fill_max_width());
+        return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(text))};
+    };
+    const auto button = [this, &chrome, answer](std::string_view key, const aurora::Color &bg,
+                                                const aurora::Color &fg, bool bordered,
+                                                LinkOpenAnswer choice) -> aurora::Node {
+        auto props = aurora::ButtonProps{};
+        props.label = settings_text(key);
+        props.color = bg;
+        props.on_color = fg;
+        if (bordered) {
+            props.border_color = chrome.card_line;
+            props.border_width = 1.0F;
+        }
+        props.min_width = kRestartButtonWidthDp;
+        auto node = std::make_shared<aurora::Button>(std::move(props));
+        node->set_on_click([dialog = link_open_dialog_, answer, choice]() -> void {
+            // 先收框再答话（同 `ask_clipboard_read_dialog` 的次序）：答话里可能装替身、也可能开第二个
+            // 浮层，框还挂在栈上就会让「收起」这件事取决于答话是否抛出来。
+            dialog->close();
+            answer(choice);
+        });
+        return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(node))};
+    };
+    // 正文四行照已评审稿面（`codespec/UI_COMMANDS.draft.svg` 屏 4，判据 4）：URI 全文、识别来源、
+    // 生效白名单、生效策略。后两行回显的是**当前生效值**而不是稿面那句固定措辞——稿画在缺省配置下，
+    // 而把「默认」二字印在一档非默认的档位旁边就是假话（此即稿 §4 批 2 那条改口的落点）。
+    std::vector<aurora::Node> children;
+    children.push_back(line("links.confirm.title", {}, chrome.text));
+    children.push_back(line("links.confirm.uri", {aurora::LocalizedString{request.target}}, chrome.text));
+    children.push_back(line(request.source == LinkSource::Osc8 ? "links.confirm.source.osc8"
+                                                                : "links.confirm.source.heuristic",
+                            {}, chrome.text_dim));
+    children.push_back(line("links.confirm.whitelist",
+                            {aurora::LocalizedString{link_schemes_display(options_.link.scan.schemes)}},
+                            chrome.text_dim));
+    children.push_back(
+        line("links.confirm.policy",
+             {aurora::LocalizedString{settings_label(link_policy_label(
+                  request.source == LinkSource::Osc8 ? options_.link.osc8 : options_.link.heuristic))}},
+             chrome.text_dim));
+    children.push_back(aurora::Node{std::make_shared<aurora::Row>(aurora::RowProps{
+        .children = {
+            button("links.confirm.cancel", chrome.control_bg, chrome.text, true, LinkOpenAnswer::Cancel),
+            button("links.confirm.open_once", chrome.control_bg, chrome.text, true,
+                   LinkOpenAnswer::OpenOnce),
+            button("links.confirm.remember_and_open", chrome.accent, chrome.window_bg, false,
+                   LinkOpenAnswer::RememberAndOpen),
+        },
+        .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
+        .gap = 8.0F,
+    })});
+
+    auto content = std::make_shared<aurora::Column>(aurora::ColumnProps{
+        .children = std::move(children),
+        .gap = 6.0F,
+    });
+    // 内容盒外的点击要被吸收：模态层底下就是正文，穿透就会一边答话一边起一段选区（同键位绑定框）。
+    content->modifier.set(aurora::Modifier{}
+                              .padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
+                              .background(chrome.card_bg, 8.0F)
+                              .border(1.0F, chrome.card_line)
+                              .clickable([]() -> void {}));
+    link_open_dialog_->set_content(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(content))});
+    link_open_dialog_->show();
+    mark_needs_paint();
+}
+
+auto TerminalView::paint_link_hover(aurora::Painter &p, const aurora::Rect &bounds) -> void {
+    // 每帧先清盒再按实际落笔回填：判据 3 那条「装不下就不画」的证人是「盒为空」，
+    // 于是它必须与本帧真的画没画同源，而不能停在上一帧的位置上。
+    link_notice_box_.reset();
+    if (!hover_link_.has_value()) {
+        return;
+    }
+    const std::size_t top = mirror_.window_top();
+    if (hover_link_->span.row < top) {
+        return;  // 已滚出可见窗：线跟条都不画（下一次 Move 会重扫或摘掉）
+    }
+    const std::size_t screen_row = hover_link_->span.row - top;
+    if (screen_row >= geometry_.rows || screen_row >= mirror_.rows()) {
+        return;  // 同上：绘制行越出这一帧的网格
+    }
+
+    const auto chrome = settings_chrome();
+    // 下划线借 `decoration_rects` 的 `Single` 档（稿 D5①）：线宽 1 物理像素、基线 +1px、四边吸附这套
+    // 落笔口径已有唯一权威实现，在这里重算一遍就会在高分屏上与正文的下划线错开半像素。
+    // 只把用色换成 accent——本段并没有真的带 SGR 4，线是悬停态自己画的。
+    const StyleRun run{
+        .first_column = hover_link_->span.first_column,
+        .last_column = hover_link_->span.last_column,
+        .text = {},
+        .paint = CellPaint{.underline = grid::UnderlineStyle::Single},
+    };
+    for (const auto &decoration : decoration_rects(geometry_, screen_row, run)) {
+        p.fill_rect(to_rect(decoration, bounds.origin), chrome.accent);
+    }
+
+    // 提示条（稿 D6① 的非模态三不）：不铺半透明带、不吃焦点、不写任何 `*_button_box_`，
+    // 于是条下的文字照常能起选区——本函数唯一写的观测点是 `link_notice_box_`。
+    // 条宽按**目标全文**的实显宽来定，刻意不设上限：截断一条 URI 本身就破了判据 1／4 那句
+    // 「显示的恒是目标而非屏上文字」，所以装不下时整条不画，而不是画一条截短的。
+    const double box_w = static_cast<double>(bounds.size.width);
+    const double box_h = static_cast<double>(bounds.size.height);
+    // 量宽用 `display_width` 而非 `measure_width`：后者给的是设备像素，跟这里的 dp 坐标系不同源，
+    // 而提示条要判的正是「这一串按实绘像素摆不摆得下」。
+    const double text_w = aurora::render::FontEngine::display_width(hover_link_->target, ref_font_, layout_opts_,
+                                                                   geometry_.scale);
+    const double strip_w = text_w + 2.0 * kLinkNoticePaddingDp;
+    const double room_w = box_w - 2.0 * kLinkNoticeInsetDp;
+    if (room_w <= 0.0 || strip_w > room_w || box_h < kLinkNoticeHeightDp + 2.0 * kLinkNoticeInsetDp) {
+        return;  // 让位不画：窄到放不下全文、或矮到放不下条，都只留下上面那条线
+    }
+    const double strip_x = kLinkNoticeInsetDp;
+    const double strip_y = box_h - kLinkNoticeHeightDp - kLinkNoticeInsetDp;
+    const Rect strip{strip_x, strip_y, strip_w, kLinkNoticeHeightDp};
+    p.fill_rect(to_rect(strip, bounds.origin), chrome.card_bg);
+    const double inner_h = kLinkNoticeHeightDp - 2.0 * kLinkNoticeStrokeDp;
+    p.fill_rect(to_rect(Rect{strip_x, strip_y, strip_w, kLinkNoticeStrokeDp}, bounds.origin), chrome.card_line);
+    p.fill_rect(to_rect(Rect{strip_x, strip_y + kLinkNoticeHeightDp - kLinkNoticeStrokeDp, strip_w,
+                             kLinkNoticeStrokeDp},
+                        bounds.origin),
+                chrome.card_line);
+    p.fill_rect(to_rect(Rect{strip_x, strip_y + kLinkNoticeStrokeDp, kLinkNoticeStrokeDp, inner_h}, bounds.origin),
+                chrome.card_line);
+    p.fill_rect(to_rect(Rect{strip_x + strip_w - kLinkNoticeStrokeDp, strip_y + kLinkNoticeStrokeDp,
+                             kLinkNoticeStrokeDp, inner_h},
+                        bounds.origin),
+                chrome.card_line);
+    p.draw_text(to_rect(Rect{strip_x + kLinkNoticePaddingDp, strip_y + kLinkNoticeStrokeDp, text_w, inner_h},
+                        bounds.origin),
+                hover_link_->target, ref_font_, chrome.text, layout_opts_);
+    link_notice_box_ = strip;
+}
+
 auto TerminalView::on_right_click(aurora::MouseEvent &e) -> void {
     if (e.action != aurora::MouseAction::Press) {
         return;  // 抬起不再处置一次：三态的动作都在按下那一刻定
@@ -1704,7 +2070,11 @@ auto TerminalView::on_right_click(aurora::MouseEvent &e) -> void {
     // 一次取态、两处用：条目在不在（计划）与标签是「开启」还是「停止」（发菜单）读的是同一个读数，
     // 分两次呼钩子就是让「条目次序」与「文案」可能来自两个时刻。
     const LogMenuState log = logging_menu_state();
-    const RightClickPlan plan = plan_right_click(options_.right_click, !bands_.empty(), log);
+    // 「打开链接」那条按落点现扫（判据 6／稿 D12①）：右键恒归本地，故上报档开着时这一条照样在——
+    // 分流闸只压在左击与悬停那两档上。命中同时存进 `menu_link_`：菜单开着时它才是这一条指的是哪串，
+    // 而不是等点击时再扫一次（那时指针可能已被浮层挪走，而浮层会吃掉 Move）。
+    const LinkMenuState link = stash_link_at_point(e);
+    const RightClickPlan plan = plan_right_click(options_.right_click, !bands_.empty(), log, link);
     switch (plan.intent) {
         case RightClickIntent::None:
             return;  // 交还给宿主：右键本就没有可复制的东西

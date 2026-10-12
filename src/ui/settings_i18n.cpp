@@ -383,6 +383,9 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     // 的下一步动作完全不同（改模式 vs 看目录）。
     {"menu.item.copy", "复制"},
     {"menu.item.paste", "粘贴"},
+    // 第四条只在右键落点扫到链接时出现（`codespec/UI_URL.draft.md` 的 D12①）：它的出现与否由纯件
+    // `plan_right_click` 决定，本条只管上屏措辞。
+    {"menu.item.open_link", "打开链接"},
     {"session.log.menu.start", "开启会话日志"},
     {"session.log.menu.stop", "停止会话日志"},
     {"session.log.command.start", "会话日志：开启（当前标签）"},
@@ -406,6 +409,27 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"settings.note.clipboard_read",
      "三态各档的后果：deny 与超限都只回送一条空响应，不弹提示、屏上也查不到；改档即刻对所有在途"
      "标签生效；ask 档每条读请求各问一次（同一会话最多同时挂 8 条，超出当场按 deny 答）。"},
+
+    // ---- 链接打开确认（`SPEC.FEAT.INTERACT.05`，`codespec/UI_URL.draft.md` 判据 4／稿 D11①）----
+    // 标题、正文首行与来源两行**逐字沿用**已评审稿面（`codespec/UI_COMMANDS.draft.svg` 屏 4）：判据 4
+    // 要的就是「那张稿面落到控件」，措辞自创即破那条对齐。
+    // 后两行是**回显当前生效值**而不是稿面那句固定措辞——稿画在缺省配置下，把「（默认）」二字印在
+    // 一档非默认的档位旁边就是假话；而「信任级别两档分开配置」那半句留在白名单行，因为它与配置值无关。
+    // 三档名后面括注落盘名（`never` / `ask_once` / `ask_always`）：面板的下拉直接吃落盘原文
+    //（`terminal.clipboard_read` 同例，见上面那条旁注的理由），只给中文名就没法把框里那句话和面板里
+    // 那一档对上——这与旁注「照上屏候选原文写」是同一条纪律的两处应用。
+    {"links.confirm.title", "打开链接？"},
+    {"links.confirm.uri", "{0}"},
+    {"links.confirm.source.osc8", "来源：OSC 8 显式超链接"},
+    {"links.confirm.source.heuristic", "来源：纯文本启发式识别（非 OSC 8 显式超链接）"},
+    {"links.confirm.whitelist", "协议白名单：{0}；信任级别两档分开配置"},
+    {"links.confirm.policy", "确认策略：{0}"},
+    {"links.confirm.cancel", "取消"},
+    {"links.confirm.open_once", "仅本次打开"},
+    {"links.confirm.remember_and_open", "记住该域并打开"},
+    {"links.policy.never", "不询问、直接打开（never）"},
+    {"links.policy.ask_once", "首次确认并记住同域（ask_once）"},
+    {"links.policy.ask_always", "每次都问（ask_always）"},
 
     // ---- 命令面板（`SPEC.FEAT.WS.07`，判据文 `codespec/UI_WORKSPACE.draft.md` §4）----
     // 占位符与空态两条的 **key 由框架命名**（`CommandPalette::AURORA_DEFAULT_*_KEY`，G38 / G39 回货形

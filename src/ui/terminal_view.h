@@ -42,6 +42,7 @@
 #include "borealis/ui/right_click.h"
 #include "borealis/ui/search.h"
 #include "borealis/ui/selection.h"
+#include "borealis/ui/url.h"
 
 namespace aurora {
 class Dialog;
@@ -62,6 +63,21 @@ class SearchOverlay;  ///< 搜索浮层的本体（`search_overlay.h`），本�
 /// 把 `offset_y` 当 dp 平移量加进绘制盒，单位与语义都对不上（架构 §9.5）。
 class TerminalView final : public aurora::LeafWidget {
   public:
+    /// @brief 链接识别与打开的可配置项（`SPEC.FEAT.INTERACT.05`，稿 D8① 的界面腿入参）。
+    ///
+    /// 三枚键一一对应三枚配置键：白名单是**已拆好的表**（`parse_link_schemes` 在装配层跑一次，
+    /// 本控件不再拆串——拆串规则归 `ui::url` 那件，视口只搬值），两枚策略按**来源**分档而非合并成
+    /// 一枚全局开关（需求那句「信任级别可分别配置」的就是这一处分叉，稿 D8① 排除了 bool 形态）。
+    /// 缺省即 `AskOnce × AskOnce × 空白名单`：空白名单是「一切不可点」而不是「未配故放行」，
+    /// 装配层须把 `terminal.link_schemes` 的缺省串拆好交进来。
+    struct LinkOptions {
+        LinkScanOptions scan{};                                     ///< 协议白名单（判据 5 的那道闸）。
+        LinkConfirmPolicy osc8 = LinkConfirmPolicy::AskOnce;        ///< 配置键 `terminal.link_osc8`。
+        LinkConfirmPolicy heuristic = LinkConfirmPolicy::AskOnce;   ///< 配置键 `terminal.link_heuristic`。
+
+        [[nodiscard]] auto operator==(const LinkOptions &) const noexcept -> bool = default;
+    };
+
     /// @brief 选区与复制行为的可配置项（裁决 7.38① 的界面腿入参）。
     ///
     /// 刻意不复用 `config::TerminalSettings`：`config` 含 `ui::PaletteSpec`，视口反向依赖它会
@@ -72,9 +88,34 @@ class TerminalView final : public aurora::LeafWidget {
         CopyOptions copy{};           ///< 三项复制变换，均默认关闭以保留原样。
         RightClickAction right_click{RightClickAction::ContextMenu};  ///< 右键三态（配置键 `terminal.right_click`）。
         term::PasteOptions paste{};   ///< 粘贴处置口径（换行策略、行尾与块间隔）。
+        LinkOptions link{};           ///< 链接白名单与两档确认策略（`SPEC.FEAT.INTERACT.05`）。
     };
 
-    /// @brief 视口的四条外部接缝：剪贴板读写、多行粘贴的确认呈现、`OSC 52` 读方向的授权一问。
+    /// @brief 确认框的三档答话（稿 D11① 的第一条接缝的应答位）。
+    ///
+    /// 三枚而非一枚 `bool`：已评审稿面（`codespec/UI_COMMANDS.draft.svg` 屏 4）上就是「取消 /
+    /// 仅本次打开 / 记住该域并打开」三枚动作，而「仅本次」与「记住」的差别正是 `AskOnce` 那一档
+    /// 的全部语义——两枚按钮表达不出「这一次不算数」。
+    enum class LinkOpenAnswer : std::uint8_t {
+        Cancel,            ///< 取消：什么都不做。
+        OpenOnce,          ///< 仅本次打开：不写名单，下次照问。
+        RememberAndOpen,   ///< 记住该域并打开：先写名单再打开。
+    };
+
+    /// @brief 确认一问的入参：目标全文、来源、以及「记住」那一档要写进名单的那个域。
+    ///
+    /// `host` 是 `plan_link_open` 归一后的串（小写、缺省端口已折叠），**不是**从目标串现拆的第二份
+    /// ——拆法有两处就会分叉，而「记住的域」与「判同域用的域」必须是同一个字符串。
+    struct LinkOpenRequest {
+        std::string target;                                        ///< URI 全文：判据 1/4 显示的是目标。
+        LinkSource source{LinkSource::Heuristic};                  ///< 来源，决定正文那行副行怎么写。
+        std::string host;                                          ///< 归一域；`RememberAndOpen` 交进名单的就是它。
+
+        [[nodiscard]] auto operator==(const LinkOpenRequest &) const noexcept -> bool = default;
+    };
+
+    /// @brief 视口的六条外部接缝：剪贴板读写、多行粘贴的确认呈现、`OSC 52` 读方向的授权一问、
+    ///        链接打开的确认一问、以及真正发出去的那一次打开。
     ///
     /// 默认（字段为空）即生产路径的实现；换成替身是为了让「右键 → 剪贴板 → 会话字节」这条链
     /// 能在无窗口站、无真实剪贴板的环境里断言（AGENTS.md §4.4 第 19 条）。字段留空即回落默认，
@@ -97,6 +138,20 @@ class TerminalView final : public aurora::LeafWidget {
         /// 测试替身可以只答一次，也可以故意不答以证析构那一档。
         std::function<void(const term::ClipboardReadRequest &, std::function<void(bool)> answer)>
             confirm_clipboard_read;
+        /// @brief 链接打开的确认一问（`SPEC.FEAT.INTERACT.05` 判据 4，稿 D11①）；空即模态对话框。
+        ///
+        /// 与 `confirm_multiline` 同一套异步形态，而「未回调即取消」在这里**成立且无需补账**：
+        /// 本条的最坏结果就是「什么都没打开」，没有一份欠远端或欠用户的回写要收尾，故**不需要**
+        /// CONN.12 那条析构撤账腿（那条之所以存在，是因为不给答复会让远端一直等）。下一棒若照抄
+        /// 那条设计在这里加一份析构回写，就是多写一份无人消费的账单。
+        std::function<void(const LinkOpenRequest &, std::function<void(LinkOpenAnswer)> answer)> confirm_open_link;
+        /// @brief 把目标串交进系统打开（稿 D10① 的平台腿）；空即只记一条日志、什么都不开。
+        ///
+        /// **刻意不做「留空即调生产腿」的回落**（同上面几条字段的口径相反）：批 2 落地时
+        /// `platform::open_url` 还不存在，而这条腿一旦在测试里被默认实现接上，就是每次跑用例开一个
+        /// 浏览器窗口——稿 F15 记的正是这样一次事故。装配层（批 3）装填它，用例装填替身，
+        /// 两条都没有时宁可什么都不发生。
+        std::function<void(std::string_view target)> open_url;
     };
 
     /// @brief 视口的外观包：绘制与排版要用的那六项（裁决 7.52 的 S4①）。
@@ -163,8 +218,8 @@ class TerminalView final : public aurora::LeafWidget {
     /// @param focus 焦点管理器（浮层在派发栈外打开时用它补压焦点作用域）。
     auto set_search_dependencies(aurora::ShortcutRegistry &shortcuts, aurora::FocusManager &focus) -> void;
 
-    /// @brief 替换剪贴板与确认的默认实现（用例注入替身；缺省不装即走生产路径）。
-    /// @param presentation 四条接缝，字段留空即保持默认。
+    /// @brief 替换剪贴板、确认与打开动作的默认实现（用例注入替身；缺省不装即走生产路径）。
+    /// @param presentation 六条接缝，字段留空即保持默认（唯 `open_url` 的默认是「不开」，见其注释）。
     auto set_presentation(Presentation presentation) -> void;
 
     /// @brief 挂上 `OSC 52` 读方向的授权闸门（`SPEC.FEAT.CONN.12`，裁决 D13② 的接线腿）。
@@ -175,6 +230,16 @@ class TerminalView final : public aurora::LeafWidget {
     /// `session::ClipboardOutbox::answer_read` 里，那里也是全仓读剪贴板的唯一落点。
     /// @param gate 授权闸门；传 nullptr 即摘除。
     auto set_clipboard_gate(const term::ClipboardGate *gate) noexcept -> void { clipboard_gate_ = gate; }
+
+    /// @brief 挂上 app 级「已记住的同域」名单（`SPEC.FEAT.INTERACT.05`，稿 D9①／§5.3 的接线腿）。
+    ///
+    /// 与 `set_clipboard_gate` 同一套接缝形态：**非拥有**的观察指针，名单全 app 一份、由装配层担保
+    /// 生命周期并负责落盘（`on_change` 那条闭包在装配层写 `connection.trusted_url_hosts`，视口不认识
+    /// `config`，架构 §2.3）。**未装即用本控件自持的那份**：它不落盘、随控件析构消失，于是
+    /// `AskOnce` 那一档在没接好这条腿的形态里退化成「每个 pane 各记各的、重启即忘」——问仍会问，
+    /// 只是记不住，而不是「记不住就每次都不问」。
+    /// @param hosts 名单本体，装配层持有的那一份。
+    auto set_trusted_link_hosts(TrustedLinkHosts &hosts) noexcept -> void { trusted_link_hosts_ = &hosts; }
 
     /// @brief 工作区层的两条注入接缝：期望行列的去向、以及「这一键归谁」的判定。
     ///
@@ -245,6 +310,31 @@ class TerminalView final : public aurora::LeafWidget {
     /// 同 `multiline_warning()` 的两条理由：Yes / No 的落点要经真实命中链才知道是哪一枚，而
     /// 「答话即收起、收起不摘浮层」只能从本句柄读。
     [[nodiscard]] auto clipboard_read_dialog() const noexcept -> const aurora::Dialog *;
+
+    /// @brief 当前悬停命中的那条链接，没命中即空（`SPEC.FEAT.INTERACT.05` 判据 1/5 的观测点）。
+    ///
+    /// 用例要靠它把「识别」与「画线」两件事分开断言：像素那边只答「这一帧有没有多一条 accent 线」，
+    /// 而「命中的是哪一段、目标是什么、来自哪一档」是同一判据的另一半——尤其 OSC 8 那一档要钉的正是
+    /// 「目标与屏上文字不同」（稿 F1），那一半在像素里读不出来。存的是**存储行序**的区间，绘制侧
+    /// 现折算成绘制行，故滚动之后这条命中仍指着同一段文字。
+    [[nodiscard]] auto hover_link() const noexcept -> const std::optional<LinkHit> & { return hover_link_; }
+
+    /// @brief 本帧左下角目标提示条的 dp 盒；没画即空（判据 3 的观测点）。
+    ///
+    /// 刻意**不写进 `*_button_box_` 那一组**：那三枚盒是「命中即吃掉这一击」的判据，而本条的非模态
+    /// 三不（稿 D6①／F9）要求提示条底下的文字照常能起选区。本盒只供用例读「画没画、画在哪」，
+    /// 指针入口不认识它——「装不下就不画」那一档因此有一条不依赖像素的证人（盒为空）。
+    [[nodiscard]] auto link_notice_box() const noexcept -> const std::optional<Rect> & {
+        return link_notice_box_;
+    }
+
+    /// @brief 链接打开确认框的只读句柄，从未问过即空指针（判据 4 的落点与收起观测点）。
+    ///
+    /// 同 `clipboard_read_dialog()` 的两条理由，而这里更硬：框上是**三枚**按钮（取消 / 仅本次打开 /
+    /// 记住该域并打开），落点只能经真实命中链才知道是哪一枚；「答话即收起」也只能从本句柄读。
+    [[nodiscard]] auto link_open_dialog() const noexcept -> const aurora::Dialog * {
+        return link_open_dialog_.get();
+    }
 
     /// @brief 本帧的整格几何（dp 步长、行列数与内边距）——工作区层据此现算最小 pane 尺寸。
     ///
@@ -697,6 +787,71 @@ class TerminalView final : public aurora::LeafWidget {
     auto ask_clipboard_read_dialog(const term::ClipboardReadRequest &request,
                                    std::function<void(bool)> answer) -> void;
 
+    /// @brief 现扫落点所在行的链接（`SPEC.FEAT.INTERACT.05` 判据 1/5/6 的公共腿，稿 D4① 的惰性一行扫）。
+    ///
+    /// 三处入口（悬停 Move、Ctrl+左击、右键）各调一次、不缓存判定：缓存会产生「线还画着、目标已换」
+    /// 的分叉，而一行扫的成本实测是纳秒档（稿 F16）。OSC 8 的目标在这里现取（`Session::hyperlink_target`
+    /// 自带短临界区，与 `modes_snapshot` 同一套「回调里读一次会话」的既定形态），解不出即交
+    /// `std::nullopt` 给纯件——那一档就是「标识已被淘汰」，纯件据此落回启发式（裁决 7.21②）。
+    /// @param storage_cell 存储行序的落点（绘制行号已由调用方折上 `window_top`）。
+    /// @return 命中的链接；行不在可见窗内、白名单外、或落点不在可点内容上时为空。
+    [[nodiscard]] auto scan_link_at(const GridCellPos &storage_cell) -> std::optional<LinkHit>;
+
+    /// @brief 更新悬停命中：与现值不等才标脏（同一次移动在同一串字符上反复扫，不该每帧重画一遍）。
+    auto update_hover_link(const GridCellPos &storage_cell) -> void;
+
+    /// @brief 右键落点现扫一次：把命中同时存进 `menu_link_` 并回 `LinkMenuState`（判据 6）。
+    ///
+    /// 存而不是点击时再扫：菜单浮层一开，后续 Move 都归浮层，本控件的 `hover_link_` 会停在右键
+    /// 那一刻的位置，而「打开链接」要指的就是那一刻命中的那串。落点越界、行不在可见窗、白名单外
+    /// 都回 `on_link = false`，此时 `menu_link_` 一并清空——「能出现就能开」不允许留着上一条的命中。
+    [[nodiscard]] auto stash_link_at_point(const aurora::MouseEvent &e) -> LinkMenuState;
+
+    /// @brief 摘掉悬停命中；没挂着即什么都不做（不标脏）。
+    ///
+    /// 三个调用点各有其据：内容变动（那条列游程不再是它）、上报档接管这一笔（判据 7 的让位）、
+    /// 运行期改白名单（判据 5 的「不重开立刻生效」——留着旧命中就是留着一条按旧名单画出的线）。
+    auto clear_hover_link() -> void;
+
+    /// @brief 按两档策略处置一次打开：直接开、先问、还是拒绝（`plan_link_open` 的三档产出）。
+    ///
+    /// 两条入口（Ctrl+左击与菜单条目）共用本函数，于是「同域只问一次」这份账只有一处记。
+    /// 拒绝那一档只记日志：白名单外与解析不出 host 的串早在识别处就不产命中，走到这里的拒绝
+    /// 只剩「host 认不出来」一种，而那一条值得留痕而不是静默。
+    auto open_link(const LinkHit &hit) -> void;
+
+    /// @brief 把一条已获授权（或策略免问）的目标交进打开接缝。
+    ///
+    /// `presentation_.open_url` 为空即只记一条日志：批 2 落地时平台腿还没有，而「装了菜单条目却
+    /// 什么都不发」比「不画条目」更坏——前者是静默失败。装填生产腿是批 3 那条闭包的事。
+    auto dispatch_open(std::string_view target) -> void;
+
+    /// @brief 答话处置：取消什么都不做，「记住」那一档先写名单再打开，两者之后都不碰选区（稿 D13①）。
+    ///
+    /// 名单写入即触发装配层那条 `on_change` 闭包落盘；未装装配腿时写进本控件自持的那份，
+    /// 于是用例可以只装替身接缝而不必造一份配置文件现场。
+    auto apply_link_answer(const LinkOpenRequest &request, LinkOpenAnswer answer) -> void;
+
+    /// @brief 确认一问的默认呈现：`au::Dialog` 上自组的三按钮条（形态照 `credential_prompt.cpp`）。
+    ///
+    /// 刻意不用 `au::confirm`：那条只有是/否两枚按钮，而三档答话里的「仅本次」与「记住」必须由
+    /// 两枚不同按钮指认（稿 F12 的实测）。无宿主即不开框、什么都不打开——与「问了没答」同档，
+    /// 因此处没有跨帧承诺要结账（见 `Presentation::confirm_open_link` 的那句「不需要析构撤账腿」）。
+    auto ask_open_link_dialog(const LinkOpenRequest &request,
+                              std::function<void(LinkOpenAnswer)> answer) -> void;
+
+    /// @brief 当前生效的「已记住的同域」名单：装了装配腿即那一份，未装即本控件自持的那份。
+    [[nodiscard]] auto link_hosts() noexcept -> TrustedLinkHosts & {
+        return trusted_link_hosts_ != nullptr ? *trusted_link_hosts_ : owned_link_hosts_;
+    }
+
+    /// @brief 悬停那一段的 accent 下划线与左下角目标提示条（判据 1/3 的绘制腿，稿 D5①／D6①）。
+    ///
+    /// 行号在这里现折算：`hover_link_` 存的是存储行序，减去副本窗顶才是 `rect_for` 认的绘制行号，
+    /// 滚出可见窗即整条不画（下一帧的 Move 会重扫或摘掉）。下划线借 `decoration_rects` 的既有算式
+    /// 取线宽与吸附，只把用色换成 accent——线宽 1 物理像素与「基线 +1px」那条口径不在这里重述一遍。
+    auto paint_link_hover(aurora::Painter &p, const aurora::Rect &bounds) -> void;
+
     session::Session *session_ = nullptr;  ///< 非拥有。
     PaletteSpec spec_{};
     aurora::Font ref_font_{};
@@ -765,7 +920,7 @@ class TerminalView final : public aurora::LeafWidget {
     ///        的两件事，而菜单与警告对话框是右键那一棒的既有形态。
     std::unique_ptr<SearchOverlay> search_overlay_{};
 
-    Presentation presentation_{};         ///< 剪贴板与多行确认的三条接缝（空字段即生产实现）。
+    Presentation presentation_{};         ///< 剪贴板、确认与打开动作的六条接缝（空字段即生产实现）。
     GridSizeSink grid_size_sink_;         ///< 空即直发 `Session::resize`（未挂工作区层的形态）。
     KeyPreFilter key_pre_filter_;         ///< 空即不认领任何键（单 pane 装配的形态）。
     aurora::OverlayHost *host_ = nullptr; ///< 非拥有：装配层给的浮层宿主，本控件的父节点。
@@ -783,6 +938,21 @@ class TerminalView final : public aurora::LeafWidget {
     std::vector<term::ClipboardReadRequest> clipboard_reads_waiting_;  ///< 排队待问的其余请求（登记序）。
     std::optional<term::ClipboardReadRequest> clipboard_read_asking_;  ///< 已问出去、还没答的那一条。
     std::shared_ptr<aurora::Dialog> clipboard_read_dialog_;            ///< 懒建的授权一问对话框。
+
+    /// @brief 链接识别与打开的四件（`SPEC.FEAT.INTERACT.05`，稿 D4①／D9①／D11①）。
+    ///
+    /// 命中存的是**存储行序**的区间（与选区同一套坐标约定），绘制侧现折算成绘制行——于是滚动之后
+    /// 那条线仍指着同一段文字，而不需要在帧边界维护一份「行号平移量」。提示条盒与上面三枚
+    /// `*_button_box_` 的区别是它**不参与命中**（判据 3 的「不吃点击」）。
+    std::optional<LinkHit> hover_link_;
+    /// @brief 右键那一刻命中的那串（菜单里「打开链接」指的就是它）。
+    ///
+    /// 与 `hover_link_` 分开的唯一理由是新输出会摘悬停线：菜单开着时用户点的仍是刚才那一条。
+    std::optional<LinkHit> menu_link_;
+    std::optional<Rect> link_notice_box_;
+    TrustedLinkHosts *trusted_link_hosts_ = nullptr;  ///< 非拥有：装配层那一份 app 级名单。
+    TrustedLinkHosts owned_link_hosts_{};             ///< 未接装配腿时的自持份：不落盘、随控件消失。
+    std::shared_ptr<aurora::Dialog> link_open_dialog_;                ///< 懒建的三按钮确认对话框。
 
     /// @brief dead-session 浮层（`SPEC.FEAT.WS.05`）：装配层注入的重启钩子，未装即不画按钮。
     std::function<void()> restart_hook_;

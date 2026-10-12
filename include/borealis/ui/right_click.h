@@ -19,6 +19,12 @@
 // - **`Paste` 与 `CopyOnSelect` 两态不发菜单**（裁决 7.38⑥）：用户选这两态就是要一次点击办一件事，
 //   菜单反而多一层。`CopyOnSelect` 态无选区时回 `None`——空选区复制出一条空文本会覆盖用户剪贴板，
 //   是负收益。
+//
+// 「打开链接」那条（`SPEC.FEAT.INTERACT.05`，裁决 7.119 D12①）自此让菜单**条件性地到四条**：命中
+// 链接时 复制 → 粘贴 → 打开链接 → 会话日志，未命中时第三条**不出现**而前三条逐字节不变。这是本件
+// 继 7.116 D6 之后的**第二处签名改动**（同一处理由：纯函数读不到会话与视口，条件只能由调用方喂进来），
+// 也是 `MenuCommand` 那句「不留点了什么也不发生的空位」的兑现方之一——菜单条目的次序与出不出现在这里
+// 折算，而不是绘制侧自己 append，否则「菜单里有几条、哪条灰」这件本来可全量断言的事就分到两处了。
 // ============================================================
 
 #include <cstdint>
@@ -35,12 +41,13 @@ enum class RightClickAction : std::uint8_t {
 
 /// @brief 菜单里的一条命令标识（**不含文案**：标识 → 文案的映射属绘制侧）。
 ///
-/// 会话日志那条是 2026-10-12 到货的消费方（`SPEC.FEAT.CONN.11`，裁决 7.116 D6），头注原先那句
-/// 「随各自需求落地再入列」对它已经兑现。其余各项（全选 / 打开链接 / 分屏 / 重命名 / 广播组 /
-/// 关闭）仍不在这里留「点了什么也不发生」的空位。
+/// 会话日志那条是 2026-10-12 到货的消费方（`SPEC.FEAT.CONN.11`，裁决 7.116 D6），「打开链接」紧随
+/// 同日到货（`SPEC.FEAT.INTERACT.05`，裁决 7.119 D12），头注原先那句「随各自需求落地再入列」对这两条
+/// 已经兑现。其余各项（全选 / 分屏 / 重命名 / 广播组 / 关闭）仍不在这里留「点了什么也不发生」的空位。
 enum class MenuCommand : std::uint8_t {
     Copy,             ///< 复制选区；无选区时置灰。
     Paste,            ///< 读剪贴板并按粘贴处置计划发送。
+    OpenLink,         ///< 打开指针下那条链接：一条命中一个目标，能出现就能开（`enabled` 恒真）。
     ToggleSessionLog, ///< 开启/停止本会话日志：一条命令两态，态由 `LogMenuState::logging` 给。
 };
 
@@ -56,6 +63,18 @@ struct LogMenuState {
 
     /// @brief 逐字段全等比较（计划断言用）。
     [[nodiscard]] auto operator==(const LogMenuState &) const noexcept -> bool = default;
+};
+
+/// @brief 「打开链接」那条进菜单时要看的那一件事（裁决 7.119 D12①）。
+///
+/// 与会话日志那枚**同形态**：一条条件一枚结构体，不合并成一张聚合表——那件聚合表是为还不存在的
+/// 第四枚条件做抽象（AGENTS §4.1 第 3 条）。也不带能力闸字段：本条的「闸」就是协议白名单，而白名单
+/// 外的串在识别处就不产链接（`ui::find_link_at` 回空，稿判据 5），故 `on_link` 为真即已含「能打开」。
+struct LinkMenuState {
+    bool on_link = false;  ///< 指针落点上有一条过了白名单闸的链接。
+
+    /// @brief 逐字段全等比较（计划断言用）。
+    [[nodiscard]] auto operator==(const LinkMenuState &) const noexcept -> bool = default;
 };
 
 /// @brief 菜单的一条条目：命令与可用位。
@@ -84,17 +103,22 @@ struct RightClickPlan {
     [[nodiscard]] auto operator==(const RightClickPlan &other) const noexcept -> bool = default;
 };
 
-/// @brief 把「三态配置 + 此刻有没有选区 + 日志现状」折算成右键处置计划。
+/// @brief 把「三态配置 + 此刻有没有选区 + 日志现状 + 指针下有没有链接」折算成右键处置计划。
 ///
-/// 纯函数：同一入参恒得同一计划，故三态、选区与日志状态的组合全部可脱开界面断言。
+/// 纯函数：同一入参恒得同一计划，故三态、选区、日志状态与链接命中的组合全部可脱开界面断言。
 /// @param action `config::RightClickAction`（本件 `RightClickAction`）的当前取值。
 /// @param has_selection 当前是否存在非空选区（判据是 `ui::row_spans` 出不出区间，不是「端点是否重合」
 ///                      那种写法——两者等价，但调用方手里的是区间表）。
-/// @param log 日志能力闸与该会话的记录态（判据 2 的两态文案之源）。**本棒唯一一处改既有签名**：
+/// @param log 日志能力闸与该会话的记录态（判据 2 的两态文案之源）。**第一处签名改动**，裁决 7.116 D6：
 ///            区分「开启/停止/此条不存在」必须要这一枚入参，而它又不能在纯函数里读会话——
-///            读 `Session` 就把绘制侧的知识带进决策件了（代价与理由见裁决 7.116 D6 的代价列）。
+///            读 `Session` 就把绘制侧的知识带进决策件了（代价与理由见该条的代价列）。
+/// @param link 指针落点上有没有一条可打开的链接（判据 6 的第三条出处）。**第二处签名改动**，裁决
+///             7.119 D12①——理由与上一枚同源：本件读不到视口，把 `ui::find_link_at` 的结果折成一枚
+///             bool 交进来是唯一不多养第二份判定的形态。代价是每个调用点都要跟着改口。
 /// @return 处置计划；`intent != Menu` 时 `items` 为空。菜单态下条目次序恒为
-///         复制 → 粘贴 → 会话日志（`log.available` 为假时第三条**不出现**，前两条逐字节不变）。
-[[nodiscard]] auto plan_right_click(RightClickAction action, bool has_selection, LogMenuState log) -> RightClickPlan;
+///         复制 → 粘贴 → 打开链接 → 会话日志：`link.on_link` 为假时第三条**不出现**，
+///         `log.available` 为假时末条**不出现**，两闸都关时就是原来那两条，逐字节不变。
+[[nodiscard]] auto plan_right_click(RightClickAction action, bool has_selection, LogMenuState log,
+                                    LinkMenuState link) -> RightClickPlan;
 
 }  // namespace borealis::ui
