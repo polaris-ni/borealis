@@ -48,6 +48,7 @@ add_library(borealis_core STATIC
         session/screen_mirror.cpp
         session/session.cpp
         session/session_log.cpp
+        ui/broadcast.cpp
         ui/cell_layout.cpp
         ui/closed_tab_stack.cpp
         ui/color_text.cpp
