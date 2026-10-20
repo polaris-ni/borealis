@@ -429,13 +429,14 @@ auto settings_chrome() -> SettingsChrome {
 }
 
 auto settings_chrome_theme() -> aurora::Theme {
-    return aurora::Theme{
-        .background = kWindowBg,
-        .primary = kAccent,
-        .on_primary = kWindowBg,
-        .text = kText,
-        .font = aurora::Font{},
-    };
+    // 只覆写本套 chrome 消费的四个色角色（`surface`/`on_surface` 承接旧 `background`/`text`）；
+    // 其余角色沿用亮色基准——本主题挂在局部 `ThemeScope` 上，未被读到的角色不上屏。
+    aurora::ColorRoles roles = aurora::ColorRoles::light();
+    roles.primary = kAccent;
+    roles.on_primary = kWindowBg;
+    roles.surface = kWindowBg;
+    roles.on_surface = kText;
+    return aurora::Theme{.roles = roles};
 }
 
 SettingsPanel::SettingsPanel(aurora::OverlayHost &host, aurora::ShortcutRegistry &shortcuts, Hooks hooks)

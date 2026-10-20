@@ -96,11 +96,12 @@ auto StartupNotice::show_if_needed(const config::LoadReport &report) -> bool {
     std::vector<aurora::Node> children;
     if (report.outcome == config::LoadOutcome::RecoveredCorrupt) {
         children.push_back(
-            make_text(settings_text("settings.startup.corrupt.title"), chrome.text, kTitleSizePt, true));
-        children.push_back(make_text(settings_text("settings.startup.corrupt.body"), chrome.text, kBodySizePt));
+            make_text(settings_text("settings.startup.corrupt.title"), chrome.roles.on_surface, kTitleSizePt, true));
+        children.push_back(
+            make_text(settings_text("settings.startup.corrupt.body"), chrome.roles.on_surface, kBodySizePt));
     } else {
         children.push_back(
-            make_text(settings_text("settings.startup.version.title"), chrome.text, kTitleSizePt, true));
+            make_text(settings_text("settings.startup.version.title"), chrome.roles.on_surface, kTitleSizePt, true));
         // 两个版本号都是**取值**：文件自报的那一档可能高于本仓能读的最高档，只报本程序支持的档位
         // 就说不清差了多少，而 `LoadReport::message` 是 ASCII 诊断、不能上界面（文件头④）。
         children.push_back(make_text(settings_text("settings.startup.version.body",
@@ -110,28 +111,28 @@ auto StartupNotice::show_if_needed(const config::LoadReport &report) -> bool {
                                                             : std::string{}},
                                                     aurora::LocalizedString{std::to_string(
                                                         config::kSupportedSchemaVersion)}}),
-                                     chrome.text,
+                                     chrome.roles.on_surface,
                                      kBodySizePt));
     }
     if (report.corrupt_backup.has_value()) {
         children.push_back(make_text(settings_text("settings.startup.backup",
                                                    {aurora::LocalizedString{path_text(*report.corrupt_backup)}}),
-                                     chrome.text,
+                                     chrome.roles.on_surface,
                                      kBodySizePt));
     }
     if (report.writes_refused) {
         // 「不静默清空」的界面表达：备份未成功时本会话拒绝写这个文件，界面上必须说出这一点，
         // 否则用户以为改动能存住，而此后每一次落盘都会被拒绝。
         children.push_back(
-            make_text(settings_text("settings.startup.writes_refused"), chrome.text, kBodySizePt));
+            make_text(settings_text("settings.startup.writes_refused"), chrome.roles.on_surface, kBodySizePt));
     }
     if (!report.rejected_keys.empty()) {
         children.push_back(
-            make_text(settings_text("settings.startup.rejected"), chrome.text, kBodySizePt));
+            make_text(settings_text("settings.startup.rejected"), chrome.roles.on_surface, kBodySizePt));
         std::vector<aurora::Node> keys;
         keys.reserve(report.rejected_keys.size());
         for (const std::string &key : report.rejected_keys) {
-            keys.push_back(make_text(aurora::LocalizedString{key}, chrome.text, kBodySizePt));
+            keys.push_back(make_text(aurora::LocalizedString{key}, chrome.roles.on_surface, kBodySizePt));
         }
         auto list = std::make_shared<aurora::Column>(
             aurora::ColumnProps{.children = std::move(keys), .gap = 2.0F});
@@ -145,8 +146,8 @@ auto StartupNotice::show_if_needed(const config::LoadReport &report) -> bool {
 
     auto ack = std::make_shared<aurora::Button>(aurora::ButtonProps{
         .label = settings_text("settings.startup.ack"),
-        .color = chrome.primary,
-        .on_color = chrome.on_primary,
+        .color = chrome.roles.primary,
+        .on_color = chrome.roles.on_primary,
         .min_width = 120.0F});
     ack->set_on_click([this]() -> void {
         // 只关框，不在派发栈内摘浮层：`remove_overlay` 会析构正在派发的子树（A4 与面板同口径）。
@@ -158,7 +159,7 @@ auto StartupNotice::show_if_needed(const config::LoadReport &report) -> bool {
 
     auto box = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(children), .gap = kGapDp});
     box->modifier.set(aurora::Modifier{}.width(kBoxWidthDp)
-                          .background(chrome.background, 8.0F)
+                          .background(chrome.roles.surface, 8.0F)
                           .padding(aurora::EdgeInsets{
                               .left = kBoxPaddingDp,
                               .top = kBoxPaddingDp,

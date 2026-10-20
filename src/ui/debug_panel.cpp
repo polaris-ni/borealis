@@ -109,11 +109,11 @@ auto DebugPanel::toggle(const std::vector<DebugSessionSnapshot> &sessions) -> vo
     const aurora::Theme chrome = settings_chrome_theme();
     std::vector<aurora::Node> rows;
     if (sessions.empty()) {
-        rows.push_back(make_text(settings_text("diagnostics.empty"), chrome.text, kBodySizePt));
+        rows.push_back(make_text(settings_text("diagnostics.empty"), chrome.roles.on_surface, kBodySizePt));
     } else {
         rows.reserve(sessions.size() * 4U);
         for (const DebugSessionSnapshot &session : sessions) {
-            append_session_rows(session, chrome.text, rows);
+            append_session_rows(session, chrome.roles.on_surface, rows);
         }
     }
     auto list = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(rows), .gap = 2.0F});
@@ -123,12 +123,12 @@ auto DebugPanel::toggle(const std::vector<DebugSessionSnapshot> &sessions) -> vo
     scroller->modifier.set(aurora::Modifier{}.fill_max_width().height(kListHeightDp));
 
     std::vector<aurora::Node> children;
-    children.push_back(make_text(settings_text("diagnostics.title"), chrome.text, kTitleSizePt, true));
+    children.push_back(make_text(settings_text("diagnostics.title"), chrome.roles.on_surface, kTitleSizePt, true));
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(scroller))});
     auto close_button = std::make_shared<aurora::Button>(aurora::ButtonProps{
         .label = settings_text("settings.close"),
-        .color = chrome.primary,
-        .on_color = chrome.on_primary,
+        .color = chrome.roles.primary,
+        .on_color = chrome.roles.on_primary,
         .min_width = 120.0F});
     close_button->set_on_click([this]() -> void {
         // 只关框，不在派发栈内摘浮层（面板本体与降级对话框同口径）。
@@ -140,7 +140,7 @@ auto DebugPanel::toggle(const std::vector<DebugSessionSnapshot> &sessions) -> vo
 
     auto box = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(children), .gap = kGapDp});
     box->modifier.set(aurora::Modifier{}.width(kBoxWidthDp)
-                          .background(chrome.background, 8.0F)
+                          .background(chrome.roles.surface, 8.0F)
                           .padding(aurora::EdgeInsets{
                               .left = kBoxPaddingDp,
                               .top = kBoxPaddingDp,
