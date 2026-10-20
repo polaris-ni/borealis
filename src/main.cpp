@@ -1,5 +1,6 @@
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <filesystem>
 #include <functional>
@@ -35,6 +36,7 @@
 #include "borealis/term/width.h"
 #include "borealis/ui/broadcast.h"
 #include "borealis/ui/font_choice.h"
+#include "borealis/ui/osc7.h"
 #include "borealis/ui/shortcuts_table.h"
 #include "borealis/ui/settings_form.h"
 #include "borealis/ui/tab_strip.h"
@@ -486,6 +488,12 @@ auto main() -> int {
     // 当前显示的标签 ID（用于场景根切换）
     std::optional<borealis::ui::TabId> current_tab_id;
 
+    // 标签的会话类型（`SPEC.FEAT.INTEG.02`）：新标签是否继承当前目录只由「当前标签是不是本地
+    // 终端」决定，而本地标签在 SSH / 串口 / Telnet 三张接线表里都没有身份，故单立一张类型表。
+    // 撤账纪律照那三张：`perform_close` 随标签同撤，撤销重开登记为 Local，重启换腿不改类型。
+    enum class TabKind : std::uint8_t { Local, Ssh, Serial, Telnet };
+    std::map<borealis::ui::TabId, TabKind> tab_kind;
+
     // ---- 广播组（`SPEC.FEAT.WS.09`，裁决 7.121）----
     // 组与端点表是 app 级一份（D2）：成员 `(TabId, PaneId)` 跨标签保留、不落盘。横幅常驻根 Column
     // 的 index 1（D10），本处先造控件，稍后与标签条 / 工作区一起入根（顺序见 `root_column` 的组装）。
@@ -689,10 +697,11 @@ auto main() -> int {
     // `Session` 的写出折算与视口的粘贴档，两处同源才不会出现「敲回车与粘多行两个样」，故由开标签
     // 那一侧一并传进来。
     auto create_new_tab_with = [&](std::shared_ptr<borealis::session::Session> session,
-                                   const std::u32string &tab_name,
+                                   const std::u32string &tab_name, TabKind kind,
                                    borealis::term::LineEnding line_ending =
                                        borealis::term::LineEnding::Lf) -> void {
         const borealis::ui::TabId id = next_tab_id++;
+        tab_kind[id] = kind;
 
         session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
         // 两接同一枚闸门（裁决 D13②）：会话那一接决定查询**收不收**（状态机现读，Deny 档当场回空响应），
@@ -716,7 +725,9 @@ auto main() -> int {
         // 声明在该类最前（故最后析构），这份值捕获替视口把会话撑到 `~TerminalView` 之后——
         // 视口析构那一步要往会话写撤账空响应。见上面 `TabWorkspace` 的成员次序注释。
         ws_hooks.make_pane = [session, view](borealis::ui::PaneId /*pane*/) -> std::shared_ptr<borealis::ui::TerminalView> {
-            // 首 pane 复用传入的 view，后续 pane 需要新建会话（暂不支持，返回空）
+            // TODO(SPEC.FEAT.WS.02): 多会话工厂落地前，新 pane 只能复用首会话；分屏的目录继承今天
+            // 因「同一会话」而天然成立。届时新 pane 的 LocalTerminalSpec 须按焦点 pane 的 OSC 7
+            // 走 `ui::choose_start_directory`，而不是复制首 pane 的启动目录。
             return view;
         };
         ws_hooks.dispatch_grid = [session](borealis::ui::PaneId /*pane*/, borealis::ui::GridSize size) -> void {
@@ -738,16 +749,37 @@ auto main() -> int {
         current_tab_id = id;
     };
     auto create_new_tab = [&]() -> void {
-        // 缺省腿＝本地终端：命令与目录从**当前**配置读（与 770 附近的重连口径一致）。
+        // 缺省腿＝本地终端：命令从配置读，目录优先继承当前标签的 OSC 7（`SPEC.FEAT.INTEG.02`）。
+        // 继承只发生在「当前标签是本地终端且会话仍活着」这一档：SSH / 串口 / Telnet 的目录是远端或
+        // 无意义的；显式本地档案走 `open_local_profile_tab`，档案目录优先级更高。存活判据与关闭确认
+        // 同源（`Session::alive()`），死会话留下的最后一条目录不再追认。
+        bool local_session = false;
+        std::u32string osc7;
+        if (current_tab_id.has_value()) {
+            const auto kind = tab_kind.find(current_tab_id.value());
+            const auto tab = tab_workspaces.find(current_tab_id.value());
+            if (kind != tab_kind.end() && kind->second == TabKind::Local &&
+                tab != tab_workspaces.end() && !tab->second.sessions.empty() &&
+                tab->second.sessions.front()->alive()) {
+                // 多会话落地后改取焦点 pane 的会话（`SPEC.FEAT.WS.02`）；今天一个标签一条会话。
+                osc7 = tab->second.sessions.front()->osc_state().working_directory;
+                local_session = true;
+            }
+        }
+        const auto start =
+            borealis::ui::choose_start_directory(local_session, osc7,
+                                                 settings.connection.startup_directory,
+                                                 borealis::ui::osc7_path_style());
+
         borealis::conn::LocalTerminalSpec spec;
         spec.command_line = settings.connection.local_shell;
-        spec.working_directory = settings.connection.startup_directory;
+        spec.working_directory = start.path;
         auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
         auto session = std::make_shared<borealis::session::Session>(
             borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
             kNominalViewport, settings.terminal.scrollback_limit, width_policy,
             make_terminal_defaults(settings), make_session_encoding(settings));
-        create_new_tab_with(std::move(session), U"本地终端");
+        create_new_tab_with(std::move(session), U"本地终端", TabKind::Local);
     };
 
     create_new_tab();
@@ -837,6 +869,7 @@ auto main() -> int {
             // 串口接线同撤：那条连接腿随本格的 Session 一起析构，裸指针不留过夜（批 3）。
             serial_by_tab.erase(id);
             telnet_by_tab.erase(id);  // Telnet 同撤（CONN.06 批 3）。
+            tab_kind.erase(id);       // 类型随标签同撤：重开那一支会重新登记（INTEG.02）。
         }
         if (current_tab_id.has_value() && current_tab_id.value() == id) {
             // 选下一个或上一个
@@ -1224,7 +1257,7 @@ auto main() -> int {
         auto session = std::make_shared<borealis::session::Session>(
             std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
             width_policy, make_terminal_defaults(settings), make_session_encoding(settings));
-        create_new_tab_with(std::move(session), decode_tab_name(profile.name));
+        create_new_tab_with(std::move(session), decode_tab_name(profile.name), TabKind::Ssh);
         if (current_tab_id.has_value()) {
             ssh_profile_by_tab[current_tab_id.value()] = sftp_profile;
             ssh_secret_by_tab[current_tab_id.value()] = std::move(sftp_secret);
@@ -1243,7 +1276,7 @@ auto main() -> int {
             borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
             kNominalViewport, settings.terminal.scrollback_limit, width_policy,
             make_terminal_defaults(settings), make_session_encoding(settings));
-        create_new_tab_with(std::move(session), decode_tab_name(profile.name));
+        create_new_tab_with(std::move(session), decode_tab_name(profile.name), TabKind::Local);
         record_recent(profile.id);
     };
 
@@ -1281,7 +1314,8 @@ auto main() -> int {
 
     auto open_serial_tab = [&](const borealis::conn::Profile &profile) -> void {
         auto bundle = make_serial_session(profile.serial);
-        create_new_tab_with(bundle.session, decode_tab_name(profile.name), bundle.line_ending);
+        create_new_tab_with(bundle.session, decode_tab_name(profile.name), TabKind::Serial,
+                            bundle.line_ending);
         if (current_tab_id.has_value()) {
             serial_by_tab[current_tab_id.value()] =
                 SerialTabBinding{.profile = profile.serial, .connection = bundle.connection};
@@ -1315,7 +1349,8 @@ auto main() -> int {
 
     auto open_telnet_tab = [&](const borealis::conn::Profile &profile) -> void {
         auto bundle = make_telnet_session(profile.telnet);
-        create_new_tab_with(bundle.session, decode_tab_name(profile.name), bundle.line_ending);
+        create_new_tab_with(bundle.session, decode_tab_name(profile.name), TabKind::Telnet,
+                            bundle.line_ending);
         if (current_tab_id.has_value()) {
             telnet_by_tab[current_tab_id.value()] = profile.telnet;
         }
@@ -2043,6 +2078,8 @@ auto main() -> int {
         }
         
         tab_workspaces[id] = TabWorkspace{.sessions = {session}, .workspace = std::move(workspace)};
+        // 闭包栈只存本地终端的规格，重开回来仍是本地标签（`SPEC.FEAT.INTEG.02` 的类型表同源登记）。
+        tab_kind[id] = TabKind::Local;
         // 新格的成员表从空开始（闭包栈只存标签规格，不存广播资格）；端点仍按「三处构造点同源」登记。
         attach_broadcast_sink(id);
         current_tab_id = id;
