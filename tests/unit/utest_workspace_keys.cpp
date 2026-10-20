@@ -1,11 +1,11 @@
 /// 测试类型: unit
 /// 目标单元: include/borealis/ui/workspace_keys.h + src/ui/workspace_keys.cpp
 /// 测试说明: 分屏层的键位绑定表与键盘步进折算（`SPEC.FEAT.WS.02` ③，裁决 7.47①②④ / 7.48）。
-///           键位侧断四类命令各自命中、认领集**恰为**那十二个键位（多余的认领会把可打印键与
+///           键位侧断五类命令各自命中、认领集**恰为**那十三个键位（多余的认领会把可打印键与
 ///           功能键从会话那里抢走）、修饰多一位即不命中、NumLock 位不参与判定；步进侧断「推哪条
 ///           把手、推多远」的全部三条算式：符号恒为「焦点 pane 变大」、步长 `max(5%, 24 dp)`、
 ///           以及三类无把手可推的拒绝路径。另断 `workspace_key_bindings()` 与派发函数同源（裁决
-///           7.72 的③：快捷键表要把这十二条当保留位比对，两处各写一张表就会分叉）。
+///           7.72 的③：快捷键表要把这十三条当保留位比对，两处各写一张表就会分叉）。
 
 #include <cstddef>
 #include <optional>
@@ -46,6 +46,7 @@ constexpr KeyPress kClaimed[] = {
     key(KeySym::E, true, true),
     key(KeySym::W, true, true),
     key(KeySym::D0, true, true),
+    key(KeySym::Z, true, true),
 
     key(KeySym::ArrowLeft, false, false, true),
     key(KeySym::ArrowRight, false, false, true),
@@ -70,6 +71,8 @@ constexpr KeyPress kClaimed[] = {
         key(KeySym::E, false, true),   // 少一位 Shift 就不是向下切分
         key(KeySym::W, false, false, true),
         key(KeySym::D0),
+        key(KeySym::Z),                // 打字
+        key(KeySym::Z, false, true),   // Ctrl+Z：SIGTSTP / TUI 的撤销，少一位 Shift 就不是缩放
         key(KeySym::KP_0, false, true),  // 小键盘 0 随 NumLock 两档归文本通道
         key(KeySym::F1),
         key(KeySym::Enter),
@@ -88,6 +91,9 @@ AURORA_TEST_CASE(pane_commands_match_their_documented_bindings) {
     // 等分取主键盘行的 0（裁决 7.48①）：小键盘那一位随锁定态有两种归属，不登记。
     AURORA_TEST_CHECK_EQ(workspace_command(key(KeySym::D0, true, true)).value(),
                          WorkspaceCommand::EqualizeLayer);
+    // 缩放（`SPEC.FEAT.WS.08`，裁决 7.120）：与分屏命令同一条前置过滤通道，不另立键位表。
+    AURORA_TEST_CHECK_EQ(workspace_command(key(KeySym::Z, true, true)).value(),
+                         WorkspaceCommand::ToggleZoom);
 }
 
 AURORA_TEST_CASE(focus_routing_covers_all_four_alt_arrows) {
@@ -113,7 +119,7 @@ AURORA_TEST_CASE(step_covers_all_four_ctrl_alt_arrows) {
                          WorkspaceCommand::StepDown);
 }
 
-AURORA_TEST_CASE(the_claimed_set_is_exactly_those_twelve_keys) {
+AURORA_TEST_CASE(the_claimed_set_is_exactly_those_thirteen_keys) {
     for (const KeyPress &press : kClaimed) {
         AURORA_TEST_CHECK(workspace_command(press).has_value());
     }
@@ -143,7 +149,7 @@ AURORA_TEST_CASE(num_lock_state_changes_no_verdict) {
 }
 
 AURORA_TEST_CASE(listed_bindings_are_exactly_the_claimed_keys) {
-    // 快捷键表要把这十二条当**保留位**去比对（裁决 7.72 的③），故列表必须与认领集逐条同形：
+    // 快捷键表要把这十三条当**保留位**去比对（裁决 7.72 的③），故列表必须与认领集逐条同形：
     // 少一条就是有一个保留位没被守住，多一条则是把会话的键也圈成了保留位。
     const auto listed = workspace_key_bindings();
     AURORA_TEST_REQUIRE_EQ(listed.size(), std::size(kClaimed));
@@ -220,7 +226,8 @@ AURORA_TEST_CASE(step_is_rejected_when_no_sibling_boundary_exists) {
         divider_step(WorkspaceCommand::StepRight, 2U, 3U, PaneAxis::Horizontal, 1000.0).has_value());
     // ④ 非步进命令不该被折成位移。
     for (const auto command : {WorkspaceCommand::SplitRight, WorkspaceCommand::ClosePane,
-                               WorkspaceCommand::EqualizeLayer, WorkspaceCommand::FocusLeft}) {
+                               WorkspaceCommand::EqualizeLayer, WorkspaceCommand::FocusLeft,
+                               WorkspaceCommand::ToggleZoom}) {
         AURORA_TEST_CHECK_FALSE(divider_step(command, 1U, 3U, PaneAxis::Horizontal, 1000.0).has_value());
     }
 }

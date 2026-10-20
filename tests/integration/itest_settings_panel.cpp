@@ -71,7 +71,7 @@
 ///              命中已注册 id 的覆盖条目既不产行也不改写那一行），三列文字逐字取注册表交出的那三份；标注列
 ///              比的是**键位语义值**而不是显示文本（同文本不同键位不标注、异文本同键位必标注且引用对方的动作名
 ///              而不是命令 id；修饰位只取 Shift / Ctrl / Alt / Meta 四位，故只差 NumLock 的两条判为同一键位），
-///              并与本仓十二条分屏保留位比一次（撞档即标注，两档并列）。孤儿行只有文本，故呈现为「延后」而
+///              并与本仓十三条分屏保留位比一次（撞档即标注，两档并列）。孤儿行只有文本，故呈现为「延后」而
 ///              不是「无冲突」；表体没有任何可提交入口，真点一格既不落盘也不广播。
 ///           ⑬ **预览的取外观与取初始档两条接缝绑成一对**（裁决 7.76③）：任缺其一即整条横条不画，于是
 ///              「装配层只装了一半」在结构上不成立——两份不同的初始档画在同一屏上就是两种光标，而
@@ -3765,7 +3765,7 @@ AURORA_TEST_CASE(the_shortcut_table_lists_registry_rows_first_and_appends_only_o
     AURORA_TEST_CHECK_EQ(zoom->binding_text, unbound);
     AURORA_TEST_CHECK_TRUE(paste->note.empty());
     AURORA_TEST_CHECK_TRUE(zoom->note.empty());
-    // `Ctrl+Insert` 不在本仓十二条分屏保留位里，故那一行的标注也是空的（否则「工作区冲突」就成了恒真）。
+    // `Ctrl+Insert` 不在本仓十三条分屏保留位里，故那一行的标注也是空的（否则「工作区冲突」就成了恒真）。
     const SettingsPanel::ShortcutRowView *copy_line = find_shortcut(rows, "Copy line");
     AURORA_TEST_REQUIRE(copy_line != nullptr);
     AURORA_TEST_CHECK_TRUE(copy_line->note.empty());

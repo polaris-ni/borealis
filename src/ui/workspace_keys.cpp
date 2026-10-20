@@ -25,6 +25,7 @@ constexpr Binding kBindings[] = {
     {term::KeySym::E, true, true, false, false, WorkspaceCommand::SplitDown},
     {term::KeySym::W, true, true, false, false, WorkspaceCommand::ClosePane},
     {kDigit0, true, true, false, false, WorkspaceCommand::EqualizeLayer},
+    {term::KeySym::Z, true, true, false, false, WorkspaceCommand::ToggleZoom},
 
     {term::KeySym::ArrowLeft, false, false, true, false, WorkspaceCommand::FocusLeft},
     {term::KeySym::ArrowRight, false, false, true, false, WorkspaceCommand::FocusRight},
