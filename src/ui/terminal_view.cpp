@@ -103,6 +103,18 @@ constexpr double kLinkNoticeInsetDp = 8.0;      ///< 距视口左沿与底沿的
 constexpr double kLinkNoticePaddingDp = 8.0;    ///< 条内文字距条边的横向留白。
 constexpr double kLinkNoticeStrokeDp = 1.0;     ///< 描边宽（与两张卡同档）。
 
+/// @brief 广播角标（`SPEC.FEAT.WS.09` 稿 §2.2／D9）：18 dp 高、圆角 9、距 pane 左与下各 8 dp；
+///        宽按 11 pt 文案实测取 `max(46, 宽 + 16)`。底色与字色是稿面固定 token（与横幅同档），
+///        不随主题走——它标识的是「这格在组里」这一操作态，不是终端内容。
+constexpr double kBroadcastBadgeHeightDp = 18.0;
+constexpr double kBroadcastBadgeMinWidthDp = 46.0;
+constexpr double kBroadcastBadgeInsetDp = 8.0;
+constexpr double kBroadcastBadgePaddingDp = 8.0;
+constexpr double kBroadcastBadgeTextTopDp = 2.0;
+constexpr float kBroadcastBadgeFontPt = 11.0F;
+constexpr aurora::Color kBroadcastBadgeBg{0x5A, 0x44, 0x20};
+constexpr aurora::Color kBroadcastBadgeInk{0xF1, 0xFA, 0x8C};
+
 /// @brief 把滚轮增量折成「档」：一 notch 即一档（Win32 与 X11 给 ±1，高分屏与 GLFW 可给小数）。
 ///        非零增量至少算一档——发零条上报等于吞掉这一事件而不告诉任何人。
 [[nodiscard]] auto wheel_notches(float delta_rows) -> int {
@@ -384,6 +396,41 @@ auto TerminalView::set_grid_size_sink(GridSizeSink sink) -> void { grid_size_sin
 
 auto TerminalView::set_key_pre_filter(KeyPreFilter filter) -> void { key_pre_filter_ = std::move(filter); }
 
+auto TerminalView::set_input_mirrors(KeyMirror key, TextMirror text) -> void {
+    key_mirror_ = std::move(key);
+    text_mirror_ = std::move(text);
+}
+
+auto TerminalView::send_broadcast_key(const term::KeyPress &press) -> void {
+    // 与 `on_key_event` 的后半段同一条编码路径，但**不碰** `swallow_next_text_`：那一位是源格
+    // 自己的文本通道账本（见公共头），代发只负责这一键在同伴上的第一次落地。
+    const auto bytes = term::encode_key(press, modes_snapshot());
+    if (!bytes) {
+        return;
+    }
+    session_->send_bytes(std::as_bytes(std::span<const char>{bytes->data(), bytes->size()}));
+}
+
+auto TerminalView::send_broadcast_text(std::u32string_view text) -> void {
+    if (text.empty()) {
+        return;
+    }
+    session_->send_text(text);  // 与键入同一条编码/行尾路径（D6）
+}
+
+auto TerminalView::session_identity() const noexcept -> const void * { return session_; }
+
+auto TerminalView::set_broadcast_badge(bool shown) -> void {
+    if (broadcast_badge_ == shown) {
+        return;
+    }
+    broadcast_badge_ = shown;
+    if (!shown) {
+        broadcast_badge_box_.reset();
+    }
+    mark_needs_paint();
+}
+
 auto TerminalView::set_restart_hook(std::function<void()> hook) -> void {
     restart_hook_ = std::move(hook);
     // 装/拆钩子都是一次可观测的绘制变更：装钩那一刻若会话已退（装配顺序不保证，重启闭包可能晚于
@@ -562,6 +609,8 @@ auto TerminalView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, cons
     // ①：整盒铺默认底色。部分裁剪帧里框架会先把裁剪区清回零基底，不铺这层就露出黑底——它与
     //    「本帧有没有脏」无关，每次进入绘制都要铺。
     p.fill_rect(bounds, to_color(spec_.default_background));
+    // 角标盒每帧先清：早退的帧（零行列 / 整个网格在裁剪盒外）不该留下上一帧的读数。
+    broadcast_badge_box_.reset();
     const std::size_t rows = std::min(geometry_.rows, mirror_.rows());
     if (rows == 0U || geometry_.columns == 0U) {
         return;
@@ -595,6 +644,9 @@ auto TerminalView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, cons
     // 盖在回看内容与指示条之上都不为过。判据现取 `Session::alive()` 而不是缓存的翻转标志——
     // `on_closed` 那一次唤醒会带着最后一批 damage 排上帧，于是浮层与「最后一段输出」同一帧落定。
     paint_restart_overlay(p, bounds);
+    // 广播角标排在最末（稿 §2.3）：它标识的是「这一格在组里」这一操作态，压住终端内容与两张状态卡
+    // 才读得出；纯展示，不进命中链（指针入口不认识这枚盒）。
+    paint_broadcast_badge(p, bounds);
 }
 
 auto TerminalView::type_name() const -> const char * { return "TerminalView"; }
@@ -673,6 +725,9 @@ auto TerminalView::on_key_event(aurora::KeyEvent &e) -> void {
         return;  // 本层不编码：可打印形态归文本通道，无遗留编码的组合归快捷键层
     }
     session_->send_bytes(std::as_bytes(std::span<const char>{bytes->data(), bytes->size()}));
+    if (key_mirror_) {
+        key_mirror_(press);  // 广播：源格已按自己的模式落地，同伴由各自视口再编码（D5/D6）
+    }
     e.is_handled = true;
     // NumLock 开着的小键盘键必有紧随其后的 `WM_CHAR`（Windows 不看 `DECKPAM`），而本层已把它发成
     // SS3 数值族或导航形态——文本通道那一条是同一物理键的第二次落地，吞掉一次。
@@ -689,7 +744,11 @@ auto TerminalView::on_text_input(aurora::TextInputEvent &e) -> void {
         e.is_handled = true;  // 已由按键通道发过，此处消费但不写会话
         return;
     }
-    session_->send_text(to_code_points(e.text));
+    const std::u32string text = to_code_points(e.text);
+    session_->send_text(text);
+    if (text_mirror_) {
+        text_mirror_(text);  // 广播：已提交文本按同伴自己的编码与行尾再发一次（D5/D6）
+    }
     e.is_handled = true;
 }
 
@@ -1367,6 +1426,37 @@ auto TerminalView::paint_unrepresentable_notice(aurora::Painter &p, const aurora
                              kRestartHintLineHeightDp},
                         bounds.origin),
                 settings_label("terminal.notice.unrepresentable.action"), ref_font_, chrome.text_dim);
+}
+
+auto TerminalView::paint_broadcast_badge(aurora::Painter &p, const aurora::Rect &bounds) -> void {
+    if (!broadcast_badge_) {
+        return;
+    }
+    const double box_w = static_cast<double>(bounds.size.width);
+    const double box_h = static_cast<double>(bounds.size.height);
+    const std::string label = settings_label("workspace.broadcast.badge");
+    const aurora::Font font{.size_pt = kBroadcastBadgeFontPt, .weight = 600};
+    // 稿要求按**实测宽**定 pill（§2.2 的 `max(46, 文字实测宽 + 16)`），不抄屏 1 的 46.1。
+    // 量宽走 `display_width` 换回 dp（同 `paint_link_hover` 的理由：`measure_width` 是设备像素）；
+    // 无头用例 scale 为 1，两种口径逐位相等。
+    const float scale = geometry_.scale > 0.0F ? geometry_.scale : 1.0F;
+    const double text_w =
+        aurora::render::FontEngine::display_width(label, font, layout_opts_, scale);
+    const double pill_w = std::max(kBroadcastBadgeMinWidthDp, text_w + 2.0 * kBroadcastBadgePaddingDp);
+    if (pill_w > box_w || box_h < kBroadcastBadgeHeightDp) {
+        return;  // 这一格放不下：整枚不画，盒留空（判据读的是「画没画、画在哪」）
+    }
+    const Rect pill{.x = kBroadcastBadgeInsetDp, .y = box_h - kBroadcastBadgeHeightDp - kBroadcastBadgeInsetDp,
+                    .width = pill_w, .height = kBroadcastBadgeHeightDp};
+    p.fill_rounded_rect(to_rect(pill, bounds.origin), static_cast<float>(kBroadcastBadgeHeightDp / 2.0),
+                        kBroadcastBadgeBg);
+    // 文案在 pill 内水平居中：最小宽 46 时文字只有 30 dp 可用，靠左会读成「贴边没对齐」。
+    const double text_x = pill.x + (pill_w - text_w) / 2.0;
+    p.draw_text(to_rect(Rect{text_x, pill.y + kBroadcastBadgeTextTopDp, text_w,
+                             kBroadcastBadgeHeightDp - 2.0 * kBroadcastBadgeTextTopDp},
+                        bounds.origin),
+                label, font, kBroadcastBadgeInk);
+    broadcast_badge_box_ = pill;
 }
 
 auto TerminalView::mirror_line_of(std::size_t storage_row) const noexcept -> const grid::Row * {

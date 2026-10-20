@@ -264,6 +264,41 @@ class TerminalView final : public aurora::LeafWidget {
     /// @param filter 判定者；入参与 `term::encode_key` 吃的是同一个 `term::KeyPress`。
     auto set_key_pre_filter(KeyPreFilter filter) -> void;
 
+    /// @brief 输入镜像的两条接缝（`SPEC.FEAT.WS.09` 的广播腿，裁决 7.121）。
+    ///
+    /// 在本视口**完成自己的发送之后**各调一次（吞掉的小键盘文本那一路不镜像）。源格按自己的模式
+    /// 编码一次，同伴格收到镜像再由 `send_broadcast_key` 按它**自己**的模式重编码一次（D6）：
+    /// 同一个物理键在 `vim` 与 `cat` 里各自的落地形态互不牵连。未装即零行为变化。
+    using KeyMirror = std::function<void(const term::KeyPress &press)>;
+    using TextMirror = std::function<void(std::u32string_view text)>;
+    /// @param key 按键镜像；空即不镜像。
+    /// @param text 已提交文本镜像；空即不镜像。
+    auto set_input_mirrors(KeyMirror key, TextMirror text) -> void;
+
+    /// @brief 广播代发：按键按本视口当前模式重编码后写入会话（`SPEC.FEAT.WS.09` D6）。
+    ///
+    /// 不置 `swallow_next_text_`：那一位记的是「同一物理键在本视口的文本通道还会来第二次」，
+    /// 而同伴后端是否也发一条 `WM_CHAR` 是同伴自己的事，源格的账不能记到同伴头上。
+    /// 本视口不编码的组合（无遗留编码）同样不发。
+    /// @param press 源格收到的同一次按键。
+    auto send_broadcast_key(const term::KeyPress &press) -> void;
+
+    /// @brief 广播代发：已提交文本按本视口的编码与行尾重编码写入会话（与键入同一条路径）。
+    /// @param text 源格已提交的那段文本（码点）。
+    auto send_broadcast_text(std::u32string_view text) -> void;
+
+    /// @brief 会话身份：同一 `Session` 的两个 pane 返回相等指针（装配层按它去重，D7）。
+    [[nodiscard]] auto session_identity() const noexcept -> const void *;
+
+    /// @brief 广播角标的显隐（`SPEC.FEAT.WS.09` D9 的 pill）；只在值变时标脏。
+    /// @param shown 是否显形。
+    auto set_broadcast_badge(bool shown) -> void;
+
+    /// @brief 最近一次绘制时的角标盒（dp，本控件局部系）；未显形或放不下即空值。
+    [[nodiscard]] auto broadcast_badge_box() const noexcept -> const std::optional<Rect> & {
+        return broadcast_badge_box_;
+    }
+
     /// @brief 运行期换外观（裁决 7.52 的 S4①，`SPEC.FEAT.PREF.02` 的「修改即时生效」）。
     ///
     /// **不重建视口**，故选区、回看偏移、焦点态与 `ScreenMirror` 副本全部原样保留——重建会把
@@ -661,6 +696,13 @@ class TerminalView final : public aurora::LeafWidget {
     /// 窄 pane 下第二行按卡宽截断而不折行，与既有卡片同档。
     auto paint_unrepresentable_notice(aurora::Painter &p, const aurora::Rect &bounds) -> void;
 
+    /// @brief 画 pane 左下角的广播角标（`SPEC.FEAT.WS.09` D9／§2.2）：18 dp 高、圆角 9、距左/下各 8 dp。
+    ///
+    /// 排在 `on_paint` 最末一层（压在终端内容与两张状态卡之上，稿 §2.3），纯展示、不进命中链；
+    /// 宽按 11 pt 文案实测取 `max(46, 宽 + 16)`。本帧盒写进 `broadcast_badge_box_`，放不下即整枚不画
+    /// 并留空盒——「装了角标但这一帧看不见」与「根本没装」由这个观测点分开。
+    auto paint_broadcast_badge(aurora::Painter &p, const aurora::Rect &bounds) -> void;
+
     /// @brief 挂上提示卡（裁决 7.104 的 D1①/D3①/D5①）：由 `on_frame()` 在取到会话 latch 时调用。
     ///
     /// 记下内容、按 5 s 重排自收定时器（先 cancel 再排，故同一会话对象上不会叠两枚定时器）、标脏。
@@ -883,6 +925,13 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 一次性吞掉紧随其后的文本事件：应用模式的小键盘数字已由按键通道发成 SS3，而 Windows
     ///        无论 `DECKPAM` 都给同一物理键再发一条 `WM_CHAR`（`term::is_keypad` 的判据）。
     bool swallow_next_text_ = false;
+
+    /// @brief 广播的两条镜像与角标状态（`SPEC.FEAT.WS.09`）：镜像在**本视口自己发完之后**调用，
+    ///        角标由工作区在成员集合变化 / 切分 / 关闭时重算（本控件只按值绘制）。
+    KeyMirror key_mirror_;  ///< 空即不镜像（单 pane 装配与既有用例的形态）。
+    TextMirror text_mirror_;
+    bool broadcast_badge_ = false;
+    std::optional<Rect> broadcast_badge_box_;  ///< 最近一次绘制的角标盒（未显形或放不下即空）。
 
     std::optional<Selection> selection_;  ///< 端点是**存储行序**（`ui/selection.h` 的坐标约定）。
     std::vector<RowSpan> bands_{};        ///< `row_spans` 的产物，行号升序；绘制与复制共用这一张表。

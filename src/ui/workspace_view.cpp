@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <map>
 #include <utility>
 
 #include "aurora/core/log.h"
@@ -143,6 +144,7 @@ auto paint_zoom_badge(aurora::Painter &p, const aurora::Rect &bounds, const Rect
         case WorkspaceCommand::FocusUp:
         case WorkspaceCommand::FocusDown:
         case WorkspaceCommand::ToggleZoom:
+        case WorkspaceCommand::ToggleBroadcast:
             return false;
     }
     return false;
@@ -180,6 +182,9 @@ WorkspaceView::WorkspaceView(std::shared_ptr<TerminalView> first_view, Hooks hoo
     views_.emplace(first, first_view.get());
     wire_view(*first_view, first);
     add(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(first_view))});
+    // 单叶工作区不画 pill（N4），但组可能是「上一轮留下的一个成员」：照现值刷一次，切分后
+    // `split_pane` 再刷一次就会显形。
+    refresh_broadcast_badges();
 }
 
 WorkspaceView::~WorkspaceView() { debounce_timer_.cancel(); }
@@ -215,6 +220,34 @@ auto WorkspaceView::flush_grid_sizes(Moment now) -> void {
             hooks_.dispatch_grid(pane, size);
         }
     }
+}
+
+auto WorkspaceView::refresh_broadcast_badges() -> void {
+    const bool multi = pane_count() > 1U;
+    // 按**视图**聚合「任一 pane 在组里」再落笔：装配层的分屏工厂今天仍可能让两个 pane 指向
+    // 同一视图（F8），逐 pane 直写会让后一格的 false 抹掉前一格的 true——共享视图的角标因此
+    // 变成「看遍历次序」的偶然结果。先聚合后写，每个视图只被写一次。
+    std::map<TerminalView *, bool> member_of_view;
+    for (const auto &[pane, view] : views_) {
+        if (view == nullptr) {
+            continue;
+        }
+        const bool member = hooks_.is_broadcast && hooks_.is_broadcast(pane);
+        const auto [it, inserted] = member_of_view.try_emplace(view, member);
+        if (!inserted) {
+            it->second = it->second || member;
+        }
+    }
+    for (const auto &[view, member] : member_of_view) {
+        view->set_broadcast_badge(multi && member);
+    }
+}
+
+auto WorkspaceView::restore_keyboard_focus() -> void {
+    if (view_of(last_focused_) == nullptr) {
+        return;  // 最后一次持焦的那一格已经关了：焦点去向由下一次点击或按键决定
+    }
+    apply_focus(last_focused_, aurora::FocusArrival::Keyboard);
 }
 
 auto WorkspaceView::on_layout(const aurora::Constraints &c, const aurora::BuildContext &ctx) -> aurora::Size {
@@ -467,6 +500,18 @@ auto WorkspaceView::wire_view(TerminalView &view, PaneId pane) -> void {
         arm_debounce();
     });
     view.set_key_pre_filter([this, pane](const term::KeyPress &press) -> bool { return on_key_press(pane, press); });
+    // 两条镜像与前置过滤同一处装：源格已发完自己那份，装配层按会话去重后扇出（D5/D7）。
+    view.set_input_mirrors(
+        [this, pane](const term::KeyPress &press) -> void {
+            if (hooks_.mirror_key) {
+                hooks_.mirror_key(pane, press);
+            }
+        },
+        [this, pane](std::u32string_view text) -> void {
+            if (hooks_.mirror_text) {
+                hooks_.mirror_text(pane, text);
+            }
+        });
 }
 
 auto WorkspaceView::on_key_press(PaneId pane, const term::KeyPress &press) -> bool {
@@ -545,6 +590,15 @@ auto WorkspaceView::run_command(WorkspaceCommand command, PaneId pane) -> void {
         case WorkspaceCommand::ToggleZoom:
             toggle_zoom(pane);
             return;
+        case WorkspaceCommand::ToggleBroadcast: {
+            // 组身份归装配层的路由器；本层只转交再按现读状态重画角标（`SPEC.FEAT.WS.09` D2/D9）。
+            // 单 pane 也允许入组（D4）：组可以只有一个成员，只是 pill 要等分屏后才显形。
+            if (hooks_.toggle_broadcast) {
+                static_cast<void>(hooks_.toggle_broadcast(pane));
+            }
+            refresh_broadcast_badges();
+            return;
+        }
     }
 }
 
@@ -571,6 +625,7 @@ auto WorkspaceView::split_pane(PaneId target, PaneAxis axis) -> void {
     // 新视图的挂载不归本层：`Container::add` 登记待补挂，框架在下一次布局入口以父侧 ctx 挂上
     // （G35 回货；裁决 7.49④ 那处自备 ctx 的补偿据此撤除）。
     apply_focus(pane, aurora::FocusArrival::Keyboard);  // 新格当场选中（判据 1）
+    refresh_broadcast_badges();  // 1 → 2 格：成员的 pill 从这一帧起显形（N4）
     mark_needs_paint();
 }
 
@@ -601,6 +656,7 @@ auto WorkspaceView::close_pane(PaneId pane) -> void {
     if (hooks_.teardown_pane) {
         hooks_.teardown_pane(pane);
     }
+    refresh_broadcast_badges();  // 2 → 1 格：余下那格即使仍在组里也不再画 pill（N4）
     mark_needs_paint();
 }
 

@@ -347,6 +347,17 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     // ---- 工作区操作（`SPEC.FEAT.WS.06` 全屏切换的命令标题）----
     {"workspace.action.toggle_fullscreen", "切换全屏"},
 
+    // ---- 广播输入（`SPEC.FEAT.WS.09`，稿 `codespec/UI_WORKSPACE_BROADCAST.draft.md` §2.2）----
+    // 六句是横幅、pill 与成员命名的**全部**上屏文案。标题的 {0} 是成员名（同标签多 pane 已由装配层
+    // 追加「窗格 N」）、{1} 是去重后的会话数；两者都是取值，故走位置参数而不是拼进模板。
+    // 句末的「点击此处退出」是 D8 改口的落点：`Esc` 留给终端，横幅是退出整组的唯一入口。
+    {"workspace.broadcast.title", "广播输入已开启：{0} 共 {1} 个会话"},
+    {"workspace.broadcast.hint", "仅组内窗格键入时同步发送；点击此处退出"},
+    {"workspace.broadcast.exit", "退出广播"},
+    {"workspace.broadcast.badge", "广播 B"},
+    {"workspace.broadcast.pane", "窗格 {0}"},
+    {"workspace.broadcast.unnamed", "未命名会话"},
+
     // ---- 撤销关闭标签（`SPEC.FEAT.WS.10` 的命令标题，待 WS.01 多标签落地后启用）----
     {"tab.action.undo_close", "重开最近关闭的标签"},
 

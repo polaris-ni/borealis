@@ -55,6 +55,7 @@ enum class WorkspaceCommand : std::uint8_t {
     StepDown,     ///< `Ctrl+Alt+↓`。
     EqualizeLayer,  ///< `Ctrl+Shift+0`：等分焦点 pane 所在层（把手双击是同一动作的鼠标档）。
     ToggleZoom,     ///< `Ctrl+Shift+Z`：当前 pane 临时铺满/还原（`SPEC.FEAT.WS.08`，裁决 7.120）。
+    ToggleBroadcast,  ///< `Ctrl+Shift+B`：把焦点 pane 加入/移出广播组（`SPEC.FEAT.WS.09`，裁决 7.121）。
 };
 
 /// @brief 一次按键是否触发某条分屏命令。
@@ -68,7 +69,7 @@ enum class WorkspaceCommand : std::uint8_t {
 /// @brief 键位总表的一条：命令 + 触发它的那一次按键（修饰只填四个可按位）。
 ///
 /// 与 `workspace_command` 吃的是同一张表，故本件的**唯一**存在理由是把「有哪些键位」这件事
-/// 变成可枚举的：快捷键只读表要拿这十三条当**保留位**参与冲突比对（判据文 D2-a / 人已拍板）。
+/// 变成可枚举的：快捷键只读表要拿这十四条当**保留位**参与冲突比对（判据文 D2-a / 人已拍板）。
 /// 那些键位不经框架 `ShortcutRegistry`（文件头），而同一个组合键在派发上是快捷键层先消费
 /// （裁决 7.51③ 理由 (a)），于是一条注册进命令表的组合键若与这里某条同形，实际生效的是快捷键层
 /// 而分屏命令按不到——界面上必须把这一格标成冲突，而不是让用户以为两个动作都能触发。

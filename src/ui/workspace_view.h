@@ -28,6 +28,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <utility>
 
 #include "aurora/app/scheduler.h"
@@ -50,11 +51,22 @@ class WorkspaceView final : public aurora::Container {
     /// @brief 视图已从容器摘除后回收该 pane 的会话；与工厂成对，故生命周期归属只在装配层。
     using PaneTeardown = std::function<void(PaneId pane)>;
 
-    /// @brief 本层与装配层的三条接缝（与 `TerminalView::Presentation` 同形态的 struct of 回调）。
+    /// @brief 本层与装配层的接缝（与 `TerminalView::Presentation` 同形态的 struct of 回调）。
+    ///
+    /// 广播那四条（`SPEC.FEAT.WS.09`，裁决 7.121 F6）与前三同形：本层仍不认识路由器、标签或
+    /// 会话，只把「这一格在不在组里」与「这一击该不该扇出」转交装配层。
     struct Hooks {
         PaneViewFactory make_pane;
         GridSizeDispatch dispatch_grid;
         PaneTeardown teardown_pane;
+        /// @brief 该 pane 现在是否在广播组里（画不画 pill）；缺省即永不在组内。
+        std::function<bool(PaneId pane)> is_broadcast;
+        /// @brief 把该 pane 加入/移出广播组，返回调用后是否在组内；缺省即该键只被认领、不改组。
+        std::function<bool(PaneId pane)> toggle_broadcast;
+        /// @brief 源格按键已发给自己之后转交：装配层按会话去重后扇出（D5/D7）。
+        std::function<void(PaneId pane, const term::KeyPress &press)> mirror_key;
+        /// @brief 源格已提交文本的转交（同上）。
+        std::function<void(PaneId pane, std::u32string_view text)> mirror_text;
     };
 
     /// @brief 以单叶工作区起步：@p first_view 挂在 pane 标识 1 上。
@@ -91,6 +103,17 @@ class WorkspaceView final : public aurora::Container {
     /// @brief 立刻结算去抖表：把到期的期望行列逐条交出（无调度器时用例靠它推进尾沿）。
     /// @param now 当前时刻。
     auto flush_grid_sizes(Moment now) -> void;
+
+    /// @brief 按装配层现读的成员资格刷新各视图的广播角标（`SPEC.FEAT.WS.09` D9）。
+    ///
+    /// 只在 `pane_count() > 1` 时为真（N4：单 pane 只靠横幅）；同一视图被多个 pane 指认时按「任一
+    /// 成员」置真，避免后写者把前者的角标抹掉。构造 / 切分 / 关闭 / 第十键之后各调一次。
+    auto refresh_broadcast_badges() -> void;
+
+    /// @brief 把键盘焦点还给最后一次真实持焦的 pane（横幅点击清组后调用，F10）。
+    ///
+    /// 横幅不可获焦，点它会让派发器把焦点清空；不补这一句，用户退出广播后第一下键入无处可去。
+    auto restore_keyboard_focus() -> void;
 
   protected:
     /// @brief 折算树、按矩形以紧约束排每个视图，并把矩形写回节点 bounds。
