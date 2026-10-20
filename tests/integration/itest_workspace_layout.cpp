@@ -378,6 +378,38 @@ class Harness {
                          .y = static_cast<float>(box.y + box.height / 2.0)};
     }
 
+    /// @brief 缩放角标的几何中心：20 dp 底板距 pane 右边与上边各 4 dp（视觉稿 §2.2）。
+    [[nodiscard]] auto badge_center(PaneId pane) const -> au::Point {
+        const Rect box = pane_box(pane);
+        return au::Point{.x = static_cast<float>(box.x + box.width - 14.0),
+                         .y = static_cast<float>(box.y + 14.0)};
+    }
+
+    /// @brief 展开字形（外向双箭头）上一个满覆盖的 accent 落点。
+    ///
+    /// `Painter::draw_line` 按**像素中心**采样并留 1 px 羽化，斜线正好经过像素中心时 coverage 才为
+    /// 1；字形中心是两条线的端点，最近像素中心离端点 0.707 px，取到的只是混色。沿 45° 线取
+    /// （中心 + 1.5, 中心 − 1.5）那个像素中心，点进来时 floor 后正是它。
+    [[nodiscard]] auto badge_expand_ink_point(PaneId pane) const -> au::Point {
+        const au::Point center = badge_center(pane);
+        return au::Point{.x = static_cast<float>(static_cast<int>(center.x) + 1),
+                         .y = static_cast<float>(static_cast<int>(center.y) - 2)};
+    }
+
+    /// @brief 收拢字形（内向双箭头）的满覆盖落点：右下那条 45° 线在中点外侧 0.8..5 px。
+    [[nodiscard]] auto badge_collapse_ink_point(PaneId pane) const -> au::Point {
+        const au::Point center = badge_center(pane);
+        return au::Point{.x = static_cast<float>(static_cast<int>(center.x) + 2),
+                         .y = static_cast<float>(static_cast<int>(center.y) + 2)};
+    }
+
+    /// @brief 底板内不压字形的取样点（离底板左上角 2 dp；字形盒从 5 dp 处才开始）。
+    [[nodiscard]] auto badge_plate_point(PaneId pane) const -> au::Point {
+        const Rect box = pane_box(pane);
+        return au::Point{.x = static_cast<float>(box.x + box.width - 4.0 - 20.0 + 2.0),
+                         .y = static_cast<float>(box.y + 4.0 + 2.0)};
+    }
+
     /// @brief 某 pane 第 @p row 行第 @p column 列的落点（窗口坐标；行列是该视图自己的屏幕坐标）。
     [[nodiscard]] auto cell_point(PaneId pane, std::size_t row, std::size_t column, double fx = 0.5,
                                   double fy = 0.5) const -> au::Point {
@@ -886,6 +918,240 @@ AURORA_TEST_CASE(closing_a_pane_recycles_view_and_session) {
     h.render();
     AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 1U);
     AURORA_TEST_CHECK(h.torn_down_.empty());
+}
+
+AURORA_TEST_CASE(zoom_fills_the_focused_pane_and_keeps_hidden_grids) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.press(au::KeyCode::D, Harness::ctrl_shift());
+    h.render();
+    h.settle();
+
+    const GridSize left_grid{h.workspace().view_of(1U)->grid_geometry().columns,
+                             h.workspace().view_of(1U)->grid_geometry().rows};
+    const GridSize right_grid{h.workspace().view_of(2U)->grid_geometry().columns,
+                              h.workspace().view_of(2U)->grid_geometry().rows};
+    const Rect right_box = h.pane_box(2U);
+    h.reset_counters();
+
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::Z, Harness::ctrl_shift()));
+    h.render();
+
+    const auto zoomed = h.workspace().zoomed_pane();
+    AURORA_TEST_REQUIRE(zoomed.has_value());
+    AURORA_TEST_CHECK_EQ(*zoomed, 2U);
+    // 显示表：缩放格满窗、隐藏格零盒、把手为空；树本身一行未改（还原仍回到原矩形）。
+    const Rect full = h.pane_box(2U);
+    AURORA_TEST_CHECK_NEAR(full.x, 0.0, 1.0);
+    AURORA_TEST_CHECK_NEAR(full.y, 0.0, 1.0);
+    AURORA_TEST_CHECK_NEAR(full.width, static_cast<double>(kWindowWidth), 1.0);
+    AURORA_TEST_CHECK_NEAR(full.height, static_cast<double>(kWindowHeight), 1.0);
+    AURORA_TEST_CHECK_NEAR(h.pane_box(1U).width, 0.0, 1e-9);
+    AURORA_TEST_CHECK_NEAR(h.pane_box(1U).height, 0.0, 1e-9);
+    AURORA_TEST_CHECK(h.workspace().current_layout().dividers.empty());
+
+    // 缩放格按满窗的行列数重排；隐藏格的网格一格不变（D4：隐藏不是 resize）。
+    const GridSize full_grid = Harness::expected_grid(kWindowWidth, kWindowHeight);
+    AURORA_TEST_CHECK_EQ(h.workspace().view_of(2U)->grid_geometry().columns, full_grid.columns);
+    AURORA_TEST_CHECK_EQ(h.workspace().view_of(2U)->grid_geometry().rows, full_grid.rows);
+    AURORA_TEST_CHECK(h.workspace().view_of(2U)->grid_geometry().columns > right_grid.columns);
+    AURORA_TEST_CHECK_EQ(h.workspace().view_of(1U)->grid_geometry().columns, left_grid.columns);
+    AURORA_TEST_CHECK_EQ(h.workspace().view_of(1U)->grid_geometry().rows, left_grid.rows);
+
+    h.settle();
+    AURORA_TEST_REQUIRE_EQ(h.dispatched_.size(), 1U);
+    AURORA_TEST_CHECK_EQ(h.dispatched_[0].first, 2U);
+    AURORA_TEST_CHECK_EQ(h.resize_count(1U), 0U);
+    AURORA_TEST_CHECK_EQ(h.resize_count(2U), 1U);
+
+    // 再按一次还原：矩形回到树折算的原位，隐藏过的会话仍只有缩放格自己收过一次下发。
+    h.reset_counters();
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::Z, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_CHECK_FALSE(h.workspace().zoomed_pane().has_value());
+    const Rect restored = h.pane_box(2U);
+    AURORA_TEST_CHECK_NEAR(restored.x, right_box.x, 1.0);
+    AURORA_TEST_CHECK_NEAR(restored.width, right_box.width, 1.0);
+    AURORA_TEST_CHECK_EQ(h.workspace().view_of(1U)->grid_geometry().columns, left_grid.columns);
+    AURORA_TEST_CHECK_EQ(h.workspace().view_of(2U)->grid_geometry().columns, right_grid.columns);
+    h.settle();
+    AURORA_TEST_REQUIRE_EQ(h.dispatched_.size(), 1U);
+    AURORA_TEST_CHECK_EQ(h.dispatched_[0].first, 2U);
+    AURORA_TEST_CHECK_EQ(h.resize_count(1U), 0U);
+}
+
+AURORA_TEST_CASE(zoom_follows_focus_across_alt_arrows) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.press(au::KeyCode::D, Harness::ctrl_shift());
+    h.render();
+    h.settle();
+
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::Z, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_REQUIRE(h.workspace().zoomed_pane().has_value());
+    AURORA_TEST_CHECK_EQ(*h.workspace().zoomed_pane(), 2U);
+
+    // 缩放态按未缩放的几何路由：左移把焦点与缩放一起交给左格。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::ArrowLeft, au::ModifierKey::Alt));
+    h.render();
+    AURORA_TEST_REQUIRE(h.workspace().zoomed_pane().has_value());
+    AURORA_TEST_CHECK_EQ(*h.workspace().zoomed_pane(), 1U);
+    AURORA_TEST_CHECK_EQ(h.workspace().focused_pane(), 1U);
+    AURORA_TEST_CHECK_NEAR(h.pane_box(1U).width, static_cast<double>(kWindowWidth), 1.0);
+    AURORA_TEST_CHECK_NEAR(h.pane_box(2U).width, 0.0, 1e-9);
+
+    // 反向同理：焦点回到右格，缩放也跟回去。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::ArrowRight, au::ModifierKey::Alt));
+    h.render();
+    AURORA_TEST_REQUIRE(h.workspace().zoomed_pane().has_value());
+    AURORA_TEST_CHECK_EQ(*h.workspace().zoomed_pane(), 2U);
+    AURORA_TEST_CHECK_EQ(h.workspace().focused_pane(), 2U);
+    AURORA_TEST_CHECK_NEAR(h.pane_box(2U).width, static_cast<double>(kWindowWidth), 1.0);
+}
+
+AURORA_TEST_CASE(structural_commands_unzoom_before_they_run) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.press(au::KeyCode::D, Harness::ctrl_shift());
+    h.render();
+    h.settle();
+    h.drag_divider(0U, {120.0});  // 先造出一个不对称的层，等分才有可证的落点
+
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::Z, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_REQUIRE(h.workspace().zoomed_pane().has_value());
+
+    // ① 切分：先还原再切；新格按未缩放几何进场，缩放态不延续。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::D, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_CHECK_FALSE(h.workspace().zoomed_pane().has_value());
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 3U);
+    for (const PaneBox &box : h.workspace().current_layout().boxes) {
+        AURORA_TEST_CHECK_GT(box.box.width, 0.0);
+    }
+    AURORA_TEST_CHECK_FALSE(h.workspace().current_layout().dividers.empty());
+
+    // 焦点交回中间的格，再缩放它。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::ArrowLeft, au::ModifierKey::Alt));
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.workspace().focused_pane(), 2U);
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::Z, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_REQUIRE(h.workspace().zoomed_pane().has_value());
+
+    // ② 等分：先还原再等分；三层宽度回到彼此相等。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::D0, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_CHECK_FALSE(h.workspace().zoomed_pane().has_value());
+    const Rect first = h.pane_box(1U);
+    const Rect second = h.pane_box(2U);
+    const Rect third = h.pane_box(3U);
+    AURORA_TEST_CHECK_NEAR(first.width, second.width, 1.5);
+    AURORA_TEST_CHECK_NEAR(second.width, third.width, 1.5);
+
+    // ③ 步进：先还原再推把手；焦点格（中间格）变宽。基准须在缩放**之前**读：缩放态的显示表里
+    // 该格是满窗盒，拿它当「变宽前」的读数会让这条判据恒假。
+    const double before = h.pane_box(2U).width;
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::Z, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_REQUIRE(h.workspace().zoomed_pane().has_value());
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::ArrowRight, au::ModifierKey::Control | au::ModifierKey::Alt));
+    h.render();
+    AURORA_TEST_CHECK_FALSE(h.workspace().zoomed_pane().has_value());
+    AURORA_TEST_CHECK_GT(h.pane_box(2U).width, before + 20.0);
+}
+
+AURORA_TEST_CASE(closing_the_zoomed_pane_clears_zoom_and_recycles_it) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.press(au::KeyCode::D, Harness::ctrl_shift());
+    h.render();
+    h.settle();
+    h.reset_counters();
+
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::Z, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_REQUIRE(h.workspace().zoomed_pane().has_value());
+
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::W, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_CHECK_FALSE(h.workspace().zoomed_pane().has_value());
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 1U);
+    AURORA_TEST_CHECK(h.workspace().view_of(2U) == nullptr);
+    AURORA_TEST_CHECK(h.view_expired(2U));
+    AURORA_TEST_CHECK_EQ(h.workspace().focused_pane(), 1U);
+    AURORA_TEST_CHECK(h.workspace().current_layout().dividers.empty());
+    AURORA_TEST_REQUIRE_EQ(h.workspace().current_layout().boxes.size(), 1U);
+    AURORA_TEST_CHECK_NEAR(h.workspace().current_layout().boxes[0].box.width,
+                           static_cast<double>(kWindowWidth), 1.0);
+}
+
+AURORA_TEST_CASE(zoom_badge_hovers_clicks_and_paints_on_the_top_right_corner) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.press(au::KeyCode::D, Harness::ctrl_shift());
+    h.render();
+    h.settle();
+
+    auto px = h.pixels();
+    // 未悬停：角标不显形，热区底下是终端自己的底。
+    AURORA_TEST_CHECK(h.sample(px, h.badge_plate_point(1U)) == h.palette().default_background);
+    AURORA_TEST_CHECK(h.sample(px, h.badge_center(1U)) == h.palette().default_background);
+
+    // 悬停：底板是 chrome，字形是 accent（取斜线上一个 coverage 为 1 的像素，理由见 helper）。
+    h.pointer(au::MouseAction::Move, h.badge_center(1U));
+    h.render();
+    px = h.pixels();
+    AURORA_TEST_CHECK(h.sample(px, h.badge_plate_point(1U)) == kChromeInk);
+    AURORA_TEST_CHECK(h.sample(px, h.badge_expand_ink_point(1U)) == kAccentInk);
+
+    // 移开：角标消失（只重画、不重排）。
+    h.pointer(au::MouseAction::Move, h.pane_center(1U));
+    h.render();
+    px = h.pixels();
+    AURORA_TEST_CHECK(h.sample(px, h.badge_plate_point(1U)) == h.palette().default_background);
+
+    // 点角标：该格取得焦点并缩放；缩放态角标常显，且左沿不画焦点描边。
+    h.click_at(h.badge_center(1U));
+    const auto zoomed = h.workspace().zoomed_pane();
+    AURORA_TEST_REQUIRE(zoomed.has_value());
+    AURORA_TEST_CHECK_EQ(*zoomed, 1U);
+    AURORA_TEST_CHECK_EQ(h.workspace().focused_pane(), 1U);
+    px = h.pixels();
+    AURORA_TEST_CHECK(h.sample(px, h.badge_plate_point(1U)) == kChromeInk);
+    AURORA_TEST_CHECK(h.sample(px, h.badge_collapse_ink_point(1U)) == kAccentInk);
+    AURORA_TEST_CHECK(h.sample(px, au::Point{1.0F, static_cast<float>(kWindowHeight / 2)}) ==
+                      h.palette().default_background);
+
+    // 再点一次：还原；焦点描边回到未缩放态，角标回到悬停显。
+    h.click_at(h.badge_center(1U));
+    AURORA_TEST_CHECK_FALSE(h.workspace().zoomed_pane().has_value());
+    h.pointer(au::MouseAction::Move, h.pane_center(1U));
+    h.render();
+    px = h.pixels();
+    AURORA_TEST_CHECK(h.sample(px, h.badge_plate_point(1U)) == h.palette().default_background);
+}
+
+AURORA_TEST_CASE(single_pane_zoom_is_claimed_but_does_nothing) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.reset_counters();
+
+    // 键仍被认领（不是发给会话的输入），但单叶没有可放大的对象（D9）。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::Z, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_CHECK_FALSE(h.workspace().zoomed_pane().has_value());
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 1U);
+    AURORA_TEST_CHECK(h.written(1U).empty());
+    AURORA_TEST_CHECK(h.dispatched_.empty());
+
+    // 单叶也没有角标：即便把指针停在右上角热区，屏上仍是终端自己的底。
+    h.pointer(au::MouseAction::Move, h.badge_center(1U));
+    h.render();
+    const auto px = h.pixels();
+    AURORA_TEST_CHECK(h.sample(px, h.badge_plate_point(1U)) == h.palette().default_background);
+    AURORA_TEST_CHECK(h.sample(px, h.badge_center(1U)) == h.palette().default_background);
 }
 
 AURORA_TEST_CASE(chrome_pixels_land_in_their_own_band) {
