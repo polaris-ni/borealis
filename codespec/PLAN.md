@@ -73,7 +73,7 @@
 | `SPEC.FEAT.WS.05` | 会话生命周期 | P1 | M2（本地终端腿）+ M3（SSH 断线重连腿） |
 | `SPEC.FEAT.WS.06` | 全屏 | P1 | M2 |
 | `SPEC.FEAT.WS.07` | 命令面板 | P1 | M2 |
-| `SPEC.FEAT.WS.08` | Pane 缩放 | P2 | M4 |
+| `SPEC.FEAT.WS.08` | Pane 缩放 | P2 | M4；**已落（2026-10-21，裁决 7.120）**：`WorkspaceCommand::ToggleZoom`（`Ctrl+Shift+Z`，第十三条保留键；单 pane no-op 但仍认领）+ `base_layout_`／`layout_` 两分布局表（隐藏 pane 仍按树原矩形紧约束 ⇒ 缩放/还原对隐藏连接零 resize 下发）+ 缩放跟随焦点、结构命令先还原、关闭缩放 pane 清缩放 + 右上角 20 dp 角标（展开/收起两形，缩放常显、未缩放悬停显）；`itest_workspace_layout` 新增 6 案至 23 案，结项读数 **86 项／1107 案**全绿。**未真机走查 ⇒ 不称「可用」**（§4.4 第 33 条）；Win32/MSVC 未编译验证、WT 缺省键推断／未验证、无转场动画、隐藏 pane 仍在跑、命令面板不可达（与分屏十二条同档，待 WS.03 的框架前置） |
 | `SPEC.FEAT.WS.09` | 广播输入 | P2 | M4 |
 | `SPEC.FEAT.WS.10` | 撤销关闭标签 | P1 | M2 |
 | `SPEC.FEAT.WS.11` | 会话恢复 | P2 | M4 |
