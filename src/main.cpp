@@ -33,6 +33,7 @@
 #include "borealis/term/keymap.h"
 #include "borealis/term/utf8.h"
 #include "borealis/term/width.h"
+#include "borealis/ui/broadcast.h"
 #include "borealis/ui/font_choice.h"
 #include "borealis/ui/shortcuts_table.h"
 #include "borealis/ui/settings_form.h"
@@ -51,6 +52,7 @@
 #include "platform/open_url.h"
 #include "platform/serial.h"
 #include "platform/user_dir.h"
+#include "ui/broadcast_banner.h"
 #include "ui/connection_sidebar.h"
 #include "ui/connection_wizard.h"
 #include "ui/credential_prompt.h"
@@ -484,6 +486,157 @@ auto main() -> int {
     // 当前显示的标签 ID（用于场景根切换）
     std::optional<borealis::ui::TabId> current_tab_id;
 
+    // ---- 广播组（`SPEC.FEAT.WS.09`，裁决 7.121）----
+    // 组与端点表是 app 级一份（D2）：成员 `(TabId, PaneId)` 跨标签保留、不落盘。横幅常驻根 Column
+    // 的 index 1（D10），本处先造控件，稍后与标签条 / 工作区一起入根（顺序见 `root_column` 的组装）。
+    borealis::ui::BroadcastRouter broadcast_router;
+    std::function<void()> refresh_broadcast_ui;
+    std::function<void()> restore_current_keyboard_focus;
+
+    // UTF-8 → 码点：词条表里「未命名会话」「窗格 N」是 UTF-8，而横幅状态存 `u32string`。逐字节折成
+    // 码点会把 CJK 拆成 Latin-1 乱码（与撤销重开标签名同一处教训）。
+    auto decode_utf8 = [](const std::string &utf8) -> std::u32string {
+        borealis::term::Utf8Decoder decoder;
+        DecodeCollector collector;
+        const auto *bytes = reinterpret_cast<const std::byte *>(utf8.data());
+        decoder.feed(std::span<const std::byte>(bytes, utf8.size()), collector);
+        decoder.finish(collector);
+        return collector.out;
+    };
+
+    auto broadcast_banner = std::make_shared<borealis::ui::BroadcastBanner>(
+        borealis::ui::BroadcastBannerHooks{.exit_all = [&]() -> void {
+            // 点击横幅 = 清空整组（D8）；只有真的清了组才归还焦点——空组的横幅高 0，本不该被命中，
+            // 这一句是防御而非正常路径。
+            if (broadcast_router.size() > 0U) {
+                broadcast_router.clear();
+                restore_current_keyboard_focus();
+            }
+        }});
+
+    // 名字与计数只有一个折算点（F12/D11）：标签名经 `resolve_tab_name` 现取，同标签多成员追加
+    // 「窗格 N」，计数取**去重后的会话数**（同一会话被两格指向时只列一次、只算一个）。
+    refresh_broadcast_ui = [&]() -> void {
+        const auto &members = broadcast_router.members();
+        borealis::ui::BroadcastBannerState state;
+        state.active = !members.empty();
+        state.session_count = broadcast_router.unique_size();
+
+        std::map<borealis::ui::TabId, std::size_t> per_tab;
+        for (const borealis::ui::BroadcastMember &member : members) {
+            ++per_tab[member.tab];
+        }
+        const auto tabs = tab_strip.tabs();
+        std::vector<const void *> seen;
+        std::map<borealis::ui::TabId, std::size_t> ordinals;
+        for (const borealis::ui::BroadcastMember &member : members) {
+            const void *identity = broadcast_router.stream_of(member);
+            if (identity != nullptr) {
+                bool duplicate = false;
+                for (const void *known : seen) {
+                    if (known == identity) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (duplicate) {
+                    continue;  // 同一会话被两格指向：横幅只列一次（D7/D11）
+                }
+                seen.push_back(identity);
+            }
+            std::u32string name;
+            for (const auto &tab : tabs) {
+                if (tab.id == member.tab) {
+                    name = borealis::ui::resolve_tab_name(tab.names, settings.appearance.tab_name_priority);
+                    break;
+                }
+            }
+            if (name.empty()) {
+                name = decode_utf8(borealis::ui::settings_label("workspace.broadcast.unnamed"));
+            } else if (per_tab[member.tab] > 1U) {
+                name.push_back(U' ');
+                name += decode_utf8(borealis::ui::settings_label(
+                    "workspace.broadcast.pane",
+                    {au::LocalizedString{std::to_string(++ordinals[member.tab])}}));
+            }
+            state.names.push_back(std::move(name));
+        }
+        broadcast_banner->set_state(std::move(state));
+        // pill 按各工作区自己的 pane 数门（N4）；隐藏标签的工作区也刷，切过去时状态已对。
+        for (auto &[tab_id, tab] : tab_workspaces) {
+            (void)tab_id;
+            tab.workspace->refresh_broadcast_badges();
+        }
+    };
+
+    restore_current_keyboard_focus = [&]() -> void {
+        if (!current_tab_id.has_value()) {
+            return;
+        }
+        const auto found = tab_workspaces.find(current_tab_id.value());
+        if (found != tab_workspaces.end()) {
+            found->second.workspace->restore_keyboard_focus();
+        }
+    };
+
+    // 成员集合真变即刷新（横幅 + 全部工作区的 pill）：toggle / remove / remove_tab / clear 四条路
+    // 共用这一处，于是「新增一条改组的调用点而忘了刷新」结构上进不来。
+    broadcast_router.set_change_hook([&refresh_broadcast_ui]() -> void {
+        if (refresh_broadcast_ui) {
+            refresh_broadcast_ui();
+        }
+    });
+
+    // 三处 `WorkspaceView` 构造点（新开标签 / 重启换会话 / 撤销重开）同源装四条接缝与端点（稿 §4 第 6 条）。
+    auto wire_broadcast_hooks = [&](borealis::ui::TabId id, borealis::ui::WorkspaceView::Hooks &hooks) -> void {
+        hooks.is_broadcast = [&broadcast_router, id](borealis::ui::PaneId pane) -> bool {
+            return broadcast_router.contains(id, pane);
+        };
+        hooks.toggle_broadcast = [&broadcast_router, id](borealis::ui::PaneId pane) -> bool {
+            return broadcast_router.toggle(id, pane);  // 变更钩子负责刷新横幅与 pill
+        };
+        hooks.mirror_key = [&broadcast_router, id](borealis::ui::PaneId pane,
+                                                   const borealis::term::KeyPress &press) -> void {
+            broadcast_router.dispatch_key(id, pane, press);
+        };
+        hooks.mirror_text = [&broadcast_router, id](borealis::ui::PaneId pane, std::u32string_view text) -> void {
+            broadcast_router.dispatch_text(id, pane, text);
+        };
+    };
+    // 端点按标签登记一次；回调每次现查 `tab_workspaces`，于是同标签重启换会话后也不需要重新登记
+    //（`replace_tab_session` 仍会再调一次，覆盖式登记是幂等的）。
+    auto attach_broadcast_sink = [&](borealis::ui::TabId id) -> void {
+        broadcast_router.attach(
+            id, borealis::ui::BroadcastRouter::Sink{
+                    .stream = [&tab_workspaces, id](borealis::ui::PaneId pane) -> const void * {
+                        const auto found = tab_workspaces.find(id);
+                        if (found == tab_workspaces.end() || found->second.workspace == nullptr) {
+                            return nullptr;
+                        }
+                        const borealis::ui::TerminalView *view = found->second.workspace->view_of(pane);
+                        return view == nullptr ? nullptr : view->session_identity();
+                    },
+                    .key = [&tab_workspaces, id](borealis::ui::PaneId pane,
+                                                 const borealis::term::KeyPress &press) -> void {
+                        const auto found = tab_workspaces.find(id);
+                        if (found == tab_workspaces.end() || found->second.workspace == nullptr) {
+                            return;
+                        }
+                        if (borealis::ui::TerminalView *view = found->second.workspace->view_of(pane)) {
+                            view->send_broadcast_key(press);
+                        }
+                    },
+                    .text = [&tab_workspaces, id](borealis::ui::PaneId pane, std::u32string_view text) -> void {
+                        const auto found = tab_workspaces.find(id);
+                        if (found == tab_workspaces.end() || found->second.workspace == nullptr) {
+                            return;
+                        }
+                        if (borealis::ui::TerminalView *view = found->second.workspace->view_of(pane)) {
+                            view->send_broadcast_text(text);
+                        }
+                    }});
+    };
+
     // SFTP 面板（SPEC.FEAT.CONN.04）的标签接线数据：活动标签的 SSH 档案，与该标签
     // 拨号那次凭据询问得到的秘密材料。材料是**内存副本**，存活期口径同
     // `SshConnection::secret_`（连接关闭即清）——不落盘、不进日志；CONN.09 本期
@@ -569,12 +722,16 @@ auto main() -> int {
         ws_hooks.dispatch_grid = [session](borealis::ui::PaneId /*pane*/, borealis::ui::GridSize size) -> void {
             session->resize({size.columns, size.rows});
         };
-        ws_hooks.teardown_pane = [](borealis::ui::PaneId /*pane*/) -> void {
-            // 单会话架构下不回收
+        ws_hooks.teardown_pane = [&broadcast_router, id](borealis::ui::PaneId pane) -> void {
+            // 关 pane 即撤该成员的账（`SPEC.FEAT.WS.09` §1 第 7 条）。非成员 remove 是空操作，
+            // 切分失败回收的那个 pane 号也走这里，不需要第二判断。
+            broadcast_router.remove(id, pane);
         };
+        wire_broadcast_hooks(id, ws_hooks);
 
         auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
         tab_workspaces[id] = TabWorkspace{.sessions = {session}, .workspace = std::move(workspace)};
+        attach_broadcast_sink(id);
 
         // 加入标签条
         tab_strip.add(id, tab_name);
@@ -595,16 +752,17 @@ auto main() -> int {
 
     create_new_tab();
 
-    // 辅助函数：重建根 Column 的子节点列表（标签栏 + 当前工作区）
+    // 辅助函数：重建根 Column 的子节点列表（标签栏 + 广播横幅 + 当前工作区）
     auto rebuild_root_children = [](std::shared_ptr<au::Column> &column,
                                      const std::map<borealis::ui::TabId, TabWorkspace> &workspaces,
                                      std::optional<borealis::ui::TabId> current_id) -> void {
-        // 保留第一个子节点（标签栏），替换第二个（工作区）
+        // 保留前两个子节点（标签栏 + 广播横幅），替换第三个（工作区）。横幅是常驻节点（D10），
+        // 组空时高 0 也不摘除——摘除会让显隐走「增删子节点」这条分叉。
         auto &nodes = column->child_nodes_mut();
         if (nodes.size() < 2) {
             return;  // 还没初始化完
         }
-        nodes.resize(1);  // 只留标签栏
+        nodes.resize(2);
         if (current_id.has_value()) {
             auto it = workspaces.find(current_id.value());
             if (it != workspaces.end()) {
@@ -652,6 +810,10 @@ auto main() -> int {
         if (!removed) {
             return;
         }
+        // 关标签即撤该标签的全部成员与端点（`SPEC.FEAT.WS.09`）：成员身份按跨标签复合键存，
+        // 不随工作区析构自动消失，漏这一笔会让横幅继续列着一张已经不存在的标签、并向其扇出。
+        // 变更钩子负责刷新横幅与其余工作区的 pill，此处无须另调。
+        broadcast_router.remove_tab(id);
         // 关闭前记录到闭包栈（`SPEC.FEAT.WS.10`）
         auto it = tab_workspaces.find(id);
         if (it != tab_workspaces.end()) {
@@ -764,14 +926,21 @@ auto main() -> int {
         },
     });
     root_column->child_nodes_mut().push_back(aurora::Node{tab_bar_ptr});
+    // 横幅常驻 index 1（D10）：标签条之下、工作区之上；组空时自报高 0。
+    root_column->child_nodes_mut().push_back(aurora::Node{broadcast_banner});
 
     // 标签真值源有任何一次**实际转移**就把标签栏标脏（裁决 **7.91**④）。不装这一钩子，三枚角标与显示名
     // 都落不了屏：`TabBarWidget` 的输入全在 `on_layout` 里经 hooks 现取，而框架的布局缓存在「约束没变
     // 且本控件未被标脏」时直接复用上次尺寸并**跳过 `on_layout`**——窗口大小没变正是常态，于是缓存恒有效。
     // 钩子装在 `TabStrip` 一侧而不是每帧都标脏，就是为了让后台标签的输出洪流只点亮一次而不是每帧重排。
-    tab_strip.set_changed_hook([bar = tab_bar_ptr]() -> void {
+    tab_strip.set_changed_hook([bar = tab_bar_ptr, &refresh_broadcast_ui]() -> void {
         bar->mark_needs_layout();
         bar->mark_needs_paint();
+        // 标签改名（含 OSC 标题）要立刻反映到横幅的成员名（F12）；新建 / 关闭标签也经这里，
+        // 于是「横幅只在按键改组时刷新」那条漏配结构上不存在。
+        if (refresh_broadcast_ui) {
+            refresh_broadcast_ui();
+        }
     });
     
     // 添加当前工作区（expand(1)：占满标签栏以下全部剩余高度，与 rebuild_root_children 同口径）
@@ -1013,10 +1182,17 @@ auto main() -> int {
             session->resize({size.columns, size.rows});
         };
         ws_hooks.teardown_pane = [](borealis::ui::PaneId) -> void {};
+        // 换会话不换身份：成员资格原样保留（`Ctrl+Shift+B` 的语义是「这一格」，不是「这一条会话」）。
+        // 四条接缝必须跟着新工作区重装，否则重启之后这一格的按键不再扇出、角标也查不到自己。
+        wire_broadcast_hooks(id, ws_hooks);
 
         auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
         // **同 TabId 覆盖**：`tab_strip` 一格不动，`current_tab_id` 一格不动，仅 `tab_workspaces[id]` 换一份。
         it->second = TabWorkspace{.sessions = {std::move(session)}, .workspace = std::move(workspace)};
+        // 端点回调虽每次现查 `tab_workspaces`，仍覆盖登记一次：与「三处构造点同源」同形，读起来不必
+        // 分神去确认哪一条登记是全量的。旧会话已被关掉，去重身份随之改变，故刷新一次横幅计数与列名。
+        attach_broadcast_sink(id);
+        refresh_broadcast_ui();
         rebuild_root_children(root_column, tab_workspaces, current_tab_id);
     };
 
@@ -1836,6 +2012,10 @@ auto main() -> int {
         }
         
         // 建工作区分屏容器（单 pane 起步）
+        // 生成新标签 ID：走共享的那支只增计数器，不复用已发过的身份。声明提前到 hooks 之前，
+        // 广播接缝要拿它当复合身份的一半；原先它紧挨 `insert_at`，只是碰巧没有更早的读者。
+        const borealis::ui::TabId id = next_tab_id++;
+
         borealis::ui::WorkspaceView::Hooks ws_hooks;
         // 值捕获 `shared_ptr<Session>` 的承重理由同 `create_new_tab_with` 处那一条注释。
         ws_hooks.make_pane = [session, view](borealis::ui::PaneId /*pane*/) -> std::shared_ptr<borealis::ui::TerminalView> {
@@ -1845,12 +2025,10 @@ auto main() -> int {
             session->resize({size.columns, size.rows});
         };
         ws_hooks.teardown_pane = [](borealis::ui::PaneId /*pane*/) -> void {};
+        wire_broadcast_hooks(id, ws_hooks);
         
         auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
         
-        // 生成新标签 ID：走共享的那支只增计数器，不复用已发过的身份。
-        const borealis::ui::TabId id = next_tab_id++;
-
         // 标签名按 UTF-8 解回码点：闭包栈存的是 `encode_utf8` 的产物，逐字节折成码点会把
         // CJK 名拆成 Latin-1 乱码，重开回来的标签就成了一串问号。
         borealis::term::Utf8Decoder decoder;
@@ -1865,6 +2043,8 @@ auto main() -> int {
         }
         
         tab_workspaces[id] = TabWorkspace{.sessions = {session}, .workspace = std::move(workspace)};
+        // 新格的成员表从空开始（闭包栈只存标签规格，不存广播资格）；端点仍按「三处构造点同源」登记。
+        attach_broadcast_sink(id);
         current_tab_id = id;
         
         // 选中恢复的标签并重建根节点子节点
