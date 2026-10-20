@@ -225,7 +225,7 @@ AURORA_TEST_CASE(orphan_rows_are_presented_as_deferred_instead_of_conflict_free)
 }
 
 AURORA_TEST_CASE(workspace_bindings_are_reserved_slots) {
-    // 分屏那十三条不经 `ShortcutRegistry`，而同一个组合键在派发上是快捷键层先消费（裁决 7.51③ 理由 (a)）。
+    // 分屏那十四条不经 `ShortcutRegistry`，而同一个组合键在派发上是快捷键层先消费（裁决 7.51③ 理由 (a)）。
     // 于是「命令撞上分屏键位」的实际情况是快捷键生效、分屏命令按不到——这一格必须标出来。
     const auto rows = build_shortcut_rows(
         std::vector<ShortcutCommandEntry>{

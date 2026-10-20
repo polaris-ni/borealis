@@ -297,7 +297,7 @@ SFTP（`SPEC.FEAT.CONN.04`）、隧道（`SPEC.FEAT.CONN.08`）、公钥推送�
 
 ### 8.4 其余工作区能力归属
 
-多窗口（`SPEC.FEAT.WS.03`）消费 `Application::open_window`（附录 A.1）；全屏（`SPEC.FEAT.WS.06`）依赖的框架窗口接口以开工实测为准；pane 缩放（`SPEC.FEAT.WS.08`）是 pane 树的视图状态；广播输入（`SPEC.FEAT.WS.09`）在 `borealis::ui` 输入分发层实现。
+多窗口（`SPEC.FEAT.WS.03`）消费 `Application::open_window`（附录 A.1）；全屏（`SPEC.FEAT.WS.06`）依赖的框架窗口接口以开工实测为准；pane 缩放（`SPEC.FEAT.WS.08`）是 pane 树的视图状态；广播输入（`SPEC.FEAT.WS.09`）在 `borealis::ui` 输入分发层实现——`BroadcastGroup` / `BroadcastRouter` 纯逻辑件持有 app 级单组与跨标签扇出（成员按 `(TabId, PaneId)` 复合键、按会话身份去重），`TerminalView` 只补「已发完自己那一份」的镜像接缝并按本视口模式/编码重编，`WorkspaceView` 只转交四条 Hooks，标签与会话生命周期留在装配层（裁决 7.121）。
 
 ---
 
