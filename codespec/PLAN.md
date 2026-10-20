@@ -76,7 +76,7 @@
 | `SPEC.FEAT.WS.08` | Pane 缩放 | P2 | M4；**已落（2026-10-21，裁决 7.120）**：`WorkspaceCommand::ToggleZoom`（`Ctrl+Shift+Z`，第十三条保留键；单 pane no-op 但仍认领）+ `base_layout_`／`layout_` 两分布局表（隐藏 pane 仍按树原矩形紧约束 ⇒ 缩放/还原对隐藏连接零 resize 下发）+ 缩放跟随焦点、结构命令先还原、关闭缩放 pane 清缩放 + 右上角 20 dp 角标（展开/收起两形，缩放常显、未缩放悬停显）；`itest_workspace_layout` 新增 6 案至 23 案，结项读数 **86 项／1107 案**全绿。**未真机走查 ⇒ 不称「可用」**（§4.4 第 33 条）；Win32/MSVC 未编译验证、WT 缺省键推断／未验证、无转场动画、隐藏 pane 仍在跑、命令面板不可达（与分屏十二条同档，待 WS.03 的框架前置） |
 | `SPEC.FEAT.WS.09` | 广播输入 | P2 | M4；**已落（2026-10-21，裁决 7.121）**：app 级单组、成员 `(TabId, PaneId)` 跨标签保存、允许单成员 + 第十四键 `Ctrl+Shift+B`（焦点 pane 逐个切换，`Esc` 恒归终端）+ 只扇出「编码成功的按键 Down」与「已提交文本」，同伴按各自模式/编码/行尾重编、同会话去重 + 26 dp 常驻横幅（名字按 `resolve_tab_name` 现取、计数按去重会话）与分屏态「广播 B」pill + 点击横幅清组并归还焦点、关 pane/关标签撤账；`utest_broadcast` 12 案、`utest_workspace_keys` 认领集恰十四条、`itest_workspace_broadcast` 4 案，结项读数 **88 项／1123 案**全绿。**未真机走查 ⇒ 不称「可用」**（§4.4 第 33 条）；Win32/MSVC 未编译验证、生产侧分屏仍单会话（WS.02 欠账，跨 pane 语义仅集成用例担保）、无持久化、会话退出后成员不自动清除、横幅显隐各触发一次可见会话 resize |
 | `SPEC.FEAT.WS.10` | 撤销关闭标签 | P1 | M2 |
-| `SPEC.FEAT.WS.11` | 会话恢复 | P2 | M4 |
+| `SPEC.FEAT.WS.11` | 会话恢复 | P2 | M4；**未开工（排序取舍）**：分屏结构恢复依赖 `WS.02` 生产侧多会话欠账（`make_pane` 今天返回同一视图／会话）；先做只能恢复出「多格共享一会话」，或把多会话重构与恢复语义塞进同一意图。待 `WS.02` 厘清后按「每标签连接规格 + `PaneTree` 快照」重排；本轮先落无架构阻塞的 `INTEG.02` |
 | `SPEC.FEAT.WS.12` | Quick Terminal | P3 | M5 |
 | `SPEC.FEAT.CONN.01` | 本地终端 | P0 | M1 |
 | `SPEC.FEAT.CONN.02` | SSH 连接 | P1 | M3；**已落（2026-10-09）**：`SshConnection`（libssh 0.12.0 经 vcpkg，裁决 7.94）——连接/主机密钥核对/认证/PTY/shell 全腿，agent 转发下发延后（§7.94 边界） |
@@ -99,7 +99,7 @@
 | `SPEC.FEAT.PREF.07` | 配置韧性 | P1 | M2；**损坏降级线（备份 `*.corrupt-<时间戳>` + 回落默认 + 显著提示）随配置层提前并已落**（2026-10-02，裁决 7.26④：备份早于任何写入、备份未成功即拒绝落盘，提示以 `LoadReport` 交 UI；**对话框本体亦已于 2026-10-06 落地，`TODO(SPEC.FEAT.PREF.07)` 就此消除**——`ui::StartupNotice` 按 `RecoveredCorrupt` / `RecoveredVersion` 两态在启动路径弹一次，形态与判据见 `codespec/UI_SETTINGS.draft.md` §7 与裁决 **7.76⑤**）；快照回滚与本地导出导入留 M2 → **2026-10-08 本轮落地**（裁决 **7.87**）：N 取 `config::kSnapshotRetention = 5`（人已拍板「滚动 N=5 份快照 + 面板一键回滚」），快照取在**写之前**故回滚是一条普通写、不必另设应急备份，回滚只接受 `snapshots()` 名单内的路径，导出件与配置文件逐字同构且外部文件按不可信输入**整体拒绝**（与装载侧的宽容刻意相反）；入口是设置面板 header 的三枚动作按钮 + 快照名单视图（`codespec/UI_SETTINGS.draft.md` §4E 的 E1-a 已就地更正）。**已移出本行「未落」清单**，未结的只有真机走查三处（对话框取消手感 / 名单滚动手感 / 留痕行可读性）与「档案 + 设置」那句里的**档案**一腿——它属 `SPEC.FEAT.CONN.03`（M3）且至今无存储形态，随该件开工时须把导出/导入的载体一并扩到档案 |
 | `SPEC.FEAT.PREF.06` | 零配置可用 | P0 | M1；**代码已落**（2026-10-02）：`Settings{}` 即首次启动那份，装载不产生文件 |
 | `SPEC.FEAT.INTEG.01` | OSC 133 命令块 | P2 | M4；`OSC 133` 的边界标记与退出码来源已预埋（裁决 7.21④），命令块区间附着到网格行与其消费行为仍留 M4 |
-| `SPEC.FEAT.INTEG.02` | OSC 7 工作目录 | P2 | M4；`OSC 7` 的目录原文来源已预埋（裁决 7.21④），新标签/分屏继承与远端语义下的降级仍留 M4 |
+| `SPEC.FEAT.INTEG.02` | OSC 7 工作目录 | P2 | M4；**已落（2026-10-21，裁决 7.122）**：`ui::osc7` 纯逻辑件（只认空 host／`localhost`，严格百分号解码、拒 NUL，POSIX／Windows 两形态）+ `TabKind` 类型表与新标签继承腿（仅当前标签为活着的本地终端；SSH／串口／Telnet／显式档案不继承；分屏因共享会话天然继承，多会话按 WS.02 TODO 接）；`utest_osc7` 10 案，结项读数 **89 项／1133 案**全绿。**未真机走查 ⇒ 不称「可用」**（§4.4 第 33 条）；直接报真实机器名的常见 shell 集成脚本不继承（fail-closed，推断／未验证）、Windows 腿未在本机实测 |
 | `SPEC.FEAT.INTEG.03` | 系统通知 | P3 | M5 |
 | `SPEC.FEAT.INTEG.04` | CLI 启动参数 | P2 | M4 |
 | `SPEC.NF.PERF.01` | 输入延迟 | P0 | M1 |

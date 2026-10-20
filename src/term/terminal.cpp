@@ -802,9 +802,8 @@ auto Terminal::do_osc(const vt::Sequence &seq) -> void {
         case 1:  // 仅图标名：消费掉，不上屏也不留状态
             break;
         case 7:
-            // URI 原样留存：`file://host/path` 的 host 归属判定与目录继承是 shell 集成的事。
-            // TODO(SPEC.FEAT.INTEG.02): 新标签/分屏继承当前会话目录，SSH 会话在远端目录语义下
-            // 降级为不继承。
+            // URI 原样留存：`file://host/path` 的 host 归属与目录继承由装配层经 `ui::osc7` 判定，
+            // 本层不解释（`SPEC.FEAT.INTEG.02`，裁决 7.122；远端 host 不继承）。
             osc_state_.working_directory.assign(args);
             break;
         case 8:

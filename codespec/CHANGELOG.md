@@ -4,6 +4,22 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.122（2026-10-21）**`SPEC.FEAT.INTEG.02` OSC 7 目录继承落地：`ui::osc7` 纯逻辑件（本机 host 收口 + 严格百分号解码 + 两平台路径形态）+ `TabKind` 类型表与新标签继承腿；SSH／串口／Telnet 与显式档案不继承，分屏因共享会话天然继承**（`include/borealis/ui/osc7.h`（新）+ `src/ui/osc7.cpp`（新）+ `tests/unit/utest_osc7.cpp`（新）+ `src/CMakeLists.txt` + `src/main.cpp` + `SPECIFICATIONS.md` 的 INTEG.02 现状句与裁决 **7.122** + `PLAN.md` 的 INTEG.02／WS.11 行 + `ARCHITECTURE.md` §5.4；按 §4.6 第 26 条按意图切笔：纯逻辑件 `2c3fd3a` → 装配接线 `a62e685` → 本笔文档回写）
+
+**动机**：`OSC 7` 的原文来源早已在 `term::OscState::working_directory` 预埋并有单测（裁决 7.21④），但消费链为零——需求原文要求的「新标签/分屏继承当前会话目录」一直没有落点。这条与 `WS.11` 会话恢复同属剩余集成项，排序上先做本棒：后者的分屏结构恢复依赖 `WS.02` 生产侧多会话欠账（`make_pane` 今天返回同一视图/会话），现在开工只能恢复出「多格共享一会话」，或把多会话重构与恢复语义塞进同一意图；INTEG.02 无新增视觉件、无架构阻塞，可独立验收。
+
+**落地形态**：
+
+- **纯逻辑件 `ui::osc7`**：`local_directory_from_osc7(raw, style)` 先按 URI 规则拆 scheme / host / path，再严格百分号解码，最后按目标平台收口；`choose_start_directory(local_session, osc7, configured, style)` 给出「本机会话优先继承、其余用配置值」的取舍与 `inherited` 标记。不含 Aurora／`config`／`session` 类型，可脱开界面单测。
+- **只认本机 host**：空 host 与 `localhost`（大小写不敏感）可折成本机路径；其余 host 一律 fail-closed 退回配置目录。远端路径交给下一只本地 shell 通常只会得到起不来的会话。
+- **URI 解析从严**：scheme 限 `file`（大小写不敏感）；问号与井号在解码**之前**截断，故 `%3F`／`%23` 仍属文件名；`%` 后必须两位十六进制，解码后拒 NUL；POSIX 直接收 URI 绝对路径（`file:///` 收成 `/`），Windows 要求 `/C:/...` 并在折算后去掉盘符前那一枚 `/`，UNC 不在本棒范围；不做存在性判断，坏目录由平台腿在启动会话时报错。
+- **装配继承腿**：新增 `TabKind{Local,Ssh,Serial,Telnet}` 表补本地标签在既有三张接线表外的身份；5 处 `create_new_tab_with` 显式传型，撤销重开登记 Local，`perform_close` 随标签同撤，重启换腿不改型。`create_new_tab` 只在当前标签是本地终端且 `Session::alive()` 时读 OSC 7；SSH／串口／Telnet 不继承，显式本地档案仍以档案目录为准。分屏今天共享同一会话，目录已天然继承；多会话落地时新 pane 按焦点 pane 接同一 helper，代码处以 `TODO(SPEC.FEAT.WS.02)` 留痕。
+- **无新增视觉件**：故无设计稿与控件走查；本次改动只在开标签的装配路径上。
+
+**验收读数**：构建通过（无警告）；新增 `utest_osc7` 10 案（10 个用例覆盖 host／scheme／百分号／NUL／query-fragment／两平台路径形态／四档取舍）；CTest 89/89（基线 88/88）、`borealis_test_runner` 全跑 1133 案全绿（基线 1123 案）。
+
+**已知边界**：① 常见 shell 集成脚本直接上报真实机器名（如 `file://myhost/path`）时继承不生效——这是「只认本机 host」的 fail-closed 代价，真实脚本覆盖率未实测，标推断／未验证；② Windows 腿的编译分支与 `CreateProcessW` 对 `C:/...` 正斜杠目录的接受度未在本机实测（本沙箱仅跑 Linux 腿与显式 `Windows` 形态的单测）；③ 装配行为未真机走查，**不称「可用」**。
+
 ## v0.121（2026-10-21）**`SPEC.FEAT.WS.09` 广播输入落地：app 级单组 + 第十四键 `Ctrl+Shift+B` + 视口按自身模式/编码重编的镜像腿 + 26 dp 常驻横幅与分屏态 pill；同会话去重、关 pane/关标签撤账、点击横幅清组归还焦点；稿面 D1–D13 全按推荐档收口**（`codespec/UI_WORKSPACE_BROADCAST.draft.md`（新）+ `include/borealis/ui/broadcast.h` + `src/ui/broadcast.cpp` + `tests/unit/utest_broadcast.cpp` + `include/borealis/ui/workspace_keys.h` + `src/ui/workspace_keys.cpp` + `tests/unit/utest_workspace_keys.cpp` + `src/ui/terminal_view.{h,cpp}` + `src/ui/workspace_view.{h,cpp}` + `src/ui/broadcast_banner.{h,cpp}`（新）+ `src/ui/settings_i18n.cpp` + `src/main.cpp` + `src/CMakeLists.txt` + `tests/integration/itest_workspace_broadcast.cpp`（新）+ `SPECIFICATIONS.md` 的 WS.09 现状句与裁决 **7.121** + `PLAN.md` 的 WS.09 行 + `ARCHITECTURE.md` §8.4 + `UI_WORKSPACE_INTERACT.draft.md`／`UI_SETTINGS.draft.md` 的计数与边界改口；按 §4.6 第 26 条按意图切笔：纯逻辑件 `2df1aef` → 界面腿 `2802e95` → 装配接线 `1075f9b` → 集成四案 `121cba0` → 本笔文档回写）
 
 **动机**：`PLAN.md` 的 M4 序位上这条与 WS.08 同属「需求一句、界面零行」的缺口——原文只要求「多个 pane/标签进入组后键盘输入同步发送 + 组状态显著标识」，而 `ARCHITECTURE.md` §8.4 把归属定在 `borealis::ui` 的输入分发层，框架却没有「把一次输入复制给多个控件」的公共件（稿 F1）。同时每个会话有自己的终端模式、字符编码与行尾，**复制源 pane 的字节**会把 UTF-8 灌进 GB18030、把 CSI 方向键灌进 application-cursor 会话（F4），所以这条不能靠一层转发闭包糊过去，得把「组成员与去重」「按同伴重编码」「跨标签端点生命周期」拆成三段各自可测的腿。

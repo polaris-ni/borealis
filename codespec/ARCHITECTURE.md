@@ -203,7 +203,7 @@ UI 事件 → 键映射（`SPEC.FEAT.INTERACT.01`）→ **文本按会话编码�
 
 `OSC 0/2` 标题、`OSC 7` 工作目录、`OSC 8` 超链接、`OSC 52` 剪贴板、`OSC 133` 命令块（`SPEC.FEAT.TERM.07`、`SPEC.FEAT.INTEG.01/02`）。标题消费链路：OSC 标题覆盖标签名，用户手动重命名优先级更高（可配）。
 
-**落地形态**（裁决 7.21）：派发在 `Terminal::do_osc`，产物是**状态快照 + 一个取走型动作**——`term::OscState` 给最近一次的标题 / 目录原文 / 133 边界与退出码 / 计数，超链接以「标识 → URI」有界表配合 §4.1 的行侧表，`OSC 52` 写方向的文本走 `Terminal::take_clipboard_write()` 的取走语义。不选事件队列的理由是 §3.4 的锁纪律：状态机跑在读线程的网格锁内，锁内只能留存不能投递。`OSC 52` 的真正落地是主线程的 IO，故由 `session::ClipboardOutbox::drain()` 转调 Aurora `Clipboard::set_text`（框架依赖只出现在 `src/`，公共头不含框架头，§2.3）；`52;c;?` 的读方向默认禁止但**回写空响应**，不让远端程序干等。未识别的命令号计入 `unhandled_count` 走 §5.5 的降级口径，不整体吞掉。
+**落地形态**（裁决 7.21）：派发在 `Terminal::do_osc`，产物是**状态快照 + 一个取走型动作**——`term::OscState` 给最近一次的标题 / 目录原文 / 133 边界与退出码 / 计数，超链接以「标识 → URI」有界表配合 §4.1 的行侧表，`OSC 52` 写方向的文本走 `Terminal::take_clipboard_write()` 的取走语义。不选事件队列的理由是 §3.4 的锁纪律：状态机跑在读线程的网格锁内，锁内只能留存不能投递。`OSC 52` 的真正落地是主线程的 IO，故由 `session::ClipboardOutbox::drain()` 转调 Aurora `Clipboard::set_text`（框架依赖只出现在 `src/`，公共头不含框架头，§2.3）；`52;c;?` 的读方向默认禁止但**回写空响应**，不让远端程序干等。未识别的命令号计入 `unhandled_count` 走 §5.5 的降级口径，不整体吞掉。`OSC 7` 的消费腿（`SPEC.FEAT.INTEG.02`，裁决 7.122）分两段：`term` 只原样留存原文，`ui::osc7` 把本机 host 的 `file://` 折成本机绝对目录，装配层只在新建默认本地标签时取用；远端 host、SSH／串口／Telnet 与显式本地档案都不继承。
 
 ### 5.5 未识别序列与降级
 
