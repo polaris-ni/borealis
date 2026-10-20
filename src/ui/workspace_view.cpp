@@ -27,6 +27,15 @@ constexpr double kFocusRingDp = 2.0;       ///< 焦点 pane 的**内**描边（�
 constexpr double kMinPaneColumns = 20.0;   ///< 最小 pane 的列数（裁决 7.47③）
 constexpr double kMinPaneRows = 3.0;       ///< 最小 pane 的行数
 
+/// @brief 缩放角标的几何（`codespec/UI_WORKSPACE_ZOOM.draft.md` §2.2）：热区＝底板，距 pane 右边与
+///        上边各 4 dp；字形盒 10×10 居中，1.5 dp 线段。
+constexpr double kZoomBadgeDp = 20.0;
+constexpr double kZoomBadgeInsetDp = 4.0;
+constexpr double kZoomBadgeRadiusDp = 3.0;
+constexpr double kZoomGlyphDp = 10.0;
+constexpr float kZoomGlyphStrokeDp = 1.5F;
+constexpr double kZoomArrowWingDp = 3.5;
+
 /// @brief 本层的矩形都在「相对容器原点」的 dp 空间（`ui::Rect`），框架收的是 origin + size（float）。
 ///        两种形态没有互转 operator，字段名与精度都不同，故换算点集中在这一个函数里。
 [[nodiscard]] auto to_frame(const Rect &r) -> aurora::Rect {
@@ -74,6 +83,69 @@ auto paint_focus_ring(aurora::Painter &p, const aurora::Rect &bounds, const Rect
     for (const Rect &edge : edges) {
         p.fill_rect(global_frame(bounds, edge), kAccent);
     }
+}
+
+/// @brief 右上角的缩放角标：chrome 不透明底板 + accent 双箭头（展开＝外向 ⤢，收起＝内向 ⤡）。
+///
+/// 字形用线段拼，不引字体（`codespec/UI_WORKSPACE_ZOOM.draft.md` F8）：pane 容器没有字体依赖，
+/// 20 dp 图标也不值得为它接一条字体回退链；无头像素判据因此稳定。
+auto paint_zoom_badge(aurora::Painter &p, const aurora::Rect &bounds, const Rect &pane, bool collapse)
+    -> void {
+    const double x = pane.x + pane.width - kZoomBadgeInsetDp - kZoomBadgeDp;
+    const double y = pane.y + kZoomBadgeInsetDp;
+    const Rect plate{.x = x, .y = y, .width = kZoomBadgeDp, .height = kZoomBadgeDp};
+    p.fill_rounded_rect(global_frame(bounds, plate), static_cast<float>(kZoomBadgeRadiusDp), kChrome);
+
+    const double gx = x + (kZoomBadgeDp - kZoomGlyphDp) / 2.0;
+    const double gy = y + (kZoomBadgeDp - kZoomGlyphDp) / 2.0;
+    const auto pt = [gx, gy](double lx, double ly) -> aurora::Point {
+        return aurora::Point{.x = static_cast<float>(gx + lx), .y = static_cast<float>(gy + ly)};
+    };
+    const auto line = [&p, &pt](double ax, double ay, double bx, double by) -> void {
+        p.draw_line(pt(ax, ay), pt(bx, by), kZoomGlyphStrokeDp, kAccent);
+    };
+    const double g = kZoomGlyphDp;
+    if (!collapse) {
+        // 外向双箭头：中心 → 右上、中心 → 左下，箭头翼在各自的外角。
+        line(g * 0.5, g * 0.5, g, 0.0);
+        line(g, 0.0, g - kZoomArrowWingDp, 0.0);
+        line(g, 0.0, g, kZoomArrowWingDp);
+        line(g * 0.5, g * 0.5, 0.0, g);
+        line(0.0, g, kZoomArrowWingDp, g);
+        line(0.0, g, 0.0, g - kZoomArrowWingDp);
+        return;
+    }
+    // 内向双箭头：左上角 → 中心、右下角 → 中心，箭头翼在中心一端。
+    constexpr double kGap = 0.8;
+    line(0.0, 0.0, g * 0.5 - kGap, g * 0.5 - kGap);
+    line(g * 0.5 - kGap, g * 0.5 - kGap, g * 0.5 - kGap - kZoomArrowWingDp, g * 0.5 - kGap);
+    line(g * 0.5 - kGap, g * 0.5 - kGap, g * 0.5 - kGap, g * 0.5 - kGap - kZoomArrowWingDp);
+    line(g, g, g * 0.5 + kGap, g * 0.5 + kGap);
+    line(g * 0.5 + kGap, g * 0.5 + kGap, g * 0.5 + kGap + kZoomArrowWingDp, g * 0.5 + kGap);
+    line(g * 0.5 + kGap, g * 0.5 + kGap, g * 0.5 + kGap, g * 0.5 + kGap + kZoomArrowWingDp);
+}
+
+/// @brief 该命令是否改动拓扑或比例：缩放态下这些命令一律先还原再执行（D3），否则它们会读到
+///        显示表里已被清空的把手与零盒。
+[[nodiscard]] auto reshapes_layout(WorkspaceCommand command) -> bool {
+    switch (command) {
+        case WorkspaceCommand::SplitRight:
+        case WorkspaceCommand::SplitDown:
+        case WorkspaceCommand::ClosePane:
+        case WorkspaceCommand::EqualizeLayer:
+        case WorkspaceCommand::StepLeft:
+        case WorkspaceCommand::StepRight:
+        case WorkspaceCommand::StepUp:
+        case WorkspaceCommand::StepDown:
+            return true;
+        case WorkspaceCommand::FocusLeft:
+        case WorkspaceCommand::FocusRight:
+        case WorkspaceCommand::FocusUp:
+        case WorkspaceCommand::FocusDown:
+        case WorkspaceCommand::ToggleZoom:
+            return false;
+    }
+    return false;
 }
 
 /// @brief 方向命令折成路由方向；非方向命令回空值。
@@ -152,26 +224,40 @@ auto WorkspaceView::on_layout(const aurora::Constraints &c, const aurora::BuildC
     const double scale = ctx.scale_factor > 0.0F ? static_cast<double>(ctx.scale_factor) : 1.0;
     spec_ = LayoutSpec{
         .divider_dp = kDividerHitDp, .min_pane_dp = min_pane_dp(), .scale = scale};
-    layout_ = tree_.layout(Rect{.x = 0.0, .y = 0.0,
-                                .width = static_cast<double>(box.width), .height = static_cast<double>(box.height)},
-                           spec_);
-    for (const PaneBox &pane_box : layout_.boxes) {
+    area_ = Rect{.x = 0.0, .y = 0.0,
+                 .width = static_cast<double>(box.width), .height = static_cast<double>(box.height)};
+    base_layout_ = tree_.layout(area_, spec_);
+    if (zoomed_.has_value() && std::ranges::none_of(base_layout_.boxes, [this](const PaneBox &pane_box) -> bool {
+            return pane_box.pane == *zoomed_;
+        })) {
+        zoomed_.reset();  // 状态陈旧（树已无此格）：按未缩放处理，不让显示表留一格满盒
+        hovered_zoom_.reset();
+    }
+    apply_display_layout();
+    for (const PaneBox &pane_box : base_layout_.boxes) {
         TerminalView *view = view_of(pane_box.pane);
         if (view == nullptr) {
             continue;
         }
-        const aurora::Rect frame = to_frame(pane_box.box);
+        // 缩放 pane 按满盒紧约束（行列数随之变大），**隐藏 pane 仍按树的原矩形**：会话网格因此
+        // 一格不变，缩放与还原都不产生隐藏会话的 resize（D4 / F7）。
+        const bool zoomed = zoomed_.has_value() && *zoomed_ == pane_box.pane;
+        const aurora::Rect frame = to_frame(zoomed ? area_ : pane_box.box);
         // 紧约束（min == max）：树给的矩形就是这一格的最终尺寸，视口不得按需收缩——否则它返回的
         // 尺寸与节点 bounds 不一致，绘制落点与命中落点会分叉。
         view->layout(aurora::Constraints{.min = frame.size, .max = frame.size}, ctx);
     }
     for (aurora::Node &node : children_) {
-        const auto it = std::ranges::find_if(layout_.boxes, [this, &node](const PaneBox &b) -> bool {
+        const auto it = std::ranges::find_if(base_layout_.boxes, [this, &node](const PaneBox &b) -> bool {
             return view_of(b.pane) == &node.widget();
         });
-        if (it != layout_.boxes.end()) {
-            node.set_bounds(to_frame(it->box));
+        if (it == base_layout_.boxes.end()) {
+            continue;
         }
+        const bool zoomed = zoomed_.has_value() && *zoomed_ == it->pane;
+        // 隐藏 pane 的 bounds 留在原矩形而不是零盒：零 bounds 仍会被 `TerminalView::on_paint` 从
+        // 容器原点画出来（F3），可见性因此由本层的绘制与命中原语显式跳过，不借几何表达。
+        node.set_bounds(to_frame(zoomed ? area_ : it->box));
     }
     return box;
 }
@@ -195,14 +281,29 @@ auto WorkspaceView::min_pane_dp() const -> double {
 auto WorkspaceView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, const aurora::BuildContext &ctx)
     -> void {
     p.fill_rect(bounds, kChrome);
-    Container::on_paint(p, bounds, ctx);
+    if (!zoomed_.has_value()) {
+        Container::on_paint(p, bounds, ctx);
+    } else {
+        // 缩放态不能委托基类：隐藏 pane 的 bounds 仍在原矩形，`Container` 会照画不误（F3）。
+        // 这里只画缩放那一格，其余跳过——它们是隐藏，不是「尺寸为零」。
+        for (aurora::Node &node : children_) {
+            const std::optional<PaneId> pane = pane_of(node.widget());
+            if (!pane.has_value() || !pane_visible(*pane)) {
+                continue;
+            }
+            const aurora::Rect cb = node.bounds();
+            const aurora::Rect global{.origin = bounds.origin + cb.origin, .size = cb.size};
+            node.widget().paint(p, global, ctx);
+        }
+    }
     const std::optional<DividerKey> lit = dragging_.has_value() ? dragging_ : hovered_;
     for (const PaneDivider &divider : layout_.dividers) {
         const DividerKey key{.container = divider.container, .slot = divider.slot};
         paint_handle(p, bounds, divider, (lit.has_value() && *lit == key) ? kAccent : kLine2);
     }
-    // 只有分屏态画描边：单叶工作区没有「哪一格是焦点」这个问题（判据 11）。
-    if (pane_count() > 1U) {
+    // 只有分屏态画描边：单叶工作区没有「哪一格是焦点」这个问题（判据 11）；缩放 pane 的边界就是
+    // 窗口边，描边不携带「哪一格是焦点」的信息（D6）。
+    if (pane_count() > 1U && !zoomed_.has_value()) {
         const PaneId active = focused_pane();
         for (const PaneBox &box : layout_.boxes) {
             if (box.pane == active) {
@@ -211,15 +312,60 @@ auto WorkspaceView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, con
             }
         }
     }
+    // 角标最后画，压在终端内容之上：缩放态常显（还原入口），未缩放态只在指针停进热区时显形。
+    for (const PaneBox &box : layout_.boxes) {
+        if (box.box.width <= 0.0 || box.box.height <= 0.0 || !pane_visible(box.pane)) {
+            continue;
+        }
+        if (!zoomed_.has_value() && (!hovered_zoom_.has_value() || *hovered_zoom_ != box.pane)) {
+            continue;
+        }
+        if (zoom_badge_box(box.box).has_value()) {
+            paint_zoom_badge(p, bounds, box.box, zoomed_.has_value());
+        }
+    }
 }
 
 auto WorkspaceView::on_hit_test(const aurora::Point &local, const aurora::Rect &bounds,
                                 const aurora::BuildContext &ctx) -> aurora::Widget * {
+    // 角标叠在终端视图内部，必须由本层先接管（F4），否则 Press 会被视口吃掉。
+    if (zoom_badge_at(local).has_value()) {
+        return this;
+    }
+    if (zoomed_.has_value()) {
+        // 缩放态不能委托基类：隐藏 pane 的旧 bounds 会挡住缩放那一格的点（F2/F4）。
+        const auto display = std::ranges::find_if(layout_.boxes, [this](const PaneBox &box) -> bool {
+            return box.pane == *zoomed_;
+        });
+        TerminalView *view = display == layout_.boxes.end() ? nullptr : view_of(*zoomed_);
+        if (view == nullptr || display == layout_.boxes.end() || !to_frame(display->box).contains(local)) {
+            return nullptr;
+        }
+        const aurora::Rect child = to_frame(display->box);
+        return view->hit_test(local - child.origin,
+                              aurora::Rect{.origin = bounds.origin + child.origin, .size = child.size}, ctx);
+    }
     return divider_at(local).has_value() ? this : Container::on_hit_test(local, bounds, ctx);
 }
 
 auto WorkspaceView::on_hit_test_chain(const aurora::Point &local, const aurora::Rect &bounds,
                                       const aurora::BuildContext &ctx) -> std::vector<aurora::HitNode> {
+    if (zoom_badge_at(local).has_value()) {
+        return std::vector<aurora::HitNode>{aurora::HitNode{this, weak_from_this(), bounds.origin}};
+    }
+    if (zoomed_.has_value()) {
+        const auto display = std::ranges::find_if(layout_.boxes, [this](const PaneBox &box) -> bool {
+            return box.pane == *zoomed_;
+        });
+        TerminalView *view = display == layout_.boxes.end() ? nullptr : view_of(*zoomed_);
+        if (view == nullptr || display == layout_.boxes.end() || !to_frame(display->box).contains(local)) {
+            return {};
+        }
+        const aurora::Rect child = to_frame(display->box);
+        return view->hit_test_chain(local - child.origin,
+                                    aurora::Rect{.origin = bounds.origin + child.origin, .size = child.size},
+                                    ctx);
+    }
     // 缝隙里既无后代也无 Clickable / Input 修饰，基类因此不会把自身入链（点把手会被当点击空白丢弃）。
     if (divider_at(local).has_value()) {
         return std::vector<aurora::HitNode>{aurora::HitNode{this, weak_from_this(), bounds.origin}};
@@ -233,6 +379,13 @@ auto WorkspaceView::on_pointer_event(aurora::MouseEvent &e) -> void {
         case aurora::MouseAction::Press: {
             if (e.button != aurora::MouseButton::Left) {
                 break;
+            }
+            // 角标先于把手：它叠在 pane 内部，本层的命中链已把它认领到这里（F4）。
+            if (const std::optional<PaneId> badge = zoom_badge_at(e.local_position); badge.has_value()) {
+                apply_focus(*badge, aurora::FocusArrival::Pointer);
+                toggle_zoom(*badge);
+                e.is_handled = true;
+                return;
             }
             const std::optional<DividerKey> key = divider_at(e.local_position);
             if (!key.has_value()) {
@@ -267,6 +420,11 @@ auto WorkspaceView::on_pointer_event(aurora::MouseEvent &e) -> void {
                 e.is_handled = true;
                 return;
             }
+            const std::optional<PaneId> badge = zoom_badge_at(e.local_position);
+            if (badge != hovered_zoom_) {
+                hovered_zoom_ = badge;
+                mark_needs_paint();  // 角标一进一出只换绘制态，不重排
+            }
             const std::optional<DividerKey> key = divider_at(e.local_position);
             if (key != hovered_) {
                 hovered_ = key;
@@ -287,6 +445,9 @@ auto WorkspaceView::on_pointer_event(aurora::MouseEvent &e) -> void {
 }
 
 auto WorkspaceView::cursor_shape() const -> std::optional<aurora::CursorShape> {
+    if (hovered_zoom_.has_value()) {
+        return aurora::CursorShape::PointingHand;
+    }
     const std::optional<DividerKey> key = dragging_.has_value() ? dragging_ : hovered_;
     if (!key.has_value()) {
         return std::nullopt;
@@ -316,11 +477,25 @@ auto WorkspaceView::on_key_press(PaneId pane, const term::KeyPress &press) -> bo
     // 树里的焦点只是框架焦点的投影：指针点过 B 而树仍记 A 时，拿投影当命令对象会把焦点弹回 A。
     last_focused_ = pane;  // 收到该键的视图就是当前持焦者——按键是框架焦点的直接证词
     static_cast<void>(tree_.set_focus(pane));
+    if (zoomed_.has_value() && *zoomed_ != pane) {
+        // 框架侧先改了焦点（标签条派焦点、浮层归还）：缩放跟到真正收到键的那一格（D2），
+        // 否则输入会发进屏上看得见、却已不是持焦者的那一格。
+        zoomed_ = pane;
+        hovered_zoom_.reset();
+        hovered_.reset();
+        apply_display_layout();
+        mark_needs_layout();
+        mark_needs_paint();
+    }
     run_command(*command, pane);
     return true;  // 命中键位但落点不存在（单叶按方向键）也算认领——它不是发给会话的输入
 }
 
 auto WorkspaceView::run_command(WorkspaceCommand command, PaneId pane) -> void {
+    // 结构命令在缩放态下先还原：它们要读的把手与兄弟盒在显示表里已被清空/归零（D3）。
+    if (reshapes_layout(command)) {
+        unzoom();
+    }
     switch (command) {
         case WorkspaceCommand::SplitRight:
             split_pane(pane, PaneAxis::Horizontal);
@@ -344,9 +519,20 @@ auto WorkspaceView::run_command(WorkspaceCommand command, PaneId pane) -> void {
         case WorkspaceCommand::FocusUp:
         case WorkspaceCommand::FocusDown: {
             const std::optional<PaneDirection> direction = direction_of(command);
-            const std::optional<PaneId> target = route_focus(pane, *direction, layout_);
+            // 缩放态按**未缩放**的几何路由：显示表里其余 pane 全是零盒，拿它路由永远没有目标。
+            const PaneLayout &routing = zoomed_.has_value() ? base_layout_ : layout_;
+            const std::optional<PaneId> target = route_focus(pane, *direction, routing);
             if (target.has_value()) {
                 apply_focus(*target, aurora::FocusArrival::Keyboard);
+                if (zoomed_.has_value() && *zoomed_ != *target) {
+                    // 缩放跟随焦点（D2）：屏上永远只有当前格，输入与可见内容因此不分叉。
+                    zoomed_ = *target;
+                    hovered_zoom_.reset();
+                    hovered_.reset();
+                    apply_display_layout();
+                    mark_needs_layout();
+                    mark_needs_paint();
+                }
             }
             return;  // 无候选即焦点原地不动，不绕到对角（判据 13）
         }
@@ -355,6 +541,9 @@ auto WorkspaceView::run_command(WorkspaceCommand command, PaneId pane) -> void {
         case WorkspaceCommand::StepUp:
         case WorkspaceCommand::StepDown:
             step_divider(command, pane);
+            return;
+        case WorkspaceCommand::ToggleZoom:
+            toggle_zoom(pane);
             return;
     }
 }
@@ -401,6 +590,12 @@ auto WorkspaceView::close_pane(PaneId pane) -> void {
     static_cast<void>(remove_child(view));
     views_.erase(pane);
     debounce_.forget(pane);  // 残留的已下发值会让将来同号的 pane 少发一次 resize
+    if (zoomed_.has_value() && *zoomed_ == pane) {
+        zoomed_.reset();  // 关掉缩放 pane 即退出缩放；键盘路径已先还原，这里兜住其余调用方
+        apply_display_layout();
+        mark_needs_layout();
+    }
+    hovered_zoom_.reset();
     hovered_.reset();
     dragging_.reset();
     if (hooks_.teardown_pane) {
@@ -439,6 +634,87 @@ auto WorkspaceView::step_divider(WorkspaceCommand command, PaneId pane) -> void 
         mark_needs_layout();
         mark_needs_paint();
     }
+}
+
+auto WorkspaceView::toggle_zoom(PaneId pane) -> void {
+    if (pane_count() <= 1U) {
+        return;  // 没有可放大的对象；键仍由 `on_key_press` 认领，不转发给会话（D9）
+    }
+    if (zoomed_.has_value() && *zoomed_ == pane) {
+        unzoom();
+        return;
+    }
+    zoomed_ = pane;
+    hovered_zoom_.reset();  // 角标随布局换位，旧悬停读数不再成立
+    hovered_.reset();
+    dragging_.reset();
+    apply_display_layout();
+    mark_needs_layout();
+    mark_needs_paint();
+}
+
+auto WorkspaceView::unzoom() -> void {
+    if (!zoomed_.has_value()) {
+        return;
+    }
+    zoomed_.reset();
+    hovered_zoom_.reset();
+    hovered_.reset();
+    dragging_.reset();
+    // 显示表立刻回到树的真相：紧随其后的结构命令（切分/等分/步进）要在本帧读到把手与兄弟盒，
+    // 只标脏等下一帧重排会把它们折在空表上。
+    apply_display_layout();
+    mark_needs_layout();
+    mark_needs_paint();
+}
+
+auto WorkspaceView::apply_display_layout() -> void {
+    layout_ = base_layout_;
+    if (!zoomed_.has_value()) {
+        return;
+    }
+    for (PaneBox &pane_box : layout_.boxes) {
+        pane_box.box = pane_box.pane == *zoomed_ ? area_ : Rect{};
+    }
+    layout_.dividers.clear();  // 缩放态没有可见的缝隙，把手也不该留在命中表里
+}
+
+auto WorkspaceView::pane_visible(PaneId pane) const -> bool {
+    return !zoomed_.has_value() || *zoomed_ == pane;
+}
+
+auto WorkspaceView::pane_of(const aurora::Widget &widget) const -> std::optional<PaneId> {
+    for (const auto &[pane, view] : views_) {
+        if (view == &widget) {
+            return pane;
+        }
+    }
+    return std::nullopt;
+}
+
+auto WorkspaceView::zoom_badge_box(const Rect &pane) const -> std::optional<Rect> {
+    constexpr double kNeeded = kZoomBadgeDp + kZoomBadgeInsetDp;
+    if (pane.width < kNeeded || pane.height < kNeeded) {
+        return std::nullopt;  // 放不下就整枚不画也不给热区，不让它越出 pane
+    }
+    return Rect{.x = pane.x + pane.width - kNeeded, .y = pane.y + kZoomBadgeInsetDp,
+                .width = kZoomBadgeDp, .height = kZoomBadgeDp};
+}
+
+auto WorkspaceView::zoom_badge_at(const aurora::Point &local) const -> std::optional<PaneId> {
+    if (pane_count() <= 1U) {
+        return std::nullopt;  // 单 pane 不提供角标（D9）
+    }
+    for (const PaneBox &pane_box : layout_.boxes) {
+        if (pane_box.box.width <= 0.0 || pane_box.box.height <= 0.0) {
+            continue;  // 缩放态下隐藏 pane 是零盒，不可达
+        }
+        const std::optional<Rect> badge = zoom_badge_box(pane_box.box);
+        if (badge.has_value() && to_frame(*badge).contains(local)) {
+            return pane_box.pane;
+        }
+    }
+    return std::nullopt;
 }
 
 auto WorkspaceView::apply_focus(PaneId pane, aurora::FocusArrival arrival) -> void {

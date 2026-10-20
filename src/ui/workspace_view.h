@@ -85,6 +85,9 @@ class WorkspaceView final : public aurora::Container {
     /// @brief 最近一次折算出的矩形表（把手命中区与各 pane 盒）。
     [[nodiscard]] auto current_layout() const noexcept -> const PaneLayout & { return layout_; }
 
+    /// @brief 当前缩放的 pane（`SPEC.FEAT.WS.08`）；未缩放回空值。
+    [[nodiscard]] auto zoomed_pane() const -> std::optional<PaneId> { return zoomed_; }
+
     /// @brief 立刻结算去抖表：把到期的期望行列逐条交出（无调度器时用例靠它推进尾沿）。
     /// @param now 当前时刻。
     auto flush_grid_sizes(Moment now) -> void;
@@ -144,6 +147,27 @@ class WorkspaceView final : public aurora::Container {
     /// @brief 键盘步进：折出该层的落点与位移，交 `move_divider`（与拖拽同一条路径）。
     auto step_divider(WorkspaceCommand command, PaneId pane) -> void;
 
+    /// @brief 切换一个 pane 的缩放（单叶工作区为 no-op，键仍由按键入口认领）。
+    auto toggle_zoom(PaneId pane) -> void;
+
+    /// @brief 退出缩放并立刻把显示表还原成树的真相（结构命令在本帧就要按未缩放几何执行）。
+    auto unzoom() -> void;
+
+    /// @brief 按 `zoomed_` 重算显示表：缩放 pane 占满可用区、其余零盒、把手为空。
+    auto apply_display_layout() -> void;
+
+    /// @brief 该 pane 在**显示表**里是否可见（缩放态只有缩放那一格）。
+    [[nodiscard]] auto pane_visible(PaneId pane) const -> bool;
+
+    /// @brief 由子控件反查 pane（绘制与命中都要按 pane 判可见性）。
+    [[nodiscard]] auto pane_of(const aurora::Widget &widget) const -> std::optional<PaneId>;
+
+    /// @brief 该 pane 的缩放角标盒（逻辑 dp，本容器局部系）；盒太小放不下时回空值。
+    [[nodiscard]] auto zoom_badge_box(const Rect &pane) const -> std::optional<Rect>;
+
+    /// @brief 指针落点是否在某个可见 pane 的缩放角标上（单叶工作区恒回空值）。
+    [[nodiscard]] auto zoom_badge_at(const aurora::Point &local) const -> std::optional<PaneId>;
+
     /// @brief 改焦点：树的投影与框架焦点一并写（后者只在派发栈内有管理器可寻）。
     /// @param pane 目标 pane。
     /// @param arrival 到达方式：指针点选记 `Pointer`，键盘路由与切分/关闭的交接记 `Keyboard`。视口
@@ -183,8 +207,12 @@ class WorkspaceView final : public aurora::Container {
     Hooks hooks_;
     PaneTree tree_{1U};
     std::map<PaneId, TerminalView *> views_;  ///< 非拥有：节点持 `shared_ptr`，本表只供按 pane 取视图。
-    PaneLayout layout_{};
+    PaneLayout base_layout_{};  ///< 树折算的真相：焦点路由、步进与隐藏 pane 的视图布局都读它。
+    PaneLayout layout_{};       ///< 显示表：缩放态下只有缩放 pane 满盒，其余零盒且无把手。
+    Rect area_{};               ///< 最近一次布局的可用区（`apply_display_layout` 要在两帧之间重算满盒）。
     LayoutSpec spec_{};
+    std::optional<PaneId> zoomed_;        ///< 按标签独立、不落盘（`SPEC.FEAT.WS.08`，裁决 7.120 D7）。
+    std::optional<PaneId> hovered_zoom_;  ///< 指针当前停在谁的角标上（只影响绘制与光标）。
     std::optional<DividerKey> hovered_;
     std::optional<DividerKey> dragging_;
     double drag_axis_dp_ = 0.0;  ///< 上一次拖拽 Move 的沿轴读数（增量式，故陈旧矩形不影响跟手）。
