@@ -22,16 +22,9 @@
 
 #include "settings_i18n.h"
 #include "settings_panel.h"  // settings_chrome
+#include "connection_glyph.h"  // 类型图标的唯一字形表（`SPEC.FEAT.WS.04`，与标签栏同一处）
 
 namespace borealis::ui {
-
-namespace {
-
-[[nodiscard]] auto type_icon(conn::ConnectionType type) -> std::string {
-    return type == conn::ConnectionType::Ssh ? "#" : ">";  // ASCII 图标：不引图标库的第一步。
-}
-
-}  // namespace
 
 ConnectionSidebar::ConnectionSidebar(aurora::OverlayHost &host, Hooks hooks)
     : host_{&host}, hooks_{std::move(hooks)} {}
@@ -192,7 +185,7 @@ auto ConnectionSidebar::build_row(const conn::SidebarRow &row) -> aurora::Node {
     const conn::Profile *profile = store_.find(row.id);
 
     auto name_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
-        .label = type_icon(row.type) + "  " + row.name,
+        .label = std::string{connection_type_glyph(row.type)} + "  " + row.name,
         .color = chrome.control_bg,
         .on_color = chrome.text,
         .border_color = chrome.card_line,
@@ -332,7 +325,7 @@ auto ConnectionSidebar::build_overlay() -> std::shared_ptr<aurora::Column> {
                 continue;  // 行源与档案表不同步时少画一行，绝不画悬空条目。
             }
             auto recent_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
-                .label = type_icon(profile->type) + "  " + profile->name,
+                .label = std::string{connection_type_glyph(profile->type)} + "  " + profile->name,
                 .color = chrome.control_bg,
                 .on_color = chrome.text_dim,
                 .border_color = chrome.card_line,

@@ -30,6 +30,7 @@ add_library(borealis_core STATIC
         conn/tunnel_client.cpp
         conn/tunnel_model.cpp
         conn/tunnel_socks.cpp
+        ui/connection_glyph.cpp
         ui/connection_sidebar.cpp
         ui/connection_wizard.cpp
         ui/credential_prompt.cpp
