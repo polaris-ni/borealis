@@ -2,7 +2,8 @@
 /// 目标单元: include/borealis/term/terminal.h 的 OSC 消费腿（含 include/borealis/term/osc.h 的形态）
 /// 测试说明: OSC 命令号派发与消费产物——`0/2` 标题、`7` 工作目录原样留存、`8` 超链接区间
 ///           （含挂格、覆盖/擦除清链、双宽只挂前半格、有界表的淘汰语义）、`52` 写方向的 base64
-///           解码与合并、`52` 读方向的空应答、`133` 命令块边界与退出码、未消费命令号的留痕、
+///           解码与合并、`52` 读方向的空应答、`133` 命令块边界与退出码、`9` / `777` 通知的留存
+///           与取走即清（SPEC.FEAT.INTEG.03）、未消费命令号的留痕、
 ///           RIS 清零（SPEC.FEAT.TERM.07，为 SPEC.FEAT.INTEG.01/.02 预埋来源）。
 
 #include <cstddef>
@@ -13,6 +14,7 @@
 
 #include "borealis/grid/row.h"
 #include "borealis/grid/storage.h"
+#include "borealis/term/notification.h"
 #include "borealis/term/osc.h"
 #include "borealis/term/terminal.h"
 #include "borealis/term/width.h"
@@ -419,11 +421,108 @@ AURORA_TEST_CASE(unconsumed_osc_commands_are_counted_not_fatal) {
     AURORA_TEST_CHECK(term.osc_state().title == std::u32string{U"still alive"});
 }
 
+AURORA_TEST_CASE(osc_9_reaches_the_pending_slot_and_clears_on_take) {
+    // 变异 m1 的证人：`9` 曾落进 `default`，症状是它只涨 `unhandled_count` 而屏幕上毫无动静。
+    auto term = make_terminal(narrow_only);
+    term.feed(osc_bel(U"9;build finished"));
+    AURORA_TEST_CHECK_EQ(term.osc_state().unhandled_count, std::size_t{0});
+    AURORA_TEST_CHECK_EQ(term.osc_state().notification_requests, std::size_t{1});
+
+    const auto pending = term.take_notification();
+    AURORA_TEST_REQUIRE(pending.has_value());
+    AURORA_TEST_CHECK(pending->body == std::u32string{U"build finished"});
+    // 没有 `OSC 0/2` 设过标题，故走三级链的最后一档（稿 D2①）。
+    AURORA_TEST_CHECK(pending->title == std::u32string{U"Borealis"});
+
+    // 取走即清（变异 m5）：一条通知只该投一次，槽留着就是每帧重复弹同一条。
+    AURORA_TEST_CHECK_FALSE(term.take_notification().has_value());
+}
+
+AURORA_TEST_CASE(osc_9_title_comes_from_the_session_title_set_earlier) {
+    auto term = make_terminal(narrow_only);
+    term.feed(osc_bel(U"0;ubuntu: ~/work"));
+    term.feed(osc_bel(U"9;tests passed"));
+
+    const auto pending = term.take_notification();
+    AURORA_TEST_REQUIRE(pending.has_value());
+    AURORA_TEST_CHECK(pending->title == std::u32string{U"ubuntu: ~/work"});
+    AURORA_TEST_CHECK(pending->body == std::u32string{U"tests passed"});
+}
+
+AURORA_TEST_CASE(osc_777_notification_uses_its_own_title) {
+    auto term = make_terminal(narrow_only);
+    term.feed(osc_bel(U"0;should not win"));
+    term.feed(osc_bel(U"777;notify;Backup done;3 files; 0 errors"));
+    AURORA_TEST_CHECK_EQ(term.osc_state().notification_requests, std::size_t{1});
+
+    const auto pending = term.take_notification();
+    AURORA_TEST_REQUIRE(pending.has_value());
+    AURORA_TEST_CHECK(pending->title == std::u32string{U"Backup done"});
+    AURORA_TEST_CHECK(pending->body == std::u32string{U"3 files; 0 errors"});
+}
+
+AURORA_TEST_CASE(a_later_notification_supersedes_the_earlier_one) {
+    // 稿 D3①：每会话只留最近一条，代价是同一帧窗口内的两条不同提醒只发后者。
+    auto term = make_terminal(narrow_only);
+    term.feed(osc_bel(U"9;first"));
+    term.feed(osc_bel(U"9;second"));
+    AURORA_TEST_CHECK_EQ(term.osc_state().notification_requests, std::size_t{2});
+    AURORA_TEST_CHECK_EQ(term.osc_state().notification_superseded, std::size_t{1});
+
+    const auto pending = term.take_notification();
+    AURORA_TEST_REQUIRE(pending.has_value());
+    AURORA_TEST_CHECK(pending->body == std::u32string{U"second"});
+    AURORA_TEST_CHECK_FALSE(term.take_notification().has_value());
+
+    // 取走之后再来一条不算覆盖：槽是空的，没有货被丢掉。
+    term.feed(osc_bel(U"9;third"));
+    AURORA_TEST_CHECK_EQ(term.osc_state().notification_superseded, std::size_t{1});
+}
+
+AURORA_TEST_CASE(an_empty_notification_is_counted_but_never_stored) {
+    // 变异 m7 的证人：空正文只留账（判据 ⑥），既不占槽也不进覆盖计数。
+    auto term = make_terminal(narrow_only);
+    term.feed(osc_bel(U"9;"));
+    term.feed(osc_bel(U"777;notify;title only"));
+    AURORA_TEST_CHECK_EQ(term.osc_state().notification_requests, std::size_t{2});
+    AURORA_TEST_CHECK_EQ(term.osc_state().notification_superseded, std::size_t{0});
+    AURORA_TEST_CHECK_EQ(term.osc_state().unhandled_count, std::size_t{0});
+    AURORA_TEST_CHECK_FALSE(term.take_notification().has_value());
+
+    term.feed(osc_bel(U"9;real body"));
+    const auto after = term.take_notification();
+    AURORA_TEST_REQUIRE(after.has_value());
+    AURORA_TEST_CHECK(after->body == std::u32string{U"real body"});
+}
+
+AURORA_TEST_CASE(other_777_subcommands_stay_in_the_unhandled_ledger) {
+    // 架构 §5.5：没实现的串按未识别序列留痕，而不是替远端猜一条横幅（判据 ③）。
+    auto term = make_terminal(narrow_only);
+    term.feed(osc_bel(U"777;popup;body"));
+    term.feed(osc_bel(U"777"));
+    AURORA_TEST_CHECK_EQ(term.osc_state().unhandled_count, std::size_t{2});
+    AURORA_TEST_CHECK_EQ(term.osc_state().notification_requests, std::size_t{0});
+    AURORA_TEST_CHECK_FALSE(term.take_notification().has_value());
+}
+
+AURORA_TEST_CASE(a_long_notification_body_is_clipped_where_it_is_stored) {
+    // 截断发生在留存之前（稿 D10①）：槽里那一份就是对外投递的体量上限。
+    auto term = make_terminal(narrow_only);
+    term.feed(osc_bel(std::u32string{U"9;"} + std::u32string(600U, U'a')));
+
+    const auto pending = term.take_notification();
+    AURORA_TEST_REQUIRE(pending.has_value());
+    AURORA_TEST_CHECK_EQ(pending->body.size(), term::kMaxNotificationBodyCodePoints);
+    AURORA_TEST_CHECK(pending->body.size() >= 3U &&
+                      pending->body.compare(pending->body.size() - 3U, 3U, U"...") == 0);
+}
+
 AURORA_TEST_CASE(ris_clears_every_osc_product) {
     auto term = make_terminal(narrow_only);
     term.feed(osc_bel(U"0;title") + osc_bel(U"7;file://host/dir") + osc_bel(U"133;A"));
     term.feed(osc_bel(U"8;;https://example.test/a") + U"a");
     term.feed(osc_bel(U"52;c;eA=="));
+    term.feed(osc_bel(U"9;a pending notice"));
     AURORA_TEST_CHECK_EQ(term.osc_state().unhandled_count, std::size_t{0});
 
     term.feed(U"\x1B" U"c");  // RIS（`\x1B` 后直接跟 `c` 会被十六进制转义吞成一个码点）
@@ -434,7 +533,10 @@ AURORA_TEST_CASE(ris_clears_every_osc_product) {
     AURORA_TEST_CHECK(state.prompt_marker == PromptMarker::None);
     AURORA_TEST_CHECK_EQ(state.command_exit_code, std::int32_t{0});
     AURORA_TEST_CHECK_EQ(state.clipboard_write_requests, std::size_t{0});
+    AURORA_TEST_CHECK_EQ(state.notification_requests, std::size_t{0});
+    AURORA_TEST_CHECK_EQ(state.notification_superseded, std::size_t{0});
     AURORA_TEST_CHECK_FALSE(term.take_clipboard_write().has_value());
+    AURORA_TEST_CHECK_FALSE(term.take_notification().has_value());
     AURORA_TEST_CHECK_EQ(link_at(term, 0, 0), kNoHyperlink);
     AURORA_TEST_CHECK_FALSE(term.hyperlink_target(1).has_value());
 }
