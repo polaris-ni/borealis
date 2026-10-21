@@ -566,6 +566,34 @@ AURORA_TEST_CASE(every_catalog_key_resolves_to_a_display_label) {
                           "CommitIssue::None must yield no text");
 }
 
+/// CJK-LITERAL: locale-output - 判据断的就是这五串的**字面形态**：`codespec/PREF05_I18N.draft.md` F8 读到
+/// 同 key 重复注册会被 `std::map` 的 insert 语义**静默丢弃**，于是「条数」与「key 集合」两类断言对这一处
+/// 天然无感，只有逐字验串才打得中（该稿 §8 的 m6 注入形态即按这条定形）。
+constexpr std::string_view kShortcutColumnTitle = "动作名";
+constexpr std::string_view kShortcutColumnCategory = "分组";
+constexpr std::string_view kShortcutColumnBinding = "当前组合键";
+constexpr std::string_view kShortcutColumnNote = "标注";
+constexpr std::string_view kShortcutUnbound = "未绑定";
+
+/// @brief `SPEC.FEAT.PREF.05` 判据 ⑥：快捷键只读表那五串各只注册一次，生效的就是裁决稿 D10 选定的那一份。
+///
+/// 上面那条覆盖率案查的是「有没有词条」，对「同一个 key 在本表里写了两遍、后一遍被吞掉」完全没有感觉；
+/// 本案把五串的字面形态钉住，于是把重复注册注回去（无论注在生效那行的前面还是后面）都会红。
+AURORA_TEST_CASE(the_five_shortcut_table_strings_register_exactly_once) {
+    borealis::ui::install_settings_strings();
+
+    const std::string title = borealis::ui::settings_label("settings.shortcut.column.title");
+    const std::string category = borealis::ui::settings_label("settings.shortcut.column.category");
+    const std::string binding = borealis::ui::settings_label("settings.shortcut.column.binding");
+    const std::string note = borealis::ui::settings_label("settings.shortcut.column.note");
+    const std::string unbound = borealis::ui::settings_label("settings.shortcut.unbound");
+    AURORA_TEST_CHECK_EQ(title, std::string{kShortcutColumnTitle});
+    AURORA_TEST_CHECK_EQ(category, std::string{kShortcutColumnCategory});
+    AURORA_TEST_CHECK_EQ(binding, std::string{kShortcutColumnBinding});
+    AURORA_TEST_CHECK_EQ(note, std::string{kShortcutColumnNote});
+    AURORA_TEST_CHECK_EQ(unbound, std::string{kShortcutUnbound});
+}
+
 AURORA_TEST_CASE(the_page_row_table_is_the_catalog_intersection_in_order) {
     borealis::ui::install_settings_strings();
     StoreProbe probe;

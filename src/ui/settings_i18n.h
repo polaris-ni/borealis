@@ -69,7 +69,8 @@ auto install_settings_strings() -> void;
 /// @brief 一次提交未通过的原因 → 中文词条。
 ///
 /// 本件是 `ui::CommitIssue` 翻成文案的**唯一**地点：表单件只回枚举而不产文案（其文件头②），
-/// 于是十三个非 `None` 值各有词条、且面板不 switch 出第二套措辞。
+/// 于是十二个非 `None` 值各有词条、且面板不 switch 出第二套措辞（枚数照 `settings_form.h` 的枚举本体，
+/// `SPEC.FEAT.PREF.05` 稿 F9 就地更正此处曾写的「十三」）。
 /// @param issue 提交结果里的原因；`None` 回空串实例（调用方在通过时不该取它）。
 [[nodiscard]] auto settings_issue_text(CommitIssue issue) -> aurora::LocalizedString;
 

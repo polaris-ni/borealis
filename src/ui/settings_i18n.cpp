@@ -13,13 +13,16 @@ namespace {
 /// @brief 面板词条所在的区域标签（同时是字符串表的缺省档，见文件头③）。
 constexpr std::string_view kTag = "zh";
 
-/// @brief key → 中文模板。key 一律是落盘点号路径或 `settings.` 前缀的界面文案键。
+/// @brief 中文档（`zh`）的 key → 模板。key 一律是落盘点号路径或 `settings.` 前缀的界面文案键。
 ///
 /// CJK-LITERAL: locale-output - 本表整张就是面板的上屏文案，换成英文被测事实即消失（裁决 7.52 的 S11）。
+/// 同一条目**只许出现一次**：本容器是 `std::map`，initializer-list 走 insert 语义，重复 key 的后一份被
+/// 静默丢弃（`SPEC.FEAT.PREF.05` 稿 F8）。
 /// 设置项标签与 `codespec/UI_SETTINGS.draft.md` 的 SVG 行标签逐字对齐；SVG 未画出的行按该稿 §2 表的
 /// 控件列取名。SVG 上被该稿撤销的四格（第五类「高级」、跟随系统浅色、多行粘贴警告、OSC 52 三态）**不在此表**，
 /// 否则面板会画出一个 schema 里没有的标签。
-const std::map<std::string, std::string, std::less<>> kStrings{
+/// 更名为 `kStringsZh` 是为英文档腾出并列的位置（`SPEC.FEAT.PREF.05`；英文表本体属计划／待建）。
+const std::map<std::string, std::string, std::less<>> kStringsZh{
     // ---- 连接管理器侧栏（UI_CONNECTIONS.draft.md；词条与 settings.* 同格角色）----
     {"connections.title", "连接"},
     {"connections.action.close", "关闭"},
@@ -281,7 +284,9 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     // ---- 快捷键只读表（D1-a 的列名 / D2-a 的标注两档 / 未绑定那一格）----
     // 表体四列的列名是本件自己的排版量而非 catalog 键，故 key 前缀走 `settings.shortcut.`；
     // 「重复」那一条的位置参数是**另一行的动作名**（取值），与 `settings.font.fallback` 同档。
-    {"settings.shortcut.column.title", "动作"},
+    // 这五串**只在此处注册一次**：本表是 `std::map`，initializer-list 构造走 insert 语义，同 key 的
+    // 后一份会被**静默丢弃**（`SPEC.FEAT.PREF.05` 稿 F8 读到的正是这一处踩过的事实）。
+    {"settings.shortcut.column.title", "动作名"},
     {"settings.shortcut.column.category", "分组"},
     {"settings.shortcut.column.binding", "当前组合键"},
     {"settings.shortcut.column.note", "标注"},
@@ -565,12 +570,8 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"connection.session_log_pattern", "追加敏感正则"},
 
     // ---- 快捷键域 ----
+    // 表头四列与「未绑定」那五串不在此处（它们在上方『快捷键只读表』段，`SPEC.FEAT.PREF.05` 稿 F8／D10）。
     {"shortcuts.overrides", "键位覆盖表"},
-    {"settings.shortcut.column.title", "动作名"},
-    {"settings.shortcut.column.category", "分组"},
-    {"settings.shortcut.column.binding", "当前组合键"},
-    {"settings.shortcut.column.note", "标注"},
-    {"settings.shortcut.unbound", "未绑定"},
     {"settings.shortcut.edit_title", "编辑键位绑定"},
     {"settings.shortcut.conflict_warning", "与以下命令冲突"},
     {"settings.action.edit", "编辑"},
@@ -680,7 +681,7 @@ auto settings_locale() -> const aurora::Locale & {
 auto install_settings_strings() -> void {
     auto &table = aurora::default_string_table();
     table.set_default_locale(settings_locale());
-    for (const auto &[key, text] : kStrings) {
+    for (const auto &[key, text] : kStringsZh) {
         table.add(settings_locale(), key, text);
     }
 }
