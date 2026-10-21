@@ -54,6 +54,7 @@
 #include "conn/ssh_connection.h"
 #include "conn/telnet_connection.h"
 #include "conn/tunnel_client.h"
+#include "config/window_geometry_store.h"
 #include "platform/instance_channel.h"
 #include "platform/open_url.h"
 #include "platform/process_args.h"
@@ -435,12 +436,19 @@ struct WorkspaceWindow {
 };
 
 /// @brief 造一扇工作区窗的地基：后端窗口 + 浮层宿主 + 撑满窗宽的根 Column。
+/// @param title 窗口标题初值（真值随后由逐窗标题差分腿改写）。
+/// @param creation_index 本窗的创建序（稿 D9 的几何键来源，主窗是 0）。
 /// @return 建窗失败即空指针（后端错误原文已在工厂里落日志），调用方**不得**接着登记宿主——
 ///         稿 §5 的「建窗」不变量：没建成窗就不许留下半个账目。
-[[nodiscard]] auto open_workspace_window(std::string title) -> std::unique_ptr<WorkspaceWindow> {
+[[nodiscard]] auto open_workspace_window(std::string title, std::size_t creation_index)
+    -> std::unique_ptr<WorkspaceWindow> {
     auto out = std::make_unique<WorkspaceWindow>();
     out->options.size = au::Size{.width = 960.0F, .height = 640.0F};
     out->options.title = std::move(title);
+    // 几何键在建窗**之前**写好：框架的恢复腿读的是 `opts.persist_id`，而 `create_native_window` 吃
+    // 的就是同一份 options（`SPEC.FEAT.WS.03` 稿 D9／§0 的 F26）。失败的那一扇不留账——本跳只写了
+    // 一个字符串，没建成窗就没有宿主、也就没有下一次保存。
+    out->options.persist_id = borealis::config::window_persist_id(creation_index);
     auto created = au::create_native_window(out->options);
     if (!created) {
         AURORA_LOG_ERROR("main", "native window creation failed: ", created.error().message);
@@ -658,6 +666,25 @@ auto main(int argc, char **argv) -> int {
         instance_listener = std::move(claimed.listener);
     }
 
+    // 逐窗几何的那份存储（`SPEC.FEAT.WS.03` 稿 D9／§6 批 5）：本仓只决定它落在哪、什么时候提交，
+    // 读写两跳都在框架的几何链里（恢复＝宿主登记与接线那两处，保存＝帧末回收的收集步骤）。
+    // **声明必须早于 `app`**：`set_window_geometry_store` 交出去的是本件内部那枚 `Preferences` 的裸
+    // 指针，而框架在 `run()` 返回后的收尾里仍会读它（保留的最后宿主就是在这一刻落几何）——局部对象
+    // 按声明逆序析构，晚声明就是「框架收尾时读一块已散的存储」。
+    borealis::config::WindowGeometryStore geometry_store;
+    // 两处提交共用一条腿（稿 D9：任一窗关闭后、退出前）。框架没有「自上次提交后改过没有」的查询，
+    // 故提交是无条件的；失败只落日志——几何丢了下一次自己再记，不该为一枚窗口位置打断关窗或退出。
+    auto flush_window_geometry = [&geometry_store]() -> void {
+        if (const auto reason = geometry_store.flush(); reason.has_value()) {
+            AURORA_LOG_WARN("main", "window geometry store flush failed: ", *reason);
+        }
+    };
+    // 几何键的**创建序计数器**（稿 D9 那句「键＝创建序」）：只增不复用，于是在用的那些窗之间不可能
+    // 撞键。按「当前活着几扇」取号看着更省，但拆一扇再开一扇时会给新窗发一枚**还挂在活着那扇上**的
+    // 键，两扇从此共写同一格；不复用的代价只是文件里多几格旧几何，本棒不清理（清哪一格是用户的账，
+    // 不是本层的）。
+    std::size_t next_window_index = 0U;
+
     // 工作区窗的持有（稿 §2／§6 批 1）：`unique_ptr` 的 **vector** 而不是按值 vector——装配层的成员
     // 与那二十来条闭包按引用吃第一扇窗（下面那批别名），按值容器一次扩容就把对象搬走、引用当场悬垂。
     // 本批生产仍只开一扇 ⇒ 行为与批 1-A 之前逐字相同；开第二扇的入口在批 3（稿 §6）。
@@ -668,7 +695,7 @@ auto main(int argc, char **argv) -> int {
     // 得更晚**，不会让视口活过自己的会话。真正会出事的是 `perform_close` 那条中途撤账的路径（根上还
     // 持着同一份时必须先摘根再 erase，那边已按这条写）。批 4「退出序遍历全部窗」要显式化的就是这
     // 一整段：一扇窗的呈现半区要在它还认得自己那些会话的时候散掉。
-    auto first_workspace = open_workspace_window("Borealis");
+    auto first_workspace = open_workspace_window("Borealis", next_window_index++);
     if (first_workspace == nullptr) {
         return 1;  // 建窗失败原文已由工厂落日志；这里不建宿主、不读盘、不起会话。
     }
@@ -1589,6 +1616,18 @@ auto main(int argc, char **argv) -> int {
     // 的键，未登记之前它是 `AURORA_INVALID_WINDOW_ID`，于是「拿没建成的窗去取宿主」必然取空。
     workspace_windows.front()->id = app.main_window();
 
+    // 逐窗几何的接线（`SPEC.FEAT.WS.03` 稿 D9／§6 批 5）：主窗是在 `Application` 构造期登记的，那一跳
+    // 还没有存储可读，故靠 `set_window_geometry_store` 的第二条入口——它对**已登记**的宿主补做一次恢复
+    // （稿 §0 的 F26），此后每扇新窗在 `open_window` 里走同一条腿。这一跳必须排在任何一次布局与出帧
+    // 之前：恢复只改 surface 的尺寸与位置，排在首帧之后就变成「先按 960×640 铺一帧、再按恢复值铺一帧」，
+    // 而两帧各会推一次网格尺寸（稿 D13 那条「恢复后首帧只下发一次」判据的来由）。
+    //
+    // 本仓不做的事有两件，都登记在册（稿 §0 的 F26、§21）：① 框架的恢复腿只落 `size` 与 `position`，
+    // `WindowGeometry::mode` 存而不取 ⇒ 最大化态回不来，本棒不在应用侧补一份几何态下发（AGENTS.md §5.1
+    // 「不长期持有框架分叉」）；② 键写在这份 `Preferences` 的**顶层**而不是 `group("windows")` 里——
+    // 自动链读的就是顶层那枚 `persist_id`，写进分组即「存得回而恢复取不到」。
+    app.set_window_geometry_store(geometry_store.preferences());
+
     // 按窗取焦点管理器（稿 §0 的 F3）：`app.focus()` 恒指主宿主，拿它给第二扇窗接线就是「键入打不
     // 进第二扇窗」那条已知形态。取不到宿主时回主窗那一份是**兜底而不是猜测**——号没登记说明这扇窗
     // 还没建成，此刻唯一能用的就是主窗，兜底让其余接线不因一扇没建成的窗整体断掉。
@@ -1767,8 +1806,9 @@ auto main(int argc, char **argv) -> int {
     // ③ 入容器排在 `take_window()` 之后、用 `window` 引用之前——容器是 `unique_ptr` 的 vector，搬走的
     //    是指针而不是对象，堆上那一格的地址在窗的生命周期内不动。
     open_new_window_request = [&app, &workspace_windows, &assemble_window_content, &make_window_scene,
-                               &create_new_tab, &tab_workspaces, &rebuild_root_children]() -> void {
-        auto created = open_workspace_window("Borealis");
+                               &create_new_tab, &tab_workspaces, &rebuild_root_children,
+                               &next_window_index]() -> void {
+        auto created = open_workspace_window("Borealis", next_window_index++);
         if (created == nullptr) {
             // 建窗失败原文已在工厂里落日志。这里不入容器、不登记宿主，于是稿 §5 那条「没建成窗就不
             // 留下半个账目」在第二扇窗这条路上同样成立。
@@ -3707,7 +3747,8 @@ auto main(int argc, char **argv) -> int {
                               &remount_overlay, &sidebar, &wizard, &credential_prompt, &panel,
                               &tunnel_panel, &sftp_panel, &keys_panel, &debug_panel, &notice,
                               &command_palette, &serial_baud_dialog, &log_dialog, &palette_mount,
-                              &serial_baud_mount, &log_dialog_mount](au::WindowId closed_id) -> void {
+                              &serial_baud_mount, &log_dialog_mount,
+                              &flush_window_geometry](au::WindowId closed_id) -> void {
         std::size_t index = workspace_windows.size();
         for (std::size_t probe = 0U; probe < workspace_windows.size(); ++probe) {
             if (workspace_windows[probe]->id == closed_id) {
@@ -3813,6 +3854,10 @@ auto main(int argc, char **argv) -> int {
             WorkspaceWindow *const next = fallback_window();
             startup_wake.store(next == nullptr ? nullptr : next->surface);
         }
+        // ⑦ 几何提交（稿 D9 的第一处 flush）：框架在**帧末回收的收集步骤**里就把这一扇的几何写进了
+        //    内存（`reap_closed` 排在 `on_window_closed` 之前，故这里读得到），本跳只负责把它落到文件。
+        //    为什么要这一处而不是只留退出那一处：关一扇之后进程还可能跑很久，而崩掉的那一次不会有退出腿。
+        flush_window_geometry();
     });
 
     // 冷启动请求在接线齐备之后、进循环之前执行一次（稿 §5.4）：首帧直接画出目标标签或那一刀切分，
@@ -3831,6 +3876,12 @@ auto main(int argc, char **argv) -> int {
         }
     }
     app.run();
+
+    // 几何提交的第二处（稿 D9「任一窗关闭后」之外的那半句「退出前」）：最后一扇被保留、不走
+    // `on_window_closed`（F19 的代价档），它那一格的几何是框架在帧末收集步骤里写进内存的，本跳是它
+    // 唯一的落盘机会。排在关会话之前是有意的：下面那条退出序会把 `tab_workspaces` 与视口整片散掉，
+    // 而这一跳只碰存储与文件，不需要任何窗还活着——先把它提交掉，退出序再怎么改都不影响这份账。
+    flush_window_geometry();
 
     // 单实例通道在 surface 消散之前停：先撤唤醒指针（此后入队的请求不再碰这枚引用，只等下一次帧
     // 边界或超时收尾），再关监听并 join transport 线程——反过来就成了「线程正在唤醒一只已析构的

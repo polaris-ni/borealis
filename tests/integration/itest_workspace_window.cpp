@@ -31,6 +31,10 @@
 ///              应用级访问器整组跟着走（`set_fallback` 的来由）」「全关时保留主宿主、`on_window_closed`
 ///              对最后一扇不触发（F19 的代价档）」。装配层那条撤账链本身在 `main.cpp`，无自动化证人
 ///              （裁决 7.83）。
+///           ⑦ 逐窗几何（批 5，稿 D9／§0 的 F26）：四案都**经本仓那枚 `WindowGeometryStore`** 落文件与
+///              键，窗侧走框架的自动链。判的是「每扇取自己那一格、没有键的那扇回默认、恢复落在首帧
+///              之前、关闭时把最终几何写回同一格」；装配层那三跳（建窗时分配键、`set_window_geometry_store`
+///              接线、两处 `flush()`）在 `main.cpp`，仍无证人（裁决 7.83）。
 ///
 ///           关窗案的两档设定：`WindowOptions::max_frames` 给有限值（帧预算取应用级那一份＝第一扇的
 ///           options），`power_saving=false` 关省电档——无头后端没有 OS 等待通道，省电档下 `wait_once`
@@ -43,17 +47,22 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "aurora/aurora.h"
+#include "aurora/app/window_geometry.h"
+#include "aurora/preferences/preferences.h"
 #include "borealis/ui/tab_strip.h"
 #include "framework/aurora_test.h"
 // 私有头（裁决 D1①），按相对路径取用而不给整个测试目标开 `src/` 含目录。
+#include "../../src/config/window_geometry_store.h"
 #include "../../src/ui/active_window_tracker.h"
 #include "../../src/ui/tab_bar.h"
 
@@ -89,12 +98,15 @@ class WindowFace {
     ///        帧预算读（`frame_budget_left()` 取的是应用级 `opts_`），第二扇那份是装饰。
     /// @param power_saving `false` 即让帧循环退回忙轮询——无头后端没有 OS 等待通道，省电档下
     ///        `wait_once` 会取「无限等待」把 `run()` 挂死（Aurora 侧 `utest_multi_window` 同档处置）。
-    WindowFace(std::string title, int max_frames = -1, bool power_saving = true) {
+    /// @param persist_id 本窗的几何键（批 5）：空即「这扇窗不参与几何持久化」，与生产里工厂恒给键
+    ///        是两档——驱动台把它做成入参，是为了让「没有键的那一扇回默认」这一档也能被证。
+    WindowFace(std::string title, int max_frames = -1, bool power_saving = true, std::string persist_id = {}) {
         options_.size =
             au::Size{.width = static_cast<float>(kWindowWidth), .height = static_cast<float>(kWindowHeight)};
         options_.title = std::move(title);
         options_.max_frames = max_frames;
         options_.power_saving = power_saving;
+        options_.persist_id = std::move(persist_id);
         au::HeadlessOptions headless;
         static_cast<au::WindowOptions &>(headless) = options_;
         auto created = au::create_window(headless);
@@ -202,12 +214,27 @@ class TwoWindowRig {
     ///        `-1` 即不限，只有靠关闭请求驱动的三条关窗案需要给它一个有限值。
     /// @param power_saving `false`＝忙轮询；有限帧预算的案必须关掉省电档，否则 `run()` 里的
     ///        `wait_once` 在无头后端取到「无限等待」而挂死。
-    explicit TwoWindowRig(int frame_budget = -1, bool power_saving = true)
-        : face_a_(std::make_unique<WindowFace>("A", frame_budget, power_saving)),
-          face_b_(std::make_unique<WindowFace>("B", frame_budget, power_saving)),
+    /// @param geometry_store 逐窗几何的存储（批 5）；空即完全不接线，与批 5 之前的形态逐字相同。
+    ///        生存期归调用方：框架持的是裸指针，故它必须比本驱动台（进而比 `app_`）活得久。
+    explicit TwoWindowRig(int frame_budget = -1, bool power_saving = true,
+                          au::preferences::Preferences *geometry_store = nullptr)
+        : face_a_(std::make_unique<WindowFace>("A", frame_budget, power_saving,
+                                               borealis::config::window_persist_id(0U))),
+          face_b_(std::make_unique<WindowFace>("B", frame_budget, power_saving,
+                                               borealis::config::window_persist_id(1U))),
           app_(face_a_->scene(), face_a_->take_window(), face_a_->options()) {
         id_a_ = app_.main_window();
+        // 接线排在**第二扇登记之前**：主窗那一格走 `set_window_geometry_store` 的「对已登记宿主补做
+        // 一次恢复」，第二扇走 `register_host` 那一条——生产里就是这一先一后两跳（稿 §0 的 F26①）。
+        if (geometry_store != nullptr) {
+            app_.set_window_geometry_store(geometry_store);
+        }
         id_b_ = app_.open_window(face_b_->take_window(), face_b_->scene(), face_b_->options());
+        // 首帧之前的几何快照（批 5，稿 D13 的可见面）：恢复只改 surface 的尺寸与位置，而它必须发生
+        // 在任何一次布局与 present **之前**，否则「先按默认尺寸铺一帧、再按恢复值铺一帧」会让网格
+        // 尺寸被下发两轮。这里的 present 计数仍是 0——脏区决策没走过，尺寸却已经就位。
+        sizes_before_first_frame_ = {surface_size(0U), surface_size(1U)};
+        frames_before_first_frame_ = {surface_frames(0U), surface_frames(1U)};
         // tracker 要主窗号，而号在宿主登记之后才有——与生产同一时序（先声明闭包、登记后再赋值）。
         tracker_.emplace(id_a_);
         face_a_->set_press_reporter([this]() -> void { report(id_a_); });
@@ -344,9 +371,49 @@ class TwoWindowRig {
         return surface == nullptr ? -1 : surface->frame_count();
     }
 
+    /// @brief 该窗后端的缩放因子；宿主已散或没建成时为 `-1.0F`。
+    ///        几何案**不用 `preflight()`**（那条要读画布，而恢复尺寸一旦小于驱动台的 640×120，
+    ///        `pixels()` 的定长 memcpy 就会过读），只需钉住「缩放为 1 ⇒ 物理像素即逻辑值」这一档
+    ///        可用性前提，恢复值才能逐值比对。
+    [[nodiscard]] auto surface_scale(std::size_t face) const -> float {
+        const au::WindowHost *const target = host(face);
+        if (target == nullptr || target->window() == nullptr) {
+            return -1.0F;
+        }
+        return target->window()->surface().scale_factor();
+    }
+
+    /// @brief 那一扇当前的 surface 尺寸（批 5 的读数：几何恢复只改尺寸与位置，二者都从这里取）。
+    ///        宿主已散或没建成时回**空尺寸**，与 `pixels()` 同一档处置——不裸解引用。
+    [[nodiscard]] auto surface_size(std::size_t face) const -> au::Size {
+        const au::WindowHost *const target = host(face);
+        if (target == nullptr || target->window() == nullptr) {
+            return au::Size{};
+        }
+        return target->window()->surface().size();
+    }
+
+    /// @brief 那一扇当前的 surface 位置（屏幕物理像素；无头缩放为 1，dp 即像素）。
+    [[nodiscard]] auto surface_position(std::size_t face) const -> au::Point {
+        const au::WindowHost *const target = host(face);
+        if (target == nullptr || target->window() == nullptr) {
+            return au::Point{};
+        }
+        return target->window()->surface().position();
+    }
+
+    /// @brief 第一帧**之前**那扇的 surface 尺寸（稿 D13「恢复后首帧只下发一次」的可见面）。
+    [[nodiscard]] auto size_before_first_frame(std::size_t face) const -> au::Size {
+        return face < sizes_before_first_frame_.size() ? sizes_before_first_frame_[face] : au::Size{};
+    }
+
+    /// @brief 第一帧**之前**那扇后端已 present 的帧数（快照里恒是 0，非 0 即快照排在了出帧之后）。
+    [[nodiscard]] auto frames_before_first_frame(std::size_t face) const -> int {
+        return face < frames_before_first_frame_.size() ? frames_before_first_frame_[face] : -1;
+    }
+
     /// @brief 两帧逐位相同（判据「另一扇整帧不动」比数差分更严：一个通道都不许差）。
-    [[nodiscard]] static auto identical(const Frame &left, const Frame &right) -> bool {
-        return !left.empty() && left.size() == right.size() &&
+    [[nodiscard]] static auto identical(const Frame &left, const Frame &right) -> bool {        return !left.empty() && left.size() == right.size() &&
                std::memcmp(left.data(), right.data(), left.size()) == 0;
     }
 
@@ -397,6 +464,9 @@ class TwoWindowRig {
     ///        同样声明在 `app_` **之前**——`~Application` 会销毁宿主，观测账必须比它活得久一点。
     std::vector<au::WindowId> closed_ids_{};
     std::size_t frames_observed_ = 0U;
+    /// @brief 首帧之前的尺寸/出帧数快照（批 5）：在 `render()` 之前取，故它记的是「恢复之后、出帧之前」那一档。
+    std::vector<au::Size> sizes_before_first_frame_{};
+    std::vector<int> frames_before_first_frame_{};
     /// @brief 帧内探针（`on_frame` 里调）：与 `closed_ids_` 同一档生存期理由，须在 `app_` 之前析构完。
     std::function<void()> frame_probe_{};
     au::Application app_;
@@ -412,6 +482,50 @@ class TabNumbering {
   private:
     TabId id_ = 0U;
 };
+
+/// @brief 本轮用例的独占目录（框架按用例建目录并在结束时清理）。
+[[nodiscard]] auto geometry_dir(std::string_view name) -> std::filesystem::path {
+    const auto path = std::filesystem::path{aurora::testing::isolation::temp_dir()} / std::string{name};
+    std::error_code ec;
+    std::filesystem::create_directories(path, ec);
+    return path;
+}
+
+/// @brief 本轮用例的几何文件路径（存储件本身**不可搬移**，故用例就地构造它）。
+///        声明序承重：`WindowGeometryStore store{geometry_file("x")};` 必须排在驱动台**之前**——
+///        框架持的是这份存储的裸指针，反过来的话 `~Application` 收尾时读到的是已散的那份 `Preferences`
+///        （与 `main.cpp` 里「存储先于 `app`」同一序理由）。
+[[nodiscard]] auto geometry_file(std::string_view name) -> std::filesystem::path {
+    return geometry_dir(name) / borealis::config::kWindowGeometryFileName;
+}
+
+/// @brief 一格几何快照（物理像素；无头缩放为 1，故与 surface 读到的尺寸/位置逐值相同）。
+[[nodiscard]] auto stored_geometry(float x, float y, float width, float height) -> au::WindowGeometry {
+    au::WindowGeometry out{};
+    out.origin = au::Point{.x = x, .y = y};
+    out.size = au::Size{.width = width, .height = height};
+    out.mode = au::WindowMode::Normal;
+    out.display_id = 0;
+    return out;
+}
+
+/// @brief 往存储里预写一格几何，键走本仓那枚分配器（`main` / `window-2`…）而不是一串手写的字面量：
+///        「建窗时分配的键」与「恢复时查的键」必须是同一支接缝，否则用例就在替一个生产里不存在的键说话。
+auto prefill_geometry(borealis::config::WindowGeometryStore &store, std::size_t creation_index,
+                      const au::WindowGeometry &geometry) -> void {
+    au::save_window_geometry(*store.preferences(), borealis::config::window_persist_id(creation_index), geometry);
+}
+
+/// @brief 读回某一格的几何（内存态即读得到，不必先 `flush()`；落盘那条腿在 `utest_window_geometry_store`）。
+[[nodiscard]] auto read_back_geometry(borealis::config::WindowGeometryStore &store, std::size_t creation_index)
+    -> std::optional<au::WindowGeometry> {
+    return au::load_window_geometry(*store.preferences(), borealis::config::window_persist_id(creation_index));
+}
+
+/// @brief 尺寸逐值相同（浮点字段但都是整数值，逐位等即够；不同即把两侧都写进失败信息，免得回头猜是哪一维）。
+[[nodiscard]] auto same_size(const au::Size &left, const au::Size &right) -> bool {
+    return left.width == right.width && left.height == right.height;
+}
 
 }  // namespace
 
@@ -734,6 +848,120 @@ AURORA_TEST_CASE(the_last_host_is_retained_so_the_closed_hook_skips_it) {
     AURORA_TEST_CHECK_EQ(rig.app().main_window(), rig.id_of(0U));
     // 访问器在 `run()` 之后仍可用＝保留这一只的全部理由（本层若指望这一跳做外部副作用，最后一扇必丢）。
     AURORA_TEST_CHECK_NOT_NULL(rig.app().window());
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(each_window_restores_the_geometry_stored_under_its_own_key) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 稿 §7「每扇窗记住自己的位置与尺寸」的自动化半区。两格几何都由**本仓那枚 `window_persist_id`**
+    // 预写（`main` 与 `window-2`），窗侧走框架自动链：主窗那一格经 `set_window_geometry_store` 补做
+    // 一次恢复，第二扇经 `register_host`——生产里就是这一先一后两跳（稿 §0 的 F26①）。
+    // 位置也各记各的：两扇若读同一格，尺寸会一样而位置不同，那条只有逐值比对才现形。
+    borealis::config::WindowGeometryStore store{geometry_file("own_slot")};
+    prefill_geometry(store, 0U, stored_geometry(120.0F, 90.0F, 800.0F, 300.0F));
+    prefill_geometry(store, 1U, stored_geometry(300.0F, 210.0F, 900.0F, 400.0F));
+
+    TwoWindowRig rig{-1, true, store.preferences()};
+    // 缩放为 1 是逐值比对的前提（无头后端的全部意义）；不成立就报失败而不是让断言含混地转红。
+    for (std::size_t face = 0U; face < 2U; ++face) {
+        AURORA_TEST_REQUIRE_MSG(rig.surface_scale(face) == 1.0F, "headless scale is not 1, "
+                                                                 "restored physical pixels are not comparable");
+    }
+
+    AURORA_TEST_CHECK_MSG(same_size(rig.surface_size(0U), au::Size{.width = 800.0F, .height = 300.0F}),
+                          "the main window did not take its own slot");
+    AURORA_TEST_CHECK_MSG(same_size(rig.surface_size(1U), au::Size{.width = 900.0F, .height = 400.0F}),
+                          "the second window did not take its own slot");
+    AURORA_TEST_CHECK_EQ(rig.surface_position(0U).x, 120.0F);
+    AURORA_TEST_CHECK_EQ(rig.surface_position(0U).y, 90.0F);
+    AURORA_TEST_CHECK_EQ(rig.surface_position(1U).x, 300.0F);
+    AURORA_TEST_CHECK_EQ(rig.surface_position(1U).y, 210.0F);
+    // 两扇各自落在不同格子上＝「共用一格」这一缺陷的反面证人（稿 §5 的不变量 1 在几何这一维的形态）。
+    AURORA_TEST_CHECK_NE(rig.surface_size(0U).width, rig.surface_size(1U).width);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_window_without_a_stored_slot_keeps_its_default_geometry) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 「没账就不动」这一半：只预写主窗那一格，第二扇必须留在驱动台给它的那份默认尺寸上。
+    // 这一档在生产里就是首次启动（`windows.json` 还不存在）——恢复腿回空值时**不回写**，
+    // 于是默认尺寸是「没得恢复」的结果，而不是「恢复成默认」的结果，两者得分开证。
+    borealis::config::WindowGeometryStore store{geometry_file("missing_slot")};
+    prefill_geometry(store, 0U, stored_geometry(120.0F, 90.0F, 800.0F, 300.0F));
+
+    TwoWindowRig rig{-1, true, store.preferences()};
+    AURORA_TEST_REQUIRE(rig.surface_scale(1U) == 1.0F);
+    AURORA_TEST_CHECK_MSG(same_size(rig.surface_size(0U), au::Size{.width = 800.0F, .height = 300.0F}),
+                          "the keyed window lost its own geometry");
+    AURORA_TEST_CHECK_MSG(same_size(rig.surface_size(1U),
+                                    au::Size{.width = static_cast<float>(kWindowWidth),
+                                             .height = static_cast<float>(kWindowHeight)}),
+                          "the unkeyed window was restored anyway");
+    // 位置同样没被动过：无头后端未 `set_position` 时恒 (0,0)，非 0 即恢复腿越过了它那一格。
+    AURORA_TEST_CHECK_EQ(rig.surface_position(1U).x, 0.0F);
+    AURORA_TEST_CHECK_EQ(rig.surface_position(1U).y, 0.0F);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_geometry_lands_before_the_first_frame_is_presented) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 稿 D13 的可见面：恢复必须排在**首帧之前**，否则「先按默认尺寸铺一帧、再按恢复值铺一帧」会把
+    // 网格尺寸下发两轮——终端网格重排是用户看得见的一跳。驱动台在 `render()` 之前取的那份快照
+    // 就是这一跳的读数：尺寸已是恢复值，而后端 present 计数仍是 0。
+    borealis::config::WindowGeometryStore store{geometry_file("before_first_frame")};
+    prefill_geometry(store, 0U, stored_geometry(120.0F, 90.0F, 800.0F, 300.0F));
+    prefill_geometry(store, 1U, stored_geometry(300.0F, 210.0F, 900.0F, 400.0F));
+
+    TwoWindowRig rig{-1, true, store.preferences()};
+    for (std::size_t face = 0U; face < 2U; ++face) {
+        AURORA_TEST_REQUIRE(rig.surface_scale(face) == 1.0F);
+        AURORA_TEST_CHECK_MSG(rig.frames_before_first_frame(face) == 0,
+                              "a frame was presented before the geometry restore ran");
+    }
+    AURORA_TEST_CHECK_MSG(same_size(rig.size_before_first_frame(0U),
+                                    au::Size{.width = 800.0F, .height = 300.0F}),
+                          "the first frame was laid out at the default size");
+    AURORA_TEST_CHECK_MSG(same_size(rig.size_before_first_frame(1U),
+                                    au::Size{.width = 900.0F, .height = 400.0F}),
+                          "the first frame was laid out at the default size");
+    // 快照确实排在出帧**之前**（不是「两个读数取自同一时刻」）：构造体里的两帧此后已真的 present。
+    AURORA_TEST_CHECK_GT(rig.surface_frames(0U), 0);
+    AURORA_TEST_CHECK_GT(rig.surface_frames(1U), 0);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(closing_a_window_writes_its_final_geometry_into_its_own_slot) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 保存腿（稿 §0 的 F26①「一处保存在 `reap_closed` 的收集步里」）：写回发生在宿主被收走那一帧的
+    // 帧末，且只写**关掉那一扇**的格子。存储全程不 `flush()`——本件判的是「框架有没有把最终几何写到
+    // 正确那一格」，落盘那一条在 `utest_window_geometry_store`，两件事分开设证人。
+    // 帧预算 3、省电档关掉（与批 4-B 同档：无头没有 OS 等待通道）。
+    borealis::config::WindowGeometryStore store{geometry_file("write_back")};
+    TwoWindowRig rig{3, false, store.preferences()};
+    AURORA_TEST_REQUIRE(rig.surface_scale(1U) == 1.0F);
+    const au::Size b_before_close = rig.surface_size(1U);
+    AURORA_TEST_CHECK_GT(b_before_close.width, 0.0F);  // 关之前先有一格真值，写回的比对才有参照
+
+    rig.request_close(1U);
+    rig.run();
+
+    AURORA_TEST_REQUIRE_EQ(rig.closed_windows().size(), std::size_t{1});
+    const auto saved = read_back_geometry(store, 1U);
+    AURORA_TEST_REQUIRE_MSG(saved.has_value(), "the closed window never wrote its geometry back");
+    AURORA_TEST_CHECK_MSG(same_size(saved->size, b_before_close),
+                          "the slot holds something other than the window's final size");
+    // 还活着的那一扇不该被写：主宿主在「最后一扇」那一档被保留、不走回收（F19），
+    // 它这一格要留到 `run()` 返回之后的退出序，装配层另有两跳 `flush()` 兜住。
+    AURORA_TEST_CHECK_MSG(!read_back_geometry(store, 0U).has_value(),
+                          "the surviving window wrote a slot it never closed");
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif
