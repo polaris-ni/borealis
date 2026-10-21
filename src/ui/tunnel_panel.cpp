@@ -161,7 +161,17 @@ constexpr std::array<conn::TunnelKind, 3> kKindCycle{
 }  // namespace
 
 TunnelPanel::TunnelPanel(aurora::OverlayHost &host, Hooks hooks)
-    : host_{host}, hooks_{std::move(hooks)} {}
+    : host_{&host}, hooks_{std::move(hooks)} {}
+
+// 先摘后换（头文件的判据）：`close()` 把编辑器与删除确认两层二级浮层按「内层先摘」的既有次序连同主卡片
+// 从**旧宿主**摘回。运行中的隧道不受这一步影响——运行态在装配层那份表里（D5①），面板只是它的投影。
+auto TunnelPanel::set_overlay_host(aurora::OverlayHost &host) -> void {
+    if (host_ == &host) {
+        return;
+    }
+    close();
+    host_ = &host;
+}
 
 TunnelPanel::~TunnelPanel() {
     close_editor();
@@ -194,7 +204,7 @@ auto TunnelPanel::open() -> void {
         aurora::Alignment::CenterLeft);
     dialog_ = std::make_shared<aurora::Dialog>(
         node(std::static_pointer_cast<aurora::Widget>(std::move(layer))));
-    overlay_index_ = host_.add_overlay(node(std::static_pointer_cast<aurora::Widget>(dialog_)));
+    overlay_index_ = host_->add_overlay(node(std::static_pointer_cast<aurora::Widget>(dialog_)));
     dialog_->show();
     open_ = true;
 }
@@ -239,7 +249,7 @@ auto TunnelPanel::refresh_overlay() -> void {
     if (!open_ || !overlay_index_.has_value()) {
         return;
     }
-    host_.remove_overlay(*overlay_index_);
+    host_->remove_overlay(*overlay_index_);
     overlay_index_.reset();
     dialog_.reset();
     const auto chrome = settings_chrome();
@@ -256,7 +266,7 @@ auto TunnelPanel::refresh_overlay() -> void {
         aurora::Alignment::CenterLeft);
     dialog_ = std::make_shared<aurora::Dialog>(
         node(std::static_pointer_cast<aurora::Widget>(std::move(layer))));
-    overlay_index_ = host_.add_overlay(node(std::static_pointer_cast<aurora::Widget>(dialog_)));
+    overlay_index_ = host_->add_overlay(node(std::static_pointer_cast<aurora::Widget>(dialog_)));
     dialog_->show();
 }
 
@@ -499,7 +509,7 @@ auto TunnelPanel::rebuild_editor() -> void {
     editor_dialog_ = std::make_shared<aurora::Dialog>(
         node(std::static_pointer_cast<aurora::Widget>(std::move(editor))));
     editor_overlay_ =
-        host_.add_overlay(node(std::static_pointer_cast<aurora::Widget>(editor_dialog_)));
+        host_->add_overlay(node(std::static_pointer_cast<aurora::Widget>(editor_dialog_)));
     editor_dialog_->show();
     editor_open_ = true;
 }
@@ -512,7 +522,7 @@ auto TunnelPanel::close_editor() -> void {
         editor_dialog_->close();
     }
     if (editor_overlay_.has_value()) {
-        host_.remove_overlay(*editor_overlay_);
+        host_->remove_overlay(*editor_overlay_);
         editor_overlay_.reset();
     }
     editor_dialog_.reset();
@@ -839,7 +849,7 @@ auto TunnelPanel::open_delete_confirm(std::string id) -> void {
     confirm_dialog_ = std::make_shared<aurora::Dialog>(
         node(std::static_pointer_cast<aurora::Widget>(std::move(content))));
     confirm_overlay_ =
-        host_.add_overlay(node(std::static_pointer_cast<aurora::Widget>(confirm_dialog_)));
+        host_->add_overlay(node(std::static_pointer_cast<aurora::Widget>(confirm_dialog_)));
     confirm_dialog_->show();
     delete_confirm_open_ = true;
 }
@@ -852,7 +862,7 @@ auto TunnelPanel::close_delete_confirm() -> void {
         confirm_dialog_->close();
     }
     if (confirm_overlay_.has_value()) {
-        host_.remove_overlay(*confirm_overlay_);
+        host_->remove_overlay(*confirm_overlay_);
         confirm_overlay_.reset();
     }
     confirm_dialog_.reset();
@@ -862,7 +872,7 @@ auto TunnelPanel::close_delete_confirm() -> void {
 
 auto TunnelPanel::clear_state() -> void {
     if (overlay_index_.has_value()) {
-        host_.remove_overlay(*overlay_index_);
+        host_->remove_overlay(*overlay_index_);
         overlay_index_.reset();
     }
     dialog_.reset();

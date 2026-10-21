@@ -110,6 +110,8 @@
    - **4-A（别名收口，先做，已落 2026-10-21）**：把装配层仍然按别名吃第一扇窗的读法（`first_window` 及其 `surface`／`tab_strip`／`current_tab_id`／`banner`／`overlay_host` 五枚别名）一律改成「按窗现取」。**必须在拆账链之前**：`workspace_windows` 一旦 `erase`，`first_window` 是它的引用（批 1-B 的台账记过这一点），五枚别名连同 `au::Surface &` 全部悬空——先收别名，erase 才是可做的动作。本棒行为不变、单窗形状不变。落进来的两件事与两件事**没**落进来的，见 §17：横幅的逐窗分流（D5）与别名是同一处代码，一并收；`Ctrl+F` 的窗内 `view_of(1)` 属 `SPEC.FEAT.INTERACT.04`，波特率选择框的浮层落点属 D6＝4-C。
    - **4-B（关窗撤账链，已落 2026-10-21）**：撤账链＝按 `perform_close` 同一条链关掉该窗名下全部标签（不弹确认，理由见 D4／F18）→ 归属兜底清扫（`owner` 指着这扇窗而栏里已无其格 ⇒ 同一条撤账＋一条 WARN）→ 摘广播成员 → `active_window_tracker.forget(id)` → 从 `workspace_windows` 移除 → 兜底落点易主（取不到落点即把本层账目里还活着的第一扇经 `set_fallback` 交回 tracker）→ 重指或清空 `startup_wake`。**触发点改口**：原写「`set_on_frame` 里轮询 `should_close()`（F17），**不用** `set_on_window_closed`（F19）」，落进来的是反的那一个——理由不是时机而是销毁序：`on_frame` 排在同一帧的 `render_all` **之前**，本层若在那一跳里 `erase` 容器元素，这一帧仍会为那扇已请求关闭的窗布局与绘制，而 `TabBarWidget`／横幅的 hooks 捕的是 `WorkspaceWindow &`，读的就是刚被析构的那一格；宿主回收之后（`on_window_closed` 的时点，`window_host(id)` 已取空）那一扇再不会被渲染，控件树随宿主一起散，本层对象才是可以安全落地的时点。「销毁前要能看见关闭请求」那一半留给稿 D4（关闭否决），本棒不做（F18：框架不给否决入口）。**代价照 F19 登记**：关最后一扇时框架保留主宿主、这一跳**不触发**，那一扇的账目留到 `run()` 返回之后由退出序统一收。证人用 `HeadlessSurface::set_should_close(true)` 真驱动（F24），无头可跑（F21）；形态、四案读数与变异自证见 §18。
    - **4-C（面板按窗与退出序）**：面板「搬窗」而非「各一份」（D6，含波特率那只框的浮层落点与 `hooks.preview_wake` 那条 `TODO`）、剩余三处 `app.focus()`（`DebugPanel`／`StartupNotice`／`SettingsPanel`）改按窗取（F19／F22 之后这一条不能再拖）、`ExitPolicy` 缺省确认与退出序遍历全部窗（F21：无头不可证，进 §9 走查）。
+     - **4-C-1（面板搬窗，已落 2026-10-21）**：七只瞬态面板加 `set_overlay_host`／`overlay_host` 接缝，两只常驻框加 `set_overlay_destination`（宿主＋焦点权威成对换）与 `abandon_overlay_destination`（散窗兜底腿），装配层直挂宿主的三只常驻浮层另立「宿主＋序号」那份搬窗账目，装配层两条腿接上（打开腿先搬再开、撤账腿 ③′ 把挂在散掉那一扇上的十二件搬到落点）。**改口两处**：稿里写的「剩余三处 `app.focus()`」实测只剩两处（`DebugPanel`／`StartupNotice`），`SettingsPanel` 构造吃的是 `app.shortcuts()`——快捷键表按 F2 本就是 app 级一份，那一条对它不适用；`hooks.preview_wake` 那条 `TODO(SPEC.FEAT.WS.03)` 已收（真值源改成面板自己记的那枚宿主指针）。形态、十二件清单、四条代价档与六则变异见 §19。
+     - **4-C-2（`ExitPolicy` 缺省与退出序遍历全部窗，未落）**：见 §6 批 4-C 原句与 §9 第 3 条。
 5. **批 5（几何分别记忆）**：`persist_id` 分配 + `preferences::Preferences` 落配置目录 + 两处 `flush()` + 「恢复后首帧只下发一次」用例。
 6. **批 6（CLI）**：`StartupAction::NewWindow` + 编码/解码 + `parse_startup_args` 旗标语义 + `--help` 文案 + 撤 2898-2901 那条拒绝 + `utest_cli_startup`／`utest_cli_handoff`／`itest_posix_instance_channel` 扩案。
 7. **批 7（收口）**：`SPECIFICATIONS.md` 的 WS.03 现状句与裁决、`CHANGELOG.md` 新版本、`PLAN.md` 的 WS.03／INTEG.04／WS.10 行、`ARCHITECTURE.md` §8.1 那句「末位标签关闭 → 关窗口属 WS.03」改口与 §8.4 多窗口段、本稿追加「§8 结项读数」。
@@ -123,8 +125,9 @@
   - `itest_workspace_layout.the_viewport_reports_each_key_and_mouse_press_exactly_once`：视口的两条腿（键＝按下、鼠＝按下）各报一次，被工作区层认领的键同样报（上报先于前置过滤），抬起与移动不报，转发腿不因上报而改变。
   - `itest_workspace_window.a_tab_bar_press_moves_the_active_window_record`：经**该窗宿主**派发一次栏带按下即把本窗号交进 `ui::ActiveWindowTracker`，且落点取的是**空白栏带**——上报不挂在命中分支里（§16③ 记这条的第一版落点是栏位、因此对 M3 等价）。
   - `itest_workspace_broadcast.the_banner_reports_the_press_that_cleared_the_group`：横幅那一次按下先于清组判定上报（上报时组仍满），抬起与失活后的第二次点击不重复报。
+- `itest_panel_retarget`（新，**已落（批 4-C-1）**，十一案）：面板搬窗这条接缝的自动化证人，判的全是**控件侧**的可断言之形——瞬态七件（`ConnectionSidebar`／`ConnectionWizard`／`CredentialPrompt`／`KeysPanel`／`SettingsPanel`／`SftpPanel`／`TunnelPanel`）走同一张判据模板：基线 → 打开 → 同宿主重复设＝空操作 → 搬到另一扇 ⇒ 旧宿主清零、新宿主也**不**挂着（换完是关闭态，这一档就是「不是各一份」那条口径的读数）→ 再开 ⇒ 只在新宿主上有那一层。两只常驻框另判焦点作用域（`DebugPanel`：旧栈弹回、新栈由下一次 `show()` 自己压；`StartupNotice`：搬过去**仍开着**，一启动只弹一次那条不能因搬窗而消失）。散窗兜底腿另两案：`DebugPanel` 的旧宿主先经 `unique_ptr` 真散一次，判的是「此后任何一次 `remove_overlay` 都是往已释放对象落手，本件不许走 `set_overlay_destination` 那条腿」，`StartupNotice` 那案则在旧宿主**还活着**时判「旧栈没被弹、旧宿主那层没被摘」（代价档见 §19⑵⑶）。装配层那六处入口与撤账腿 ③′ 本身仍无证人（`main.cpp` 不进 runner，裁决 7.83）。
 - `utest_cli_startup`／`utest_cli_handoff`：`--new-window` 的旗标解析与 `NewWindow` 的编解码往返、未知 action 仍整帧拒。
-- 变异候选（每条一个判据，注入后按 §4.4 第 22 条点名转红）：新窗继承发起窗目录（应为配置目录）、`frame_wake` 全部捕主窗 surface、`current_tab_id` 回全局一份、横幅恒列全组成员、`ClosedTabStack` 回全局、关窗不撤标签账、`persist_id` 恒空、`--new-window` 仍走拒绝支、tracker 无记录时不回主窗。**其中「`current_tab_id` 回全局一份」「横幅恒列全组成员」「关窗不撤标签账」三条的注入点在 `main.cpp`**（批 4-A 之后那两枚别名与逐窗分流都在装配层）——第 22 条要求的变异自证在这一件上只能落进 §9 走查与源码审查，本稿不冒充读数（与 §16 末段「未做的两则」同一档，理由同一条：`main.cpp` 不进 runner，裁决 7.83）。批 4-B 新落的四则注入（tracker 两件转红、harness 两件转红）与各自的等价档读数见 §18——那一条注入点的界同样受这条边界约束：帧循环那半区的真值在 Aurora 侧，本棒不改框架、不做框架侧注入。
+- 变异候选（每条一个判据，注入后按 §4.4 第 22 条点名转红）：新窗继承发起窗目录（应为配置目录）、`frame_wake` 全部捕主窗 surface、`current_tab_id` 回全局一份、横幅恒列全组成员、`ClosedTabStack` 回全局、关窗不撤标签账、`persist_id` 恒空、`--new-window` 仍走拒绝支、tracker 无记录时不回主窗。**其中「`current_tab_id` 回全局一份」「横幅恒列全组成员」「关窗不撤标签账」三条的注入点在 `main.cpp`**（批 4-A 之后那两枚别名与逐窗分流都在装配层）——第 22 条要求的变异自证在这一件上只能落进 §9 走查与源码审查，本稿不冒充读数（与 §16 末段「未做的两则」同一档，理由同一条：`main.cpp` 不进 runner，裁决 7.83）。批 4-B 新落的四则注入（tracker 两件转红、harness 两件转红）与各自的等价档读数见 §18——那一条注入点的界同样受这条边界约束：帧循环那半区的真值在 Aurora 侧，本棒不改框架、不做框架侧注入。批 4-C-1 新落的六则注入（M1–M6，落点全在本仓九件控件源文件内）与各自的转红读数见 §19。
 
 ## 8 与既有裁决的相接处
 
@@ -147,6 +150,12 @@
 **观察项（F22 补记）**：宿主销毁路径上 `Dialog`／`Popup` 的 `set_on_close` **不会被调用**，框架也不提供销毁前通知。本仓现有四处用它（`DebugPanel`、`StartupNotice`、`SearchOverlay`、`SettingsPanel` 那条只是注释）都只清自己的内部状态、随控件一起析构，因此「没回调」不产生悬垂，只产生销毁链上一度不一致。**若日后有件要靠它做外部副作用（摘全局表、归还焦点、落盘），那条会在关窗路径上静默丢失** ⇒ 批 4-B 的撤账只能挂在装配层自己的 `retire_window` 里显式做，不许指望控件的 `on_close`。（4-B 落的是 `set_on_window_closed` 而不是 `retire_window` 这个名字，链与这一句的口径一致，见 §6 批 4-B 改口与 §18⑴。）
 
 **观察项（批 4-B 补记）**：主窗散后，装配层那枚按值留存的 `shared_ptr<au::OverlayHost>`（§17⑷）会把它的浮层栈——连同挂在上面的面板与关闭确认框——续命到进程结束。形态是「看不见但不是野指针」：宿主已散、那一扇再不会被渲染，控件随 `main()` 一起析构。可见的那一半（面板「搬窗」到落点窗）属 D6＝4-C，本棒不动。
+
+**观察项（批 4-C-1 补记）**，四条登记在册、本棒不解决：
+1. **撤账腿 ③′ 与三枚「宿主＋序号」的重挂本身无证人**：判据全在控件侧 setter，`main.cpp` 那一段（落点窗怎么挑、十二件的调用次序）不进 runner（裁决 7.83），只能源码审查＋§9 第 6 条走查。
+2. **「取不到落点窗即原地不动」那一档在生产路径上不可达**：`landing_window == nullptr` 只在「本层账目里除这一扇外一扇都不剩」时成立，而关最后一扇时框架保留主宿主、`on_window_closed` 根本不触发（F19，§18⑹）。代码仍按 fail-closed 写，是因为它不该依赖框架这一条没写在公共契约上的行为。
+3. **序号是易主的**：`remove_overlay` 按当前子节点表 `erase`，摘掉一层会让它后面所有序号整体前移（框架 `popup.h` 自述）。故 `MountedOverlay` 在每次重挂后**必须重取**序号，而瞬态面板的 setter 走的是「先按旧序号摘、再记新序号」那一条腿——次序反过来即摘掉别人的那一层。同一宿主上两枚都能摘挂的浮层（如命令面板与波特率框）因此是**彼此序号的读者**，本棒靠「各件只记自己那枚、重挂即重取」把它约束住；若日后加入别处也摘挂的件，这条约束得由框架侧的稳定句柄解决（按 §5.1 分流，本棒不提任务书）。
+4. **向导的落点按 tracker 而不是「点它的那一扇」**：`ConnectionWizard` 由侧栏点击唤起，而侧栏那一条腿没有上报点（稿 D7 的三处上报点不含侧栏），故「在 B 窗点侧栏档案、向导开在最近被碰过的那一扇（可能是 A）」这一档仍在。它是 D6「落点＝发起命令的那一扇」口径的一个已知缺口，不是本棒新引入的形态；补齐要么给侧栏加第四处上报点，要么让向导吃打开它的那枚宿主指针——两者都要另立裁决，本棒不顺手做。
 
 ## 11 批 1-A 实测台账（`itest_workspace_window`，2026-10-21）
 
@@ -383,5 +392,41 @@
 
 **在册欠项（如实记，交批 4-C／批 5–7）**：① 「窗拆后三处账目为空」在生产路径上仍无自动化证人；② 面板与浮层落点按发起窗（D6，含波特率那只框）、`hooks.preview_wake` 的 `TODO(SPEC.FEAT.WS.03)`、剩余三处 `app.focus()`＝4-C；③ 主窗散后其 `OverlayHost` 由装配层那枚按值副本续命到进程结束（看不见但不是野指针），可见性那一半属 D6＝4-C（§17⑷）；④ `Ctrl+F` 在窗内仍取 1 号视图（属 `SPEC.FEAT.INTERACT.04`）；⑤ OS 激活态与派发事实答非所问的两档、以及「关最后一扇走同一条退出序」，无头面不可证，均在 §9。
 
-**边界**：批 4-B 到此收口（一扇窗被框架收走之后，本层不再有指着它的活引用、落点与唤醒指针都有去处）；4-C 的面板搬窗与退出序、批 5 几何记忆、批 6 CLI `--new-window`、批 7 文档回写与三处同口径计数均未落。§9 七条真机走查照欠，本批不称「可用」。
+**边界**：批 4-B 到此收口（一扇窗被框架收走之后，本层不再有指着它的活引用、落点与唤醒指针都有去处）；4-C-1 的面板搬窗（§19）、4-C-2 的退出序、批 5 几何记忆、批 6 CLI `--new-window`、批 7 文档回写与三处同口径计数均未落。§9 七条真机走查照欠，本批不称「可用」。
+
+## 19 批 4-C-1 台账（面板搬窗与散窗兜底腿，2026-10-21）
+
+**落到的形状**（二十件：`src/main.cpp` 221 增／36 删、九对 `src/ui/*.{h,cpp}` 合计 370 增／74 删、新增 `tests/integration/itest_panel_retarget.cpp`（358 行／十一案）、本稿；`src/ui/terminal_view.*` 与纯逻辑件一行未动）。
+
+⑴ **三类件、两种接缝、一份装配账**：
+- **七只瞬态面板**（`ConnectionSidebar`／`ConnectionWizard`／`CredentialPrompt`／`KeysPanel`／`SettingsPanel`／`SftpPanel`／`TunnelPanel`）加 `set_overlay_host(OverlayHost &)` 与 `overlay_host()`。setter 只做三件事：按自己记下的序号从**旧**宿主摘回、清掉本件的浮层句柄与内部状态、把宿主指针换成新的。换完是**关闭态**——往新宿主的第几层由调用方紧接着走的既有开合腿建，本棒**不**给 setter 加第二条建浮层的路径（加了就是同一件事两种形状，判据只能证到其中一种）。
+- **两只常驻框**（`DebugPanel`／`StartupNotice`：浮层建一次、开合只切显隐）另加一对：`set_overlay_destination(OverlayHost &, FocusManager &)` 与 `abandon_overlay_destination(OverlayHost &, FocusManager &)`。前者宿主与焦点权威**成对换**（稿 §0 的 F3：压进哪一扇窗的栈就必须由同一扇窗弹出，分两次设就是让作用域漏在散掉的那一栈里）；后者是散窗那一侧的对应腿，三本账（`scope_pushed_`／`overlay_index_`／`dialog_`）一律**清零**而不是摘回——旧宿主与旧焦点栈都随那一扇一起没了，既无处可摘也无处可弹，能做的只有承认「上一处的东西已经不在了」。`dialog_` 必须一起放：否则下一次 `toggle()`／`show_if_needed()` 走「句柄已在、只切显隐」那条腿，而切开的这份对话框并没有挂在新宿主上，面板此后再也不出现。放句柄**不**回调 `on_close`（框架只在 `close()` 末尾调它，`dialog.h` 自陈无析构回调），因此也不会拿着新焦点权威去少弹一层——这一条是 M6 的落点。
+- **三枚装配层直挂宿主的常驻浮层**（命令面板、串口波特率框、会话日志框）不经控件接缝（它们是框架的 `CommandPalette`／`Dialog`，不认识窗），账目由装配层自己那份 `MountedOverlay{on, index}` 与 `remount_overlay` 兑现：同宿主即空操作，否则先按序号从旧宿主摘、再往新宿主 `add_overlay` 并**重取**序号。留序号而不是留一枚 `bool mounted` 的理由就在搬窗这一步——没有序号就摘不到自己那一层，只能往别的窗再挂一份，那变成「各窗一份」，不是本条口径。
+
+⑵ **两条腿、三条口径**：打开腿（九处 `retarget_panel`／`retarget_destination` 与三枚 `remount_overlay` 调用，排在既有开合动作**之前**）与撤账腿 ③′。三条口径写在装配层那段注释里，判据按同一口径读：① 取不到落点窗即**原地不动**（面板继续挂在它现在那一扇，而不是猜一扇活着的窗——「把用户没碰过的那一扇改得看得见」比「这一条没生效」更难解释，与 §17⑶ 那一条同源）；② 真值源在各件自己记的那枚宿主指针，装配层**不**另立一张「面板在哪扇窗」的表（那是第二份账，必然与摘挂时机分叉）；③ 摘与挂的次序归各件 setter，本支只决定「搬到哪」。`window_of_host` 是「宿主指针 → 本仓那份窗」的唯一换算处（容器才同时有宿主与窗）。
+
+⑶ **撤账腿 ③′ 排在 ④ `erase` 之前**，位置是承重的：setter 与重挂都要从**旧宿主**按序号摘回，而旧宿主随本层对象一起散（主窗那一份另有 §17⑷ 那枚按值副本续命，其余窗没有这层保险）。落点取「除这一扇之外的第一扇」而不是 `command_window()`——关闭不是一条来自某扇窗的命令、没有派发事实可依，与 ⑤⑥ 那两跳同一条兜底口径；这一支与 ⑤ 事后取到的 `fallback_window()` 在同一份容器读法下等价，但必须**在 erase 之前**算。两只常驻框在这一跳走 `abandon_` 那条而不是 `set_overlay_destination`：旧窗的 `FocusManager` 在 ④ 之前就已被框架回收（Aurora 主仓 `codespec/specification/06-app-platform.md` §3「宿主被回收**之后**触发一次」），那条腿里的 `pop_scope()` 会落手在已析构的对象上——**这是本棒新增第二枚接缝的全部理由**，否则同一件事只需要一个方法。
+
+⑷ **改口两处**：① 稿 §6 批 4-C 写的「剩余三处 `app.focus()`（`DebugPanel`／`StartupNotice`／`SettingsPanel`）」实测只剩两处——`SettingsPanel` 构造吃的是 `app.shortcuts()`，快捷键表按稿 §0 的 F2 本就是 app 级一份，那一条对它不适用；② `hooks.preview_wake` 那条 `TODO(SPEC.FEAT.WS.03)` 已收，真值源改成设置页自己记的那枚宿主指针（经 `window_of_host` 换算回窗），对不上号即「面板挂在一扇已散掉的窗上」＝撤账腿还没跑到的窗口，那一档退回 `fallback_window()` 而不是不醒——夹具重投的那批脏总要有一扇窗来排。
+
+⑸ **四条代价档**（D6 的「搬窗而不是各一份」在本棒之后长这样，§9 第 6 条走查取观感读数）：
+- **C1 搬完即关闭态**：瞬态七件由「先搬再开」掩盖掉，两只常驻框与三枚直挂浮层是真代价——在 B 窗按 F12，A 窗那块调试面板就此消失且**不**在 B 窗自动打开，用户要重按一次。
+- **C2 「两窗不能同时各开一块 SFTP」**（D6 原文）：设置页、密钥页、SFTP、隧道同理，界面上是搬过去而不是各有一份。`the_settings_page_moves_instead_of_existing_twice` 那一案的案名就是这条代价的读数形态。
+- **C3 降级提示随窗散去即消失、不重弹**：`StartupNotice` 的 `shown_` 幂等闸记的是「本次启动弹过」，与挂在哪儿无关；它也没有打开腿（一启动只弹一次），只有撤账腿。
+- **C4 旧焦点栈那一层作用域随窗带走**：`abandon_` 那条腿不弹旧栈。真实散窗时旧管理器根本已经不存在，测试里那案（`the_startup_notice_abandons_without_touching_the_dead_stack`）特意让旧宿主与旧管理器**还活着**，正是为了把这一档读成可见断言（`focus_a.scope_depth()` 仍是 1）而不是让它藏在销毁序里不可观测。
+
+**读数**：`cmake --build --preset linux` 通过且无 error／warning；`ctest --preset linux -E etest_` **98/98**（9.59 s）、runner 全跑 **1238/1238**（21.41 s）。门迁移：**97 项／1227 案 → 98 项／1238 案（+1 项／+11 案）**——新 TU `itest_panel_retarget` 进 CTest 一项、十一案；既有 1227 案零改动照绿是「单窗形态与批 4-B 那条链未破」那一侧的证据。三处文档的同口径计数照例归 §6 批 7 一次性改。
+
+**变异自证**（§4.4 第 22 条，六则注入逐条点名、逐条取实际读数，落点全在本仓九件控件源文件内；M2 单独跑一轮，M1／M3／M4 同批注入以证「各件 setter 互不相干」——那一轮只有各自点名的那一案转红、其余八案照绿，M5 与 M6 各单独一轮。注入转红后全部还原，`.bak` 复原会保留旧 mtime 而骗过 ninja，故 `touch` 一遍再重编，11/11 复绿）：
+- **M1 `SftpPanel::set_overlay_host` 不关旧浮层** ⇒ `the_sftp_panel_moves_without_leaving_a_copy_behind` 面红四笔：`a.overlay_count()` 1 vs 0（判据里两处）、`panel.is_open()` 仍真、搬完再开时 `b.overlay_count()` 0 vs 1（旧宿主那一层还开着，重开腿即不再往新宿主挂）。其余六案**等价**照绿——各件 setter 独立。
+- **M2 `KeysPanel::set_overlay_host` 的同宿主闸门摘掉** ⇒ `the_keys_panel_moves_its_rows_off_the_retiring_host` 面红两笔：`panel.is_open()` 变假、`a.overlay_count()` 0 vs 1。同宿主重复设本应空操作，闸门一摘就真去 `close()` 了一次——这一案判的是「重复设不伤害现场」那条口径。
+- **M3 `DebugPanel::set_overlay_destination` 不往新宿主重挂** ⇒ `the_debug_panel_is_detached_from_the_old_host_and_remounted_on_the_new_one` 面红两笔（搬开后与再开一次后各一笔，`b.overlay_count()` 0 vs 1）。这一则是常驻框与瞬态面板的**形态分界**：瞬态靠调用方重开，常驻框必须自己重挂。
+- **M4 `StartupNotice::abandon_overlay_destination` 改成去弹旧栈** ⇒ `the_startup_notice_abandons_without_touching_the_dead_stack` 面红（`focus_a.scope_depth()` 0 vs 1）。这一条证的正是 ⑶ 那句销毁序：真实散窗时那一跳是往已析构对象落手，本件不许走那条腿。
+- **M5 `SettingsPanel::set_overlay_host` 的摘挂次序反过来**（先换指针再摘）⇒ `the_settings_page_moves_instead_of_existing_twice` 面红两笔（`a.overlay_count()` 1 vs 0，判据里两处）。摘的那一跳落到了 B 宿主上，而 B 只有基础内容那格，框架的越界档让它**空摘**（`popup.h`：序号越界或为 0 时不做任何事）——旧宿主那一层就此留在原地。口径 ③ 的承重次序由此成为有证人的一条而不是一句注释。
+- **M6 `DebugPanel::abandon_overlay_destination` 不放对话框句柄** ⇒ `the_debug_panel_abandons_a_host_that_is_already_gone` 面红三笔：`panel.dialog() == nullptr`、下一次 `toggle()` 后 `b.overlay_count()` 0 vs 1 与 `focus_b.scope_depth()` 0 vs 1（走的是「句柄已在、只切显隐」那条腿，而那份对话框并没有挂在新宿主上）。这一则是本件最阴的一则：注入后**当前这一次**看不出问题，坏在「此后再也不能出现」。
+- 装配层那两条腿（九处 retarget、三枚 `MountedOverlay`、③′ 的落点选择与调用次序）无可注入的判据（`main.cpp` 不进 runner，裁决 7.83），照 §17 末段与 §18 末段同一档处理：源码审查＋§9 第 6 条走查。
+
+**在册欠项（如实记，交批 4-C-2／批 5–7）**：① `ExitPolicy` 从未在本仓设置，实测读数是框架缺省 `ExitPolicy::LastWindowClosed`（Aurora 主仓 `include/aurora/app/application.h` 的成员初值），「缺省确认与退出序遍历全部窗」＝4-C-2；② 侧栏→向导那条落点缺口（向导吃 tracker 而不是点它的那一扇，§10 批 4-C-1 补记第 4 条）；③ 三处文档同口径计数 96／1212 → 98／1238 归批 7；④ `Ctrl+F` 在窗内仍取 1 号视图（属 `SPEC.FEAT.INTERACT.04`）；⑤ OS 激活态与派发事实答非所问的两档、以及「关最后一扇走同一条退出序」，无头面不可证，均在 §9。
+
+**边界**：批 4-C-1 到此收口（面板与浮层的落点窗成为可变事实且散窗时有人接手，§17⑷ 那条「看不见但不是野指针」的形态自此有了可见的那一半）；4-C-2 的 `ExitPolicy` 与退出序、批 5 几何记忆、批 6 CLI `--new-window`、批 7 文档回写与三处同口径计数均未落。§9 七条真机走查照欠，本批不称「可用」。
 

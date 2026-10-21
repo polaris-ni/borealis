@@ -71,17 +71,63 @@ auto append_session_rows(const DebugSessionSnapshot &session, const aurora::Colo
 
 }  // namespace
 
-DebugPanel::DebugPanel(aurora::OverlayHost &host, aurora::FocusManager &focus) : host_(host), focus_(focus) {}
+DebugPanel::DebugPanel(aurora::OverlayHost &host, aurora::FocusManager &focus) : host_(&host), focus_(&focus) {}
+
+// 常驻浮层的搬窗（头文件那条判据的落点）：摘与挂都在这一步做完，中间不经过 `toggle()`——后者是「关着就
+// 用新快照打开」，搬窗要的恰恰是「别在这里打开」。次序固定为先收作用域再摘浮层：`Dialog::close()` 的
+// on_close 腿自己弹过一次，剩下的那一次（从未派发栈内打开过的那种）必须用**旧的**焦点权威弹回去，换了
+// 指针再弹就是往另一扇窗的栈里少弹一层。
+auto DebugPanel::set_overlay_destination(aurora::OverlayHost &host, aurora::FocusManager &focus) -> void {
+    if (host_ == &host && focus_ == &focus) {
+        return;
+    }
+    if (dialog_ != nullptr && dialog_->is_open()) {
+        // 与 `StartupNotice` 的唯一差别：本件搬完是**关闭态**。它的作用域记账带着一枚按旧栈深度取的下标
+        //（`scope_depth_before_`），带着还开着的框搬过去会让那次比较跨栈；而诊断内容本就是「打开那一刻取
+        // 一份快照」，到新窗重按一次 F12 才是它的设计。
+        dialog_->close();
+    }
+    if (scope_pushed_) {
+        focus_->pop_scope();
+        scope_pushed_ = false;
+    }
+    const bool had_overlay = overlay_index_.has_value();
+    if (had_overlay) {
+        host_->remove_overlay(*overlay_index_);
+        overlay_index_.reset();
+    }
+    host_ = &host;
+    focus_ = &focus;
+    if (had_overlay && dialog_ != nullptr) {
+        overlay_index_ = host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(dialog_)});
+    }
+}
+
+// 散窗兜底腿（头文件那条销毁序决定的另一条形态）：三本账一律**清零**而不是摘回——旧宿主与旧焦点栈都随
+// 那一扇窗一起散了，这里既无处可摘也无处可弹，能做的只有承认「上一处的东西已经不在了」。
+auto DebugPanel::abandon_overlay_destination(aurora::OverlayHost &host, aurora::FocusManager &focus) -> void {
+    if (host_ == &host && focus_ == &focus) {
+        return;
+    }
+    scope_pushed_ = false;
+    overlay_index_.reset();
+    // 句柄必须一起放：否则下一次 `toggle()` 走「句柄已在、只切显隐」那条腿，而切开的这份对话框并没有挂在
+    // 新宿主上——面板此后再也不出现。放句柄不会回调 `on_close`（框架只在 `close()` 末尾调它），因此也不会
+    // 拿着新焦点权威去少弹一层。
+    dialog_.reset();
+    host_ = &host;
+    focus_ = &focus;
+}
 
 DebugPanel::~DebugPanel() noexcept {
     // 析构次序＝声明次序的倒序：先还焦点作用域，再放对话框句柄，最后摘浮层（裁决 7.67 的时序）。
     if (scope_pushed_) {
-        focus_.pop_scope();
+        focus_->pop_scope();
         scope_pushed_ = false;
     }
     dialog_.reset();
     if (overlay_index_.has_value()) {
-        host_.remove_overlay(*overlay_index_);
+        host_->remove_overlay(*overlay_index_);
         overlay_index_.reset();
     }
 }
@@ -96,14 +142,14 @@ auto DebugPanel::toggle(const std::vector<DebugSessionSnapshot> &sessions) -> vo
         dialog_->set_on_close([this]() -> void {
             // 只在对账仍欠一次弹出时补弹（文件头③）：`Dialog::close()` 在派发栈内自己弹过的那一次
             // 不留在这里重复处理，而栈外从未弹过的情形由析构兜底。
-            if (scope_pushed_ && focus_.scope_depth() > scope_depth_before_) {
-                focus_.pop_scope();
+            if (scope_pushed_ && focus_->scope_depth() > scope_depth_before_) {
+                focus_->pop_scope();
             }
             scope_pushed_ = false;
         });
         // 宿主必须已有基础内容，否则 `add_overlay` 回空而浮层永远摘不掉（裁决 7.56⑥）。
         // 常驻而不随开合摘建：关闭态的 `Dialog` 不渲染也不参与命中，摘建反而要在派发栈内动子树。
-        overlay_index_ = host_.add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(dialog_)});
+        overlay_index_ = host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(dialog_)});
     }
 
     const aurora::Theme chrome = settings_chrome_theme();
@@ -150,10 +196,10 @@ auto DebugPanel::toggle(const std::vector<DebugSessionSnapshot> &sessions) -> vo
 
     // 文件头③：调用点可能在派发栈内（快捷键真派发）也可能在栈外（命令面板 / 用例编程调用），
     // 前者 `show()` 自压作用域，后者只置位——按深度差判定，两种入口都不双压。
-    scope_depth_before_ = focus_.scope_depth();
+    scope_depth_before_ = focus_->scope_depth();
     dialog_->show();
-    if (focus_.scope_depth() == scope_depth_before_) {
-        focus_.push_scope(dialog_.get());
+    if (focus_->scope_depth() == scope_depth_before_) {
+        focus_->push_scope(dialog_.get());
         scope_pushed_ = true;
     }
 }

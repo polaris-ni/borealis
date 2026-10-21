@@ -333,6 +333,18 @@ public:
     auto operator=(SettingsPanel &&other) -> SettingsPanel & = delete;
     ~SettingsPanel();
 
+    /// @brief 换浮层宿主（`SPEC.FEAT.WS.03` 稿 D6「面板搬窗」）：设置页是 app 级单实例，浮层要挂在发起
+    ///        `settings.open` 的那一扇窗上；装配层在打开腿与关窗撤账腿各调一次。
+    ///
+    /// 已挂在别的宿主上时先 `close()`——字体候选与键位绑定那两层二级浮层按既有「序号降序摘」的次序从
+    /// **旧宿主**摘回（换指针之后再摘就会拿旧序号摘新增宿主的子节点）。换完处于关闭态，未落盘的副本随
+    /// `close()` 的既有口径留在 `form_` 里；代价档是面板在两窗间「搬过去」而不是「各有一份」。
+    /// @param host 新增浮层宿主，**非拥有**：它持有本件的浮层节点，析构次序须晚于本件。
+    auto set_overlay_host(aurora::OverlayHost &host) -> void;
+
+    /// @brief 现在挂在谁的宿主上（装配层据此判断「这一扇散了，本件要搬」；nullptr＝从未挂过）。
+    [[nodiscard]] auto overlay_host() const noexcept -> aurora::OverlayHost * { return host_; }
+
     /// @brief 打开面板：装载表单副本、挂浮层、登记关闭快捷键。已开着则只刷新浮层。
     auto open() -> void;
 
@@ -831,7 +843,7 @@ private:
     /// 「面板把没接线的键画成可用的了」这条误读要有证人，可看的判据是角标与组顶说明而不是控件灰置态。
     [[nodiscard]] static auto is_editable(const SettingsControl &control) -> bool;
 
-    aurora::OverlayHost &host_;       ///< 浮层宿主（装配层的场景根，非拥有）。
+    aurora::OverlayHost *host_ = nullptr;  ///< 非拥有：当前挂在谁的宿主上（`set_overlay_host` 可换）。
     aurora::ShortcutRegistry &shortcuts_;  ///< 快捷键注册表：`Escape` 的登记与解绑处（非拥有）。
     Hooks hooks_{};
     SettingsForm form_{std::vector<FormEntry>{}};  ///< 副本；未打开时是空表。

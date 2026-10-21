@@ -34,7 +34,18 @@ namespace {
 }  // namespace
 
 ConnectionSidebar::ConnectionSidebar(aurora::OverlayHost &host, Hooks hooks)
-    : host_{host}, hooks_{std::move(hooks)} {}
+    : host_{&host}, hooks_{std::move(hooks)} {}
+
+// 换宿主即「先摘后换」（头文件那条判据的落点）：`close()` 用的是记在 `overlay_index_` 里的旧宿主序号，
+// 它必须发生在改 `host_` 之前。换完不自动重挂——重挂由调用方的 open/toggle 走既有那条建层腿，
+// 于是本件只有一份建浮层的代码，搬窗不会开出第二种浮层形态。
+auto ConnectionSidebar::set_overlay_host(aurora::OverlayHost &host) -> void {
+    if (host_ == &host) {
+        return;
+    }
+    close();
+    host_ = &host;
+}
 
 ConnectionSidebar::~ConnectionSidebar() {
     close();
@@ -87,7 +98,7 @@ auto ConnectionSidebar::open() -> void {
 
     dialog_ = std::make_shared<aurora::Dialog>(
         aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(layer))});
-    overlay_index_ = host_.add_overlay(
+    overlay_index_ = host_->add_overlay(
         aurora::Node{std::static_pointer_cast<aurora::Widget>(dialog_)});
     dialog_->show();
     open_ = true;
@@ -110,7 +121,7 @@ auto ConnectionSidebar::refresh_rows() -> void {
     query_ = search_input_ != nullptr ? search_input_->value() : query_;
     // 整块重建（同 SettingsPanel::select_page 的口径：行序变了就地改计数会错位）。
     if (overlay_index_.has_value()) {
-        host_.remove_overlay(*overlay_index_);
+        host_->remove_overlay(*overlay_index_);
         overlay_index_.reset();
     }
     dialog_.reset();
@@ -127,7 +138,7 @@ auto ConnectionSidebar::refresh_rows() -> void {
         aurora::Alignment::CenterLeft);
     dialog_ = std::make_shared<aurora::Dialog>(
         aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(layer))});
-    overlay_index_ = host_.add_overlay(
+    overlay_index_ = host_->add_overlay(
         aurora::Node{std::static_pointer_cast<aurora::Widget>(dialog_)});
     dialog_->show();
 }
@@ -409,7 +420,7 @@ auto ConnectionSidebar::build_overlay() -> std::shared_ptr<aurora::Column> {
 
 auto ConnectionSidebar::clear_state() -> void {
     if (overlay_index_.has_value()) {
-        host_.remove_overlay(*overlay_index_);
+        host_->remove_overlay(*overlay_index_);
         overlay_index_.reset();
     }
     dialog_.reset();

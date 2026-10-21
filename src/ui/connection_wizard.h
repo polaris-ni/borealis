@@ -49,6 +49,17 @@ public:
     auto operator=(const ConnectionWizard &) -> ConnectionWizard & = delete;
     ~ConnectionWizard();
 
+    /// @brief 换浮层宿主（`SPEC.FEAT.WS.03` 稿 D6「面板搬窗」）：向导是 app 级单实例，浮层要挂在发起
+    ///        命令的那一扇窗上（打开腿与关窗撤账腿由装配层各调一次）。
+    ///
+    /// 已挂在别的宿主上时先 `close()`——它按自己记的序号从**旧宿主**摘回，先换指针就会拿旧序号摘新增
+    /// 宿主的子节点。换完处于关闭态（草稿随之丢弃：把 A 窗的半张草稿搬进 B 窗不是本条要兑现的行为）。
+    /// @param host 新增浮层宿主，**非拥有**：它持有本件的浮层节点，析构次序须晚于本件。
+    auto set_overlay_host(aurora::OverlayHost &host) -> void;
+
+    /// @brief 现在挂在谁的宿主上（装配层据此判断「这一扇散了，本件要搬」；nullptr＝从未挂过）。
+    [[nodiscard]] auto overlay_host() const noexcept -> aurora::OverlayHost * { return host_; }
+
     /// @brief 新建：清空草稿、进步骤 0。
     auto open_new() -> void;
 
@@ -92,7 +103,7 @@ private:
     /// 就地重建（切档、枚举回投）都不呼本件——重建只读 `current_ports` 的那份快照。
     auto request_port_scan() -> void;
 
-    class aurora::OverlayHost &host_;
+    class aurora::OverlayHost *host_ = nullptr;  ///< 非拥有：当前挂在谁的宿主上（`set_overlay_host` 可换）。
     Hooks hooks_{};
     std::shared_ptr<aurora::Dialog> dialog_{};
     std::optional<std::size_t> overlay_index_{};

@@ -117,7 +117,17 @@ constexpr std::array<std::uint16_t, 3> kRsaBits{2048U, 3072U, 4096U};
 }  // namespace
 
 KeysPanel::KeysPanel(aurora::OverlayHost &host, Hooks hooks)
-    : host_{host}, hooks_{std::move(hooks)} {}
+    : host_{&host}, hooks_{std::move(hooks)} {}
+
+// 先摘后换（头文件的判据）：`close()` 会把生成／推送／删除确认三层二级浮层连同主卡片按「序号降序」的
+// 既有次序从**旧宿主**摘回；换指针之后再走这一步就是拿旧序号摘新增宿主的子节点。
+auto KeysPanel::set_overlay_host(aurora::OverlayHost &host) -> void {
+    if (host_ == &host) {
+        return;
+    }
+    close();
+    host_ = &host;
+}
 
 KeysPanel::~KeysPanel() {
     close_generate();
@@ -218,7 +228,7 @@ auto KeysPanel::apply_snapshot(const KeysSnapshot &snapshot) -> void {
 
 auto KeysPanel::install_overlay() -> void {
     if (overlay_index_.has_value()) {
-        host_.remove_overlay(*overlay_index_);
+        host_->remove_overlay(*overlay_index_);
         overlay_index_.reset();
     }
     dialog_.reset();
@@ -236,7 +246,7 @@ auto KeysPanel::install_overlay() -> void {
         aurora::Alignment::CenterLeft);
     dialog_ = std::make_shared<aurora::Dialog>(
         node(std::static_pointer_cast<aurora::Widget>(std::move(layer))));
-    overlay_index_ = host_.add_overlay(node(std::static_pointer_cast<aurora::Widget>(dialog_)));
+    overlay_index_ = host_->add_overlay(node(std::static_pointer_cast<aurora::Widget>(dialog_)));
     dialog_->show();
 }
 
@@ -456,7 +466,7 @@ auto KeysPanel::rebuild_generate() -> void {
     generate_dialog_ = std::make_shared<aurora::Dialog>(
         node(std::static_pointer_cast<aurora::Widget>(std::move(editor))));
     generate_overlay_ =
-        host_.add_overlay(node(std::static_pointer_cast<aurora::Widget>(generate_dialog_)));
+        host_->add_overlay(node(std::static_pointer_cast<aurora::Widget>(generate_dialog_)));
     generate_dialog_->show();
     generate_open_ = true;
 }
@@ -469,7 +479,7 @@ auto KeysPanel::close_generate() -> void {
         generate_dialog_->close();
     }
     if (generate_overlay_.has_value()) {
-        host_.remove_overlay(*generate_overlay_);
+        host_->remove_overlay(*generate_overlay_);
         generate_overlay_.reset();
     }
     generate_dialog_.reset();
@@ -683,7 +693,7 @@ auto KeysPanel::rebuild_push() -> void {
     push_dialog_ = std::make_shared<aurora::Dialog>(
         node(std::static_pointer_cast<aurora::Widget>(std::move(editor))));
     push_overlay_ =
-        host_.add_overlay(node(std::static_pointer_cast<aurora::Widget>(push_dialog_)));
+        host_->add_overlay(node(std::static_pointer_cast<aurora::Widget>(push_dialog_)));
     push_dialog_->show();
     push_open_ = true;
 }
@@ -696,7 +706,7 @@ auto KeysPanel::close_push() -> void {
         push_dialog_->close();
     }
     if (push_overlay_.has_value()) {
-        host_.remove_overlay(*push_overlay_);
+        host_->remove_overlay(*push_overlay_);
         push_overlay_.reset();
     }
     push_dialog_.reset();
@@ -877,7 +887,7 @@ auto KeysPanel::open_delete_confirm(std::string path) -> void {
     confirm_dialog_ = std::make_shared<aurora::Dialog>(
         node(std::static_pointer_cast<aurora::Widget>(std::move(content))));
     confirm_overlay_ =
-        host_.add_overlay(node(std::static_pointer_cast<aurora::Widget>(confirm_dialog_)));
+        host_->add_overlay(node(std::static_pointer_cast<aurora::Widget>(confirm_dialog_)));
     confirm_dialog_->show();
     delete_confirm_open_ = true;
 }
@@ -890,7 +900,7 @@ auto KeysPanel::close_delete_confirm() -> void {
         confirm_dialog_->close();
     }
     if (confirm_overlay_.has_value()) {
-        host_.remove_overlay(*confirm_overlay_);
+        host_->remove_overlay(*confirm_overlay_);
         confirm_overlay_.reset();
     }
     confirm_dialog_.reset();
@@ -900,7 +910,7 @@ auto KeysPanel::close_delete_confirm() -> void {
 
 auto KeysPanel::clear_state() -> void {
     if (overlay_index_.has_value()) {
-        host_.remove_overlay(*overlay_index_);
+        host_->remove_overlay(*overlay_index_);
         overlay_index_.reset();
     }
     dialog_.reset();

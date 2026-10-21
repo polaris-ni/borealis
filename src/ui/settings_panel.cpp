@@ -440,7 +440,17 @@ auto settings_chrome_theme() -> aurora::Theme {
 }
 
 SettingsPanel::SettingsPanel(aurora::OverlayHost &host, aurora::ShortcutRegistry &shortcuts, Hooks hooks)
-    : host_(host), shortcuts_(shortcuts), hooks_(std::move(hooks)) {}
+    : host_(&host), shortcuts_(shortcuts), hooks_(std::move(hooks)) {}
+
+// 先摘后换（头文件的判据）：`close()` 按「绑定对话框 → 候选浮层 → 面板浮层」的降序把**旧宿主**上那几层
+// 摘干净，换指针之后再摘就会拿旧序号摘到新增宿主的子节点上。表单副本不动（`close()` 的既有口径）。
+auto SettingsPanel::set_overlay_host(aurora::OverlayHost &host) -> void {
+    if (host_ == &host) {
+        return;
+    }
+    close();
+    host_ = &host;
+}
 
 SettingsPanel::~SettingsPanel() {
     close();
@@ -529,7 +539,7 @@ auto SettingsPanel::close() -> void {
     config_notice_text_.clear();
 
     if (overlay_index_.has_value()) {
-        host_.remove_overlay(*overlay_index_);
+        host_->remove_overlay(*overlay_index_);
         overlay_index_.reset();
     }
     preview_.reset();  // 横条随浮层一起消失：控件树已脱离宿主，留一份「看着还挂在树上」的视口是最难查的陈旧态
@@ -778,7 +788,7 @@ auto SettingsPanel::rebuild_overlay() -> void {
     clear_config_state();
 
     if (overlay_index_.has_value()) {
-        host_.remove_overlay(*overlay_index_);
+        host_->remove_overlay(*overlay_index_);
         overlay_index_.reset();
     }
 
@@ -801,7 +811,7 @@ auto SettingsPanel::rebuild_overlay() -> void {
         std::vector<aurora::Node>{aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(scrim))},
                                   build_card()},
         aurora::Alignment::Center);
-    overlay_index_ = host_.add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(layer))});
+    overlay_index_ = host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(layer))});
 }
 
 auto SettingsPanel::build_card() -> aurora::Node {
@@ -2154,7 +2164,7 @@ auto SettingsPanel::open_family_popup(aurora::Point anchor) -> void {
     // 同一只 `Popup` 跨开合复用：每次打开都按**当前**表单重建候选（置顶那档随配置值走）。
     if (font_popup_ == nullptr) {
         font_popup_ = std::make_shared<aurora::Popup>();
-        font_popup_index_ = host_.add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(font_popup_)});
+        font_popup_index_ = host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(font_popup_)});
     }
     font_popup_->set_content(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(viewport))});
     static_cast<void>(font_popup_->open_at(anchor));
@@ -2200,7 +2210,7 @@ auto SettingsPanel::clear_family_state() -> void {
     font_notice_.reset();
     font_candidates_.clear();
     if (font_popup_ != nullptr && font_popup_index_.has_value()) {
-        host_.remove_overlay(*font_popup_index_);
+        host_->remove_overlay(*font_popup_index_);
     }
     font_popup_.reset();
     font_popup_index_.reset();
@@ -2382,7 +2392,7 @@ auto SettingsPanel::open_binding_dialog(const std::string &command_id, std::size
         // 裁决 7.38⑥ F-b）。挂在宿主上而非卡片里：卡片每次重建都会换掉，而浮层序号因此只与「本层
         // 比卡片后加」这一条有关（见 `clear_binding_state()` 的降序注）。
         binding_overlay_index_ =
-            host_.add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(binding_dialog_)});
+            host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(binding_dialog_)});
     }
     
     // 初始化输入框为当前绑定值
@@ -2416,7 +2426,7 @@ auto SettingsPanel::clear_binding_state() -> void {
     binding_input_.reset();
     conflict_notice_.reset();
     if (binding_overlay_index_.has_value()) {
-        host_.remove_overlay(*binding_overlay_index_);
+        host_->remove_overlay(*binding_overlay_index_);
     }
     binding_dialog_.reset();
     binding_overlay_index_.reset();

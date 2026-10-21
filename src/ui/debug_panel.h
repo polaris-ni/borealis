@@ -57,7 +57,7 @@ struct DebugSessionSnapshot {
 /// @brief F12 呼出的只读诊断浮层：打开即取一份计数器快照。
 class DebugPanel {
   public:
-    /// @brief 绑定浮层宿主与焦点权威（装配层交 `app.focus()`，同 `StartupNotice`）。
+    /// @brief 绑定浮层宿主与焦点权威（装配层按窗交，同 `StartupNotice`；换窗见 `set_overlay_destination`）。
     DebugPanel(aurora::OverlayHost &host, aurora::FocusManager &focus);
 
     DebugPanel(const DebugPanel &other) = delete;
@@ -65,6 +65,33 @@ class DebugPanel {
     DebugPanel(DebugPanel &&other) = delete;
     auto operator=(DebugPanel &&other) -> DebugPanel & = delete;
     ~DebugPanel() noexcept;
+
+    /// @brief 换浮层宿主与焦点权威（`SPEC.FEAT.WS.03` 稿 D6「面板搬窗」＋稿 §0 的 F3「焦点按窗取」）。
+    ///
+    /// 本件的浮层是**常驻**形态（建一次、开合只切 `Dialog` 显隐），故搬窗不能等 `close()` 去摘——必须在
+    /// 旧宿主上摘掉那一层再往新增宿主重挂，否则此后每帧都在给一扇已经不渲染的窗画浮层。两份引用一起换
+    /// 而不是分两次：`push_scope` 压进哪一扇窗的栈就必须由同一扇窗弹出，分开设就会出现「作用域漏在散掉
+    /// 的那一扇的栈里」这种还得靠析构兜的形态。搬完本件处于关闭态（原窗已散，用户在新窗再按 F12）。
+    /// @param host 新增浮层宿主，**非拥有**。
+    /// @param focus 新增窗的焦点管理器，**非拥有**。
+    auto set_overlay_destination(aurora::OverlayHost &host, aurora::FocusManager &focus) -> void;
+
+    /// @brief 现在挂在谁的宿主上（装配层据此判断「这一扇散了，本件要搬」；nullptr＝从未挂过）。
+    [[nodiscard]] auto overlay_host() const noexcept -> aurora::OverlayHost * { return host_; }
+
+    /// @brief 散窗兜底腿（`SPEC.FEAT.WS.03` 稿 D6＝批 4-C）：认下新落点，但**不碰旧宿主与旧焦点栈**。
+    ///
+    /// 与 `set_overlay_destination` 的差别只由销毁序决定：框架在 `on_window_closed` 之前回收窗口宿主
+    /// （aurora 主仓 `codespec/specification/06-app-platform.md` §3「宿主被回收**之后**触发一次」），
+    /// 旧焦点管理器此刻已经不存在——那条腿里的 `pop_scope()` 是往已析构的对象上落手。旧宿主那层浮层同样
+    /// 随窗一起散，本件能做的只有把上一处的账清零。
+    ///
+    /// 搬完是关闭态（与 `set_overlay_destination` 同一档口径），且对话框句柄要**一起放**：下一次
+    /// `toggle()` 见句柄已存在便只切显隐，而这份句柄在新宿主上并没有挂载点——面板此后不会再现。
+    /// 放句柄不会触发 `Dialog` 的关闭回调（框架那条回调只挂在 `close()` 末尾），故这里不会误弹作用域。
+    /// @param host 新增浮层宿主，**非拥有**。
+    /// @param focus 新增窗的焦点管理器，**非拥有**。
+    auto abandon_overlay_destination(aurora::OverlayHost &host, aurora::FocusManager &focus) -> void;
 
     /// @brief 开合切换：关着就用这份快照打开，开着就关掉。
     /// @param sessions 打开那一刻的计数器快照（开着时传入被忽略）。
@@ -77,8 +104,8 @@ class DebugPanel {
     [[nodiscard]] auto is_showing() const noexcept -> bool { return dialog_ != nullptr && dialog_->is_open(); }
 
   private:
-    aurora::OverlayHost &host_;
-    aurora::FocusManager &focus_;
+    aurora::OverlayHost *host_ = nullptr;   ///< 非拥有：当前挂在谁的宿主上（`set_overlay_destination` 可换）。
+    aurora::FocusManager *focus_ = nullptr; ///< 非拥有：与宿主同生同换的那一扇窗的焦点权威。
     std::shared_ptr<aurora::Dialog> dialog_;
     std::optional<std::size_t> overlay_index_;
     std::size_t scope_depth_before_ = 0;

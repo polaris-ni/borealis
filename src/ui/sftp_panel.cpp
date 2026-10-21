@@ -102,10 +102,20 @@ constexpr auto kDoubleClickWindow = std::chrono::milliseconds{500};
 // 生命周期
 // ============================================================
 
-SftpPanel::SftpPanel(aurora::OverlayHost &host, Hooks hooks) : host_{host}, hooks_{std::move(hooks)} {
+SftpPanel::SftpPanel(aurora::OverlayHost &host, Hooks hooks) : host_{&host}, hooks_{std::move(hooks)} {
     // worker 与面板同生共死：线程在构造即起（拨号请求随 open() 投递），
     // 析构置停机位后 join，SftpClient 的析构腿兜底断链。
     worker_ = std::thread([this]() -> void { run_worker(); });
+}
+
+// 先摘后换（头文件的判据）：`close()` 先置取消旗再投断链，并把对话框层与主卡片按既有次序从**旧宿主**
+// 摘回。搬窗等于换了一条会话生命周期——列目录的在途传输不跟着搬到另一扇窗继续跑。
+auto SftpPanel::set_overlay_host(aurora::OverlayHost &host) -> void {
+    if (host_ == &host) {
+        return;
+    }
+    close();
+    host_ = &host;
 }
 
 SftpPanel::~SftpPanel() {
@@ -144,7 +154,7 @@ auto SftpPanel::open() -> void {
     if (!profile.has_value()) {
         state_ = ConnState::NotSsh;  // D8① 空态：非 SSH 标签不拨号，只给状态行。
     }
-    overlay_index_ = host_.add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(build_root())});
+    overlay_index_ = host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(build_root())});
     if (profile.has_value()) {
         std::optional<std::string> secret;
         if (hooks_.resolve_secret != nullptr) {
@@ -168,7 +178,7 @@ auto SftpPanel::close() -> void {
 auto SftpPanel::clear_state() -> void {
     close_dialog();
     if (overlay_index_.has_value()) {
-        host_.remove_overlay(*overlay_index_);
+        host_->remove_overlay(*overlay_index_);
         overlay_index_.reset();
     }
     transfer_text_.reset();
@@ -548,8 +558,8 @@ auto SftpPanel::rebuild_overlay() -> void {
     if (!open_ || !overlay_index_.has_value()) {
         return;
     }
-    host_.remove_overlay(*overlay_index_);
-    overlay_index_ = host_.add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(build_root())});
+    host_->remove_overlay(*overlay_index_);
+    overlay_index_ = host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(build_root())});
 }
 
 // ============================================================
@@ -1081,7 +1091,7 @@ auto SftpPanel::close_dialog() -> void {
         dialog_.reset();
     }
     if (dialog_index_.has_value()) {
-        host_.remove_overlay(*dialog_index_);
+        host_->remove_overlay(*dialog_index_);
         dialog_index_.reset();
     }
     prompt_input_.reset();
@@ -1139,7 +1149,7 @@ auto SftpPanel::show_name_prompt(const std::string &title_key, const std::string
 
     dialog_ = std::make_shared<aurora::Dialog>();
     dialog_->set_content(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(content))});
-    dialog_index_ = host_.add_overlay(aurora::Node{dialog_});
+    dialog_index_ = host_->add_overlay(aurora::Node{dialog_});
     dialog_->show();
 }
 
@@ -1194,7 +1204,7 @@ auto SftpPanel::show_delete_confirm(const std::string &name, bool is_directory) 
         aurora::ColumnProps{.children = std::move(children), .gap = 8.0F});
     dialog_ = std::make_shared<aurora::Dialog>();
     dialog_->set_content(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(content))});
-    dialog_index_ = host_.add_overlay(aurora::Node{dialog_});
+    dialog_index_ = host_->add_overlay(aurora::Node{dialog_});
     dialog_->show();
 }
 

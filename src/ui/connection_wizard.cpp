@@ -197,7 +197,17 @@ class DeviceDropdown final : public aurora::Dropdown {
 }  // namespace
 
 ConnectionWizard::ConnectionWizard(aurora::OverlayHost &host, Hooks hooks)
-    : host_{host}, hooks_{std::move(hooks)} {}
+    : host_{&host}, hooks_{std::move(hooks)} {}
+
+// 先摘后换（头文件的判据）：`close()` 摘的是记在 `overlay_index_` 里的**旧宿主**序号，换指针之后这一步
+// 就变成拿旧序号去摘新增宿主的子节点。换完不重挂——建层只有 `build_and_show()` 一条腿，搬窗不开第二形态。
+auto ConnectionWizard::set_overlay_host(aurora::OverlayHost &host) -> void {
+    if (host_ == &host) {
+        return;
+    }
+    close();
+    host_ = &host;
+}
 
 ConnectionWizard::~ConnectionWizard() {
     close();
@@ -640,14 +650,14 @@ auto ConnectionWizard::build_and_show() -> void {
     if (dialog_ != nullptr) {
         // 换步/换值重建：先摘旧层再挂新层（序号按新建算，不留旧句柄）。
         if (overlay_index_.has_value()) {
-            host_.remove_overlay(*overlay_index_);
+            host_->remove_overlay(*overlay_index_);
             overlay_index_.reset();
         }
         dialog_.reset();
     }
     dialog_ = std::make_shared<aurora::Dialog>(
         aurora::Node{std::static_pointer_cast<aurora::Widget>(build_content())});
-    overlay_index_ = host_.add_overlay(
+    overlay_index_ = host_->add_overlay(
         aurora::Node{std::static_pointer_cast<aurora::Widget>(dialog_)});
     dialog_->show();
     open_ = true;
@@ -665,7 +675,7 @@ auto ConnectionWizard::close() -> void {
 
 auto ConnectionWizard::clear_state() -> void {
     if (overlay_index_.has_value()) {
-        host_.remove_overlay(*overlay_index_);
+        host_->remove_overlay(*overlay_index_);
         overlay_index_.reset();
     }
     dialog_.reset();

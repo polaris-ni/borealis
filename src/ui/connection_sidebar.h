@@ -59,6 +59,18 @@ public:
     auto operator=(const ConnectionSidebar &) -> ConnectionSidebar & = delete;
     ~ConnectionSidebar();
 
+    /// @brief 换浮层宿主（`SPEC.FEAT.WS.03` 稿 D6「面板搬窗」）：本侧栏是 app 级单实例，而浮层要挂在
+    ///        **发起命令的那一扇窗**的宿主上，装配层在打开腿与关窗撤账腿各调一次。
+    ///
+    /// 已挂在别的宿主上时先 `close()`——它按自己记的序号从**旧宿主**摘回，先换指针再去摘就会拿旧序号摘
+    /// 新增宿主的子节点（那可能是别的面板的浮层）。换完本件处于关闭态，调用方要在新增窗上看见它就接着
+    /// 调 open/toggle。代价档：面板在两窗间是「搬过去」而不是「各有一份」。
+    /// @param host 新增浮层宿主，**非拥有**：它持有本件的浮层节点，析构次序须晚于本件。
+    auto set_overlay_host(aurora::OverlayHost &host) -> void;
+
+    /// @brief 现在挂在谁的宿主上（装配层据此判断「这一扇散了，本件要搬」；nullptr＝从未挂过）。
+    [[nodiscard]] auto overlay_host() const noexcept -> aurora::OverlayHost * { return host_; }
+
     auto open() -> void;
     auto close() -> void;
     auto toggle() -> void {
@@ -98,7 +110,7 @@ private:
     auto run_import() -> void;
     auto clear_state() -> void;
 
-    class aurora::OverlayHost &host_;
+    class aurora::OverlayHost *host_ = nullptr;  ///< 非拥有：当前挂在谁的宿主上（`set_overlay_host` 可换）。
     Hooks hooks_{};
     conn::ProfileStore store_{};
     conn::SidebarViewMode mode_ = conn::SidebarViewMode::All;

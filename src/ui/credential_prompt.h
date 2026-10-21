@@ -36,6 +36,17 @@ public:
     auto operator=(const CredentialPrompt &) -> CredentialPrompt & = delete;
     ~CredentialPrompt();
 
+    /// @brief 换浮层宿主（`SPEC.FEAT.WS.03` 稿 D6「面板搬窗」）：询问框是 app 级单实例，要弹在**发起
+    ///        连接的那一扇窗**上；装配层在 `ask()` 之前与关窗撤账腿各调一次。
+    ///
+    /// 已挂在别的宿主上时先 `close()`——那一条走既有取消腿（`on_cancel` 把挂起态清掉），摘的是**旧宿主**
+    /// 上自己那个序号。换完处于关闭态，调用方接着 `ask()` 就挂到新增窗。
+    /// @param host 新增浮层宿主，**非拥有**：它持有本件的浮层节点，析构次序须晚于本件。
+    auto set_overlay_host(aurora::OverlayHost &host) -> void;
+
+    /// @brief 现在挂在谁的宿主上（装配层据此判断「这一扇散了，本件要搬」；nullptr＝从未挂过）。
+    [[nodiscard]] auto overlay_host() const noexcept -> aurora::OverlayHost * { return host_; }
+
     /// @brief 弹出询问。@param kind 要哪种材料 @param profile_name 展示名（进标题）。
     auto ask(conn::SecretAsk kind, const std::string &profile_name) -> void;
 
@@ -52,7 +63,7 @@ private:
     auto build_dialog() -> void;
     auto clear_state() -> void;
 
-    class aurora::OverlayHost &host_;
+    class aurora::OverlayHost *host_ = nullptr;  ///< 非拥有：当前挂在谁的宿主上（`set_overlay_host` 可换）。
     Hooks hooks_{};
     std::shared_ptr<aurora::Dialog> dialog_{};
     std::optional<std::size_t> overlay_index_{};

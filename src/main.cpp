@@ -1046,8 +1046,10 @@ auto main(int argc, char **argv) -> int {
                                borealis::term::LineEnding line_ending)
         -> std::shared_ptr<borealis::ui::TerminalView> {
         // 按属主窗取 surface：读的是 `WorkspaceWindow::surface` 这一枚成员指针，窗登记进宿主之后它
-        // 仍有效（窗口本体归宿主，surface 归窗口）。拆窗时这一腿要停发——那属批 4 的账目，
-        // TODO(SPEC.FEAT.WS.03): 窗关闭后唤醒腿须随窗撤账，此刻生产还开不出第二扇，也关不掉这一扇。
+        // 仍有效（窗口本体归宿主，surface 归窗口）。拆窗时这一腿要停发——那半区归关窗撤账链（批 4-B
+        // 的 ①②：本窗名下全部标签先走 `perform_close`，会话随账目一起散，此后没有还能触到这一腿的读线程）。
+        // TODO(SPEC.FEAT.WS.03): 残留档＝会话被装配层的中间态留档（重启的 `retired`、回滚那一条）持着时，
+        // 唤醒腿仍捕本 `WorkspaceWindow &`；此刻它只可能指着还活着的那一扇，但这一条没有证人（裁决 7.83）。
         session->set_frame_wake([&window]() -> void {
             if (window.surface != nullptr) {
                 window.surface->request_wake();
@@ -1634,6 +1636,76 @@ auto main(int argc, char **argv) -> int {
         return window == nullptr ? std::nullopt : window->current_tab_id;
     };
 
+    // 面板与常驻浮层的落窗腿（稿 D6 的推荐档：app 级一份、浮层挂**发起命令的那一扇窗**）。两条腿共用这一
+    // 处的六个入口——打开腿（命令闭包在 open/toggle 之前先搬）与批 4-B 的撤账腿（散掉那一扇名下的浮层搬到
+    // 活着的落点）。三条口径：
+    //   ① 取不到落点窗即**原地不动**：面板继续挂在它现在那一扇，而不是猜一扇活着的窗——「把用户没碰过的
+    //      那一扇改得看得见」比「这一条没生效」更难解释（上面 `command_window` 那条理由同一条）；
+    //   ② 真值源在各件自己记的那枚宿主指针（`overlay_host()`），装配层不另立一张「面板在哪扇窗」的表，
+    //      那是第二份账、必然与摘挂时机分叉；
+    //   ③ 摘与挂的次序归各件自己的 setter（它按记下的序号从**旧宿主**摘回），本支只决定「搬到哪」。
+    // 宿主指针 → 本仓那份窗：把「某件现在挂在哪」换算回「哪一扇」的唯一地方（容器才同时有宿主与窗）。
+    // 取不到即那枚宿主属于一扇已经散掉的窗（撤账腿还没跑到），调用方按空落点处理。
+    auto window_of_host = [&workspace_windows](const au::OverlayHost *mounted) -> WorkspaceWindow * {
+        if (mounted == nullptr) {
+            return nullptr;
+        }
+        for (const std::unique_ptr<WorkspaceWindow> &candidate : workspace_windows) {
+            if (candidate->overlay_host.get() == mounted) {
+                return candidate.get();
+            }
+        }
+        return nullptr;
+    };
+    auto retarget_panel_to = [](auto &panel, WorkspaceWindow *window) -> void {
+        if (window == nullptr) {
+            return;
+        }
+        panel.set_overlay_host(*window->overlay_host);
+    };
+    auto retarget_panel = [&command_window, &retarget_panel_to](auto &panel) -> void {
+        retarget_panel_to(panel, command_window ? command_window() : nullptr);
+    };
+    // 两只「浮层常驻、开合只切显隐」的框另走一条腿：焦点权威必须与宿主一起换（稿 §0 的 F3——压进哪一扇窗
+    // 的焦点栈就由哪一扇窗弹出），单换宿主会把作用域留在已经散掉的那一栈里。
+    auto retarget_destination_to = [&window_focus](auto &panel, WorkspaceWindow *window) -> void {
+        if (window == nullptr) {
+            return;
+        }
+        panel.set_overlay_destination(*window->overlay_host, window_focus(*window));
+    };
+    auto retarget_destination = [&command_window, &retarget_destination_to](auto &panel) -> void {
+        retarget_destination_to(panel, command_window ? command_window() : nullptr);
+    };
+    // 散窗那一侧的对应腿（撤账链的 ③′）：与各件那条 `set_overlay_destination` 的差别只在方法本身——旧窗的
+    // 焦点管理器已被框架回收（`06-app-platform.md` §3「宿主被回收**之后**触发」），摘与弹都没有落点，
+    // 只能清零认下新落点。焦点权威同样按窗取，故这一支也要经 `window_focus`。
+    auto abandon_destination_to = [&window_focus](auto &target, WorkspaceWindow *window) -> void {
+        if (window == nullptr) {
+            return;
+        }
+        target.abandon_overlay_destination(*window->overlay_host, window_focus(*window));
+    };
+    // 装配层直接挂进宿主的三只常驻浮层（命令面板、串口波特率框、会话日志框）的搬窗账目：记「挂在谁那儿 +
+    // 那一层的序号」。序号在重挂后**必须重取**——`remove_overlay` 是按当前子节点表 erase 的，摘掉一层会让
+    // 它后面的序号整体前移。宿主没有基础内容时 `add_overlay` 回空（框架 G29 的口径），而本仓每扇窗入根前
+    // 已经放上那层根 Column，故这一档在这三条腿上不可达。
+    struct MountedOverlay {
+        au::OverlayHost *on = nullptr;       ///< nullptr＝还没挂过（首次 `remount_overlay` 即建挂载）。
+        std::optional<std::size_t> index{};  ///< 挂上之后的序号（重挂要重取）。
+    };
+    auto remount_overlay = [](const auto &widget, MountedOverlay &state, au::OverlayHost &target) -> void {
+        if (state.on == &target) {
+            // 已经挂在发起窗上：常驻浮层的形态就是「挂一次、只切显隐」，不重复摘挂。
+            return;
+        }
+        if (state.index.has_value() && state.on != nullptr) {
+            state.on->remove_overlay(*state.index);
+        }
+        state.on = &target;
+        state.index = target.add_overlay(au::Node{std::static_pointer_cast<au::Widget>(widget)});
+    };
+
     // 视口的两条浮层依赖此刻才取得到，先给已存在的全部视图（首标签那一只）补挂，再交给
     // `create_new_tab` 与撤销重开在创建那一刻调用——两条建视图路径共用同一处接线，结构上不可能分叉。
     wire_view = [&window_focus, &app, &restart_current_tab, &logging_state_probe, &logging_toggle_action,
@@ -1713,6 +1785,10 @@ auto main(int argc, char **argv) -> int {
         rebuild_root_children(window, tab_workspaces);
     };
 
+    // 设置页自己那份句柄留给下面两条腿现读：`hooks.preview_wake` 要叫醒的是**面板此刻挂着的那一扇**，
+    // 而面板是 app 级单实例、宿主会随搬窗变（稿 D6）。与 `wizard_ref` 同一形态——先声明闭包、构造完再
+    // 赋值，钩子跑起来时读到的永远是那一枚已经建好的面板。
+    borealis::ui::SettingsPanel *settings_panel = nullptr;
     // 面板的三条接缝都在装配层兑现：装载取 `Store` 的当前配置，落盘走 `apply_form` + `replace()`，
     // 广播把刚落盘的配置重新折算成外观包与交互项交回视口（`SPEC.FEAT.PREF.02` 的「即时生效」腿）。
     borealis::ui::SettingsPanel::Hooks hooks;
@@ -1779,11 +1855,16 @@ auto main(int argc, char **argv) -> int {
     };
     // 夹具在预览视口的 `on_layout` 里随 `resize` 重投，那一批脏要下一帧才排；不唤醒就会停在
     // 「横条画了但内容还是上一版」。与下面 `set_on_frame` 里的 `pump_preview()` 配对存在。
-    // 唤醒腿按属主窗取 surface（稿 §0 的 F11）：此刻设置面板仍挂在按值留下的那一枚浮层宿主上（=首格），
-    // 于是叫醒的也是那一扇；面板「搬窗」而非「各一份」是 D6 的口径、落点在批 4-C，届时这一腿与浮层宿主
-    // 一起改按发起窗取。TODO(SPEC.FEAT.WS.03): 面板所属窗改动时这一腿要跟着改。
-    hooks.preview_wake = [&fallback_window]() -> void {
-        WorkspaceWindow *const window = fallback_window();
+    // 唤醒腿按**面板现在挂着的窗**取 surface（稿 D6 的搬窗腿之后，面板挂哪一扇是可变事实，真值源在面板
+    // 自己记的那枚宿主指针）：预览浮层就在那一扇的宿主里，叫醒别的窗只会让别的窗多画一帧，而这一帧该排的
+    // 横条脏仍留在设置页那一扇的队列里。对不上号即「面板挂在一扇已经散掉的窗上」——那是撤账腿还没跑到的
+    // 窗口，退回 `fallback_window()` 而不是不醒：夹具重投的脏总要有一扇窗来排。
+    hooks.preview_wake = [&settings_panel, &window_of_host, &fallback_window]() -> void {
+        WorkspaceWindow *window = window_of_host(settings_panel != nullptr ? settings_panel->overlay_host()
+                                                                           : nullptr);
+        if (window == nullptr) {
+            window = fallback_window();
+        }
         if (window != nullptr && window->surface != nullptr) {
             window->surface->request_wake();
         }
@@ -1836,6 +1917,7 @@ auto main(int argc, char **argv) -> int {
     hooks.pick_export_path = []() -> std::string { return picked_save_path(); };
     hooks.pick_import_path = []() -> std::string { return picked_open_path(); };
     borealis::ui::SettingsPanel panel{*host, app.shortcuts(), std::move(hooks)};
+    settings_panel = &panel;
 
     // ---- 连接管理器（CONN.07 / CONN.09，设计稿 D1–D8 已裁决收口）----
     // UTF-8 档案名 → 标签名：与「撤销重开」那条腿同一解法（CJK 名逐字节折码点会成乱码）。
@@ -2215,6 +2297,14 @@ auto main(int argc, char **argv) -> int {
     };
     auto credential_prompt =
         std::make_shared<borealis::ui::CredentialPrompt>(*host, std::move(prompt_hooks));
+    // 凭据问句的唯一漏斗（稿 D6 的搬窗腿）：五处入口（档案连接、隧道、密钥口令、重启重拨、SFTP 重拨）
+    // 都要「先把问句搬到发起连接的那一扇窗，再问」。写在调用点就会漏一处，漏掉的那一处等于把材料问句
+    // 弹在用户没碰过的窗脸上——那正是 `CredentialPrompt` 这一支按窗取要防的形态。
+    auto ask_secret = [&credential_prompt, &retarget_panel](const borealis::conn::SecretAsk ask,
+                                                            const std::string &name) -> void {
+        retarget_panel(*credential_prompt);
+        credential_prompt->ask(ask, name);
+    };
 
     auto connect_profile = [&](const borealis::conn::Profile &profile) -> void {
         if (profile.type == borealis::conn::ConnectionType::Local) {
@@ -2242,7 +2332,7 @@ auto main(int argc, char **argv) -> int {
         // Reference 句柄本期同样落询问：真实 OS 后端（libsecret/Keychain/CredMan）留独立
         // 任务，这是 CONN.09 的降级语义而非捷径（设计稿 Q3）。
         pending_profile = profile;
-        credential_prompt->ask(ask, profile.name);
+        ask_secret(ask, profile.name);
     };
 
     borealis::ui::ConnectionWizard::Hooks wizard_hooks;
@@ -2293,8 +2383,12 @@ auto main(int argc, char **argv) -> int {
         return !store.replace(std::move(next)).has_value();
     };
     sidebar_hooks.connect = connect_profile;
-    sidebar_hooks.create_new = [&wizard]() -> void { wizard->open_new(); };
-    sidebar_hooks.edit = [&wizard](const borealis::conn::Profile &profile) -> void {
+    sidebar_hooks.create_new = [&wizard, &retarget_panel]() -> void {
+        retarget_panel(*wizard);
+        wizard->open_new();
+    };
+    sidebar_hooks.edit = [&wizard, &retarget_panel](const borealis::conn::Profile &profile) -> void {
+        retarget_panel(*wizard);
         wizard->open_edit(profile);
     };
     // `~/.ssh/config` 只读导入（D5）：读盘 + parse_ssh_config + 确定性 id 去重；单向不回写。
@@ -2345,7 +2439,10 @@ auto main(int argc, char **argv) -> int {
     toggle_connections.id = "connections.toggle";
     toggle_connections.title = borealis::ui::settings_label("connections.title");
     toggle_connections.category = "terminal";
-    toggle_connections.action = [&sidebar]() -> void { sidebar->toggle(); };
+    toggle_connections.action = [&sidebar, &retarget_panel]() -> void {
+        retarget_panel(*sidebar);  // 搬窗（稿 D6）：先挂到发起命令那一扇的宿主上，再走既有开合腿
+        sidebar->toggle();
+    };
     toggle_connections.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(toggle_connections));
 
@@ -2396,7 +2493,7 @@ auto main(int argc, char **argv) -> int {
     // D7 凭据链：agent 型（SecretAsk::None）静默拉起；询问型经 credential_prompt
     // 异步回-call（启动序绝不弹模态框——自启路径根本不走这里）。
     tunnel_hooks.start =
-        [&store, &credential_prompt, &pending_tunnel, &launch_tunnel, tunnel_mutex,
+        [&store, &ask_secret, &pending_tunnel, &launch_tunnel, tunnel_mutex,
          tunnel_runtimes](const borealis::conn::TunnelSpec &spec) -> void {
         const auto settings = store.settings();
         const borealis::conn::Profile *target = nullptr;
@@ -2421,7 +2518,7 @@ auto main(int argc, char **argv) -> int {
             return;
         }
         pending_tunnel = std::pair{target->ssh, spec};
-        credential_prompt->ask(ask, target->name);
+        ask_secret(ask, target->name);
     };
     tunnel_hooks.stop = [&tunnel_entries, tunnel_mutex,
                          tunnel_runtimes](const std::string &id) -> void {
@@ -2478,7 +2575,10 @@ auto main(int argc, char **argv) -> int {
     open_tunnels.id = "tunnels.open";
     open_tunnels.title = borealis::ui::settings_label("tunnel.title");
     open_tunnels.category = "terminal";
-    open_tunnels.action = [&tunnel_panel]() -> void { tunnel_panel.toggle(); };
+    open_tunnels.action = [&tunnel_panel, &retarget_panel]() -> void {
+        retarget_panel(tunnel_panel);
+        tunnel_panel.toggle();
+    };
     open_tunnels.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(open_tunnels));
 
@@ -2514,7 +2614,10 @@ auto main(int argc, char **argv) -> int {
     toggle_sftp.id = "sftp.toggle";
     toggle_sftp.title = borealis::ui::settings_label("sftp.title");
     toggle_sftp.category = "terminal";
-    toggle_sftp.action = [&sftp_panel]() -> void { sftp_panel.toggle(); };
+    toggle_sftp.action = [&sftp_panel, &retarget_panel]() -> void {
+        retarget_panel(sftp_panel);
+        sftp_panel.toggle();
+    };
     toggle_sftp.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(toggle_sftp));
 
@@ -2635,7 +2738,7 @@ auto main(int argc, char **argv) -> int {
             }
             if (row.encrypted) {
                 pending_export = std::pair{path, row.basename};
-                credential_prompt->ask(borealis::conn::SecretAsk::Passphrase, row.basename);
+                ask_secret(borealis::conn::SecretAsk::Passphrase, row.basename);
             } else {
                 submit_keys_export(path, std::nullopt);
             }
@@ -2668,7 +2771,7 @@ auto main(int argc, char **argv) -> int {
             return;
         }
         pending_push = std::tuple{path, target->ssh, line};
-        credential_prompt->ask(ask, target->name);
+        ask_secret(ask, target->name);
     };
     keys_hooks.delete_key = [&keys_worker, &store, keys_user_dir](const std::string &path)
         -> void {
@@ -2689,7 +2792,10 @@ auto main(int argc, char **argv) -> int {
     open_keys.id = "keys.open";
     open_keys.title = borealis::ui::settings_label("keys.title");
     open_keys.category = "terminal";
-    open_keys.action = [&keys_panel]() -> void { keys_panel.toggle(); };
+    open_keys.action = [&keys_panel, &retarget_panel]() -> void {
+        retarget_panel(keys_panel);
+        keys_panel.toggle();
+    };
     open_keys.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(open_keys));
 
@@ -2699,7 +2805,12 @@ auto main(int argc, char **argv) -> int {
     open_settings.id = "settings.open";
     open_settings.title = borealis::ui::settings_label("settings.action.open");
     open_settings.category = "settings";
-    open_settings.action = [&panel]() -> void { panel.open(); };
+    open_settings.action = [&panel, &retarget_panel]() -> void {
+        // 搬窗（稿 D6）：设置页挂在按值留存的那枚宿主上（=首格）直到第一次被打开为止，这一跳之后它跟着
+        // 发起命令的窗走。`hooks.preview_wake` 读的就是这一支改完之后的宿主。
+        retarget_panel(panel);
+        panel.open();
+    };
     open_settings.default_binding = au::KeyCombo{au::ModifierKey::Control, au::KeyCode::Comma};
     open_settings.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(open_settings));
@@ -2748,7 +2859,10 @@ auto main(int argc, char **argv) -> int {
 
     // 把命令面板挂进场景根（`OverlayHost` 的子节点 [1..] 是按需追加的浮层）：初始不打开，故只建不弹。
     // 面板的 `open()` / `close()` 会自动管理焦点作用域（push_scope / pop_scope），与设置面板同口径。
-    (void)host->add_overlay(std::static_pointer_cast<au::Widget>(command_palette));
+    // 初始挂首格那一份宿主，此后每次打开先搬到发起窗（稿 D6）。序号在这里就记下：不留序号的常驻浮层
+    // 搬不了窗——摘不到自己那一层，只能往别的窗再挂一份，那变成「各窗一份」，不是本条的口径。
+    MountedOverlay palette_mount;
+    remount_overlay(command_palette, palette_mount, *host);
 
     // 命令面板的打开入口（判据文 §3 D1）：`Ctrl+Shift+P` 呼出，语义同 Tabby / Windows Terminal。
     // 框架侧 CommandPalette 已具备模态浮层 + 即时过滤 + Enter/Esc/↑/↓ 全接管能力（widget/command_palette.h）。
@@ -2756,7 +2870,16 @@ auto main(int argc, char **argv) -> int {
     open_command_palette.id = "command_palette.open";
     open_command_palette.title = borealis::ui::settings_label("command_palette.action.open");
     open_command_palette.category = "workspace";
-    open_command_palette.action = [command_palette]() -> void { command_palette->open(); };
+    open_command_palette.action = [command_palette, &command_window, &palette_mount,
+                                   &remount_overlay]() -> void {
+        // 搬窗（稿 D6）：app 级一只面板，浮层要开在发起 `Ctrl+Shift+P` 的那一扇窗上。取不到落点窗即按
+        // 它现在挂着的那一扇打开（口径①，与面板那几条同一条）。
+        WorkspaceWindow *const window = command_window ? command_window() : nullptr;
+        if (window != nullptr) {
+            remount_overlay(command_palette, palette_mount, *window->overlay_host);
+        }
+        command_palette->open();
+    };
     open_command_palette.default_binding = au::KeyCombo{au::ModifierKey::Control | au::ModifierKey::Shift, au::KeyCode::P};
     open_command_palette.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(open_command_palette));
@@ -2949,7 +3072,7 @@ auto main(int argc, char **argv) -> int {
         // 询问型且手上没材料：弹询问，明文回到 `on_secret` 的 `pending_restart` 那一支才真正重开。
         // 标题给的是主机而不是档案名——本表只留 `SshProfile`，档案展示名不在这一层的料里。
         pending_restart = std::make_pair(id, ssh);
-        credential_prompt->ask(ask, ssh.host);
+        ask_secret(ask, ssh.host);
     };
 
     // `session.restart` 命令（`SPEC.FEAT.WS.05`）：与浮层按钮同源，判据是「同一份闭包、两处入口」。
@@ -2984,12 +3107,16 @@ auto main(int argc, char **argv) -> int {
     // 拒绝」而**当前档不动**——`current_baud()` 只在回读相符时才前进，所以「界面回原档」这条是
     // 结构性的，不需要装配层再回滚一遍。
     auto serial_baud_dialog = std::make_shared<au::Dialog>();
-    bool serial_baud_mounted = false;
+    // 落点账目与命令面板同一形态（稿 D6）：初始挂首格那一份宿主，此后每次开框先搬到发起窗。留序号而不是
+    // 留一枚 `bool mounted` 的理由就在搬窗这一步——没有序号就摘不到自己那一层。
+    MountedOverlay serial_baud_mount;
+    remount_overlay(serial_baud_dialog, serial_baud_mount, *host);
     auto show_serial_baud_frame = [&](au::Node content) -> void {
-        if (!serial_baud_mounted) {
-            static_cast<void>(host->add_overlay(
-                aurora::Node{std::static_pointer_cast<au::Widget>(serial_baud_dialog)}));
-            serial_baud_mounted = true;
+        // 浮层落点按发起窗：这一只框由 `serial.set_baud` 命令唤起，命令闭包拿不到派发来源（稿 §0 的 F5），
+        // 落点只能问 tracker。取不到窗即按它现在挂着的那一扇（口径①），不是退回主窗别名。
+        WorkspaceWindow *const window = command_window ? command_window() : nullptr;
+        if (window != nullptr) {
+            remount_overlay(serial_baud_dialog, serial_baud_mount, *window->overlay_host);
         }
         serial_baud_dialog->set_content(std::move(content));
         serial_baud_dialog->show();
@@ -3096,15 +3223,16 @@ auto main(int argc, char **argv) -> int {
     // 一次 `open` 与一次 `mkdir` 落在 UI 线程，是裁决 7.116⑤ 明确接受的代价（量级是一次系统调用，
     // 而每分片的重复工都在该会话自己的读线程上，见 `session_log.h` 的头注）。
     auto log_dialog = std::make_shared<au::Dialog>();
-    bool log_dialog_mounted = false;
+    // 落点账目同命令面板与波特率框（稿 D6）：初始挂首格，开框时按发起窗搬。
+    MountedOverlay log_dialog_mount;
+    remount_overlay(log_dialog, log_dialog_mount, *host);
     auto log_arg = [](const std::string &text) -> std::vector<au::LocalizedString> {
         return {au::LocalizedString{text}};
     };
     auto show_log_frame = [&](au::Node content) -> void {
-        if (!log_dialog_mounted) {
-            static_cast<void>(host->add_overlay(
-                aurora::Node{std::static_pointer_cast<au::Widget>(log_dialog)}));
-            log_dialog_mounted = true;
+        WorkspaceWindow *const window = command_window ? command_window() : nullptr;
+        if (window != nullptr) {
+            remount_overlay(log_dialog, log_dialog_mount, *window->overlay_host);
         }
         log_dialog->set_content(std::move(content));
         log_dialog->show();
@@ -3262,12 +3390,18 @@ auto main(int argc, char **argv) -> int {
     // 于是 `Session` 的四个 stats 取数点只在主线程这一次调用上发生锁竞争。
     // TODO(SPEC.NF.RELI.01): 崩溃留存腿（信号钩子、dump 还是自写诊断文件、Windows/POSIX 分平台形态）
     // 与既有文档无出处可依，待人裁决后再开工，本棒不自行择一实现。
-    borealis::ui::DebugPanel debug_panel{*host, app.focus()};
+    // 宿主与焦点权威**成对**交进来（稿 §0 的 F3：`app.focus()` 恒指宿主表里的主窗那一份，跟着
+    // `main_host_` 易主）：这一对在启动时是首格那扇窗，之后每次搬窗由 `set_overlay_destination` 一起换，
+    // 于是「压进哪一栈就由哪一栈弹出」那条不变量不会因中间有人关了主窗而断掉。
+    borealis::ui::DebugPanel debug_panel{*host, window_focus(*workspace_windows.front())};
     au::Command open_diagnostics;
     open_diagnostics.id = "diagnostics.open";
     open_diagnostics.title = borealis::ui::settings_label("diagnostics.action.open");
     open_diagnostics.category = "workspace";
-    open_diagnostics.action = [&debug_panel, &tab_workspaces]() -> void {
+    open_diagnostics.action = [&debug_panel, &tab_workspaces, &retarget_destination]() -> void {
+        // 搬窗（稿 D6）：诊断框的浮层与焦点权威一起换到发起这一条的窗上（F12 经命令层进来，落点问
+        // tracker）。快照内容与挂在哪儿无关，这一跳只决定「看得见的那一扇」。
+        retarget_destination(debug_panel);
         std::vector<borealis::ui::DebugSessionSnapshot> snapshots;
         for (const auto &[tab_id, workspace] : tab_workspaces) {
             // 标题里的格号就是真实 `PaneId`（稿 §6 的诊断行）：旧形态取的是 vector 下标 +1，
@@ -3421,7 +3555,7 @@ auto main(int argc, char **argv) -> int {
     // 启动降级提示（`SPEC.FEAT.PREF.07`，裁决 7.76⑤）：`LoadOutcome` 四态里只有两条降级态会弹，弹一次即止。
     // `message` 是 ASCII 英文诊断，只进日志不上中文界面（判据文 S13①），故以「本次真的弹了」为条件——
     // 「哪两态弹」的判定只在 `StartupNotice` 里存一份，装配层不另做一遍 `outcome` 分支。
-    borealis::ui::StartupNotice notice{*host, app.focus()};
+    borealis::ui::StartupNotice notice{*host, window_focus(*workspace_windows.front())};
     if (notice.show_if_needed(store.report())) {
         AURORA_LOG_WARN("main", "config load degraded: ", store.report().message);
     }
@@ -3568,7 +3702,11 @@ auto main(int argc, char **argv) -> int {
     // 返回之后由退出序统一收（本函数末尾那条 `session->close()` 循环），形态与本棒之前完全一致。
     app.set_on_window_closed([&workspace_windows, &perform_close, &erase_tab_ledger, &tab_workspaces,
                               &broadcast_router, &active_window_tracker, &fallback_window,
-                              &startup_wake](au::WindowId closed_id) -> void {
+                              &startup_wake, &retarget_panel_to, &abandon_destination_to,
+                              &remount_overlay, &sidebar, &wizard, &credential_prompt, &panel,
+                              &tunnel_panel, &sftp_panel, &keys_panel, &debug_panel, &notice,
+                              &command_palette, &serial_baud_dialog, &log_dialog, &palette_mount,
+                              &serial_baud_mount, &log_dialog_mount](au::WindowId closed_id) -> void {
         std::size_t index = workspace_windows.size();
         for (std::size_t probe = 0U; probe < workspace_windows.size(); ++probe) {
             if (workspace_windows[probe]->id == closed_id) {
@@ -3611,6 +3749,53 @@ auto main(int argc, char **argv) -> int {
         }
         // ③ 落点记录器撤账（F20：号只增不复用，撤掉的号永远不会再被返回）。
         active_window_tracker.forget(closed_id);
+        // ③′ 浮层落点搬窗（稿 D6＝批 4-C）：面板与三只装配层直接挂进宿主的常驻浮层都是 **app 级一份**，
+        //     挂在哪一扇由发起命令的那一扇决定；那一扇散了，「一份」不能跟着散，得搬到还落得下去的窗上。
+        //     这一跳必须排在 ④ **之前**：setter 与重挂都要从**旧宿主**按记下的序号摘回，而旧宿主随本层对象
+        //     一起散（主窗那一份另有 `host` 那枚按值副本续命，其余窗没有这层保险）。
+        //     落点是「除这一扇之外的第一扇」而不是 `command_window()`：关闭不是一条来自某扇窗的命令，
+        //     没有派发事实可依，与 ⑤⑥ 那两跳同一条兜底口径；一扇都不剩即空落点，各处按口径 ① 原地不动
+        //     （稿 F19：关最后一扇时框架保留主宿主，本钩子根本不触发，那一档走的是 `run()` 之后的退出序）。
+        //     两只常驻框另走 `abandon_overlay_destination`——旧窗的焦点管理器在 ④ 之前就已被框架回收
+        //     （aurora 主仓 `06-app-platform.md` §3「宿主被回收之后触发」），那条 `set_overlay_destination`
+        //     里的 `pop_scope()` 会落手在已析构的对象上。
+        WorkspaceWindow *landing_window = nullptr;
+        for (const std::unique_ptr<WorkspaceWindow> &candidate : workspace_windows) {
+            if (candidate.get() != &window) {
+                landing_window = candidate.get();
+                break;
+            }
+        }
+        au::OverlayHost *const closing_host = window.overlay_host.get();
+        auto retire_panel = [closing_host, landing_window, &retarget_panel_to](auto *panel) -> void {
+            if (panel != nullptr && panel->overlay_host() == closing_host) {
+                retarget_panel_to(*panel, landing_window);
+            }
+        };
+        auto retire_destination = [closing_host, landing_window, &abandon_destination_to](auto *panel) -> void {
+            if (panel != nullptr && panel->overlay_host() == closing_host) {
+                // 无落点时助手原地不动（口径 ①）：此刻旧宿主已被 ④ 收走，本件的账由析构收尾。
+                abandon_destination_to(*panel, landing_window);
+            }
+        };
+        auto retire_mount =
+            [closing_host, landing_window, &remount_overlay](const auto &widget, MountedOverlay &state) -> void {
+                if (landing_window != nullptr && state.on == closing_host) {
+                    remount_overlay(widget, state, *landing_window->overlay_host);
+                }
+            };
+        retire_panel(sidebar.get());
+        retire_panel(wizard.get());
+        retire_panel(credential_prompt.get());
+        retire_panel(&panel);
+        retire_panel(&tunnel_panel);
+        retire_panel(&sftp_panel);
+        retire_panel(&keys_panel);
+        retire_destination(&debug_panel);
+        retire_destination(&notice);
+        retire_mount(command_palette, palette_mount);
+        retire_mount(serial_baud_dialog, serial_baud_mount);
+        retire_mount(log_dialog, log_dialog_mount);
         // ④ 本层对象落地：此刻宿主已散，控件树只剩这一格持着的 `shared_ptr`，随它一起散。
         workspace_windows.erase(workspace_windows.begin() + static_cast<std::ptrdiff_t>(index));
         // ⑤ 兜底落点易主：主窗自己散了才换（`forget` 之后取不到任何落点即那一档）。框架把主窗位交给

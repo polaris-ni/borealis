@@ -41,7 +41,17 @@ using aurora::Color;
 }  // namespace
 
 CredentialPrompt::CredentialPrompt(aurora::OverlayHost &host, Hooks hooks)
-    : host_{host}, hooks_{std::move(hooks)} {}
+    : host_{&host}, hooks_{std::move(hooks)} {}
+
+// 先摘后换：`close()` 走既有取消腿（`on_cancel` 清挂起态）并按记下的序号摘**旧宿主**上那一层。搬窗因此
+// 等于「上一次要的材料没答完就作废」——这是 D6 单实例的代价档，而不是把凭据问句搬进另一扇窗。
+auto CredentialPrompt::set_overlay_host(aurora::OverlayHost &host) -> void {
+    if (host_ == &host) {
+        return;
+    }
+    close();
+    host_ = &host;
+}
 
 CredentialPrompt::~CredentialPrompt() {
     close();
@@ -127,7 +137,7 @@ auto CredentialPrompt::ask(conn::SecretAsk kind, const std::string &profile_name
 
     dialog_ = std::make_shared<aurora::Dialog>(
         aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(content))});
-    overlay_index_ = host_.add_overlay(
+    overlay_index_ = host_->add_overlay(
         aurora::Node{std::static_pointer_cast<aurora::Widget>(dialog_)});
     dialog_->show();
     open_ = true;
@@ -146,7 +156,7 @@ auto CredentialPrompt::close() -> void {
 auto CredentialPrompt::clear_state() -> void {
     // 降序摘除不适用（本件一次只有一层浮层），但「先摘层再清句柄」的次序同款。
     if (overlay_index_.has_value()) {
-        host_.remove_overlay(*overlay_index_);
+        host_->remove_overlay(*overlay_index_);
         overlay_index_.reset();
     }
     dialog_.reset();

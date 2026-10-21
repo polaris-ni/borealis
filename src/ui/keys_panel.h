@@ -91,6 +91,18 @@ class KeysPanel {
     auto operator=(const KeysPanel &) -> KeysPanel & = delete;
     ~KeysPanel();
 
+    /// @brief 换浮层宿主（`SPEC.FEAT.WS.03` 稿 D6「面板搬窗」）：面板是 app 级单实例，浮层要挂在发起
+    ///        命令的那一扇窗上；装配层在打开腿与关窗撤账腿各调一次。
+    ///
+    /// 已挂在别的宿主上时先 `close()`——生成／推送／删除确认这三层二级浮层由既有取消腿一起从**旧宿主**
+    /// 摘回（换指针之后再摘就会拿旧序号摘新增宿主的子节点）。换完处于关闭态，调用方接着 open/toggle 就
+    /// 挂到新增窗；代价是搬窗那一刻二级浮层里没提交的输入不保留。
+    /// @param host 新增浮层宿主，**非拥有**：它持有本件的浮层节点，析构次序须晚于本件。
+    auto set_overlay_host(aurora::OverlayHost &host) -> void;
+
+    /// @brief 现在挂在谁的宿主上（装配层据此判断「这一扇散了，本件要搬」；nullptr＝从未挂过）。
+    [[nodiscard]] auto overlay_host() const noexcept -> aurora::OverlayHost * { return host_; }
+
     auto open() -> void;
     auto close() -> void;
     auto toggle() -> void {
@@ -177,7 +189,7 @@ class KeysPanel {
     /// @brief 把快照折成行表并记下（tick 与几条动作尾巴共用）。
     auto apply_snapshot(const KeysSnapshot &snapshot) -> void;
 
-    class aurora::OverlayHost &host_;
+    class aurora::OverlayHost *host_ = nullptr;  ///< 非拥有：当前挂在谁的宿主上（`set_overlay_host` 可换）。
     Hooks hooks_{};
     KeysSnapshot snapshot_{};
     std::vector<KeyRow> painted_rows_{};  ///< 上一帧实际画出的行（diff 基准）。
