@@ -393,6 +393,9 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     // 那句「将写入：完整路径」的落点；开启失败的回报两条各自独立，因为「正则非法」与「建不了文件」
     // 的下一步动作完全不同（改模式 vs 看目录）。
     {"menu.item.copy", "复制"},
+    // 第二条只在最近一条完成块有非空输出时出现（`SPEC.FEAT.INTEG.01`，裁决 7.123 D3①）：
+    // 与链接那条同一口径——出现与否由纯件 `plan_right_click` 决定，本条只管上屏措辞。
+    {"menu.item.copy_command_output", "复制上一命令的全部输出"},
     {"menu.item.paste", "粘贴"},
     // 第四条只在右键落点扫到链接时出现（`codespec/UI_URL.draft.md` 的 D12①）：它的出现与否由纯件
     // `plan_right_click` 决定，本条只管上屏措辞。
@@ -534,6 +537,9 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"terminal.link_osc8", "显式超链接（OSC 8）打开前"},
     {"terminal.link_heuristic", "纯文本识别的链接打开前"},
     {"terminal.link_schemes", "允许打开的协议"},
+    // 分隔线那行点明「悬停时」与「命令块」两件事：面板里没有第二处解释这条线什么时候出现，
+    // 写成「显示分隔线」会让用户以为它常驻（裁决 7.123 D9①）。
+    {"terminal.command_block_separator", "悬停命令块时显示分隔线"},
 
     // ---- 连接域 ----
     {"connection.local_shell", "默认 shell"},

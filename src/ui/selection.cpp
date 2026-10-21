@@ -208,18 +208,18 @@ auto word_span_at(const grid::Row &row, const GridCellPos point, const std::stri
     return RowSpan{point.row, first, last + 1U};
 }
 
-auto copy_text(const grid::Storage &storage, const Selection &selection, const CopyOptions &options)
-    -> std::string {
+auto copy_spans(const grid::Storage &storage, const std::span<const RowSpan> spans,
+                const CopyOptions &options, const bool trim_grid_fill) -> std::string {
     std::vector<std::string> lines;
-    for (const auto &span : row_spans(selection, storage.columns())) {
+    for (const auto &span : spans) {
         if (span.row >= storage.total_lines()) {
-            continue;  // 历史已溢出：这一号行不再是选区当初指着的内容，也不补空行
+            continue;  // 历史已溢出：这一号行不再是区间当初指着的内容，也不补空行
         }
         auto line = row_text(storage.line(span.row), span, options);
         if (!line.has_value()) {
             continue;
         }
-        if (options.trim_trailing_space) {
+        if (options.trim_trailing_space || trim_grid_fill) {
             trim_trailing_space(*line);
         }
         if (options.smart_line_join && !lines.empty() && continues_line(lines.back())) {
@@ -238,6 +238,11 @@ auto copy_text(const grid::Storage &storage, const Selection &selection, const C
         text.append(lines[i]);
     }
     return text;
+}
+
+auto copy_text(const grid::Storage &storage, const Selection &selection, const CopyOptions &options)
+    -> std::string {
+    return copy_spans(storage, row_spans(selection, storage.columns()), options);
 }
 
 }  // namespace borealis::ui

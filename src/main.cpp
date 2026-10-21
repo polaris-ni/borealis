@@ -186,6 +186,7 @@ struct TunnelEntry {
         .schemes = borealis::ui::parse_link_schemes(settings.terminal.link_schemes)};
     interaction.link.osc8 = settings.terminal.link_osc8;
     interaction.link.heuristic = settings.terminal.link_heuristic;
+    interaction.command_block_separator = settings.terminal.command_block_separator;
     return interaction;
 }
 

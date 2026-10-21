@@ -37,6 +37,7 @@
 #include "borealis/term/paste.h"
 #include "borealis/term/terminal.h"
 #include "borealis/ui/cell_layout.h"
+#include "borealis/ui/command_block.h"
 #include "borealis/ui/grid_size_debounce.h"
 #include "borealis/ui/palette.h"
 #include "borealis/ui/right_click.h"
@@ -89,6 +90,11 @@ class TerminalView final : public aurora::LeafWidget {
         RightClickAction right_click{RightClickAction::ContextMenu};  ///< 右键三态（配置键 `terminal.right_click`）。
         term::PasteOptions paste{};   ///< 粘贴处置口径（换行策略、行尾与块间隔）。
         LinkOptions link{};           ///< 链接白名单与两档确认策略（`SPEC.FEAT.INTERACT.05`）。
+        /// @brief 悬停命令块时在块首行上沿画一条分隔线（`SPEC.FEAT.INTEG.01`，裁决 7.123 D6①）。
+        ///
+        /// 缺省关（新增视觉默认不打扰）；唯一一项**参与绘制**的行为口径，故
+        /// `apply_interaction_options` 对它的改动要标脏（其余五项都用取时现读、不碰画面）。
+        bool command_block_separator{false};
     };
 
     /// @brief 确认框的三档答话（稿 D11① 的第一条接缝的应答位）。
@@ -311,13 +317,13 @@ class TerminalView final : public aurora::LeafWidget {
     /// @param appearance 新的外观包（与构造时同一个载体）。
     auto apply_appearance(Appearance appearance) -> void;
 
-    /// @brief 运行期换选区、复制与粘贴的行为口径（S4① 的第二条入口）。
+    /// @brief 运行期换选区、复制、粘贴与命令块分隔线的行为口径（S4① 的第二条入口）。
     ///
-    /// 五项都在**用取时现读**（`word_delimiters` 在 `span_of`、`copy_on_select` 在抬起分支、
+    /// 六项里有五项在**用取时现读**（`word_delimiters` 在 `span_of`、`copy_on_select` 在抬起分支、
     /// `copy` 在 `selected_text`、`right_click` 在 `on_right_click`、`paste` 在 `flush_paste_request`），
-    /// 故本入口只换值、不标脏——没有一项参与绘制，标脏只会让画面无谓地重画一遍。既有选区的端点
-    /// 是按**当时**的粒度折进外沿存下的，断点集改动不会回头重折已存的选区（用户改的是「下一次双击」，
-    /// 不是「上一次选中」）。
+    /// 故换值之外不标脏；双击选词的断点集改动也不会回头重折已存的选区（用户改的是「下一次双击」）。
+    /// `command_block_separator` 是例外：它决定一条已经画在屏上的线该不该在，故由真变假时立刻摘掉
+    /// 悬停块并标脏，否则线会一直留到下一次 Move（裁决 7.123 D6① 的「设置关掉立即摘」）。
     /// @param options 新的行为口径。
     auto apply_interaction_options(InteractionOptions options) -> void;
 
@@ -565,6 +571,16 @@ class TerminalView final : public aurora::LeafWidget {
         Line,
     };
 
+    /// @brief 一次复制请求的来源（裁决 7.123 D10①）。
+    ///
+    /// 一枚三值请求而不是两枚 bool：两个来源在同一帧同时置位没有定义，落地次序会变成隐式约定。
+    /// 请求在事件回调里只置位，读网格、拼文本与写剪贴板都在下一帧的 `on_frame`（AGENTS §4.5 第 25 条）。
+    enum class CopyRequest : std::uint8_t {
+        None,           ///< 没有待落地的复制。
+        Selection,      ///< 当前选区（copy-on-select 与菜单「复制」共用）。
+        CommandOutput,  ///< 右键那一刻存下的命令块输出（`menu_block_`）。
+    };
+
     /// @brief 帧内取用的光标快照：只收绘制需要的那五个字段，且要可比（`term::Cursor` 无 `==`）。
     struct CursorState {
         std::size_t row = 0;
@@ -669,7 +685,19 @@ class TerminalView final : public aurora::LeafWidget {
     auto reregister_blink_timer() -> void;
 
     /// @brief 画一个屏幕行：色带、批量文本（含斜体分流）与装饰线。
+    ///
+    /// 失败命令的输出行在 `layout_row` 之前预填一层低强度红底（裁决 7.123 D5① / D8①）：
+    /// 默认底色的 run 不会覆盖它，而显式 cell 底色、搜索命中与选区色带仍按既有次序盖在其上。
     auto paint_row(aurora::Painter &p, const aurora::Rect &bounds, std::size_t screen_row) -> void;
+
+    /// @brief 本屏幕行是否落在某条失败块的输出区间内（`failed_spans_` 的命中判据）。
+    [[nodiscard]] auto failed_background_at(std::size_t screen_row) const -> bool;
+
+    /// @brief 画悬停命令块的分隔线（`SPEC.FEAT.INTEG.01`，裁决 7.123 D6①）。
+    ///
+    /// 只在开关打开、悬停序列号仍指到一条现存块、且该块提示符首行仍在可见窗内时落笔：
+    /// 块首行上沿一条 1 物理像素的 `card_line`。纯装饰，不写命中盒也不吃点击。
+    auto paint_command_block_separator(aurora::Painter &p, const aurora::Rect &bounds) -> void;
 
     /// @brief 画光标（三形态 + 失焦降级 + 闪烁 off 相）。
     auto paint_cursor(aurora::Painter &p, const aurora::Rect &bounds, std::size_t rows) -> void;
@@ -753,6 +781,28 @@ class TerminalView final : public aurora::LeafWidget {
     /// @return 交进 `ui::layout_row` 的三层入参；无命中且无选区时各字段即「什么都不画」。
     [[nodiscard]] auto bands_for_screen_row(std::size_t screen_row) const -> RowBands;
 
+    /// @brief 按本帧的块表与副本坐标重算失败块的可见屏幕行区间（`failed_spans_`）。
+    ///
+    /// 每帧一次、只读 `blocks_` 与 `mirror_` 的三个读数；不读会话锁，也不在逐格绘制里重算。
+    auto refresh_failed_spans() -> void;
+
+    /// @brief 按指针落点更新悬停命令块；块变了才标脏。
+    ///
+    /// 只认「落点在本帧块表某条未作废块的 `prompt_row..last_row()` 内」，序列号 0 表示没有悬停。
+    /// 与链接悬停同一条 Move 边界（裁决 7.123 F12）：`?1003` 档的 Move 整笔归远端，本入口收不到。
+    /// @param storage_cell 存储行序的落点（绘制行号已由调用方折上 `window_top`）。
+    auto update_hover_block(const GridCellPos &storage_cell) -> void;
+
+    /// @brief 摘掉悬停命令块；没挂着即什么都不做（不标脏）。
+    auto clear_hover_block() -> void;
+
+    /// @brief 右键那一刻把「最近一条可复制的完成块」整份存进 `menu_block_`，并回条目的可用位。
+    ///
+    /// 存整块而不是点击时重选：菜单开着时输出仍可增长，重选会指到新块（裁决 7.123 D3①）。
+    /// 判据是 `last_completed` 一路的「已完成、未作废、有非空 `C → D` 输出」，再按当下的存储
+    /// 范围确认真有可复制的行；不满足即清空并回 `available = false`。
+    [[nodiscard]] auto stash_command_output() -> CommandOutputMenuState;
+
     /// @brief 存储行对应的命中列区间切片；本行没有命中即空。表按 (行, 列) 升序，故两次二分。
     [[nodiscard]] auto hit_slice(std::size_t storage_row) const noexcept -> std::span<const RowSpan>;
 
@@ -773,7 +823,11 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 把顶边位移的增量折算进匹配表（与选区共用 `mirror_` 带出的同一份读数，零新增锁）。
     auto compensate_search_drift() -> void;
 
-    /// @brief 落地攒下的 copy-on-select 请求：在帧边界做 IO，不在事件回调里做（AGENTS.md §4.5 第 25 条）。
+    /// @brief 落地攒下的复制请求：在帧边界做 IO，不在事件回调里做（AGENTS.md §4.5 第 25 条）。
+    ///
+    /// 请求是三值（选区 / 命令块输出 / 无），落地后清回 `None`；命令块那条用完即清 `menu_block_`，
+    /// 避免下一次复制借到旧快照（裁决 7.123 D10①）。块的行号是绝对行，故取文本时现取锁内网格的
+    /// `dropped_lines` 折算——右键那一刻的读数不能拿来用，两者之间可能又滚过。
     auto flush_copy_request() -> void;
 
     /// @brief 右键按下：按 `plan_right_click` 的意图分发到菜单 / 直接复制 / 直接粘贴（裁决 7.41）。
@@ -944,8 +998,19 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 上一次运动上报落在哪一格（**可见区**行号，与上报协议同一坐标系，不是选区用的存储行序）。
     ///        只用于按格去重（裁决 7.77④），按下与松开都把它清掉。
     std::optional<GridCellPos> reported_motion_{};
-    bool copy_pending_ = false;  ///< 抬起已发生、复制留到下一帧的 `on_frame` 落地。
+    CopyRequest copy_request_ = CopyRequest::None;  ///< 待落地的复制来源（帧边界消费）。
     std::int64_t dropped_baseline_ = 0;  ///< 上次折算选区时的顶边位移读数（裁决 7.39⑤）。
+
+    /// @brief 命令块的界面三件（`SPEC.FEAT.INTEG.01`，裁决 7.123）。
+    ///
+    /// `blocks_` 每帧从 `Session::command_blocks()` 取一份副本；`failed_spans_` 是按副本坐标
+    /// 重算出的**屏幕行**区间（0 = 窗顶），绘制只查它。`hover_block_serial_` 存序号而非指针：
+    /// 块表每帧整份换掉，序号是唯一在换表后仍有意义的标识（0 = 无悬停）。`menu_block_` 是右键
+    /// 那一刻存下的整块，点击时不再按当前状态重选。
+    std::vector<term::CommandBlock> blocks_;
+    std::vector<BlockRowRange> failed_spans_;
+    std::uint64_t hover_block_serial_ = 0;
+    std::optional<term::CommandBlock> menu_block_;
 
     /// @brief 搜索的状态：条件、产出当前表的那份条件、表本身、表自己的顶边位移基准，另加脏 / 非法 /
     ///        计数三个闸门。

@@ -507,6 +507,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     put_enum(node, "link_osc8", kLinkConfirmNames, static_cast<std::int64_t>(terminal.link_osc8));
     put_enum(node, "link_heuristic", kLinkConfirmNames, static_cast<std::int64_t>(terminal.link_heuristic));
     put(node, "link_schemes", terminal.link_schemes);
+    put(node, "command_block_separator", terminal.command_block_separator);
     return node;
 }
 
@@ -823,6 +824,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     terminal.link_heuristic = static_cast<LinkConfirmPolicy>(scope.enumerated(
         "link_heuristic", kLinkConfirmNames, static_cast<std::int64_t>(defaults.terminal.link_heuristic)));
     terminal.link_schemes = scope.text("link_schemes", defaults.terminal.link_schemes);
+    terminal.command_block_separator =
+        scope.boolean("command_block_separator", defaults.terminal.command_block_separator);
     scope.collect_unknown();
     return terminal;
 }

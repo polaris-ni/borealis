@@ -221,6 +221,9 @@ class StringCollector final : public term::CodePointSink {
     switch (command) {
         case MenuCommand::Copy:
             return std::string{settings_label("menu.item.copy")};
+        case MenuCommand::CopyCommandOutput:
+            // 一条命令一态（同「打开链接」）：块不可用时整条不出现，能出现就恒能复制。
+            return std::string{settings_label("menu.item.copy_command_output")};
         case MenuCommand::Paste:
             return std::string{settings_label("menu.item.paste")};
         case MenuCommand::OpenLink:
@@ -365,10 +368,16 @@ auto TerminalView::apply_interaction_options(InteractionOptions options) -> void
     // 留着等于「这一串已经不可点了，屏上还画着可点的那条线」，而菜单里那条「打开链接」也还指着它。
     // 摘掉而不是就地重扫——本函数拿不到指针位置，下一次 Move 自然会按新白名单重扫一遍。
     const bool link_changed = !(options_.link == options.link);
+    // 分隔线是唯一参与绘制的行为口径：由开变关时屏上那条线必须立刻消失，不能等下一次 Move
+    // （裁决 7.123 D6① 的「设置关掉立即摘」）。由关变开没有可摘的东西，等悬停自然出现。
+    const bool separator_off = options_.command_block_separator && !options.command_block_separator;
     options_ = std::move(options);
     if (link_changed) {
         clear_hover_link();
         menu_link_.reset();  // 菜单正开着时换档：这一条退化成点了什么都不做，比按旧名单开出去安全
+    }
+    if (separator_off) {
+        clear_hover_block();
     }
 }
 
@@ -532,6 +541,13 @@ auto TerminalView::on_frame() -> void {
                 run_search_scan(grid);
             }
         });
+    // 命令块与网格分两次短锁取（裁决 7.123 D7①）：块表变化可能不带任何 damage（`D` 只改块表），
+    // 故它自己的那份「变没变」要单独拿来标脏。先取块再算失败区间——后者的屏幕行依赖副本刚并入的
+    // `dropped_lines` / `window_top`，早一格就是按上一帧的窗口算这一帧的位置。
+    auto fresh_blocks = session_->command_blocks();
+    const bool blocks_changed = !(fresh_blocks == blocks_);
+    blocks_ = std::move(fresh_blocks);
+    refresh_failed_spans();
     // 选区的端点是存储行序，而存储顶边会随输出溢出、随 resize 与 `clear()` 位移：折算必须发生在
     // 副本并入之后（读数由副本带出），否则高亮与复制文本会跟着旧的行号指着别的内容（裁决 7.38⑤）。
     compensate_selection_drift();
@@ -560,8 +576,10 @@ auto TerminalView::on_frame() -> void {
         clear_unrepresentable_notice();
     }
     // 回看换源与光标移动都不在提交里：前者由距底行数变化指认（`on_scroll` 在帧序里先于本函数，
-    // 故同帧就能换源），后者直接比较光标快照。
-    if (!frame.empty() || previous_back != mirror_.back_rows() || !(cursor_ == painted_cursor_)) {
+    // 故同帧就能换源），后者直接比较光标快照。块表变化同样可能不带提交（`D` 不动网格），
+    // 失败底色与菜单可用性都靠它，故一并进这一条标脏判据（裁决 7.123 D7①）。
+    if (!frame.empty() || blocks_changed || previous_back != mirror_.back_rows() ||
+        !(cursor_ == painted_cursor_)) {
         painted_cursor_ = cursor_;
         mark_needs_paint();
     }
@@ -634,6 +652,9 @@ auto TerminalView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, cons
     }
     paint_cursor(p, bounds, rows);
     paint_scroll_indicator(p, bounds, rows);
+    // 命令块分隔线排在正文、光标与回看指示条之后，链接悬停层与两张状态卡之前（裁决 7.123 D8①）：
+    // 它要盖在行底上才读得出，而状态卡是更重的信息，不能被一条装饰线压住。
+    paint_command_block_separator(p, bounds);
     // 悬停那一段的 accent 线与目标提示条排在正文与指示条之后、两张状态卡之前：线要盖在底色之上才读得出
     // 是「这一串可点」，而条要**让位**于更重的状态卡——两者同框时先保住「发送侧被拒」或「会话已退出」那条。
     paint_link_hover(p, bounds);
@@ -801,7 +822,10 @@ auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
     if (takes_pointer_by_report(e, term::mouse_tracking(modes))) {
         // 上报档接管这一笔时先摘悬停线（`SPEC.FEAT.INTERACT.05` 判据 7，稿 D7①）：远端要的是这一击
         // 与这段移动，本控件既不发线也没有 Ctrl+点击可用，留着上一帧的线就是「看起来还能点」。
+        // 命令块分隔线走同一条让位：`?1003` 档下 Move 全归远端，本层没有新落点可跟，留着旧线就是
+        // 让一条不再更新的装饰假装还指着指针（裁决 7.123 D6①、F12）。
         clear_hover_link();
+        clear_hover_block();
         report_pointer(e, modes);
         return;
     }
@@ -855,6 +879,10 @@ auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
             } else {
                 clear_hover_link();  // 中途开档（远端刚 `?1000h`）：把上一帧留下的线摘掉
             }
+            // 分隔线与链接悬停的归属边界相同、松紧不同（稿 F12）：`?1000`/`?1002` 档的无键 Move
+            // 照样本地收到（`takes_pointer_by_report` 不收无键悬停），故它不按档位再筛一次——
+            // 这一条是无承诺的装饰，不需要像链接那样担心「看起来能点」。`?1003` 档根本走不到这里。
+            update_hover_block(cell);
             if (!dragging_) {
                 return;  // 悬停移动不改选区
             }
@@ -871,7 +899,7 @@ auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
             // copy-on-select 只在区间非空时触发（裁决 7.38⑥）；写剪贴板是 IO，落在下一帧的
             // `on_frame` 而不是本回调（AGENTS.md §4.5 第 25 条）。
             if (options_.copy_on_select && selection_.has_value()) {
-                copy_pending_ = true;
+                copy_request_ = CopyRequest::Selection;
             }
             e.is_handled = true;
             break;
@@ -1100,6 +1128,15 @@ auto TerminalView::on_blink_tick() -> void {
 
 auto TerminalView::paint_row(aurora::Painter &p, const aurora::Rect &bounds, std::size_t screen_row) -> void {
     const auto &row = mirror_.line(screen_row);
+    // 失败命令的输出行先铺一层低强度红底（裁决 7.123 D5① / D8①）：这里在 `layout_row` **之前**，
+    // 故默认底色的 run 不会覆盖它；显式 cell 底色、搜索命中与选区色带仍按下面的既有次序盖在其上。
+    // 提示符与命令行回显不在 `failed_spans_` 里——区间取自 `C → D`，不按 `A/B` 反推。
+    if (failed_background_at(screen_row)) {
+        const auto box = rect_for(geometry_, screen_row, 0U, geometry_.columns);
+        const RgbaColor failed_ink =
+            mix_half(mix_half(spec_.basic[1], spec_.default_background), spec_.default_background);
+        p.fill_rect(to_rect(box, bounds.origin), to_color(failed_ink));
+    }
     // 三层区间一次交出、一次换底：底色替换发生在 `resolve` 之后，故高亮段与选中段各因底色不同而
     // 自成一跑，色带、文本与装饰都跟着这张 run 表走（裁决 7.38① D1①，视觉稿 A1-c 的「字形不被染色」）。
     // 无区间时带形态逐字段等于两参形态，于是这里只有一条绘制路径而不是「有选区走 A、有命中走 B」。
@@ -1219,6 +1256,51 @@ auto TerminalView::paint_scroll_indicator(aurora::Painter &p, const aurora::Rect
     const Rect thumb{static_cast<double>(bounds.size.width) - kIndicatorWidthDp, thumb_top, kIndicatorWidthDp,
                      thumb_height};
     p.fill_rect(to_rect(thumb, bounds.origin), to_color(spec_.default_foreground));
+}
+
+auto TerminalView::failed_background_at(std::size_t screen_row) const -> bool {
+    return std::any_of(failed_spans_.begin(), failed_spans_.end(), [screen_row](const BlockRowRange &range) {
+        return screen_row >= range.first_row && screen_row < range.last_row;
+    });
+}
+
+auto TerminalView::refresh_failed_spans() -> void {
+    failed_spans_.clear();
+    const std::size_t window_top = mirror_.window_top();
+    const std::size_t rows = mirror_.rows();
+    const std::int64_t dropped = mirror_.dropped_lines();
+    for (const auto &block : blocks_) {
+        const auto spans = failed_output_spans(block, dropped, window_top, rows);
+        failed_spans_.insert(failed_spans_.end(), spans.begin(), spans.end());
+    }
+}
+
+auto TerminalView::paint_command_block_separator(aurora::Painter &p, const aurora::Rect &bounds) -> void {
+    if (!options_.command_block_separator || hover_block_serial_ == 0U) {
+        return;
+    }
+    const auto found = std::find_if(blocks_.begin(), blocks_.end(), [this](const term::CommandBlock &block) {
+        return block.serial == hover_block_serial_ && !block.superseded;
+    });
+    if (found == blocks_.end()) {
+        return;  // 块已被清空或淘汰：序列号失效即不画，等下一次 Move 重定
+    }
+    // 绝对行 → 存储行 → 屏幕行，唯一的换算是副本带出的两个读数（与 `paint_link_hover` 同一条算式）。
+    const std::int64_t storage_row = found->prompt_row - mirror_.dropped_lines();
+    if (storage_row < 0) {
+        return;  // 块首行已被挤出存储顶端
+    }
+    if (static_cast<std::size_t>(storage_row) < mirror_.window_top()) {
+        return;  // 块还在存储里，但首行滚到可见窗上方：本帧不画
+    }
+    const std::size_t screen_row = static_cast<std::size_t>(storage_row) - mirror_.window_top();
+    if (screen_row >= mirror_.rows() || screen_row >= geometry_.rows || geometry_.columns == 0U) {
+        return;
+    }
+    const auto box = rect_for(geometry_, screen_row, 0U, geometry_.columns);
+    const double stroke = 1.0 / geometry_.scale;  // 1 物理像素（与光标描边同一口径）
+    const auto chrome = settings_chrome();
+    p.fill_rect(to_rect(Rect{box.x, box.y, box.width, stroke}, bounds.origin), chrome.card_line);
 }
 
 auto TerminalView::paint_restart_overlay(aurora::Painter &p, const aurora::Rect &bounds) -> void {
@@ -1640,11 +1722,26 @@ auto TerminalView::compensate_search_drift() -> void {
 }
 
 auto TerminalView::flush_copy_request() -> void {
-    if (!copy_pending_) {
+    if (copy_request_ == CopyRequest::None) {
         return;
     }
-    copy_pending_ = false;
-    const std::string text = selected_text();
+    const CopyRequest request = copy_request_;
+    copy_request_ = CopyRequest::None;
+    std::string text;
+    if (request == CopyRequest::Selection) {
+        text = selected_text();
+    } else if (request == CopyRequest::CommandOutput) {
+        if (!menu_block_.has_value()) {
+            return;  // 快照没了就没有可复制的对象；下一次右键会重新存
+        }
+        const term::CommandBlock block = *menu_block_;
+        menu_block_.reset();  // 用完即清：不能让下一次复制借到旧快照（裁决 7.123 D10①）
+        // 块的行号是绝对行，而右键那一刻到这一帧之间可能又滚过：折算读数必须现取自锁内网格。
+        session_->read([&text, &block, this](grid::Storage &grid, const term::Cursor &,
+                                             const term::TermModes &) {
+            text = copy_command_output(grid, block, grid.dropped_lines(), options_.copy);
+        });
+    }
     if (text.empty()) {
         return;
     }
@@ -1700,7 +1797,10 @@ auto TerminalView::on_menu_command(MenuCommand command) -> void {
     }
     switch (command) {
         case MenuCommand::Copy:
-            copy_pending_ = true;
+            copy_request_ = CopyRequest::Selection;
+            break;
+        case MenuCommand::CopyCommandOutput:
+            copy_request_ = CopyRequest::CommandOutput;
             break;
         case MenuCommand::Paste:
             paste_pending_ = true;
@@ -1925,6 +2025,59 @@ auto TerminalView::clear_hover_link() -> void {
     }
     hover_link_.reset();
     mark_needs_paint();
+}
+
+auto TerminalView::update_hover_block(const GridCellPos &storage_cell) -> void {
+    if (!options_.command_block_separator) {
+        return;  // 开关关着时连线都不存在，不必维护悬停态
+    }
+    const std::int64_t absolute = static_cast<std::int64_t>(storage_cell.row) + mirror_.dropped_lines();
+    std::uint64_t next = 0U;
+    // 同一行可能被新旧两块共享（`D` 在列 0 时那一行归下一条提示符，但开放块的外推仍可能覆盖它），
+    // 与记录件 `block_at` 同一条口径取较新的一条。倒序遍历即「新 → 旧」。
+    for (auto it = blocks_.rbegin(); it != blocks_.rend(); ++it) {
+        if (it->superseded || absolute < it->prompt_row || absolute > it->last_row()) {
+            continue;
+        }
+        next = it->serial;
+        break;
+    }
+    if (next == hover_block_serial_) {
+        return;  // 在同一块里移动不重画：线落的位置（块首行）没有变
+    }
+    hover_block_serial_ = next;
+    mark_needs_paint();
+}
+
+auto TerminalView::clear_hover_block() -> void {
+    if (hover_block_serial_ == 0U) {
+        return;  // 没挂着就不标脏
+    }
+    hover_block_serial_ = 0U;
+    mark_needs_paint();
+}
+
+auto TerminalView::stash_command_output() -> CommandOutputMenuState {
+    menu_block_.reset();
+    if (mirror_.rows() == 0U || mirror_.columns() == 0U) {
+        return {};
+    }
+    // 「最近一条完成块」只认新到旧的第一条，不在它没输出时退到更旧的命令上（裁决 7.123 D3①）：
+    // 用户右键的是眼前这一段，拿上一段命令的输出冒充「上一命令」比条目不出现更坏。
+    const auto found = std::find_if(blocks_.rbegin(), blocks_.rend(), [](const term::CommandBlock &block) {
+        return block.completed && !block.superseded;
+    });
+    if (found == blocks_.rend() || !found->has_copyable_output()) {
+        return {};
+    }
+    // 再按当下的存储范围确认真有可复制的行：整段已滚出存储顶端时块表还在，但文本已经取不到了。
+    const auto spans =
+        command_output_spans(*found, mirror_.dropped_lines(), total_lines_, mirror_.columns());
+    if (spans.empty()) {
+        return {};
+    }
+    menu_block_ = *found;
+    return CommandOutputMenuState{.available = true};
 }
 
 auto TerminalView::stash_link_at_point(const aurora::MouseEvent &e) -> LinkMenuState {
@@ -2164,15 +2317,20 @@ auto TerminalView::on_right_click(aurora::MouseEvent &e) -> void {
     // 分流闸只压在左击与悬停那两档上。命中同时存进 `menu_link_`：菜单开着时它才是这一条指的是哪串，
     // 而不是等点击时再扫一次（那时指针可能已被浮层挪走，而浮层会吃掉 Move）。
     const LinkMenuState link = stash_link_at_point(e);
-    const RightClickPlan plan = plan_right_click(options_.right_click, !bands_.empty(), log, link);
+    // 命令块同样是「右键那一刻」的快照：菜单开着时输出仍可增长，点击时重选会指到一条新块。
+    const CommandOutputMenuState output = stash_command_output();
+    const RightClickPlan plan = plan_right_click(options_.right_click, !bands_.empty(), log, link, output);
     switch (plan.intent) {
         case RightClickIntent::None:
+            menu_block_.reset();
             return;  // 交还给宿主：右键本就没有可复制的东西
         case RightClickIntent::Copy:
-            copy_pending_ = true;
+            copy_request_ = CopyRequest::Selection;
+            menu_block_.reset();  // 直接复制走选区，块快照没有消费者
             break;
         case RightClickIntent::Paste:
             paste_pending_ = true;
+            menu_block_.reset();
             break;
         case RightClickIntent::Menu:
             open_context_menu(e.position, plan.items, log);

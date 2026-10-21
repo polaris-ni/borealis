@@ -2,16 +2,22 @@
 
 namespace borealis::ui {
 
-auto plan_right_click(RightClickAction action, bool has_selection, LogMenuState log, LinkMenuState link)
-    -> RightClickPlan {
+auto plan_right_click(RightClickAction action, bool has_selection, LogMenuState log, LinkMenuState link,
+                      CommandOutputMenuState output) -> RightClickPlan {
     RightClickPlan plan;
     switch (action) {
         case RightClickAction::ContextMenu: {
             plan.intent = RightClickIntent::Menu;
             plan.items = {
                 MenuItem{.command = MenuCommand::Copy, .enabled = has_selection},
-                MenuItem{.command = MenuCommand::Paste},
             };
+            // 「复制上一命令的全部输出」插在「复制」之后（裁决 7.123 D3①）：块不可用就不出现，与会话
+            // 日志 / 打开链接同形态。能出现即恒可用——`CommandOutputMenuState` 为真时调用方已存下整块，
+            // 点击时不再按当前状态重选。
+            if (output.available) {
+                plan.items.push_back(MenuItem{.command = MenuCommand::CopyCommandOutput, .enabled = true});
+            }
+            plan.items.push_back(MenuItem{.command = MenuCommand::Paste, .enabled = true});
             // 「打开链接」按命中决定**出不出现**（裁决 7.119 D12①／稿判据 6）：与会话日志那条同形态——
             // 没命中时不是灰显，而是这一处压根没有链接可开。出现时恒可用，`enabled` 在这里没有第二档
             // 可表达（白名单外的串早在 `find_link_at` 就不产链接了，能出现即必能开）。

@@ -266,6 +266,9 @@ namespace {
                           {},
                           ConsumerStatus::Wired,
                           EffectLevel::Immediate));
+    // 命令块分隔线（`SPEC.FEAT.INTEG.01`，裁决 7.123 D9①）：纯装饰开关，改完立刻生效。
+    catalog.push_back(toggle("terminal.command_block_separator", SettingsPage::Terminal, ConsumerStatus::Wired,
+                             EffectLevel::Immediate));
 
     // ---- 连接页（建档表单属屏 2，本页只有默认值）----
     catalog.push_back(row("connection.local_shell",

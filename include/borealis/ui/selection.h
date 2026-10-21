@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -114,6 +115,23 @@ struct CopyOptions {
     /// @brief 逐字段全等比较。
     [[nodiscard]] auto operator==(const CopyOptions &other) const noexcept -> bool = default;
 };
+
+/// @brief 按行区间表取文本：逐行取列区间，按 @p options 变换后以 LF 分隔拼接。
+///
+/// 这是 `copy_text` 与命令块输出复制（`ui::copy_command_output`）共用的拼接腿：两者的行区间
+/// 来源不同（选区归一 / `C → D` 游标），而「双宽字符不产半个字、组合标记随基础格、越界行
+/// 跳过、奇数反斜杠合并」这些口径必须只有一份实现（裁决 7.123 D4①）。
+/// @param storage 权威网格（调用方须持会话锁访问）。
+/// @param spans 行号升序的列区间表；行号即 `storage` 的行序。
+/// @param options 三项复制变换。
+/// @param trim_grid_fill 是否**无条件**裁掉每行行尾的网格填充空格。
+///
+/// 默认假即 `copy_text` 的既有行为（是否裁由 `options.trim_trailing_space` 定）；命令块复制
+/// 传真，因为块输出没有列端点语义，行尾空格无法与显式打印的空格区分（裁决 7.123 D4① 的
+/// 在册代价）。裁剪发生在 `smart_line_join` 之前：`foo\   ` 这类续行必须先去掉空白才合得上。
+/// @return 拼接文本；无内容时为空串。
+[[nodiscard]] auto copy_spans(const grid::Storage &storage, std::span<const RowSpan> spans,
+                              const CopyOptions &options, bool trim_grid_fill = false) -> std::string;
 
 /// @brief 取选区的文本：逐行取选中列区间，按 @p options 变换后以 LF 分隔拼接。
 ///

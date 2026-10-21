@@ -192,6 +192,12 @@ struct TerminalSettings {
     /// 那一档要在旁注里说清而不是在代码里猜。
     std::string link_schemes{"http,https"};
 
+    /// @brief 悬停命令块时是否在块首行上沿画一条分隔线（`SPEC.FEAT.INTEG.01`，裁决 7.123 D6①）。
+    ///
+    /// 缺省关：新增视觉默认不打扰是本仓既有取向。纯装饰，不写命中盒也不吃点击；块首行滚出
+    /// 可见区时不画。只在鼠标移动归本地时更新（`?1003` 档下 Move 全归远端，这一层拿不到落点）。
+    bool command_block_separator{false};
+
     /// @brief 逐字段全等比较（配置往返断言用）。
     [[nodiscard]] auto operator==(const TerminalSettings &other) const noexcept -> bool = default;
 };

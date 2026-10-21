@@ -331,6 +331,9 @@ auto assign_shortcuts(Settings &settings, const FormValue &value) -> void {
         Binding{"terminal.link_schemes",
                 [](const Settings &s) -> FormValue { return FormValue::text(s.terminal.link_schemes); },
                 [](Settings &s, const FormValue &v) { assign(s.terminal.link_schemes, v); }},
+        Binding{"terminal.command_block_separator",
+                [](const Settings &s) -> FormValue { return FormValue::boolean(s.terminal.command_block_separator); },
+                [](Settings &s, const FormValue &v) { assign(s.terminal.command_block_separator, v); }},
         // `connection.trusted_url_hosts` **不进表单**：它是运行期数据而不是偏好（D9①），面板不画它，
         // 于是也就没有「搬出—搬回」这条腿。它走 `kNonPreferenceLeaves` 那条例外通道，只被 store 读写。
 

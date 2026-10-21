@@ -52,6 +52,9 @@ struct CommandBlock {
     bool completed = false;               ///< 是否收到过 `D`。
     bool superseded = false;              ///< 未收 `D` 就被新 `A` 顶掉。
 
+    /// @brief 逐字段全等比较（界面每帧比较块表变化、测试断言用）。
+    [[nodiscard]] auto operator==(const CommandBlock &) const noexcept -> bool = default;
+
     /// @brief 块在绝对行空间里的末行（含）。
     ///
     /// `D` 在列 0 表示「命令以换行结尾」，那一行是下一条命令的提示符，不属于本块；列 > 0 时
