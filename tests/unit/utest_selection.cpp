@@ -32,6 +32,7 @@ namespace {
 using borealis::grid::Cell;
 using borealis::grid::Row;
 using borealis::grid::Storage;
+using borealis::ui::copy_spans;
 using borealis::ui::copy_text;
 using borealis::ui::CopyOptions;
 using borealis::ui::GridCellPos;
@@ -399,6 +400,20 @@ AURORA_TEST_CASE(selected_content_survives_a_saturated_scroll) {
     AURORA_TEST_CHECK_STREQ(
         copy_text(storage, translate_selection_rows(initial, storage.dropped_lines()), CopyOptions{}),
         std::string{"kee"});
+}
+
+AURORA_TEST_CASE(copy_spans_is_the_shared_leg_behind_copy_text) {
+    Storage storage = make_storage(8U, 2U);
+    put_text(storage, 0U, 0U, "abc");
+    const auto selected = stream(0U, 0U, 0U, 7U);
+    const CopyOptions options{};
+    const auto spans = row_spans(selected, storage.columns());
+
+    // 默认档逐字节等价：不传 `trim_grid_fill` 时 `copy_text` 就是本函数外加区间归一。
+    AURORA_TEST_CHECK_STREQ(copy_spans(storage, spans, options), copy_text(storage, selected, options));
+    AURORA_TEST_CHECK_STREQ(copy_text(storage, selected, options), std::string{"abc     "});
+    // 命令块复制把「裁网格填充」无条件打开（裁决 7.123 D4①）：同一份区间只差这一枚布尔。
+    AURORA_TEST_CHECK_STREQ(copy_spans(storage, spans, options, true), std::string{"abc"});
 }
 
 }  // namespace borealis::test_cases::utest_selection

@@ -10,6 +10,9 @@
 ///           本棒（`SPEC.FEAT.INTERACT.05` 裁决 7.119 D12①）追加第四枚入参 `LinkMenuState`：命中链接
 ///           ＝四条且次序为 复制/粘贴/打开链接/会话日志，未命中＝三条**逐字节不变**——「打开链接」
 ///           这一条同样是不出现而非灰显，而它把会话日志那条往后挤了一位，故挤位这件事要单独钉住。
+///           `SPEC.FEAT.INTEG.01`（裁决 7.123 D3①）再追加第五枚入参 `CommandOutputMenuState`：可用＝
+///           在「复制」之后、「粘贴」之前插入一条；不可用＝整条不出现。既有期望表全取不可用档，
+///           故前两棒钉住的次序逐字节未动。
 
 #include <type_traits>
 #include <vector>
@@ -23,6 +26,7 @@ namespace borealis::test_cases::utest_right_click {
 namespace {
 
 using borealis::config::TerminalSettings;
+using borealis::ui::CommandOutputMenuState;
 using borealis::ui::LinkMenuState;
 using borealis::ui::LogMenuState;
 using borealis::ui::MenuCommand;
@@ -42,51 +46,56 @@ constexpr LogMenuState log_running{.available = true, .logging = true};
 constexpr LinkMenuState no_link;
 constexpr LinkMenuState on_link{.on_link = true};
 
+/// 命令块那条（`SPEC.FEAT.INTEG.01` 裁决 7.123 D3①）同理：既有判据全取「没有可复制输出」档，
+/// 于是上面的期望表一条都不用改。可用与否由 `stash_command_output` 现算，本件只喂结果。
+constexpr CommandOutputMenuState no_output;
+constexpr CommandOutputMenuState with_output{.available = true};
+
 }  // namespace
 
 AURORA_TEST_CASE(context_menu_with_selection_offers_both_commands_enabled) {
-    const RightClickPlan plan = plan_right_click(RightClickAction::ContextMenu, true, log_off, no_link);
+    const RightClickPlan plan = plan_right_click(RightClickAction::ContextMenu, true, log_off, no_link, no_output);
     AURORA_TEST_CHECK_EQ(plan.intent, RightClickIntent::Menu);
     AURORA_TEST_CHECK(plan.items == std::vector<MenuItem>{{MenuCommand::Copy, true}, {MenuCommand::Paste, true}});
 }
 
 AURORA_TEST_CASE(context_menu_without_selection_grays_out_only_the_copy_row) {
-    const RightClickPlan plan = plan_right_click(RightClickAction::ContextMenu, false, log_off, no_link);
+    const RightClickPlan plan = plan_right_click(RightClickAction::ContextMenu, false, log_off, no_link, no_output);
     AURORA_TEST_CHECK_EQ(plan.intent, RightClickIntent::Menu);
     // 置灰而非点击后静默失败（视觉稿 F-b）；粘贴不受选区影响。
     AURORA_TEST_CHECK(plan.items == std::vector<MenuItem>{{MenuCommand::Copy, false}, {MenuCommand::Paste, true}});
 }
 
 AURORA_TEST_CASE(direct_paste_action_sends_no_menu) {
-    const RightClickPlan plan = plan_right_click(RightClickAction::Paste, true, log_off, no_link);
+    const RightClickPlan plan = plan_right_click(RightClickAction::Paste, true, log_off, no_link, no_output);
     AURORA_TEST_CHECK_EQ(plan.intent, RightClickIntent::Paste);
     AURORA_TEST_CHECK_TRUE(plan.items.empty());
 }
 
 AURORA_TEST_CASE(direct_paste_action_ignores_selection_presence) {
     // 有无选区都粘贴：本态的入参与结果只有意图，选区知识归复制那条腿。
-    AURORA_TEST_CHECK(plan_right_click(RightClickAction::Paste, false, log_off, no_link) ==
-                      plan_right_click(RightClickAction::Paste, true, log_off, no_link));
+    AURORA_TEST_CHECK(plan_right_click(RightClickAction::Paste, false, log_off, no_link, no_output) ==
+                      plan_right_click(RightClickAction::Paste, true, log_off, no_link, no_output));
 }
 
 AURORA_TEST_CASE(copy_on_select_action_copies_without_a_menu) {
-    const RightClickPlan plan = plan_right_click(RightClickAction::CopyOnSelect, true, log_off, no_link);
+    const RightClickPlan plan = plan_right_click(RightClickAction::CopyOnSelect, true, log_off, no_link, no_output);
     AURORA_TEST_CHECK_EQ(plan.intent, RightClickIntent::Copy);
     AURORA_TEST_CHECK_TRUE(plan.items.empty());
 }
 
 AURORA_TEST_CASE(copy_on_select_action_with_empty_selection_does_nothing) {
     // 空选区复制出一条空文本会覆盖用户剪贴板里的既有内容，是负收益，故回 None 而不是 Copy。
-    const RightClickPlan plan = plan_right_click(RightClickAction::CopyOnSelect, false, log_off, no_link);
+    const RightClickPlan plan = plan_right_click(RightClickAction::CopyOnSelect, false, log_off, no_link, no_output);
     AURORA_TEST_CHECK_EQ(plan.intent, RightClickIntent::None);
     AURORA_TEST_CHECK_TRUE(plan.items.empty());
 }
 
 AURORA_TEST_CASE(the_three_actions_do_not_share_an_intent) {
     // 三态互不吞并：同一「有选区」入参下三种动作给出三种意图，缺省态才是菜单。
-    const RightClickPlan menu = plan_right_click(RightClickAction::ContextMenu, true, log_off, no_link);
-    const RightClickPlan paste = plan_right_click(RightClickAction::Paste, true, log_off, no_link);
-    const RightClickPlan copy = plan_right_click(RightClickAction::CopyOnSelect, true, log_off, no_link);
+    const RightClickPlan menu = plan_right_click(RightClickAction::ContextMenu, true, log_off, no_link, no_output);
+    const RightClickPlan paste = plan_right_click(RightClickAction::Paste, true, log_off, no_link, no_output);
+    const RightClickPlan copy = plan_right_click(RightClickAction::CopyOnSelect, true, log_off, no_link, no_output);
     AURORA_TEST_CHECK_TRUE(menu != paste);
     AURORA_TEST_CHECK_TRUE(paste != copy);
     AURORA_TEST_CHECK_TRUE(menu != copy);
@@ -95,9 +104,9 @@ AURORA_TEST_CASE(the_three_actions_do_not_share_an_intent) {
 AURORA_TEST_CASE(the_log_row_is_absent_when_the_gate_is_closed_not_grayed_out) {
     // D1① + F17：闸关时条目**不进** items。灰显会把「这里本来有个功能」告诉用户，而裁决要的是
     // 「没有入口」；`enabled` 那一列因此不是这条判据的表达位，故本用例连条目数一起钉。
-    const RightClickPlan closed = plan_right_click(RightClickAction::ContextMenu, true, log_off, no_link);
+    const RightClickPlan closed = plan_right_click(RightClickAction::ContextMenu, true, log_off, no_link, no_output);
     AURORA_TEST_CHECK_EQ(closed.items.size(), 2U);
-    const RightClickPlan open = plan_right_click(RightClickAction::ContextMenu, true, log_idle, no_link);
+    const RightClickPlan open = plan_right_click(RightClickAction::ContextMenu, true, log_idle, no_link, no_output);
     AURORA_TEST_REQUIRE_EQ(open.items.size(), 3U);
     // 两态都可用（记录与否只是标签措辞的差别，见 `menu_label`），且排在复制/粘贴之后。
     AURORA_TEST_CHECK(open.items[2] == MenuItem{MenuCommand::ToggleSessionLog, true});
@@ -107,8 +116,8 @@ AURORA_TEST_CASE(the_log_row_is_absent_when_the_gate_is_closed_not_grayed_out) {
 
 AURORA_TEST_CASE(the_log_state_does_not_reorder_the_menu) {
     // 四组组合（闸关/开 × 态关/开）里条目次序只有一档：有闸就是三条，没闸就是两条。
-    const RightClickPlan idle = plan_right_click(RightClickAction::ContextMenu, true, log_idle, no_link);
-    const RightClickPlan running = plan_right_click(RightClickAction::ContextMenu, true, log_running, no_link);
+    const RightClickPlan idle = plan_right_click(RightClickAction::ContextMenu, true, log_idle, no_link, no_output);
+    const RightClickPlan running = plan_right_click(RightClickAction::ContextMenu, true, log_running, no_link, no_output);
     AURORA_TEST_CHECK_EQ(idle.items.size(), running.items.size());
     for (std::size_t index = 0; index < idle.items.size(); ++index) {
         AURORA_TEST_CHECK_MSG(idle.items[index].command == running.items[index].command,
@@ -123,7 +132,7 @@ AURORA_TEST_CASE(direct_right_click_actions_still_send_no_menu_with_the_gate_ope
     for (const RightClickAction action : {RightClickAction::Paste, RightClickAction::CopyOnSelect}) {
         for (const LogMenuState log : {log_off, log_idle, log_running}) {
             for (const LinkMenuState link : {no_link, on_link}) {
-                AURORA_TEST_CHECK_TRUE(plan_right_click(action, true, log, link).items.empty());
+                AURORA_TEST_CHECK_TRUE(plan_right_click(action, true, log, link, no_output).items.empty());
             }
         }
     }
@@ -132,7 +141,7 @@ AURORA_TEST_CASE(direct_right_click_actions_still_send_no_menu_with_the_gate_ope
 AURORA_TEST_CASE(a_hit_link_adds_the_open_row_and_pushes_the_log_row_down) {
     // 判据 6（`codespec/UI_URL.draft.md` 的 D12①）：四条的次序是 复制 → 粘贴 → **打开链接** → 会话日志。
     // 恒可用（`enabled` 真）：白名单外的串早在 `find_link_at` 就不产链接，能出现即必能开。
-    const RightClickPlan plan = plan_right_click(RightClickAction::ContextMenu, true, log_idle, on_link);
+    const RightClickPlan plan = plan_right_click(RightClickAction::ContextMenu, true, log_idle, on_link, no_output);
     AURORA_TEST_REQUIRE_EQ(plan.items.size(), 4U);
     AURORA_TEST_CHECK(plan.items[0] == MenuItem{MenuCommand::Copy, true});
     AURORA_TEST_CHECK(plan.items[1] == MenuItem{MenuCommand::Paste, true});
@@ -143,18 +152,18 @@ AURORA_TEST_CASE(a_hit_link_adds_the_open_row_and_pushes_the_log_row_down) {
 AURORA_TEST_CASE(an_unhit_right_click_sends_the_three_row_menu_byte_for_byte) {
     // 「未命中 ⇒ 三条逐字节不变」是本棒对既有判据唯一的改口面（稿 D12 的代价面）：闸开但没命中链接
     // 时，菜单与 `MenuCommand::OpenLink` 存在之前一模一样，故拿一份手写的三条表逐项比。
-    const RightClickPlan plan = plan_right_click(RightClickAction::ContextMenu, true, log_idle, no_link);
+    const RightClickPlan plan = plan_right_click(RightClickAction::ContextMenu, true, log_idle, no_link, no_output);
     AURORA_TEST_CHECK(plan.items ==
                       std::vector<MenuItem>{{MenuCommand::Copy, true},
                                             {MenuCommand::Paste, true},
                                             {MenuCommand::ToggleSessionLog, true}});
     // 无选区那一档仍只置灰「复制」，命中链接不会让第二条以外的任何东西复活。
-    const RightClickPlan without_selection = plan_right_click(RightClickAction::ContextMenu, false, log_idle, on_link);
+    const RightClickPlan without_selection = plan_right_click(RightClickAction::ContextMenu, false, log_idle, on_link, no_output);
     AURORA_TEST_REQUIRE_EQ(without_selection.items.size(), 4U);
     AURORA_TEST_CHECK_FALSE(without_selection.items[0].enabled);
     AURORA_TEST_CHECK_TRUE(without_selection.items[2].enabled);
     // 能力闸关 + 命中链接＝三条（复制/粘贴/打开链接）：两条闸各自只管自己那一条的出现与否。
-    const RightClickPlan log_closed = plan_right_click(RightClickAction::ContextMenu, true, log_off, on_link);
+    const RightClickPlan log_closed = plan_right_click(RightClickAction::ContextMenu, true, log_off, on_link, no_output);
     AURORA_TEST_REQUIRE_EQ(log_closed.items.size(), 3U);
     AURORA_TEST_CHECK_EQ(log_closed.items[2].command, MenuCommand::OpenLink);
 }
@@ -162,9 +171,45 @@ AURORA_TEST_CASE(an_unhit_right_click_sends_the_three_row_menu_byte_for_byte) {
 AURORA_TEST_CASE(the_link_row_absence_does_not_depend_on_the_selection) {
     // 「打开链接」的入参是**指针落点**而不是选区（判据 6）：有无选区只动「复制」那一格。
     const RightClickPlan hit =
-        plan_right_click(RightClickAction::ContextMenu, false, log_off, on_link);
+        plan_right_click(RightClickAction::ContextMenu, false, log_off, on_link, no_output);
     AURORA_TEST_CHECK_EQ(hit.items.size(), 3U);
     AURORA_TEST_CHECK_EQ(hit.items[2].command, MenuCommand::OpenLink);
+}
+
+AURORA_TEST_CASE(an_available_command_output_adds_the_row_right_after_copy) {
+    // `SPEC.FEAT.INTEG.01`（裁决 7.123 D3①）：条目紧跟在「复制」之后、「粘贴」之前——它复制的是
+    // 命令块而不是选区，排在复制旁边才读得成同一族的两条复制动作。
+    const RightClickPlan plan =
+        plan_right_click(RightClickAction::ContextMenu, true, log_off, no_link, with_output);
+    AURORA_TEST_CHECK(plan.items ==
+                      std::vector<MenuItem>{{MenuCommand::Copy, true},
+                                            {MenuCommand::CopyCommandOutput, true},
+                                            {MenuCommand::Paste, true}});
+    // 与另外两条条件条目同框：次序是 复制 → 复制输出 → 粘贴 → 打开链接 → 会话日志。
+    const RightClickPlan full =
+        plan_right_click(RightClickAction::ContextMenu, true, log_idle, on_link, with_output);
+    AURORA_TEST_REQUIRE_EQ(full.items.size(), 5U);
+    AURORA_TEST_CHECK_EQ(full.items[1].command, MenuCommand::CopyCommandOutput);
+    AURORA_TEST_CHECK_EQ(full.items[2].command, MenuCommand::Paste);
+    AURORA_TEST_CHECK_EQ(full.items[3].command, MenuCommand::OpenLink);
+    AURORA_TEST_CHECK_EQ(full.items[4].command, MenuCommand::ToggleSessionLog);
+}
+
+AURORA_TEST_CASE(the_command_output_row_is_absent_not_grayed_out) {
+    // 没有可复制的输出（最近一条命令无输出或块已滚出存储）时整条不出现：需求说的是「复制上一命令
+    // 的全部输出」，灰显会让用户以为再选一段文字就能点亮它。这与会话日志、打开链接同一条口径。
+    const RightClickPlan plan = plan_right_click(RightClickAction::ContextMenu, true, log_off, no_link, no_output);
+    AURORA_TEST_CHECK(plan.items == std::vector<MenuItem>{{MenuCommand::Copy, true}, {MenuCommand::Paste, true}});
+}
+
+AURORA_TEST_CASE(the_command_output_row_does_not_depend_on_the_selection) {
+    // 有无选区只动「复制」那一格：命令块输出是一个独立的来源，不靠选区成立。
+    const RightClickPlan plan =
+        plan_right_click(RightClickAction::ContextMenu, false, log_off, no_link, with_output);
+    AURORA_TEST_REQUIRE_EQ(plan.items.size(), 3U);
+    AURORA_TEST_CHECK_FALSE(plan.items[0].enabled);
+    AURORA_TEST_CHECK_TRUE(plan.items[1].enabled);
+    AURORA_TEST_CHECK_EQ(plan.items[1].command, MenuCommand::CopyCommandOutput);
 }
 
 AURORA_TEST_CASE(config_right_click_is_an_alias_not_a_second_value_table) {

@@ -292,8 +292,9 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // 68 行＝写出的全部偏好键；串口侧第七键 `connection.serial.flow` 随裁决 7.110 D3① 进表，
     // CONN.11 的追加敏感正则 `connection.session_log_pattern` 随裁决 7.116 D10 改判进表，
     // CONN.12 的读方向授权档 `terminal.clipboard_read` 随裁决 D1① 进表（键在终端域、标识属连接域），
-    // INTERACT.05 的三行（`link_osc8` / `link_heuristic` / `link_schemes`）随裁决 D8① 进表。
-    AURORA_TEST_CHECK_EQ(keys.size(), 68U);
+    // INTERACT.05 的三行（`link_osc8` / `link_heuristic` / `link_schemes`）随裁决 D8① 进表，
+    // INTEG.01 的分隔线开关 `terminal.command_block_separator` 随裁决 7.123 D9① 进表，故停在 69。
+    AURORA_TEST_CHECK_EQ(keys.size(), 69U);
 }
 
 AURORA_TEST_CASE(keys_are_unique_and_rows_are_addressable) {
