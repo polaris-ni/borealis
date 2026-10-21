@@ -123,8 +123,8 @@ class WorkspaceView final : public aurora::Container {
     /// @brief 按模型焦点切分（装配层入口，`SPEC.FEAT.INTEG.04` 的 `split-pane`）。
     ///
     /// 与 `Ctrl+Shift+D` 同一条路径：先退出缩放（结构命令要读未缩放几何），再对焦点叶子切分。
-    /// 目标取 `tree_.focused()` 而非 `focused_pane()`：生产工厂今天让多个 pane 指向同一视图
-    /// （`SPEC.FEAT.WS.02` 尚欠），按视图反查会落到遍历次序里的第一格，不是模型焦点。
+    /// 目标取 `tree_.focused()` 而非 `focused_pane()`：后者是**框架焦点**的读数，只有派发栈内才与模型
+    /// 投影同步——装配层的启动入口正走在栈外，那一读会落后一拍，切到的是被切格之外的另一格。
     /// @param axis `Horizontal` 为左右分（与 `Ctrl+Shift+D` 同轴），`Vertical` 为上下分。
     auto split_focused(PaneAxis axis) -> void;
 
@@ -133,12 +133,14 @@ class WorkspaceView final : public aurora::Container {
     /// 格的身份全程不变：`PaneTree` 的叶子、广播成员资格、缩放态与焦点归属都按原样跟上，只有视图
     /// 与它背后的会话换成新的。返回 false 即**什么都没动**，四种情形各对应一条拒绝：新视图为空、该格
     /// 不存在、交进来的就是当前那份视图（换了等于没换）、这一格与别格共用同一份视图（子节点身份靠
-    /// 视图地址反查，共用时无法定位该换哪一个——多会话落地前的生产工厂正是这副形态）。
+    /// 视图地址反查，共用时无法定位该换哪一个；每格各有一份视图之后生产走不到这一支，它是 fail-closed
+    /// 守卫，证人取 `itest_workspace_broadcast` 的 `shared_view` 档）。
     ///
     /// 三条次序是承重的，不是排布偏好：① 先把框架焦点清掉再销毁旧视图——焦点管理器留着悬垂指针
     /// 的话，下一次 `set_focus` 会去 blur 一个已析构的控件（与 `close_pane` 的「先交接再摘子」同源）；
     /// ② 换 Node 之后须 `note_pending_mount()`，新视图的挂载仍交回框架在下一次布局做（文件头第三条
-    /// 实测事实，`Container::add` 之外的手写换子同样适用）；③ 去抖表按格清账，否则新会话会沿用旧格
+    /// 实测事实，`Container::add` 之外的手写换子同样适用；删掉这一句全量用例仍绿，故它是机制沿用而非
+    /// 已证行为，见稿 `WS02_PANE_SESSION` §11 的变异账）；③ 去抖表按格清账，否则新会话会沿用旧格
     /// 已下发的那份行列而少发一次 `resize`（与 `close_pane` 里那句 `debounce_.forget` 同一条理由）。
     /// @param pane 目标格。
     /// @param next 新的视图，本容器自此持有它。

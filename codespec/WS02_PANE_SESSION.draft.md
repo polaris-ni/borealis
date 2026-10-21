@@ -127,3 +127,33 @@
 4. **批 4（收口）**：`SPECIFICATIONS.md` 的 WS.02 现状句与裁决、`CHANGELOG.md` 新版本、`PLAN.md` 的 WS.02／WS.11／WS.09／INTEG.02／INTEG.04 措辞回填、`ARCHITECTURE.md` 数据流那一行、本稿末尾追加的「§11 结项读数」一节（该编号在本批才存在）。
 
 每批独立分层提交；结项读数以「ctest 全绿 + runner 案数增量 + 变异证人逐条转红」三件齐为凭（AGENTS §4.4 第 22 条）。
+
+## 11 结项读数（2026-10-21，四批已落）
+
+**落地次序**：批 1 的 UI 腿两处接缝（§3 的 `origin` 形参与 `replace_view`）→ 批 2 的装配层每格一份会话与六条工厂（§3、§5）→ 批 3 的逐 pane 语义与 CLI 政策复核（§6、§7）→ 批 4 的文档回写与本节。四笔分层提交为 `1d778c7`／`171b0f9`／`e0ba339`／本笔。
+
+**§9 的五条推荐已按推荐执行**（人未逐条裁决，留此待复核）：串口切分拒绝且仅日志、标签名由焦点格独占且可写空、重启粒度降到 pane 级、非本地 `split-pane --profile` 维持拒绝但换成此刻真实的理由、改 `WorkspaceView` 的两处接缝。
+
+**批 3 相对稿面的两处收口细节**（§7 只给了方向，这里是落点）：
+
+- 一次性本地料按**字段级**合并，而不是整份替换本腿形态：命令行给了哪一格就钉哪一格，没钉的那一格仍由本腿折（缺省腿走 OSC 7 继承、按档案腿走档案目录）。于是目录优先级恒只在 `ui::choose_start_directory` 一处算，切分腿与新开标签腿不会各折一遍。作废点只有一个——设置它的那一跳在 `split_focused` 回来之后无条件 `reset()`，成功即已被工厂并入新格，失败（几何不容、树没动）也不会把上一条命令的意图留给下一次 `Ctrl+Shift+D`。
+- 「当前标签是不是本地腿」属运行期事实，故那条拒绝落在装配侧 `apply_startup_request`（`cli` 纯逻辑件不认识标签类型），诊断是 `split-pane --cwd and --profile need the current tab to be local`；`cli` 侧只留非本地 `--profile` 那一条拒绝。
+
+**结项读数**：`cmake --build --preset linux` 通过且无警告；`ctest --preset linux -E etest_` **95/95**（注册 98，含 3 条 etest）、`borealis_test_runner` 全跑 **1207 案**全绿（v0.124 基线 95 项／1202 案 ⇒ 本件 +5 案，全部长在批 1 的既有用例体内，本件零新增测试 TU）。
+
+**变异账**（一条注入一个判据，转红即该证人非空转；「仍绿」如实记账）：
+
+| 注入点 | 读数 |
+|:--|:--|
+| M1 `startup_policy_error` 的本地档判定恒真（等于放开非本地档案切分） | `utest_cli_startup` 红 |
+| M2 删去 `--cwd` 只对本地生效那一条 | `utest_cli_startup` 红 |
+| M3 把已放开的 `split-pane --cwd` 重新拒掉 | `utest_cli_startup` 红（放开那一档确有证人） |
+| M4 `replace_view` 少第三句 `debounce_.forget(pane)` | `itest_workspace_layout` 红 |
+| M5 `replace_view` 少第二句 `note_pending_mount()` | **全量仍绿** ⇒ 该句是框架补挂机制的沿用（`Container::add` 同源），其**产品后果**无自动化证人，只记为机制事实；本节与 `workspace_view.h` 的注释同口径 |
+| M6 放开「两格共用一份视图」的拒绝 | `itest_workspace_broadcast` 红（`shared_view` 档） |
+| M7 `split_pane` 的 `origin` 改传 `tree_.focused()` | 全量仍绿 ⇒ **等价变异**：两条入口（键盘认领的格、`split_focused` 的模型焦点）在调用那一刻恒等，见 M7b／M7c 才是真证人 |
+| M7b／M7c `origin` 改传常量 1／改传新格号 | `itest_workspace_layout` 红 |
+| M8 `flush_grid_sizes` 的 `dispatch_grid` 恒传格 1 | `itest_workspace_layout` 红 |
+| M9 `close_pane` 不呼 `teardown_pane` | 广播与布局两套件同红 |
+
+**已知边界**：① `main.cpp` 不进 runner ⇒ 六条工厂给的料型别、串口切不开、重启只换焦点格、一次性本地料的字段级合并四件事**无自动化证人**（F14），只有源码审查与本稿 §8 走查清单；② §8 的七条真机走查**未做**，故本件**不称「可用」**（AGENTS §4.5 第 33 条）；③ Windows 腿未编译未真机；④ 非本地档案的切分仍缺凭据询问链（异步弹框与同步工厂互斥），属独立一件，见 §9 第 4 条备选；⑤ 同一标签的两格 SSH 共用一份档案事实（SFTP／隧道／密钥面板按 `TabId` 记账）在本件保持不变，稿 §6 已登记为「不变」。

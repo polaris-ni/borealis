@@ -277,7 +277,9 @@ auto WorkspaceView::replace_view(PaneId pane, std::shared_ptr<TerminalView> next
     }
     if (holders > 1U) {
         // 两格共用一份视图时「这一格的子节点」无从分辨，换下去必然让另一格指着已散的手柄。
-        // 今天的生产工厂正是这副形态（`SPEC.FEAT.WS.02` 的多会话欠账），故宁可拒，不猜。
+        // 每格各有一份会话与视口之后生产走不到这一支（`SPEC.FEAT.WS.02` 已落），留着它是 fail-closed
+        // 守卫：装配层若哪天又交回共用形态，宁可拒也不猜。证人取 `itest_workspace_broadcast` 的
+        // `shared_view` 档。
         AURORA_LOG_WARN("workspace", "replace_view: pane ", pane,
                         " shares its view with another pane, replacement is ambiguous");
         return false;
