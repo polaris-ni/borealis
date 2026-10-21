@@ -94,6 +94,7 @@
 | `ssh.*`（port / auth_method / agent_forwarding / keepalive_interval_sec / connect_timeout_sec） | 表单五项 | port 与两时长为整数、`auth_method` 四取值 | 无消费方（SSH 族未开工） | 延后 |
 | `serial.*`（baud / data_bits / stop_bits / parity / line_ending / encoding） | 表单六项 | baud `[1, 4000000]`、data_bits `[5,8]`、stop_bits `[1,2]`、parity 与 line_ending 各为 `one_of` 白名单 | 无消费方（串口族未开工） | 延后 |
 | `session_logging` / `session_log_dir` | 开关 + 文本输入 | bool / 自由文本 | 无消费方（`SPEC.FEAT.CONN.11` 属 M4） | 延后 |
+| `restore_sessions` | 开关 | bool，缺省**开** | 启动路径读一次（`SPEC.FEAT.WS.11` 稿 D3①：关 ⇒ 读写皆停、已有快照文件不删） | **重启后生效**（`EffectLevel::NextLaunch` 的第二枚消费者，与 `language` 同档——本进程没有重放入口，故该档注释里「唯一消费点是面板角标」那句随批 7 改口） |
 
 > 「已记住的同域」不画在本表里：`connection.trusted_url_hosts` 是**运行期数据而不是偏好**（裁决 7.119 D9①），它走 `kNonPreferenceLeaves` 那条例外通道（例外叶 4→5），于是面板**没有查看/清空入口**——要清只能改 `borealis.json`。这一档是刻意排的：补那一行需要一份本仓没有先例的列表编辑控件，而「用户真要管这份名单」尚未成立（稿 §8 在册，真人别扭再补，届时它才占 schema 那一行）。
 

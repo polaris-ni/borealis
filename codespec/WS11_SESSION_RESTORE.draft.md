@@ -37,6 +37,7 @@
 | **F24** | **落地阶段读数：`describe()` 绝不归一**。相对长度只在 `layout` 的 `distribute` 里折算，形状原样搬出才能做到「折出来 → 重建 → 再折出来」两次读数按位相等；实测把拖到底的那一层（540／48／196 dp）搬进新树再折一次，逐位相同（`a_dragged_proportion_survives_the_round_trip`） | 这条是判据 ① 的落法：比的不是「比例看起来一样」，而是**双精度按位相等**（`PaneShape::operator==` 取 default 正是为此）。任何一处顺手加归一／吸附，两次读数就差在 1e-16 上，判据当场失去意义 |
 | **F25** | **落地阶段读数：`restore` 的自检清单是六道判据**——单子层、长度与子数不符、长度非有限或 ≤0、叶子却带子（判别位有歧义）、叶子序位不是 `[0, N)` 的排列、身份递增越界；全部在写树**之前**跑完，任一条不过即整份拒绝且旧树逐位不动（`malformed_shapes_are_rejected_and_leave_the_tree_alone`，11 例坏形状 + 2 例反空转） | 批 2 的 JSON 读侧要在六道**之外**再加「顶层类型／数组元素类型／计数超上界」那一层：树件管形状合法性，快照件管文档合法性，两道闸叠加才是判据 ② 的完整形态。批 2 不要把六道判据重写一遍——`from_json` 折出形状后交给 `restore`，坏文档自然被这六道接住 |
 | **F26** | **落地阶段（批 3）读数：框架的 `remove(key)` 删不掉「值是整棵对象」的那种键**。实测同一份 `Preferences`：①`set("layout", <一棵对象>)` + `flush()` 写盘；②换实例 `remove("layout")` + `flush()`；③再换新实例——`contains("layout")` 仍为 **true**，整棵布局原样在盘上。原因是墓碑按 `flatten` 之后的**叶子复合键**记账，中间对象层只作前缀、自己不落成独立条目，故顶层那个容器键找不到对应墓碑；`clear()` 则靠「清空纪元」对叶子生效，是**唯一**能清掉整棵布局的那一跳（探针 `/tmp/wsprobe/rmprobe.cpp`，不入库） | 判据 ③ 那句「开关关掉之前已有的快照不被删除」因此**连框架那跳都挡得住**——不是本件刻意留了后门，而是这条路本来走不通。反向的约束落在批 5／批 7：装配层**不许**指望用 `remove` 清快照，界面上也确实没有清理入口（D9① 的在册代价照旧成立）；真要清只能整份 `clear()`，而那是把别人的键也一起清掉的爆炸半径，本棒不用 |
+| **F27** | **落地阶段（批 4）读数：一枚缺省为开的布尔键，同步面比 F19 那句「六处 + 两处计数闸」还多一处**。实测红的第一枚不是 catalog 的计数闸而是 `utest_form_transfer` 里的布尔覆盖闸——`a_boolean_key_reads_the_boolean_it_names` 断 `bool_probes().size() == boolean_key_count()`（按 `ValueDomain::Boolean` 现数 catalog），新增布尔键即 21→22 直接转红，故 `bool_probes()` 那张表是**第三处必须同步的清单**。它与「缺省开」这一档还有第二处咬合：该表与 `made_up()` 的通用写法都是「取离缺省最远的那个值」，缺省 `true` 的键在这里必须填 `false`，填反了那条探针就成了恒真空话（本案按此形态填，`utest_config` 的往返位同理取 `false`） | F19 那条清单在结项回写时补上这一处（批 7 的 `SPECIFICATIONS.md` 口径位）。对本棒的直接影响：批 4 的证人范围从「catalog 那一行」扩到「行案 + 缺省案 + 往返案 + 布尔探针案 + 两档词条案」五处，M5／M6／M7／M9 四支变异正是落在这四处而非行案上——**判据 ③ 的 catalog 半边只是入口，真把「键存在但存不回去／搬不进表单」抓住的是那三张既有清点表** |
 
 ---
 
@@ -143,7 +144,7 @@
 | **1** | `PaneTree` 的描述／重建件 + 嵌套形状类型 | `include/borealis/ui/pane_tree.h`、`src/ui/pane_tree.cpp` | `utest_pane_tree` 扩案（判据 ①） |
 | **2** | 快照数据模型 + JSON 编解码（fail-closed 读侧） | `include/borealis/ui/workspace_snapshot.h`、`src/ui/workspace_snapshot.cpp`、`src/CMakeLists.txt`（`borealis_core` 是显式清单，实测必须登记；测试侧 `cmake/BorealisTests.cmake` 的 GLOB 零改）、`include/borealis/conn/local_terminal.h`（补 `operator==`） | `utest_workspace_snapshot` 新套件（判据 ②⑥⑦） |
 | **3** | 第三枚 `Preferences` 的落盘件 | `src/config/workspace_store.{h,cpp}`、`src/CMakeLists.txt`（同批登记一行，`borealis_core` 显式清单） | 判据 ② 的落盘往返腿 + 判据 ③ 的档位半边（同套件扩案） |
-| **4** | 新键六处同步 + 面板那一行 + 两档词条 + 两处计数闸改口 | `settings.h`、`store.cpp`、`form_transfer.cpp`、`settings_catalog.cpp`、`settings_i18n.cpp`、`utest_settings_catalog.cpp` | catalog 那一行案（判据 ③） |
+| **4** | 新键六处同步 + 面板那一行 + 两档词条 + 两处计数闸改口 | `settings.h`、`store.cpp`、`form_transfer.cpp`、`settings_catalog.cpp`、`settings_i18n.cpp`、`utest_settings_catalog.cpp`（另加两处实测必需的同步：`utest_config.cpp` 的缺省档与往返、`utest_form_transfer.cpp` 的布尔探针表，见 F27） | catalog 那一行案（判据 ③） |
 | **5** | 装配腿：本地 per-pane 账、采集、启动重放、D7 的 CLI 次序 | `src/main.cpp` | **无自动化证人**（F21），§5 走查第 ①–⑤ 条兜底 |
 | **6** | 无头集成用例：写快照 → 新宿主读回 → 断标签数/类型/格数/焦点/尺寸下发 | `tests/integration/itest_workspace_restore.cpp`（新）、`itest_workspace_layout.cpp`（扩） | 判据 ①④ 的接线半边 + 变异自证 |
 | **7** | 文档回写与结项：`SPECIFICATIONS.md` 现状句 + 裁决 7.131、`CHANGELOG.md` v0.131、`PLAN.md` §3/§8、`ARCHITECTURE.md` §2.2 与 §11、`UI_SETTINGS.draft.md` 那一行与 §4 相关句 | `codespec/` | 结项三件齐读数 |
@@ -197,3 +198,25 @@ F12 那处在册代价第一次实际支付：`src/ui/` 依架构 §2.1 不得�
 会得到一条恒不成立的断言），改用一枚从未写过布局的存储来证明那三条「还在」不是恒真的空话。② 夹具文件名一律
 取中立名（`store_round_trip.json` / `keep_previous.json`），生产那枚 `workspace.json` 只在默认绑定那一跳断——
 否则夹具跟着文件名一起被变异带走，落盘案对「文件名写错」这支变异就没有鉴别力。
+
+**批 4 已落地（2026-10-22）**：`connection.restore_sessions`（bool，缺省**开**，`Wired` × `NextLaunch`，画在连接页）
+六处同步全部落定：`settings.h` 的字段与缺省 → `store.cpp` 的读写两半（键名 `restore_sessions`，紧随日志三键之后）
+→ `form_transfer.cpp` 的 `Binding`（与 catalog 同序，那条「行数与逐格次序照表」的闸要求两者同批落地）
+→ `settings_catalog.cpp` 连接页那一行 → `settings_i18n.cpp` 两档词条（`重启后恢复会话` / `Restore sessions after
+restart`）→ `codespec/UI_SETTINGS.draft.md` §2 C 段那一行。`main.cpp` 的消费点按 §8 的棒次归批 5。
+读数：`utest_settings_catalog` **11 案 → 12 案**（新增 `restore_sessions_is_a_wired_next_launch_connection_switch`），
+计数闸 70 → **71**、`Absent` 行数**停在 19 未动**（本案是 `Wired`，不进那个集合）；`ctest --preset linux -E etest_`
+**105/105 全绿**（零新套件）、`./build/borealis_test_runner` **1329 案全绿**（起点 1328，增量 +1）。
+变异九支逐条转红、**无一空转**：页挂到外观 → 2 案红（本案 + `keys_are_unique_and_rows_are_addressable` 的页-域双向闸）；
+消费方改 `Absent` → 2 案红（本案 + `grade_columns_match_the_two_physical_boundaries`）；生效档改 `NextSession`
+→ 同上 2 案红；缺省改 `false` → 行案与 `utest_config.defaults_are_the_first_launch_shape` 各 1 案红；
+写侧漏那一枚 `put` → `utest_config` 6 案红 + `table_covers_exactly_the_written_schema_keys` 1 案红；
+读侧漏那一跳 → `utest_config` 4 案红；`Binding` 整块删 → `utest_form_transfer` 6 案红（catalog **0 案红**，
+两处证人不重叠，正是 F27 那条读数的现场）；词条只留英文档 → `utest_i18n_tiers` 2 案红；`Binding` 接到同域
+另一枚布尔成员 → `utest_form_transfer` 4 案红。两支源文件与各测试件均已按 `/tmp/mut4/*.orig` 逐文件 diff 确认还原。
+两处批 4 独有、值得与批 5 对齐的口径：① **本棒的第一枚缺省为 `true` 的布尔偏好键**，于是所有「取离缺省最远值」
+的既有写法都必须在这一枚上填 `false`（`bool_probes()`、`made_up()`、`utest_config` 的往返位三处同理），而
+`bool_probes().size() == boolean_key_count()` 那枚覆盖闸是 F19 清单之外的第三处同步（F27）；② catalog 一行
+现在就写 `Wired`，而消费点在批 5 才接上——这两批之间面板那句话与实际不符，是分批的固有代价，兑现手段是
+§5 走查第 ⑧ 条（关 ⇒ 重启不恢复且期间不写；再开 ⇒ 恢复出关掉之前那一份旧布局），本棒不称其已被自动化证明。
+判据 ③ 的两半自此齐了：行案（本批）+ 快照件的档位案与那枚编译期 `concept`（批 3）。
