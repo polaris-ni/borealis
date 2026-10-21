@@ -47,7 +47,13 @@ const Tier kStringsZh{
     {"connections.view.favorites", "收藏"},
     {"connections.view.groups", "分组"},
     {"connections.recent.title", "最近连接"},
-    {"connections.notice.imported", "已导入 {0} 条"},
+    // 批 4 的复数形态（`SPEC.FEAT.PREF.05` 判据 ③／裁决 D7）：全表带计数的词条实测 13 枚，其中英文侧
+    // 数词直接修饰可数名词的 5 枚（本枚与 `keys.header.count`／`workspace.broadcast.title`／
+    // `session.reconnect.exhausted`／`terminal.notice.unrepresentable.line`）**两档都写成 `{n, plural, …}` 块**。
+    // 中文侧写块是行为不变的形态统一：框架 `plural.h` 给 `zh` 的规则恒 `other`，故中文渲染逐字同旧串，
+    // 而英文侧的 `one=` 分支才是判据 ③ 的读数。另 8 枚不写块（序数、单位、纯索引或数词后无名词），逐枚
+    // 理由见该稿 §8 的批 4 读数。
+    {"connections.notice.imported", "已导入 {0, plural, other={0} 条}"},
     {"connections.type.local", "本地终端"},
     {"connections.type.ssh", "SSH"},
     // 向导第四型的类型卡（`SPEC.FEAT.CONN.06`，裁决 7.112 D2①）：本棒的新词条**只有这一枚**
@@ -177,7 +183,7 @@ const Tier kStringsZh{
     //      keys_format 唯一产出，面板不 switch 出第二套措辞）----
     {"keys.title", "SSH 密钥"},
     {"keys.empty", "暂无密钥：点「生成密钥」创建一把，或添加扫描目录"},
-    {"keys.header.count", "{0} 把"},
+    {"keys.header.count", "{0, plural, other={0} 把}"},
     {"keys.action.add_dir", "添加目录"},
     {"keys.action.generate", "生成密钥"},
     {"keys.action.close", "关闭"},
@@ -366,7 +372,7 @@ const Tier kStringsZh{
     // 六句是横幅、pill 与成员命名的**全部**上屏文案。标题的 {0} 是成员名（同标签多 pane 已由装配层
     // 追加「窗格 N」）、{1} 是去重后的会话数；两者都是取值，故走位置参数而不是拼进模板。
     // 句末的「点击此处退出」是 D8 改口的落点：`Esc` 留给终端，横幅是退出整组的唯一入口。
-    {"workspace.broadcast.title", "广播输入已开启：{0} 共 {1} 个会话"},
+    {"workspace.broadcast.title", "广播输入已开启：{0} 共 {1, plural, other={1} 个会话}"},
     {"workspace.broadcast.hint", "仅组内窗格键入时同步发送；点击此处退出"},
     {"workspace.broadcast.exit", "退出广播"},
     {"workspace.broadcast.badge", "广播 B"},
@@ -388,7 +394,7 @@ const Tier kStringsZh{
     {"session.reconnect.countdown", "{0} 秒后自动重试"},
     {"session.reconnect.retry_now", "立即重试"},
     {"session.reconnect.stop", "停止重连"},
-    {"session.reconnect.exhausted", "重试 {0} 次仍失败 · 已停止"},
+    {"session.reconnect.exhausted", "重试 {0, plural, other={0} 次仍失败 · 已停止}"},
     {"session.reconnect.not_reconnectable", "认证被拒 · 不自动重试"},
     {"session.reconnect.user_stopped", "自动重连已停止"},
     {"session.restart.by_profile", "重启（按档案）"},
@@ -398,7 +404,7 @@ const Tier kStringsZh{
     // 第二行只指路径、不报当前处置档名：那枚下拉显示的是 ASCII 档名本身（replace / drop /
     // pass_through_utf8），卡片报中文档名会对不上、报 ASCII 又违背界面语言；档名中文化属设置面板本体。
     // 路径三段各与真标签同源（`settings.page.terminal` ＋ `terminal.unrepresentable`）。
-    {"terminal.notice.unrepresentable.line", "{0} 发不出这一段里的 {1} 个字符"},
+    {"terminal.notice.unrepresentable.line", "{0} 发不出这一段里的 {1, plural, other={1} 个字符}"},
     {"terminal.notice.unrepresentable.action", "已按当前处置档发送 · 改档见 设置 › 终端 › 不可表示字符处置"},
 
     // ---- 右键菜单与「会话日志」一族（`SPEC.FEAT.INTERACT.03` 的三条目 + `SPEC.FEAT.CONN.11`）----
@@ -687,7 +693,8 @@ const Tier kStringsEn{
     {"connections.view.favorites", "Favorites"},
     {"connections.view.groups", "Groups"},
     {"connections.recent.title", "Recent connections"},
-    {"connections.notice.imported", "Imported {0} profiles"},
+    // 复数块的五枚与中文表同一批 key（该表顶上那段注讲形态为什么两档都写）；`one=` 分支只有英文档有读数。
+    {"connections.notice.imported", "Imported {0, plural, one={0} profile other={0} profiles}"},
     {"connections.type.local", "Local terminal"},
     {"connections.type.ssh", "SSH"},
     // 向导第四型的类型卡（`SPEC.FEAT.CONN.06`，裁决 7.112 D2①）：本棒的新词条**只有这一枚**
@@ -758,7 +765,7 @@ const Tier kStringsEn{
     //      keys_format 唯一产出，面板不 switch 出第二套措辞）----
     {"keys.title", "SSH keys"},
     {"keys.empty", "No keys yet: choose Generate key to create one, or add a directory to scan"},
-    {"keys.header.count", "{0} keys"},
+    {"keys.header.count", "{0, plural, one={0} key other={0} keys}"},
     {"keys.action.add_dir", "Add directory"},
     {"keys.action.generate", "Generate key"},
     {"keys.action.close", "Close"},
@@ -984,7 +991,7 @@ const Tier kStringsEn{
     // 的落点（`Esc` 留给终端，横幅是退出整组的唯一入口）。
     {"workspace.action.toggle_fullscreen", "Toggle fullscreen"},
     {"workspace.action.new_window", "New window"},
-    {"workspace.broadcast.title", "Input broadcast is on: {0}, {1} sessions"},
+    {"workspace.broadcast.title", "Input broadcast is on: {0}, {1, plural, one={1} session other={1} sessions}"},
     {"workspace.broadcast.hint", "Sent to every pane in the group as you type; click here to exit"},
     {"workspace.broadcast.exit", "Exit broadcast"},
     {"workspace.broadcast.badge", "Broadcast B"},
@@ -1004,7 +1011,7 @@ const Tier kStringsEn{
     {"session.reconnect.countdown", "Retrying automatically in {0} s"},
     {"session.reconnect.retry_now", "Retry now"},
     {"session.reconnect.stop", "Stop reconnecting"},
-    {"session.reconnect.exhausted", "Still failing after {0} tries · stopped"},
+    {"session.reconnect.exhausted", "Still failing after {0, plural, one={0} try other={0} tries} · stopped"},
     {"session.reconnect.not_reconnectable", "Authentication refused · no automatic retry"},
     {"session.reconnect.user_stopped", "Automatic reconnect stopped"},
     {"session.restart.by_profile", "Restart (from profile)"},
@@ -1014,7 +1021,8 @@ const Tier kStringsEn{
     // 第二行只指路径、不报当前处置档名：那一枚下拉显示的就是 ASCII 档名本身（replace / drop /
     // pass_through_utf8），报第二种说法会对不上。路径三段与真标签同源（见 `settings.page.terminal`
     // 与下面的 `terminal.unrepresentable`）。
-    {"terminal.notice.unrepresentable.line", "{0} cannot send {1} characters in this block"},
+    {"terminal.notice.unrepresentable.line",
+     "{0} cannot send {1, plural, one={1} character other={1} characters} in this block"},
     {"terminal.notice.unrepresentable.action",
      "Sent under the current policy · change it in Settings > Terminal > Unrepresentable character policy"},
 

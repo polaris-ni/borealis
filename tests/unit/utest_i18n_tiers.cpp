@@ -1,7 +1,7 @@
 /// 测试类型: unit
 /// 目标单元: src/ui/settings_i18n.{h,cpp} 的语言档接缝（`settings_locale`／两枚装填函数／
 ///           `settings_string_keys`／`settings_string_text`）+ src/config/schema_names.h 的 `language_tag`
-/// 测试说明: 守住 `SPEC.FEAT.PREF.05` 判据 ① 与 ② 的纯逻辑半边，共八条：
+/// 测试说明: 守住 `SPEC.FEAT.PREF.05` 判据 ①②③ 的纯逻辑半边，共九条：
 ///           ① 落盘名与 i18n 区域标签同源（`language_tag` 是那条同源关系的唯一读点，装填侧不得自列
 ///           第二份名字）；② 装填只装选定那一档——按另一档的 tag 去查也只能拿回选定那一档的模板（或两级
 ///           全 miss），于是「把缺省档写死回 `zh`、忽略参数」这类退化（该稿 §8 的 m1）在这里转红，而这一
@@ -13,12 +13,14 @@
 ///           `text` 恒空 ⇒ 空白而不是漏出 key）另立一案，因为它是面板上「覆盖率证人」成立的前提；
 ///           ⑥ 判据 ② 的单向半边（英文档的每一 key 都在中文档有非空孪生条目），随批 3 四段一路有效；
 ///           ⑦ 判据 ② 的等式半边（两档 key 集逐字相等，且每一 key 在两档都有非空模板），随批 3 段 4
-///           英文本体落齐立项，是 7.25⑬「新增界面串必须先加两档」那条纪律唯一的结构式证人。
+///           英文本体落齐立项，是 7.25⑬「新增界面串必须先加两档」那条纪律唯一的结构式证人；
+///           ⑧ 判据 ③ 的复数形态（5 枚计数词条在英文档 1／2 两值必须两串、在中文档剥掉计数后必须同串），
+///           随批 4 落地，外加两组抄在测试里的英文金样串。
 ///
-///           **本案刻意不立的一句**（`codespec/PREF05_I18N.draft.md` §4.1 第 3 条）：判据 ③ 的复数形态
-///           要等批 4 那 13 条计数短语落地，中途立它要么即红要么空转；同理，「选英文档时每一 key 都
-///           解析不出」那种形态在段 1 成立、批 3 补上本体后必然翻转，因此一律不写成断言——②⑥⑦ 三案吃的是
-///           「等式与子集」，它们不随英文档的厚度翻转。
+///           **本案刻意不立的一句**（`codespec/PREF05_I18N.draft.md` §4.1 第 3 条）：「选英文档时每一 key 都
+///           解析不出」那种形态在段 1 成立、批 3 补上本体后必然翻转，因此不写成断言——②⑥⑦ 三案吃的是
+///           「等式与子集」，它们不随英文档的厚度翻转。判据 ③ 那一句过去也登记在这里，批 4 计数短语落齐后
+///           它已撤销并长成 ⑧。
 ///           段 4 之前英文档没译到的 key 上屏为空白，是 F13 登记过的已知代价；段 4 落齐后它由 ⑦ 的
 ///           「非空模板」那半边接手，不再是本案的读数。
 ///           ②' 抄在测试里的那五对是金样：改那一档的措辞就得同步改这里，这是把 m1 变成可抓事实的价格。
@@ -31,9 +33,11 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "aurora/i18n/locale.h"
+#include "aurora/i18n/localized_string.h"
 #include "aurora/i18n/string_table.h"
 
 #include "borealis/config/settings.h"
@@ -68,6 +72,50 @@ constexpr std::array<InterfaceLanguage, 2> kBothTiers{InterfaceLanguage::Zh, Int
         }
     }
     return hits;
+}
+
+/// @brief 判据 ③ 的样本：一枚带计数的词条 key、计数在哪个参数位、总共有几个参数位。
+///
+/// 其余参数位一律填 `kCountFiller`（不含数字）——本案只看「数进没进串、单复数变没变」，
+/// 让填充串带数字就会把 `find("1")` 那两句变成空转。参数位数取自实测调用点（批 4 读数），
+/// 位数错了 `resolve` 就把那一块原样留下，下面的非空/含数断言当场红。
+struct CountPhrase {
+    std::string_view key;
+    std::size_t count_slot;
+    std::size_t slots;
+};
+
+constexpr std::string_view kCountFiller{"A"};
+
+/// @brief 按判据 ③ 的口径渲染一枚计数词条：走真解析链路（`StringTable::resolve`），不是读模板串。
+///
+/// 复数块只有在 `resolve` 里才展开（`lookup` 拿回的是模板本身），所以判据 ③ 必须经这条链路——
+/// 也正是这一点让本案能抓到「块写坏」（未闭合的花括号会让 `find_closing_brace` 找不到配平，
+/// 那一块原样上屏）与「`other=` 分支漏了占位符」两种形态。
+[[nodiscard]] auto render_count(const au::StringTable &table, const InterfaceLanguage language,
+                                const CountPhrase &phrase, const int count) -> std::string {
+    std::vector<au::LocalizedString> args;
+    args.reserve(phrase.slots);
+    for (std::size_t slot = 0; slot < phrase.slots; ++slot) {
+        args.push_back(slot == phrase.count_slot
+                           ? au::LocalizedString{std::to_string(count)}
+                           : au::LocalizedString{std::string{kCountFiller}});
+    }
+    return table.resolve(au::LocalizedString::tr(std::string{phrase.key}, std::move(args)), locale_of(language));
+}
+
+/// @brief 把渲染串里的第一枚 `1` 改成 `2`。
+///
+/// 「随数变格」这件事不能直接断两串相等或不等：计数本身就在串里，n=1 与 n=2 的两串天然不同，
+/// 于是「不等」骗得过退化、「相等」又永远骗不过去。剥掉数之后比才是两侧各自的读数——中文侧要
+/// 剥完**相等**（`plural.h` 给 `zh` 恒 `other`，只有数在动），英文侧要剥完**不等**（名词跟着变格）。
+/// 填充位不含数字，故第一枚 `1` 必是那个计数。
+[[nodiscard]] auto renumbered_to_two(const std::string &rendered) -> std::string {
+    std::string out{rendered};
+    if (const auto at = out.find('1'); at != std::string::npos) {
+        out.replace(at, 1U, "2");
+    }
+    return out;
 }
 
 /// @brief 把「这张表只可能由 `installed` 那一档供数」按单键走一遍。
@@ -215,7 +263,8 @@ AURORA_TEST_CASE(installed_tiers_answer_templates_pinned_in_the_test) {
     //
     // 代价照实登记：这五对是**金样**，改了那一档的措辞就得同步改这里——这是将 m1 变成可抓事实的价格。
     // 选 key 的口径：两档都有本体、且两档文字不同（同字的那些条目，如 `settings.chain.up` 那三枚字形，
-    // 在这里没有分辨力）；`{0}` 那一枚顺带证明位置参数原样进表。
+    // 在这里没有分辨力）；`keys.dir.unreachable` 那一枚顺带证明位置参数原样进表。批 4 起它替掉原来的
+    // `keys.header.count`——后者现在住进复数块，抄在测试里的那份就成了语法而不是文案，金样案要守的是文案。
     struct Pin {
         std::string_view key;
         std::string_view english;
@@ -225,7 +274,7 @@ AURORA_TEST_CASE(installed_tiers_answer_templates_pinned_in_the_test) {
         Pin{"settings.badge.next_launch", "Takes effect after restart"},
         Pin{"settings.chain.filter", "Type a family name to add it"},
         Pin{"connections.action.import", "Import ~/.ssh/config"},
-        Pin{"keys.header.count", "{0} keys"},
+        Pin{"keys.dir.unreachable", "Directory unreachable: {0}"},
     };
 
     au::StringTable english_table;
@@ -331,6 +380,74 @@ AURORA_TEST_CASE(the_two_tiers_share_the_same_key_space) {
         AURORA_TEST_CHECK_MSG(!borealis::ui::settings_string_text(InterfaceLanguage::En, key).empty(),
                               "the en tier registers an empty template: " + key);
     }
+}
+
+AURORA_TEST_CASE(the_count_phrases_decline_in_english_but_not_in_chinese) {
+    // 判据 ③ 的案，随批 4 立（`§4.1` 第 3 条：英文档本体没落齐时它要么即红要么空转）。断的是三件事：
+    //   ① 英文档同一 key 在 n=1 与 n=2 两值渲染出**两条不同的串**（字面判据），且**剥掉计数之后仍不等**
+    //      （有牙的那半，见循环里那句注释）——后者吃的才是 `one=` 分支本身：摘掉它（该稿 §8 的 m4），
+    //      `select_plural_branch` 回落到 `other=`，名词就不再随数变格；
+    //   ② 中文档那两串**剥掉计数之后逐字相等**，且数仍进串——框架 `plural.h` 给 `zh` 的规则恒 `other`，
+    //      故中文侧写成块是「形态统一而行为不变」，这一句就是那个「不变」的读数（不能直接断两串相等：
+    //      计数本身在串里，见 `renumbered_to_two`）；
+    //   ③ 两组金样串抄在测试里（`keys.header.count` 与 `connections.notice.imported`），抓的是分支
+    //      **文本**而不是形状：把 `one={0} key` 写成 `one={0} keys` 在 ① 上看不出来。
+    // 覆盖范围：全表带计数的词条实测 13 枚（F17），其中英文侧数词直接修饰可数名词、因此两档都写进块的
+    // 是那 5 枚（另 8 枚为序数、单位、纯索引或数词后无名词，逐枚理由见该稿 §8 的批 4 读数）。本案只吃
+    // 这 5 枚——它们在两档都必须是块形态，而 `other`-only 的中文块在 ② 上与旧串同形。
+    const std::array<CountPhrase, 5> kCountPhrases{
+        CountPhrase{"connections.notice.imported", 0U, 1U},
+        CountPhrase{"keys.header.count", 0U, 1U},
+        CountPhrase{"workspace.broadcast.title", 1U, 2U},
+        CountPhrase{"session.reconnect.exhausted", 0U, 1U},
+        CountPhrase{"terminal.notice.unrepresentable.line", 1U, 2U},
+    };
+
+    au::StringTable english_table;
+    borealis::ui::install_settings_strings(english_table, InterfaceLanguage::En);
+    au::StringTable chinese_table;
+    borealis::ui::install_settings_strings(chinese_table, InterfaceLanguage::Zh);
+
+    for (const CountPhrase &phrase : kCountPhrases) {
+        const std::string en_one = render_count(english_table, InterfaceLanguage::En, phrase, 1);
+        const std::string en_two = render_count(english_table, InterfaceLanguage::En, phrase, 2);
+        AURORA_TEST_CHECK_MSG(!en_one.empty() && !en_two.empty(),
+                              std::string{"the en tier resolved the count phrase to an empty string: "}
+                                  + std::string{phrase.key});
+        AURORA_TEST_CHECK_MSG(en_one.find('1') != std::string::npos && en_two.find('2') != std::string::npos,
+                              std::string{"the count never reached the en string for "} + std::string{phrase.key}
+                                  + ": 1 -> " + en_one + ", 2 -> " + en_two);
+        AURORA_TEST_CHECK_MSG(en_one != en_two,
+                              std::string{"the en tier reads identically for one and two on "}
+                                  + std::string{phrase.key} + ": 1 -> " + en_one + ", 2 -> " + en_two);
+        // 上面那句**不是 m4 的落点**（批 4 实测）：计数本身在串里，块退化到只剩 `other=` 时 n=1 拿回
+        // "1 keys"、n=2 拿回 "2 keys"，两串照样不等，① 的字面判据当场空转。真正有牙的是这一句——
+        // 把数剥掉后仍要不等，说的才是「名词跟着数变了格」。摘掉 5 枚里任何一枚的 `one=`，这里逐枚红。
+        AURORA_TEST_CHECK_MSG(renumbered_to_two(en_one) != en_two,
+                              std::string{"the en tier differs from one to two only by the digit on "}
+                                  + std::string{phrase.key} + " (the plural block has no one= branch): 1 -> " + en_one
+                                  + ", 2 -> " + en_two + ", renumbered 1 -> " + renumbered_to_two(en_one));
+
+        const std::string zh_one = render_count(chinese_table, InterfaceLanguage::Zh, phrase, 1);
+        const std::string zh_two = render_count(chinese_table, InterfaceLanguage::Zh, phrase, 2);
+        AURORA_TEST_CHECK_MSG(!zh_one.empty() && zh_one.find('1') != std::string::npos,
+                              std::string{"the zh tier lost the count for "} + std::string{phrase.key}
+                                  + ": 1 -> " + zh_one);
+        AURORA_TEST_CHECK_MSG(renumbered_to_two(zh_one) == zh_two,
+                              std::string{"the zh tier declined a count phrase (it must not: plural.h gives zh "
+                                          "the other category always): 1 -> "}
+                                  + zh_one + ", 2 -> " + zh_two + ", renumbered 1 -> " + renumbered_to_two(zh_one));
+    }
+
+    // ③ 的金样：抄在测试里的两条英文串，读点与被测表无关（与 ②' 那一案同一口径，代价也同——改措辞要同步改这里）。
+    AURORA_TEST_CHECK_EQ(render_count(english_table, InterfaceLanguage::En, kCountPhrases[1], 1),
+                         std::string{"1 key"});
+    AURORA_TEST_CHECK_EQ(render_count(english_table, InterfaceLanguage::En, kCountPhrases[1], 2),
+                         std::string{"2 keys"});
+    AURORA_TEST_CHECK_EQ(render_count(english_table, InterfaceLanguage::En, kCountPhrases[0], 1),
+                         std::string{"Imported 1 profile"});
+    AURORA_TEST_CHECK_EQ(render_count(english_table, InterfaceLanguage::En, kCountPhrases[0], 2),
+                         std::string{"Imported 2 profiles"});
 }
 
 }  // namespace borealis::test_cases::utest_i18n_tiers
