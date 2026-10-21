@@ -1,21 +1,25 @@
 /// 测试类型: unit
 /// 目标单元: src/ui/settings_i18n.{h,cpp} 的语言档接缝（`settings_locale`／两枚装填函数／
 ///           `settings_string_keys`／`settings_string_text`）+ src/config/schema_names.h 的 `language_tag`
-/// 测试说明: 守住 `SPEC.FEAT.PREF.05` 判据 ① 与 ② 的纯逻辑半边，共六条：
+/// 测试说明: 守住 `SPEC.FEAT.PREF.05` 判据 ① 与 ② 的纯逻辑半边，共七条：
 ///           ① 落盘名与 i18n 区域标签同源（`language_tag` 是那条同源关系的唯一读点，装填侧不得自列
 ///           第二份名字）；② 装填只装选定那一档——按另一档的 tag 去查也只能拿回选定那一档的模板（或两级
 ///           全 miss），于是「把缺省档写死回 `zh`、忽略参数」这类退化（该稿 §8 的 m1）在这里转红，而这一
-///           形态在英文档补上本体之后依然成立；③ 缺省档随参数走，于是框架在没有
-///           `Provider<Locale>` 的那几处按 `Locale{}`（＝`en`）查表时也落回用户选的那一档（F3／F5）；
-///           ④ 进程级 `settings_locale()` 随装填参数移动；⑤ 查表失败的可见形态（F13：回退 `text` 恒空 ⇒
-///           空白而不是漏出 key）另立一案，因为它是面板上「覆盖率证人」成立的前提；⑥ 判据 ② 的单向半边
-///           （英文档的每一 key 都在中文档有非空孪生条目），随批 3 四段一路有效，四段落齐后补反向等式。
+///           形态在英文档补上本体之后依然成立；②' 同一件事的**独立读点**：五对期望串抄在测试里，
+///           与被测的 `source_tier()` 无关，因此 m1 的两种形态分别在 ②'/④ 与 ④ 上有牙（② 那条等式案
+///           两侧同读源表，对「连源表一起写死」自反成立——批 3 段 2 实测，故补本案）；③ 缺省档随参数走，
+///           于是框架在没有 `Provider<Locale>` 的那几处按 `Locale{}`（＝`en`）查表时也落回用户选的那一档
+///           （F3／F5）；④ 进程级 `settings_locale()` 随装填参数移动；⑤ 查表失败的可见形态（F13：回退
+///           `text` 恒空 ⇒ 空白而不是漏出 key）另立一案，因为它是面板上「覆盖率证人」成立的前提；
+///           ⑥ 判据 ② 的单向半边（英文档的每一 key 都在中文档有非空孪生条目），随批 3 四段一路有效，
+///           四段落齐后补反向等式。
 ///
 ///           **本案刻意不立的两句**（`codespec/PREF05_I18N.draft.md` §4.1 第 3 条）：判据 ② 的**等式**
 ///           「两档 key 集逐字相等」与判据 ③ 的复数形态在英文档还没落齐的四段中途要么即红要么空转，
 ///           故随段 4 一起补；同理，「选英文档时每一 key 都解析不出」那种形态今天成立、批 3 补上本体后
 ///           必然翻转，因此一律不写成断言——②⑥ 两案吃的是「等式与子集」，它们不依赖英文档的厚度。
 ///           英文档还没译到的 key 上屏为空白，是 F13 登记过的已知代价，不是本案的读数。
+///           ②' 抄在测试里的那五对是金样：改那一档的措辞就得同步改这里，这是把 m1 变成可抓事实的价格。
 
 #include "ui/settings_i18n.h"
 
@@ -150,10 +154,11 @@ AURORA_TEST_CASE(installing_registers_only_the_selected_tier) {
     //    而不是「查另一档查不到」——后者今天成立、批 3 补上英文本体后必然翻转，属该稿 §4.1 第 3 条明令
     //    不写的那一类断言。
     //
-    //    这一句就是 m1（「装填时把缺省档写死回 `zh`、忽略参数」）的落点：那种实现把中文模板装进了本该
-    //    是英文档的那张表，第一条腿逐条拿到中文串而源表读数是英文串（今天是 `<none>`），本案整体转红。
-    //    第二条腿反向同判据，且它今天就有 466 条读数——中文档装着、按英文 tag 去查也只能拿回中文模板，
-    //    这正是「回落方向跟着参数」在纯逻辑侧的形态（③ 那条腿是它在 `Locale{}` 上的同一件事）。
+    //    **本案不是 m1 的落点**（批 3 段 2 实测）：m1 的两种形态（连源表一起写死／只把 tag 与缺省档写死）
+    //    在这里都是 0 条读数红——因为等式右边经由 `settings_string_text()` 读的就是同一个 `source_tier()`，
+    //    而被回落规则喂平的另一半同理成立。m1 由下面那一案的金样读点（②'）与进程 locale 案（④）分抓。
+    //    本案真正咬住的是「装填腿把空模板当成一条装进去」这类形态（p2 实测 1 条读数红）与 key 集本身
+    //    错位（m3），两条腿的回落方向也在 ③ 那一案上与 `Locale{}` 的形态对齐。
     //
     //    登记一条已知代价（该稿 F13／§5 第 3 条）：英文档还是空表的今天，「选英文 ⇒ 上屏文案全空」是真实
     //    形态而不是测试假象；批 3 逐段收敛之后剩下的仍是**没译到的那些 key** 的空白，直到四段落齐。
@@ -177,6 +182,48 @@ AURORA_TEST_CASE(installing_registers_only_the_selected_tier) {
     //    `command_palette` 的占位符）在只装一档时不会变空白的理由（该稿 F5／F19）。
     const std::vector<std::string> &chinese_keys = borealis::ui::settings_string_keys(InterfaceLanguage::Zh);
     AURORA_TEST_CHECK_EQ(resolvable(chinese_table, au::Locale{}, chinese_keys), chinese_keys.size());
+}
+
+AURORA_TEST_CASE(installed_tiers_answer_templates_pinned_in_the_test) {
+    // 判据 ① 装填腿的**第二份**证人，与上面那一案互补而非重复：等式案两侧都经由 `settings_string_text()`
+    // 读源表，而 m1 那条变异恰好写死的是同一个 `source_tier()`，于是「表答回的＝源表读数」自反成立、
+    // 等式案对 m1 全形态失明（批 3 段 2 实测：m1 全形态下等式案 0 条读数红）。本案把期望串**抄在测试里**，
+    // 读点与被测函数无关，因此 m1 的两种形态（只写死缺省档 / 连源表一起写死）都在这里转红。
+    //
+    // 代价照实登记：这五对是**金样**，改了那一档的措辞就得同步改这里——这是将 m1 变成可抓事实的价格。
+    // 选 key 的口径：两档都有本体、且两档文字不同（同字的那些条目，如 `settings.chain.up` 那三枚字形，
+    // 在这里没有分辨力）；`{0}` 那一枚顺带证明位置参数原样进表。
+    struct Pin {
+        std::string_view key;
+        std::string_view english;
+    };
+    constexpr std::array<Pin, 5> kPins{
+        Pin{"settings.title", "Settings"},
+        Pin{"settings.badge.next_launch", "Takes effect after restart"},
+        Pin{"settings.chain.filter", "Type a family name to add it"},
+        Pin{"connections.action.import", "Import ~/.ssh/config"},
+        Pin{"keys.header.count", "{0} keys"},
+    };
+
+    au::StringTable english_table;
+    borealis::ui::install_settings_strings(english_table, InterfaceLanguage::En);
+    au::StringTable chinese_table;
+    borealis::ui::install_settings_strings(chinese_table, InterfaceLanguage::Zh);
+
+    for (const Pin &pin : kPins) {
+        const auto en_hit = english_table.lookup(std::string{pin.key}, locale_of(InterfaceLanguage::En));
+        AURORA_TEST_CHECK_MSG(en_hit.has_value() && en_hit.value() == pin.english,
+                              std::string{"installing the en tier did not serve the pinned template for "}
+                                  + std::string{pin.key} + ": got "
+                                  + (en_hit.has_value() ? *en_hit : std::string{"<none>"}));
+
+        // 反方向只需「不是那份英文金样」：装了中文档的表若答出英文模板，说明源表那半被写死反了。
+        const auto zh_hit = chinese_table.lookup(std::string{pin.key}, locale_of(InterfaceLanguage::Zh));
+        AURORA_TEST_CHECK_MSG(zh_hit.has_value() && zh_hit.value() != pin.english,
+                              std::string{"installing the zh tier served the pinned english template for "}
+                                  + std::string{pin.key} + ": got "
+                                  + (zh_hit.has_value() ? *zh_hit : std::string{"<none>"}));
+    }
 }
 
 AURORA_TEST_CASE(the_process_locale_moves_with_the_installed_language) {

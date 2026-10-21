@@ -489,8 +489,9 @@ const Tier kStringsZh{
 
     // ---- 外观域 ----
     {"appearance.theme", "主题"},
-    // 语言档那一行的标签。英文档的同名条目随批 3 的英文本体一起落——本批 `kStringsEn` 还是空表，
-    // 而「新键须两档齐加」那条纪律的结构式证人（判据 ②）也在那一批进（`§4.1` 第 3 条）。
+    // 语言档那一行的标签。英文档的同名条目排在批 3 段 4（`appearance.*` 那一族）——本行所属的域还没轮到，
+    // 于是它在英文档暂时是 F13 的空白形态；「两档同 key 集」那条结构式证人（判据 ②）随四段落齐立项
+    // （`§4.1` 第 3 条）。
     {"appearance.language", "界面语言"},
     {"appearance.palette.basic", "16 色重映射"},
     {"appearance.palette.foreground", "默认前景色"},
@@ -649,8 +650,8 @@ const Tier kStringsZh{
     {"sftp.transfer.queued", "排队 {0}"},
 };
 
-/// @brief 英文档（`en`）的 key → 模板：批 3 按域四段推，**本段（段 1）已落 `connections.*` 与 `keys.*`
-/// 共 146 条**，其余 320 条随该稿 §4 批 3 的后三段补（计划／待建）。
+/// @brief 英文档（`en`）的 key → 模板：批 3 按域四段推，**段 1 落了 `connections.*` 与 `keys.*` 共 146 条，
+/// 段 2 落了 `settings.*` 77 条，合计 223 条**，其余 243 条随该稿 §4 批 3 的段 3／段 4 补（计划／待建）。
 ///
 /// 位置刻意紧跟中文表（该稿 D4），并排校对是这一档存在的唯一理由——466 条 key（批 1 收敛后的 464 条加
 /// 批 2 两枚）分在两个文件里，「两档同 key 集」那条判据就要跨文件聚合。段内条目序与中文表逐条一致，
@@ -820,6 +821,139 @@ const Tier kStringsEn{
     {"keys.push.fail.write_rejected", "Writing the authorized keys file did not succeed"},
     {"keys.push.fail.invalid_line", "This public key does not form a valid line; the push was not started"},
     {"keys.notice.copied", "Copied to the clipboard"},
+
+    // ---- 面板骨架（批 3 段 2：`settings.*` 全族 77 条，段内序与中文表逐条一致）----
+    // 副标题说的是本件默认的提交语义，行尾与组顶角标说的是被标的那一行/那一组（B3-a 同一口径），
+    // 故「立即生效」与下面 `settings.badge.*` 的三档延后并不互相推翻。
+    {"settings.title", "Settings"},
+    {"settings.subtitle", "Changes take effect immediately"},
+    {"settings.close", "Close"},
+    {"settings.action.open", "Open Settings"},
+    {"settings.page.appearance", "Appearance"},
+    {"settings.page.terminal", "Terminal"},
+    {"settings.page.connection", "Connection"},
+    {"settings.page.shortcuts", "Shortcuts"},
+    {"settings.action.unset", "Not set"},
+    {"settings.action.theme_default", "Restore theme default"},
+    {"settings.badge.customized", "Customized"},
+    {"settings.badge.deferred", "Deferred"},
+    {"settings.badge.next_session", "Takes effect next session"},
+    {"settings.badge.next_launch", "Takes effect after restart"},
+
+    // ---- 组顶说明：每条都要点名「哪个消费方还没开工」，否则「只落盘」就成了没来由的话 ----
+    {"settings.note.status_bar",
+     "The entry landed before its consumer: hiding the status bar is not built yet, so this group only reaches disk"},
+    {"settings.note.ssh",
+     "The entry landed before its consumer: the SSH connection family is not built yet, "
+     "so this group only reaches disk"},
+    {"settings.note.serial",
+     "The entry landed before its consumer: the serial connection family is not built yet, "
+     "so this group only reaches disk"},
+    {"settings.note.shortcuts",
+     "The entry landed before its consumer: key rebinding is not built yet, "
+     "so bindings in the override table do nothing"},
+
+    // ---- 回退链区段（A5-a）----
+    // 三枚按钮是**字形**而不是词，两档同字（`SPEC.FEAT.PREF.05` 稿 m1 那条等价变异点名的正是这类条目）；
+    // 上限的数字仍经 `{0}` 交出，不写进模板（裁决 7.62，理由同中文表那一条注）。
+    {"settings.chain.up", "↑"},
+    {"settings.chain.down", "↓"},
+    {"settings.chain.remove", "✕"},
+    {"settings.chain.filter", "Type a family name to add it"},
+    {"settings.chain.empty", "The fallback chain is empty: only the framework's global default chain runs"},
+    {"settings.chain.full", "The limit of {0} is reached: the add field is closed"},
+    {"settings.chain.truncated", "The chain is longer than the limit of {0}: the extra entries are not drawn"},
+    {"settings.chain.no_match", "No family name matches"},
+
+    // ---- 字体族区段（A4-b：一句话覆盖「目录里没有」与「度量非等宽」两档，两个参数是取值）----
+    {"settings.font.fallback", "The configured {0} is unavailable: {1} is used instead"},
+
+    // ---- 快捷键只读表（D1-a 的列名 / D2-a 的标注两档 / 未绑定那一格）----
+    // 这五串同样只在此处注册一次；「重复」那枚的位置参数是**另一行的动作名**（取值），
+    // 与 `settings.font.fallback` 同档，故两侧都带引号形态。
+    {"settings.shortcut.column.title", "Action"},
+    {"settings.shortcut.column.category", "Group"},
+    {"settings.shortcut.column.binding", "Current binding"},
+    {"settings.shortcut.column.note", "Note"},
+    {"settings.shortcut.unbound", "Unbound"},
+    {"settings.shortcut.conflict_with", "Duplicates \"{0}\""},
+    {"settings.shortcut.conflict_workspace", "Conflicts with a split-screen binding"},
+
+    // ---- 配置韧性动作区（`SPEC.FEAT.PREF.07` 的 M2 腿）----
+    // 说明里不写份数（真值源是 `config::kSnapshotRetention`，本件不 include `config`）；
+    // 文件名走位置参数，三条失败留痕不含存储侧交回的那句 ASCII 诊断（裁决 7.76⑤，理由同中文表）。
+    {"settings.config.export", "Export settings"},
+    {"settings.config.import", "Import settings"},
+    {"settings.config.snapshots", "Settings snapshots"},
+    {"settings.config.back", "Back"},
+    {"settings.snapshot.note",
+     "Each snapshot is taken before a save, so rolling back returns this file to that moment; panel edits that were "
+     "never saved are lost with them"},
+    {"settings.snapshot.empty", "No snapshots yet: nothing has been written to disk"},
+    {"settings.snapshot.rollback", "Roll back"},
+    {"settings.config.exported", "Exported to {0}"},
+    {"settings.config.imported", "Imported {0}"},
+    {"settings.config.rolled_back", "Rolled back to {0}"},
+    {"settings.config.export_failed", "Export failed: the target file could not be written"},
+    {"settings.config.import_failed",
+     "Import failed: that file is not a usable configuration, current settings unchanged"},
+    {"settings.config.rollback_failed", "Rollback failed: current settings unchanged"},
+
+    // ---- 启动降级提示（`SPEC.FEAT.PREF.07`，判据文 §7 的 S13①）----
+    // 标题按 `LoadOutcome` 两态各一条；版本号与备份路径都是**取值**故走位置参数。
+    {"settings.startup.corrupt.title", "The configuration file is corrupt"},
+    {"settings.startup.version.title", "The configuration file is newer than this program"},
+    {"settings.startup.corrupt.body",
+     "This configuration file could not be read, so the program started on defaults."},
+    {"settings.startup.version.body",
+     "This configuration file was written by a newer version (file {0}, this program supports {1}), so the program "
+     "started on defaults."},
+    {"settings.startup.backup", "The corrupt file was backed up to: {0}"},
+    {"settings.startup.writes_refused",
+     "The corrupt file could not be backed up: this session will not write the configuration file, "
+     "the original stays as it is"},
+    {"settings.startup.rejected", "These settings were outside their usable range and fell back to their defaults:"},
+    {"settings.startup.ack", "Got it"},
+
+    // ---- 三条延后落地的旁注（会话日志 / OSC 52 读方向 / 打开链接）----
+    // 读方向那一条要把三档各自的后果一次讲完，并把候选原文 `deny` / `ask` 照上屏形态写进句子：
+    // 面板的下拉直接把落盘名交给 `aurora::Dropdown`，旁注换另一套说法就让用户在框里找不到那一档。
+    {"settings.note.session_log",
+     "Capability gate: even with this on, each session must still start its log explicitly. Old files in the log "
+     "directory are neither cleaned nor rotated in this phase."},
+    {"settings.note.clipboard_read",
+     "What each tier does: deny and over-limit both reply with a single empty response, no prompt and nothing to "
+     "find on screen; changing the tier takes effect immediately for every live tab; ask asks once per read request "
+     "(a session can hold at most 8 pending reads, any further request is answered as deny)."},
+    {"settings.note.link_confirm",
+     "The two keys each cover one source: osc8 is a target the program declared explicitly, heuristic is a string "
+     "guessed from its shape. ask_once remembers scheme + host + port, so a second link in the same domain is not "
+     "asked about again, but a different port is."},
+    {"settings.note.link_schemes",
+     "Comma separated; links outside the allowlist are not drawn as clickable (an empty or all-invalid list means "
+     "nothing is clickable)"},
+
+    // ---- 快捷键域（表头四列与「未绑定」在上方只读表段，此处只有编辑浮层那六串）----
+    {"settings.shortcut.edit_title", "Edit key binding"},
+    {"settings.shortcut.conflict_warning", "Conflicts with these commands"},
+    {"settings.action.edit", "Edit"},
+    {"settings.action.restore_defaults", "Restore defaults"},
+    {"settings.action.confirm", "OK"},
+    {"settings.action.cancel", "Cancel"},
+
+    // ---- 提交未通过的原因（`ui::CommitIssue` 的十二个非 `None` 值；措辞只说这一格能做什么）----
+    {"settings.issue.unknown_key", "That key is not in this version's settings table"},
+    {"settings.issue.not_loaded", "That key is not loaded into this panel"},
+    {"settings.issue.domain_mismatch", "That value's type does not match this setting"},
+    {"settings.issue.text_not_accepted", "This setting does not take typed text"},
+    {"settings.issue.malformed_number", "Enter a number"},
+    {"settings.issue.not_integral", "This setting only takes whole numbers"},
+    {"settings.issue.out_of_range", "Outside the allowed range"},
+    {"settings.issue.not_a_choice", "Choose one of the listed values"},
+    {"settings.issue.malformed_color", "A color must be the 7-character #RRGGBB form"},
+    {"settings.issue.unset_not_allowed", "This setting must have a color"},
+    {"settings.issue.slot_out_of_range", "The palette slot is outside 0 to 15"},
+    {"settings.issue.table_size_wrong", "The palette must have exactly 16 slots"},
 };
 
 
