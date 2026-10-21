@@ -1,7 +1,7 @@
 /// 测试类型: unit
 /// 目标单元: src/ui/settings_i18n.{h,cpp} 的语言档接缝（`settings_locale`／两枚装填函数／
 ///           `settings_string_keys`／`settings_string_text`）+ src/config/schema_names.h 的 `language_tag`
-/// 测试说明: 守住 `SPEC.FEAT.PREF.05` 判据 ① 与 ② 的纯逻辑半边，共七条：
+/// 测试说明: 守住 `SPEC.FEAT.PREF.05` 判据 ① 与 ② 的纯逻辑半边，共八条：
 ///           ① 落盘名与 i18n 区域标签同源（`language_tag` 是那条同源关系的唯一读点，装填侧不得自列
 ///           第二份名字）；② 装填只装选定那一档——按另一档的 tag 去查也只能拿回选定那一档的模板（或两级
 ///           全 miss），于是「把缺省档写死回 `zh`、忽略参数」这类退化（该稿 §8 的 m1）在这里转红，而这一
@@ -11,14 +11,16 @@
 ///           于是框架在没有 `Provider<Locale>` 的那几处按 `Locale{}`（＝`en`）查表时也落回用户选的那一档
 ///           （F3／F5）；④ 进程级 `settings_locale()` 随装填参数移动；⑤ 查表失败的可见形态（F13：回退
 ///           `text` 恒空 ⇒ 空白而不是漏出 key）另立一案，因为它是面板上「覆盖率证人」成立的前提；
-///           ⑥ 判据 ② 的单向半边（英文档的每一 key 都在中文档有非空孪生条目），随批 3 四段一路有效，
-///           四段落齐后补反向等式。
+///           ⑥ 判据 ② 的单向半边（英文档的每一 key 都在中文档有非空孪生条目），随批 3 四段一路有效；
+///           ⑦ 判据 ② 的等式半边（两档 key 集逐字相等，且每一 key 在两档都有非空模板），随批 3 段 4
+///           英文本体落齐立项，是 7.25⑬「新增界面串必须先加两档」那条纪律唯一的结构式证人。
 ///
-///           **本案刻意不立的两句**（`codespec/PREF05_I18N.draft.md` §4.1 第 3 条）：判据 ② 的**等式**
-///           「两档 key 集逐字相等」与判据 ③ 的复数形态在英文档还没落齐的四段中途要么即红要么空转，
-///           故随段 4 一起补；同理，「选英文档时每一 key 都解析不出」那种形态今天成立、批 3 补上本体后
-///           必然翻转，因此一律不写成断言——②⑥ 两案吃的是「等式与子集」，它们不依赖英文档的厚度。
-///           英文档还没译到的 key 上屏为空白，是 F13 登记过的已知代价，不是本案的读数。
+///           **本案刻意不立的一句**（`codespec/PREF05_I18N.draft.md` §4.1 第 3 条）：判据 ③ 的复数形态
+///           要等批 4 那 13 条计数短语落地，中途立它要么即红要么空转；同理，「选英文档时每一 key 都
+///           解析不出」那种形态在段 1 成立、批 3 补上本体后必然翻转，因此一律不写成断言——②⑥⑦ 三案吃的是
+///           「等式与子集」，它们不随英文档的厚度翻转。
+///           段 4 之前英文档没译到的 key 上屏为空白，是 F13 登记过的已知代价；段 4 落齐后它由 ⑦ 的
+///           「非空模板」那半边接手，不再是本案的读数。
 ///           ②' 抄在测试里的那五对是金样：改那一档的措辞就得同步改这里，这是把 m1 变成可抓事实的价格。
 
 #include "ui/settings_i18n.h"
@@ -101,11 +103,32 @@ auto check_serves_only_the_installed_tier(const au::StringTable &table, const In
     return out;
 }
 
+/// @brief 两档有序 key 表的首个差异，只用于等式案转红时的定位。
+///
+/// 466 枚 key 报一句「不相等」没法定位：拼错的 key 和漏掉的 key 都缩在同一枚布尔里，两档各 466 条时
+/// 差一枚的表要把整表打印出来才找得着。这里按字典序走到第一处分叉就停，把两侧那枚原样吐出来。
+[[nodiscard]] auto first_difference(const std::vector<std::string> &left, const std::vector<std::string> &right)
+    -> std::string {
+    for (std::size_t i = 0U; i < left.size() || i < right.size(); ++i) {
+        if (i >= left.size()) {
+            return "index " + std::to_string(i) + " only in the right tier: " + right[i];
+        }
+        if (i >= right.size()) {
+            return "index " + std::to_string(i) + " only in the left tier: " + left[i];
+        }
+        if (left[i] != right[i]) {
+            return "index " + std::to_string(i) + " is " + left[i] + " on the left, " + right[i]
+                   + " on the right";
+        }
+    }
+    return std::string{"<none>"};
+}
+
 /// @brief 把进程级那张表与 `settings_locale()` 恢复回中文档的守卫。
 ///
 /// 本件是那张表的唯一装填点，而 runner 在**同一进程**里跑完所有用例：本案要把进程档切到英文再切回，
-/// 若 `AURORA_TEST_REQUIRE_*` 提前返回就把英文档（今天是空档）留给了后面的用例，别的套件会读成一片
-/// 空白而不是读到它们自己的红。守卫放在函数作用域，撤销与析构同拍。
+/// 若 `AURORA_TEST_REQUIRE_*` 提前返回就把英文档留给了后面的用例，别的套件会读到另一种语言的模板而不是
+/// 读到它们自己的红。守卫放在函数作用域，撤销与析构同拍。
 struct ProcessTierGuard {
     ProcessTierGuard() = default;
     ProcessTierGuard(const ProcessTierGuard &) = delete;
@@ -270,11 +293,11 @@ AURORA_TEST_CASE(both_tiers_are_addressed_by_sorted_unique_keys) {
 
 AURORA_TEST_CASE(every_english_entry_has_a_non_empty_chinese_twin) {
     // 判据 ② 的**单向半边**，形态是子集而不是等式（该稿 §4.1 第 3 条：等式那半边要等四段英文本体落齐，
-    // 中途立它必红）。这一段今天有 146 条读数（`connections.*` 与 `keys.*`），故本案不是空转，且它管的
-    // 正是英文档在生长过程中最容易犯的两种错：
+    // 中途立它必红）。它管的正是英文档在生长过程中最容易犯的两种错：
     //   ① 写了一枚中文档没有的 key（拼错的 key 在界面上是**空白**而不是错字，F13，所以只能这样抓）；
     //   ② 用空串占位「回头再译」——空串让判据 ② 的等式在四段之后仍然成立，却把 F13 的空白留在了界面上。
-    // 反向等式（中文档的每一 key 也在英文档里）随段 4 落齐时补，届时的形态见该稿 §8 的结项读数。
+    // 段 4 落齐后本案的读数已被下面那一案**完全覆盖**（等式 ⇒ 子集，且非空断言两侧都查），故它自此不是
+    // 必要证人；按该稿 §4.1 第 5 条登记的形态它仍是段 1–3 期间的在场证人，去留留批 7 结项时一并定。
     const std::vector<std::string> &english_keys = borealis::ui::settings_string_keys(InterfaceLanguage::En);
     AURORA_TEST_CHECK_GT(english_keys.size(), 0U);
     for (const std::string &key : english_keys) {
@@ -282,6 +305,31 @@ AURORA_TEST_CASE(every_english_entry_has_a_non_empty_chinese_twin) {
                               "the en tier registers an empty template: " + key);
         AURORA_TEST_CHECK_MSG(!borealis::ui::settings_string_text(InterfaceLanguage::Zh, key).empty(),
                               "the en tier has a key the zh tier never heard of: " + key);
+    }
+}
+
+AURORA_TEST_CASE(the_two_tiers_share_the_same_key_space) {
+    // 判据 ② 的**等式**半边，批 3 四段落齐后才立项（`§4.1` 第 3 条：中途立它必红，红在「还没译到的那些
+    // key」上而不是红在真缺陷上）。这一案是 7.25⑬「新增界面串必须先加两档」那条纪律唯一的结构式证人，
+    // 也是 m2（`kStringsEn` 删一枚 key）自此有牙的地方——上面那一案吃的是英文档自己的形态，删一条它看不见。
+    //
+    // 断的是两件不同的事，故分开写：① 两档 key 集排序后逐字相等（漏 key 与拼错 key 都在这里红）；
+    // ② 每一 key 在两档都有**非空**模板（用空串占位「回头再译」在这一条红，而它骗得过 ①）。
+    // 两档同字的那几枚（`{0}` 与三枚字形一类，`§4.1` 第 6 条点名过）在 ①② 上都有读数，本案不看文本是否
+    // 相同，故不受它们影响。
+    const std::vector<std::string> &chinese_keys = borealis::ui::settings_string_keys(InterfaceLanguage::Zh);
+    const std::vector<std::string> &english_keys = borealis::ui::settings_string_keys(InterfaceLanguage::En);
+    AURORA_TEST_CHECK_MSG(chinese_keys == english_keys,
+                          "the two tiers do not share the same key space: zh holds "
+                              + std::to_string(chinese_keys.size()) + " keys, en holds "
+                              + std::to_string(english_keys.size()) + ", first difference at "
+                              + first_difference(chinese_keys, english_keys));
+
+    for (const std::string &key : chinese_keys) {
+        AURORA_TEST_CHECK_MSG(!borealis::ui::settings_string_text(InterfaceLanguage::Zh, key).empty(),
+                              "the zh tier registers an empty template: " + key);
+        AURORA_TEST_CHECK_MSG(!borealis::ui::settings_string_text(InterfaceLanguage::En, key).empty(),
+                              "the en tier registers an empty template: " + key);
     }
 }
 

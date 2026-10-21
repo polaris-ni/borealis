@@ -650,19 +650,26 @@ const Tier kStringsZh{
     {"sftp.transfer.queued", "排队 {0}"},
 };
 
-/// @brief 英文档（`en`）的 key → 模板：批 3 按域四段推，**段 1 落了 `connections.*` 与 `keys.*` 共 146 条，
-/// 段 2 落了 `settings.*` 77 条，段 3 落了终端与会话侧 93 条，合计 316 条**，其余 150 条随该稿 §4 的
-/// 段 4 补（`connection.*`／`serial.*`／`sftp.*`／`tunnel.*`／`shortcuts.*`／`appearance.*`，计划／待建）。
+/// @brief 英文档（`en`）的 key → 模板：批 3 按域四段推完，**段 1 落 `connections.*` 与 `keys.*` 146 条、
+/// 段 2 落 `settings.*` 77 条、段 3 落终端与会话侧 93 条、段 4 落连接域与其余 150 条（`connection.*`／
+/// `serial.*`／`sftp.*`／`tunnel.*`／`shortcuts.*`／`appearance.*`），合计 466 条，与中文表逐 key 相等**。
+///
+/// CJK-LITERAL: locale-output - 本表与中文表同为上屏文案的真值源，换成转写即失去并排对照的价值。表内
+/// 非 ASCII 的字面量只有两类共九枚：三枚字形（`settings.chain.*`，与中文表同字）与六枚 `" · "` 分隔符
+/// （沿 `serial_format.cpp` 与 `settings_panel.cpp` 那两处同类别已标的既定视觉形态）。
 ///
 /// 位置刻意紧跟中文表（该稿 D4），并排校对是这一档存在的唯一理由——466 条 key（批 1 收敛后的 464 条加
 /// 批 2 两枚）分在两个文件里，「两档同 key 集」那条判据就要跨文件聚合。段内条目序与中文表逐条一致，
 /// 中文表里解释「为什么是这个措辞」的那几条注也随条目一起搬过来：改一条时两档同屏可见。
 ///
-/// 没译到的那些 key 在这一档里**根本没有条目**：装填腿只装选定那一档（该稿 D4 的落地期改形，理由见
-/// `§4.1` 第 2 条），于是选英文档时它们两级全 miss ⇒ 回退 `LocalizedString::text`（`tr()` 造的实例恒空）
-/// ⇒ 界面空白（该稿 F13 的形态）。这是批 3 中途的已知代价，也是判据 ② 的常驻案要等四段落齐才立项的理由
-/// （该稿 `§4.1` 第 3 条）；而「装进去的只有选定那一档」这条性质本身由 `utest_i18n_tiers` 的档位身份案
-/// 逐 key 守着——它比的是「表答回的模板＝源表里选定那一档的模板」，本档从空表变成本体的过程不会让它翻转。
+/// 两档文本逐字相同的 13 枚不是漏译：`CR`／`CRLF`／`LF`／`SSH`／`Telnet`／`Ed25519`／`RSA`／`SOCKS5 -D`
+/// 本来就是英文缩写，`{0}` 与 `{0}+` 是纯读数，另三枚是上面那三枚字形。「两档同 key 集」那条判据（该稿
+/// §5 第 2 条）断的是 key 集与「每档都有非空模板」，不比文本，故这 13 枚在判据上都有读数。
+///
+/// 装填腿只装选定那一档（该稿 D4 的落地期改形，理由见 `§4.1` 第 2 条），于是本档此前「没译到的 key 上屏
+/// 为空白」——该稿 F13 在批 3 中途的已知代价——随段 4 闭合：本档没有空串占位条目。自此「新增界面串必须
+/// 先加两档才能上屏」（7.25⑬）由 `utest_i18n_tiers.the_two_tiers_share_the_same_key_space` 常驻把守；
+/// 判据 ② 的等式形态在四段中途必红（红在还没译到的那些 key 上），故按该稿 `§4.1` 第 3 条排到今天。
 const Tier kStringsEn{
     // ---- 连接管理器侧栏（UI_CONNECTIONS.draft.md；词条与 settings.* 同格角色）----
     {"connections.title", "Connections"},
@@ -1089,6 +1096,176 @@ const Tier kStringsEn{
     {"terminal.link_heuristic", "Before opening detected links"},
     {"terminal.link_schemes", "Schemes allowed to open"},
     {"terminal.command_block_separator", "Show a divider while hovering a command block"},
+
+    // ---- 热改波特率（批 3 段 4 收尾这一笔 150 条：`serial.set_baud.*`／`tunnel.*`／`appearance.*`／
+    //      `connection.*`／`shortcuts.*`／`sftp.*`，段内序与中文表逐条一致）----
+    {"serial.set_baud.title", "Change serial baud rate"},
+    {"serial.set_baud.current", "Current: {0}"},
+    {"serial.set_baud.applied", "Switched to {0}"},
+    {"serial.set_baud.rejected", "Refused by the device: {0}"},
+    {"serial.set_baud.not_serial", "The current session is not a serial port"},
+
+    // ---- SSH 隧道面板（UI_TUNNEL.draft.md，裁决 7.97）----
+    // state / error / listen 三族由 `tunnel_format` 唯一产出，面板不 switch 出第二套措辞。
+    // `tunnel.listen.server_picked` 与 `.server_chosen` 不是一句话的两种写法：前者是「-R 配 0 端口、
+    // 运行时还没回报择定值」那一档的注记，后者是 `bound_port>0`（或 Active 等帧）之后已择定的回显，
+    // 两枚各由 `tunnel_endpoint_note_key` 的一个分支产出（`src/ui/tunnel_format.cpp`）。
+    {"tunnel.title", "Tunnels"},
+    {"tunnel.empty", "No tunnels yet: use New tunnel to add one"},
+    {"tunnel.header.running", "{0} running"},
+    {"tunnel.action.close", "Close"},
+    {"tunnel.action.new", "New tunnel"},
+    {"tunnel.action.start", "Start"},
+    {"tunnel.action.stop", "Stop"},
+    {"tunnel.action.edit", "Edit"},
+    {"tunnel.action.delete", "Delete"},
+    {"tunnel.state.stopped", "Stopped"},
+    {"tunnel.state.dialing", "Dialing"},
+    {"tunnel.state.active", "Ready"},
+    {"tunnel.state.backoff", "Backing off"},
+    {"tunnel.state.failed", "Failed"},
+    {"tunnel.error.dial_failed", "Connect or authenticate failed"},
+    {"tunnel.error.bind_failed", "Listen port could not be opened"},
+    {"tunnel.error.remote_refused", "Server refused the remote listen"},
+    {"tunnel.error.channel_lost", "Session dropped"},
+    {"tunnel.listen.server_picked", "The server picks the port"},
+    {"tunnel.listen.server_chosen", "The server chose the port"},
+    {"tunnel.row.profile", "Carried by: {0}"},
+    {"tunnel.row.retry_wait", "Retry {0} · in {1} s"},
+    {"tunnel.row.autostart_skipped", "Autostart skipped: store the credential first"},
+    {"tunnel.notice.persist_failed", "The tunnel table could not be saved: this change stays in memory only"},
+    {"tunnel.kind.local", "Local -L"},
+    {"tunnel.kind.remote", "Remote -R"},
+    {"tunnel.kind.dynamic", "SOCKS5 -D"},
+    {"tunnel.confirm.title", "Stop and delete?"},
+    {"tunnel.confirm.body", "{0} is running; it will be stopped before deleting."},
+    {"tunnel.confirm.action", "Stop and delete"},
+    {"tunnel.editor.title_new", "New tunnel"},
+    {"tunnel.editor.title_edit", "Edit tunnel"},
+    {"tunnel.editor.field.name", "Name"},
+    {"tunnel.editor.field.listen_addr", "Listen address"},
+    {"tunnel.editor.field.listen_port", "Listen port"},
+    {"tunnel.editor.field.target_host", "Target host"},
+    {"tunnel.editor.field.target_port", "Target port"},
+    {"tunnel.editor.field.profile", "Carrying profile"},
+    {"tunnel.editor.field.autostart", "Start automatically"},
+    {"tunnel.editor.no_profile", "(no SSH profile)"},
+    {"tunnel.editor.retry.base", "Base backoff ms"},
+    {"tunnel.editor.retry.cap", "Cap ms"},
+    {"tunnel.editor.retry.attempts", "Attempts"},
+    {"tunnel.editor.retry.hint", "Blank = the old global tier (1s / 30s / unlimited)"},
+    {"tunnel.editor.action.save", "Save"},
+    {"tunnel.editor.action.cancel", "Cancel"},
+    {"tunnel.editor.issue_name", "Name cannot be empty"},
+    {"tunnel.editor.issue_profile", "An SSH profile must be selected"},
+    {"tunnel.editor.issue_listen_port", "Listen port must be in range (-R allows 0)"},
+    {"tunnel.editor.issue_target_host", "Target host cannot be empty"},
+    {"tunnel.editor.issue_target_port", "Target port must be 1..65535"},
+    {"tunnel.editor.issue_conflict", "Another tunnel claims the same listen point"},
+
+    // ---- 外观域 ----
+    // `appearance.language` 是批 2 那枚新键：英文本体到此才闭合「新键须两档齐加」那条纪律，
+    // 判据 ② 的常驻案（两档 key 集逐字相等）也随这一段落齐才能立（`§4.1` 第 3 条）。
+    {"appearance.theme", "Theme"},
+    {"appearance.language", "Interface language"},
+    {"appearance.palette.basic", "16-color remap"},
+    {"appearance.palette.foreground", "Default foreground color"},
+    {"appearance.palette.background", "Default background color"},
+    {"appearance.palette.cursor", "Cursor color"},
+    {"appearance.palette.selection", "Selection color"},
+    {"appearance.palette.bold_is_bright", "Bold uses bright colors"},
+    {"appearance.palette.min_contrast_enabled", "Enforce minimum contrast"},
+    {"appearance.palette.min_contrast", "Minimum contrast"},
+    {"appearance.font_family", "Monospace font"},
+    {"appearance.font_size_pt", "Font size"},
+    {"appearance.font_line_height", "Line height"},
+    {"appearance.font_letter_spacing_dp", "Letter spacing"},
+    {"appearance.font_fallback_chain", "CJK fallback chain"},
+    {"appearance.viewport_padding_dp", "Viewport padding"},
+    {"appearance.cursor_shape", "Cursor shape"},
+    {"appearance.cursor_blinking", "Cursor blinking"},
+    {"appearance.cursor_blink_period_ms", "Blink period"},
+    {"appearance.sidebar_collapsed", "Collapse the sidebar"},
+    {"appearance.tab_name_priority", "Tab name priority"},
+    {"appearance.status_bar.show_connection", "Connection status"},
+    {"appearance.status_bar.show_reconnect", "Reconnect status"},
+    {"appearance.status_bar.show_cursor_position", "Cursor position"},
+    {"appearance.status_bar.show_encoding", "Session encoding"},
+    {"appearance.status_bar.show_grid_size", "Rows and columns"},
+    {"appearance.status_bar.show_font_size", "Font size"},
+    {"appearance.status_bar.show_theme", "Current theme"},
+    {"appearance.status_bar.show_scrollback", "Scrollback lines"},
+    {"appearance.status_bar.show_clipboard_policy", "Clipboard policy"},
+    {"appearance.status_bar.show_input_latency", "Input latency"},
+
+    // ---- 连接域（设置页那 20 行的行名；键名沿用落盘点号，故 `agent 转发` 这种中英混排在此档
+    //      就是纯英文 `Agent forwarding`）----
+    {"connection.local_shell", "Default shell"},
+    {"connection.startup_directory", "Startup directory"},
+    {"connection.ssh.port", "Port"},
+    {"connection.ssh.auth_method", "Authentication method"},
+    {"connection.ssh.agent_forwarding", "Agent forwarding"},
+    {"connection.ssh.keepalive_interval_sec", "Keepalive interval"},
+    {"connection.ssh.connect_timeout_sec", "Connect timeout"},
+    {"connection.ssh.reconnect_base_delay_ms", "Reconnect base backoff"},
+    {"connection.ssh.reconnect_max_delay_ms", "Reconnect backoff cap"},
+    {"connection.ssh.reconnect_attempts", "Automatic reconnect attempts"},
+    {"connection.serial.baud", "Baud rate"},
+    {"connection.serial.data_bits", "Data bits"},
+    {"connection.serial.stop_bits", "Stop bits"},
+    {"connection.serial.parity", "Parity"},
+    {"connection.serial.flow", "Flow control"},
+    {"connection.serial.line_ending", "Line ending"},
+    {"connection.serial.encoding", "Serial encoding"},
+    {"connection.session_logging", "Session log"},
+    {"connection.session_log_dir", "Log directory"},
+    {"connection.session_log_pattern", "Extra sensitive regex"},
+
+    // ---- 快捷键域（表头四列与「未绑定」在上方只读表段，这里只有组名那一枚）----
+    {"shortcuts.overrides", "Key override table"},
+
+    // ---- SFTP 浏览器（SPEC.FEAT.CONN.04；codespec/UI_SFTP.draft.md §4，裁决 7.95）----
+    {"sftp.title", "SFTP files"},
+    {"sftp.action.close", "Close"},
+    {"sftp.action.retry", "Retry"},
+    {"sftp.action.up", "Up"},
+    {"sftp.action.refresh", "Refresh"},
+    {"sftp.action.upload", "Upload"},
+    {"sftp.action.download", "Download"},
+    {"sftp.action.new_folder", "New folder"},
+    {"sftp.action.new_file", "New file"},
+    {"sftp.action.rename", "Rename"},
+    {"sftp.action.delete", "Delete"},
+    {"sftp.action.cancel", "Cancel"},
+    {"sftp.action.confirm", "OK"},
+    {"sftp.column.local", "Local"},
+    {"sftp.column.remote", "Remote"},
+    {"sftp.column.name", "Name"},
+    {"sftp.column.size", "Size"},
+    {"sftp.column.mtime", "Modified"},
+    {"sftp.column.permissions", "Permissions"},
+    {"sftp.status.connecting", "Connecting..."},
+    {"sftp.status.connected", "Connected"},
+    {"sftp.status.failed", "Connection failed"},
+    {"sftp.status.not_ssh", "The current tab is not an SSH session"},
+    {"sftp.error.not_connected", "Not connected"},
+    {"sftp.error.network", "Network error"},
+    {"sftp.error.permission_denied", "Permission denied"},
+    {"sftp.error.not_found", "Path not found"},
+    {"sftp.error.cancelled", "Cancelled"},
+    {"sftp.error.local_io", "Local read or write failed"},
+    {"sftp.error.protocol", "Protocol error"},
+    {"sftp.delete.title", "Confirm delete"},
+    {"sftp.delete.body", "Delete {0}? This cannot be undone."},
+    {"sftp.delete.dir_note", "Only empty directories can be deleted."},
+    {"sftp.delete.confirm", "Delete"},
+    {"sftp.input.name", "Name"},
+    {"sftp.input.new_folder", "New folder"},
+    {"sftp.input.new_file", "New file"},
+    {"sftp.input.rename", "Rename"},
+    {"sftp.transfer.uploading", "Uploading {0}"},
+    {"sftp.transfer.downloading", "Downloading {0}"},
+    {"sftp.transfer.queued", "Queued {0}"},
 };
 
 
