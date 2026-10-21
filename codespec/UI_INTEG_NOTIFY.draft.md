@@ -1,12 +1,12 @@
 # UI_INTEG_NOTIFY.draft.md — `SPEC.FEAT.INTEG.03` 系统通知（OSC 9 / OSC 777 转 toast）设计稿
 
-> **状态**：**地基实测已完、稿面按常存授权自决收口（2026-10-22）**——§3 的 D1–D12 逐条给出推荐档，人在开工令里已写明「后续再遇到问题则你自行按照推荐去做」，故本稿全按推荐档收口并据此转实现；每一档的代价都写在行内，待人复核时只需看代价。**本稿零 `src/` 改动**，实现按 §4 分三批走。
+> **状态**：**三批已全部落地并结项（2026-10-22，裁决 7.128）**——§3 的 D1–D12 逐条按推荐档收口，人在开工令里写明「后续再遇到问题则你自行按照推荐去做」，代价写在行内。**§4 的批 1／批 2 已按此转实现**，两处稿面口径被开工后的实测推翻，已在原地更正（D4／D9 的 tag 与签名、§2 第 8 条的可证范围）并回写裁决 7.128。
 > **本条无界面本体**（AGENTS.md §4.4 第 22 条那句「UI 编写前先出设计图评审」针对的是画面判据；本条的产物是 OS 通知，仓内不新增任何可画的东西），故无草图、无 SVG 源；可断言面全部落在无头通道（§8）。
 > 需求原文（`codespec/SPECIFICATIONS.md` 的 `SPEC.FEAT.INTEG.03`）：**OSC 9 / OSC 777 通知转系统 toast（长命令结束提醒、远端程序消息）；依赖系统通知 API（框架缺口 G11）**。
 
 ---
 
-## 0 地基实测（F1–F14，全部只读源与只读探针，2026-10-22）
+## 0 地基实测（F1–F14 只读源与只读探针；F15／F16 是批 2 开工后撞到的两处，稿面就地更正，2026-10-22）
 
 | 号 | 读数 | 它决定了什么 |
 |:---|:---|:---|
@@ -24,6 +24,8 @@
 | **F12** | **本机（Linux 通道）的通知服务在册**——读数来自只读探针：会话总线上 `org.freedesktop.Notifications` 的 `NameHasOwner` 回 `(true,)`（`gdbus`），`libnotify.so.4` 与 `libdbus-1.so.3` 各在 `ldconfig` 里有一枚，`/usr/bin/notify-send` 在位，`XDG_CURRENT_DESKTOP=ubuntu:GNOME`、`WAYLAND_DISPLAY=wayland-0` | F1 的三层降级在本机**第一层就可达**，所以 Linux 侧的真投递没有环境障碍；但「真弹出来、肉眼看得见」仍是人工判据（F6），本棒不向用户桌面投递任何一条通知 |
 | **F13** | **码点串 → UTF-8 的转换是现成件**：`term::encode_utf8(std::u32string_view, std::string &)`（`include/borealis/term/utf8.h`），且 `ClipboardOutbox::drain()` 已用同一条路径并注明「不可表示码点在解码环节就已换成替换字符，这里没有第二层失败面」；`Notification` 的字段是 `std::string` | 通知腿不引入新的编码问题：升格一次即可，失败面与 52 同档 |
 | **F14** | **不落新键就不碰三处计数闸**：`tests/unit/utest_settings_catalog.cpp` 现钉 `keys.size() == 69U` 与 `ConsumerStatus::Absent` 行数 `== 19U`；一枚新键的代价是「`config/settings.h` + `store.cpp` + `form_transfer.cpp` + `settings_catalog.cpp` + `settings_i18n.cpp` + `main.cpp::make_interaction` 六处同步」外加两处计数改口（既有稿 F14 的原话：漏一处即「面板能改、视口不认」或「能存不能读」） | 本条按 D5／D11 推荐档落 ⇒ **不加开关、不加档位键**，69 与 19 两个数逐字不变。需求原文没有「可配」二字，这是特性不是漏项 |
+| **F15** | **（批 2 实测，推翻 D4／D9 的签名）`Session` 公共面没有任何标识**：`ui::PaneId` 是 `std::uint64_t` 且「由装配层分配」，**每棵 pane 树内**首格挂 1、新号从 2 起只增不复用；`ui::TabId` 同型，由 `src/main.cpp` 的进程级 `next_tab_id` 只增分配（那行注释的理由与裁决 7.42⑩ 同一条）。于是「会话级恒定 id」在本仓**不存在**，唯一不撞且恒定的组合是 `(TabId, PaneId)`，而这一对只在装配层 `sessions_by_pane` 那一格循环里同时可得 | D4 的 tag 与 D9 的 `drain(Session &)` 都必须扩成 `drain(Session &, tab_id, pane_id)`。稿面原写法不是错在语义而是错在**假设了一件不存在的东西**；代价是落地件多收两枚整数、装配那一行的注释要写清号从何来（已写）。用例侧的对应证人＝同标签两格各拿自己的 tag |
+| **F16** | **（批 2 实测，推翻 §2 第 8 条）判据 ⑦ 在本通道无自动化证人**：装了 `install_recording_backend()` 之后 `notify()` 只更新记录并**恒回成功**，无头回退档同样回成功（`notification.h` 的 Headless 段原文），本沙箱又无失败注入面 | §2 第 8 条那句「上述七条全部在无头通道可证」按实测**收窄为六条**；⑦ 的担保改为源码审查 + §6 走查第 ① 条在**没有**通知服务的机器上（或 macOS，F4）的自然命中。这不是遗漏而是**观测面的物理边界**，与裁决 7.83 那类「`main.cpp` 不进 runner」的欠账同档登记 |
 
 ---
 
@@ -40,7 +42,7 @@
 
 ---
 
-## 2 交付判据（每条都有无头证人，§8 给注入位）
+## 2 交付判据（①～⑥ 有无头证人；⑦ 经 F16 实测无证人，⑧ 是本条的口径而非判据，§8 给注入位）
 
 1. `ESC ] 9 ; <text> BEL` 之后的**第一次帧边界排帧**投出一条通知，正文＝`<text>`（超长按 D10 截断），标题按 D2 的兜底链取。
 2. `ESC ] 777 ; notify ; <title> ; <body>` 投出一条通知且 `title` / `body` 各归其位；**`body` 内的 `;` 不被截**（body 取「首个 `;` 之后的整段」）。
@@ -49,7 +51,7 @@
 5. 取走即清：一次排帧投一条，无待发时 `drain` 返回 0 且不触达通知面（与 52 写方向同档的「不空转」判据）。
 6. 空正文（`9 ;` 之后什么都没有）⇒ **不发**，不产出空白 toast；该次仍计入 `notification_requests`，留痕在计数里而不是屏幕上。
 7. 投递失败（`NotificationPostFailed`）⇒ 一条 `AURORA_LOG_WARN` 留 `detail` 原文，不重试、不抬异常、不阻断帧循环，返回值如实报 0 落地。
-8. 上述七条**全部在无头通道可证**：`install_recording_backend()` 之后不触达任何系统通知服务，断言只走 `last_notification()` + `clear_last_notification()`（F5／F6）。
+8. 判据 ①～⑥ **全部在无头通道可证**：`install_recording_backend()` 之后不触达任何系统通知服务，断言只走 `last_notification()` + `clear_last_notification()`（F5／F6）。**⑦ 除外**——记录后端与无头回退都把投递判成成功，本通道构造不出失败（F16，批 2 实测后就地收窄；原写法是「上述七条」）。
 
 ---
 
@@ -60,12 +62,12 @@
 | **D1** | 9 / 777 的**载荷口径** | `9`＝首个 `;` 之后的**整段**作正文；`777`＝首段须为 `notify`，其后第一段为 `title`、**余下整段**为 `body` | ② `777` 严格按三段切（`body` 里的 `;` 被截）；③ 只认 `9`，`777` 继续记 unhandled | ② 会把「正文含分号」这条日常输入截断——正文是不可信输入而分号在其中极常见；③ 直接砍掉需求点名的第二家形态。① 复用现成的 `osc::split_first`（`tail` 的定义就是「分隔符之后的**全部**剩余」），两跳即得，代价是多一条「首段须 `notify`」的拒绝用例（判据 ③） |
 | **D2** | `9` 没有标题字段，`Notification::title` 填什么 | 会话标题非空则用它（`OscState::title`，`OSC 0/2` 的最近一次值），空则回 ASCII `"Borealis"` | ② 恒空串（交给桌面按应用名兜底）；③ 恒 `"Borealis"` | ② 依赖各桌面对空标题的兜底策略，行为跨平台分叉而本仓无法无头断言；③ 会把「哪个会话在提醒」这一层信息压掉，而多会话是本仓的常态。① 的代价：标题是**该会话最近一次的标题**而不是「发通知那一刻的标题」，二者在同一帧内可能差一步——如实登记，不做二次取时点 |
 | **D3** | 待发产物的形态 | **每会话一枚「最近一条」**（`std::optional<PendingNotification>`，后到覆盖先到并计一次 `superseded`），取走即空 | ② 每会话有界队列（上限 8，满则丢最旧）；③ 逐条入队不设上限 | ② 要再写一套队列与其丢弃判据，而 F7 说明 OS 侧的**同 tag 替换**已经在做同一件事——两条不同正文在同 tag 下的可见结果就是「只显示最新」，排队只是把同一个结果延后若干帧交付；③ 直接违反「会话字节流是不可信输入」这条既有纪律（`osc.h` 里超链接表 1024 上限的理由原文）。① 与 `52` 写方向同形（F9），代价一句话：**同一会话同一帧窗口内的两条不同提醒只发后者**，且这本来就是 tag 替换会给出的结果 |
-| **D4** | `tag` 取什么 | 会话级稳定值：`borealis-session-<session id>`（ASCII） | ② 逐条递增 tag；③ 留空串交给实现层占位键 | ② 让「替换」失效，刷屏变成逐条弹（F7）；③ 虽然实现层给了占位键，但那枚键**不由本仓掌控**，激活回传（将来）与去重行为都无法断言。① 的代价：同一会话的多条提醒在支持去重的服务器上合并成一条不断更新的横幅——**这正是本条要的节流**（与 D3 同一条口径），且跨会话之间互不覆盖 |
+| **D4** | `tag` 取什么 | 会话级稳定值：`borealis-session-<session id>`（ASCII） | ② 逐条递增 tag；③ 留空串交给实现层占位键 | ② 让「替换」失效，刷屏变成逐条弹（F7）；③ 虽然实现层给了占位键，但那枚键**不由本仓掌控**，激活回传（将来）与去重行为都无法断言。① 的代价：同一会话的多条提醒在支持去重的服务器上合并成一条不断更新的横幅——**这正是本条要的节流**（与 D3 同一条口径），且跨会话之间互不覆盖。**【批 2 实测补口径，F15】** `<session id>` 这一枚在本仓**不存在**：`Session` 公共面无任何标识，`PaneId` 只在本标签的树内只增不复用，故唯一恒定且不撞的是 `(TabId, PaneId)` 这一对，tag 实测形态为 `borealis-session-<tab>.<pane>`（分隔符取 `.`，免得与前缀里的 `-` 混成一串肉眼分不出段的号） |
 | **D5** | `urgency` 与 `timeout_ms` | 一律 `Normal` + `timeout_ms = 0`（交给平台默认） | ② 按正文关键词升 `Critical`；③ 加两枚 schema 键 | ② 是对不可信输入做语义解释（关键词表由谁定？误判的代价是抢走专注时段，F4 里 `Critical` 明确「不受专注时段抑制」）；③ 吃下 F14 那整套六处同步而需求没要求「可配」。① 的代价：所有通知同一紧急度，远端程序无法表达「这条很重要」——而 9 / 777 的公开形态里本来就没有紧急度字段 |
 | **D6** | 投递失败怎么降级 | `AURORA_LOG_WARN` 逐条留 `detail`，返回值如实报 0；**不在 UI 里另起提示** | ② 退化为本仓内嵌提示条（照 `unrepresentable_notice` 那张卡的形态）；③ 静默 | ③ 与 F4「不静默 no-op」的框架口径相反；② 要给一条**远端程序发起的**提醒再做一层界面状态机，且要新槽位、新帧判据、新词条——需求没要求，`SPEC.FEAT.TERM.09` 那张一次性卡的形态是为「本仓自己发不出去」设计的，语义不同。① 的代价：无桌面环境（含 macOS，F4）时用户得不到任何屏上反馈，登记为 §6 走查与 §7 延后项 |
 | **D7** | 用户正看着这扇窗时要不要照发 | **恒发** | ② 仅当窗口失焦才发 | ② 的判据拿不到：框架既无「当前活动窗口」查询，也无 OS 级前台态读数（`SPEC.FEAT.WS.03` 的稿 §0 已实测登记，即 G42 的同一处缺口）；用「本仓记录的派发事实」冒充前台态就是把推断写进投递决策，而误判的代价是**该提醒的那条没提醒**。① 与 xterm / iTerm2 的既有语义一致（它们恒发），代价是前台时多一条横幅，归 §6 第 1 条肉眼判 |
 | **D8** | 会话已退出／标签已关而待发槽里有货 | **随会话一起撤账**（对象析构即货消，不补投） | ② 摘账前抢投一次 | ② 要给「会话已没了」这件事再想一遍「提醒给谁看」，而提醒的对象正是一个已经不存在的会话；① 与 CONN.12 那条「析构撤账」的既有口径同档（裁决 7.118 的 D6 那条改判的反面——那里撤账是为了**必有回写**，这里无回写承诺）。代价：命令刚结束就关掉那个标签的用户看不到那条提醒，而他已经不需要它了 |
-| **D9** | 转发腿挂在哪 | **`session::NotificationOutbox::drain(Session &) -> std::size_t`**，调用点＝装配层 `set_on_frame` 里那条逐会话循环（F11，紧挨 `outbox.drain`） | ② 挂 `TerminalView::on_frame()`（视口侧） | ② 让「框架头 + 系统 IO」出现在 UI 的 TU 里，而 F9 那条纪律给这类落地件的形态是「独立一枚 outbox、公共头不含框架类型」；① 与 52 写方向共用同一次排帧、同一个「全部标签每帧都排」的范围（漏排的后果那注释已经写过）。代价：`src/main.cpp` 不进 CTest runner（裁决 7.83），那一行本身**无自动化证人**，故链路的证人落在 `itest_notifications` 直调 `drain`，装配那一行归源码审查 + §6 走查（§8 末条如实登记） |
+| **D9** | 转发腿挂在哪 | **`session::NotificationOutbox::drain(Session &) -> std::size_t`**（批 2 实测扩为 `drain(Session &, tab_id, pane_id)`，理由见 F15 与 D4 的补口径），调用点＝装配层 `set_on_frame` 里那条逐会话循环（F11，紧挨 `outbox.drain`） | ② 挂 `TerminalView::on_frame()`（视口侧） | ② 让「框架头 + 系统 IO」出现在 UI 的 TU 里，而 F9 那条纪律给这类落地件的形态是「独立一枚 outbox、公共头不含框架类型」；① 与 52 写方向共用同一次排帧、同一个「全部标签每帧都排」的范围（漏排的后果那注释已经写过）。代价：`src/main.cpp` 不进 CTest runner（裁决 7.83），那一行本身**无自动化证人**，故链路的证人落在 `itest_notifications` 直调 `drain`，装配那一行归源码审查 + §6 走查（§8 末条如实登记） |
 | **D10** | 正文／标题的截断长度 | **正文 512 码点、标题 128 码点**，文件级常量不入 schema；超出即在截断处补 ASCII `"..."`（计入三枚字符） | ② 200 / 50；③ 不截，交给通知服务 | ③ 把 F10 那 1 MiB 的载荷原样交给 DBus 与桌面服务，长度不由本仓定就等于长度不设防；② 的 200 对一条 shell 提示而言过短（`git status` 的一句话摘要就超）。① 的依据：toast 的可见长度本来就远小于 512，取这一档只为「有界」而不是为「显示得下」；代价是一篇长日志的正文看不全——而**看不全的正文不该走 toast**，那是会话日志（`SPEC.FEAT.CONN.11`）的射程 |
 | **D11** | 「长命令结束提醒」这句要不要本仓造触发器 | **不造**：本条只落 9 / 777 转发 | ② 顺带做「`OSC 133;D` 边沿 + 运行时长超阈值 ⇒ 自动发一条」 | ② 要新增阈值键（F14 六处同步）、要定义「运行多久算长」、且其判据源（133 的 D 边沿）属 `SPEC.FEAT.INTEG.01` 已经交付完的射程——在同一条需求里塞第二条触发器会让两条的验收面纠缠。① 的代价：纯裸 shell（无 shell 集成）不会有自动提醒，需用户配一行 prompt hook 发 `OSC 777`；按 AGENTS.md §4.2 第 11 条，这一档解读**回写成裁决**而不改需求原文 |
 | **D12** | 计数与可观测 | 给 `term::OscState` 加两枚计数：`notification_requests`（识别为通知的条数，含被丢弃的空正文）与 `notification_superseded`（同会话被后到覆盖的条数）；**调试面板不加行** | ② 不加计数；③ 加进 `DebugPanel` 第四族 | ② 会让判据 ④ 与 ⑥ 没有可断言的落点（屏上什么都不留的两条只能靠计数自证）；③ 要动 `ui::DebugPanel` 的快照聚合体与装配层组装，而面板的三族计数器面向的是「解析/解码/不可表示」这类**内部降级**，通知是对外投递，语义不同档。① 的代价：两枚计数只被用例与诊断日志读，面板上看不见（登记为 §7 延后） |
@@ -76,19 +78,19 @@
 
 **新增件（三件）**：
 
-- `include/borealis/term/notification.h`（公共头，**不含框架类型**）：`enum class NotificationKind { TerminalMessage, NotifyExtension }`（9 与 777 的来源留痕，供用例与日志分辨）、`struct PendingNotification { std::u32string title; std::u32string body; NotificationKind kind; }`、两枚长度常量、`parse_notification(std::int32_t code, std::u32string_view args) -> std::optional<PendingNotification>` 一类的纯切分入口（D1 的拒绝档在这里出结果）。
+- `include/borealis/term/notification.h`（公共头，**不含框架类型**）：`enum class NotificationKind { TerminalMessage, NotifyExtension }`（9 与 777 的来源留痕，供用例与日志分辨）、`struct PendingNotification { std::u32string title; std::u32string body; NotificationKind kind; }`、两枚长度常量、`NotificationDraft`（**实测落名 `draft_notification(std::int32_t code, std::u32string_view args, std::u32string_view session_title)`**，标题兜底链要吃的会话标题作第三形参递进来，才保得住本件的纯函数性）一类的纯切分入口（D1 的拒绝档在这里出结果）。
 - `src/term/notification.cpp`（实现 `parse_notification` + 截断 + 空正文丢弃；进 `src/CMakeLists.txt` 的 `borealis_core` 逐文件源列表——F：该列表**不是 GLOB**，漏一处即链接期断裂）。
-- `include/borealis/session/notification_outbox.h` + `src/session/notification_outbox.cpp`：`class NotificationOutbox { static auto drain(Session &) -> std::size_t; }`，**全仓唯一触达 `aurora::NotificationCenter` 的 TU**（框架头只出实现文件，架构 §2.3 同一条）。
+- `include/borealis/session/notification_outbox.h` + `src/session/notification_outbox.cpp`：`class NotificationOutbox { static auto drain(Session &, std::uint64_t tab_id, std::uint64_t pane_id) -> std::size_t; }`（**实测签名多收两枚整数**，理由见 F15 与 D4），**全仓唯一触达 `aurora::NotificationCenter` 的 TU**（框架头只出实现文件，架构 §2.3 同一条）。
 
-**改现有件**：`include/borealis/term/osc.h`（加两枚计数 + 头注释那句「唯一的动作型 OSC」就地改口为两条）、`src/term/terminal.cpp`（`do_osc` 加 `case 9` / `case 777` 两支 + 待发槽成员 + `take_notification()`）、`include/borealis/term/terminal.h`（取走入口与成员）、`include/borealis/session/session.h` + `src/session/session.cpp`（`take_notification()` 转发，与 `take_clipboard_write` 并排）、`src/main.cpp`（F11 那条循环里加一行 `drain` + 失败日志一行）。
+**改现有件**：`include/borealis/term/osc.h`（加两枚计数 + 头注释那句「唯一的动作型 OSC」就地改口为两条）、`src/term/terminal.cpp`（`do_osc` 加 `case 9` / `case 777` 两支 + 待发槽成员 + `take_notification()`）、`include/borealis/term/terminal.h`（取走入口与成员）、`include/borealis/session/session.h` + `src/session/session.cpp`（`take_notification()` 转发，与 `take_clipboard_write` 并排）、`src/main.cpp`（F11 那条循环里加一行 `drain`；失败日志那行实测落在落地件内而不是装配层，D6① 的「只 WARN」由 `notification_outbox.cpp` 自己兑现，装配层因此只多那一行）。
 
 **用例**：`tests/unit/utest_term_notification.cpp`（新，D1 的切分与拒绝、截断、空正文、计数）；`tests/unit/utest_terminal_osc.cpp` 扩案（9 / 777 进分表、取走即清、覆盖计数）；`tests/integration/itest_notifications.cpp`（新，harness 照 `itest_clipboard_read` 的 `FakeConnection::deliver` + `Session` 形态，装 `install_recording_backend()`，断言 F5 那枚单槽的字段往返与逐会话排帧范围）。
 
 **分批**：
 
 1. **批 1＝term 消费腿**：新公共头 + `src/term/notification.cpp` + `do_osc` 两支 + 待发槽与取走入口 + 两枚计数 + `utest_term_notification` 与 `utest_terminal_osc` 扩案。判据 ①②③④⑤⑥ 的**语义半区**在此批可证（脱界面）。
-2. **批 2＝落地件与装配**：`NotificationOutbox`（含 `encode_utf8` 升格与 tag 组装）+ CMake 源列表 + `src/main.cpp` 那一行 + `itest_notifications` 八案。判据 ①⑤⑦⑧ 的**链路半区**在此批可证。
-3. **批 3＝文档回写与在册收口**：`SPECIFICATIONS.md` 的 `INTEG.03` 现状句 + 新裁决、`PLAN.md` 的 §5 观察池该行改口（G11 那句「落期不变」要更新为「已落地」）与 §8 出账、`ARCHITECTURE.md` §5.4 / §5.5 与 §2.3 的落点补写（含「唯一的动作型 OSC」改口）、`CHANGELOG.md` 新版本。
+2. **批 2＝落地件与装配**：`NotificationOutbox`（含 `encode_utf8` 升格与 tag 组装）+ CMake 源列表 + `src/main.cpp` 那一行 + `itest_notifications`（**实测 12 案**，稿面原写「八案」是估的）。判据 ①⑤⑦⑧ 的**链路半区**在此批可证——其中 ⑦ 经 F16 实测**不可证**，故此处可证的实为 ①⑤⑧ 三条。
+3. **批 3＝文档回写与在册收口（本笔）**：`SPECIFICATIONS.md` 的 `INTEG.03` 现状句 + 新裁决 **7.128**（含 D11 那句用途的解读与 F15／F16 两条实测改口）、附录 A.1 与 A.2 的 G11 两处指针、`PLAN.md` 的 §3 INTEG.03 行与 §5 观察池该行出账及 §8 的 M5 一句、`ARCHITECTURE.md` §5.4／§5.5 与 §7 归属行、§15 缺口表那一行（G9／G11 那格）（含「唯一的动作型 OSC」改口为两条）、`CHANGELOG.md` v0.128。**§2.3 那三条不变量清单不动**：实测该节今天只有「平台类型不外泄 / 终端层不依赖 UI / UI 不读网格私有布局」三条，「公共头不含框架类型」从未在那里成文——§5.4 与 `clipboard_outbox` 沿用的都是这一处编号，本笔不改既有引用（免得一处规矩两个出处），只把落点登记在 **§2.2 的 `include/borealis/session/` 目录行**（两份 outbox 并列一句），投递腿的完整叙述在 §5.4 的落地形态段内。
 
 **结项读数口径**：本通道（Linux GCC + POSIX + Headless）`ctest --preset linux -E etest_` 全绿 ＋ `borealis_test_runner` 案数增量 ＋ §8 变异逐条转红；**Win32 / MSVC 腿未编译未实测，一律标推断／未验证**（§4.2 第 11 条）。
 
@@ -96,7 +98,7 @@
 
 ## 5 数据流与不变量
 
-1. **字节流 → 状态机 → 待发槽 → 帧边界 → 框架**：`Session` 读线程在网格锁内 `feed` ⇒ `do_osc` 认出 9 / 777 ⇒ 折成 `PendingNotification` 存进**一枚** optional；主线程每帧在装配层那条逐会话循环里 `NotificationOutbox::drain(session)` 取走（取走即空）⇒ `encode_utf8` 升格 ⇒ `au::NotificationCenter::notify`。**锁内不做任何投递与 IO**（F9）。
+1. **字节流 → 状态机 → 待发槽 → 帧边界 → 框架**：`Session` 读线程在网格锁内 `feed` ⇒ `do_osc` 认出 9 / 777 ⇒ 折成 `PendingNotification` 存进**一枚** optional；主线程每帧在装配层那条逐会话循环里 `NotificationOutbox::drain(session, tab_id, pane_id)` 取走（取走即空）⇒ `encode_utf8` 升格 ⇒ `au::NotificationCenter::notify`。**锁内不做任何投递与 IO**（F9）。
 2. **单槽 ＋ 同 tag ＝ 两级节流**：本仓只留最近一条（D3），OS 侧同 tag 再合并一次（D4）。不变量：**任一会话在一帧窗口内至多投递一条**，且**同一会话的任一时刻至多一条在册通知**（由 tag 保证）。
 3. **长度有界**：正文 512 / 标题 128 码点（D10）。不可信输入的两处上限——解析器的 1 MiB（F10）与本层的截断——**互不替代**：前者保内存，后者保对外投递的体量。
 4. **不依赖窗口身份**：投递决策里不含「哪扇窗在前台」，产物里也不带窗号／标签号（D7）。因此本条与 **G42**（快捷键落点）与 **G44**（关闭否决）**没有接缝**：既不读 `ui::ActiveWindowTracker`，也不改 `src/main.cpp` 的 `target_window` 解析器，更不碰关闭链——回货时这两条的接线面与本条正交。将来若接激活回调（§7），才第一次需要「通知 → 哪一扇窗」的映射，届时按 G42 的回货形态做，本条不预造。
@@ -123,7 +125,7 @@
 
 ---
 
-## 8 判据与变异计划（结项三件齐：ctest 全绿 + runner 案数增量 + 变异证人逐条转红）
+## 8 判据与变异计划＋实测读数（结项三件齐：ctest 全绿 + runner 案数增量 + 变异证人逐条转红）
 
 | 注入 | 做法 | 预期转红的证人 |
 |:---|:---|:---|
@@ -135,5 +137,16 @@
 | m6 | `NotificationOutbox::drain` 不做 `encode_utf8` 而直接把码点串按字节塞进 `std::string` | `itest_notifications` 的中文/多字节往返案（走查第 3 条的无头替身） |
 | m7 | 空正文不再丢弃而照发 | 判据 ⑥ 的「不发空白 toast」案 |
 | m8 | 装配层那一行 `drain` 删掉 | **无自动化证人**（`src/main.cpp` 不进 runner，裁决 7.83 的老边界），如实登记不冒充读数；担保＝源码审查 + §6 走查第 1 条 |
+| m9 | （批 2 追加）`notification_tag` 只取 `tab_id`，丢掉格号 | 首案的 tag 断言 + 同标签两格那案 |
+| m10 | （批 2 追加）无待发时不提前返回，仍组一条空通知投出去 | 「空转不触达通知面」案、空正文案、非 `notify` 拒绝案、同标签两格案 |
 
-等价变异若出现须指名等价原因（项目口径）；本棒预计没有——八条注入各打得到一条独立断言。
+**实测读数（逐条注入后跑门，注入已全部撤除并复跑绿：CTest 101/101、runner 1287/1287）**：
+
+- **批 1**：m1 → `utest_terminal_osc` 6 红；m2 → 2 红；m3 → 4 红；m4 → 1 红；m5 → 2 红；m5-b（RIS 不撤待发槽，本批新加断言的专属证人）→ 1 红；m7 → 2 红。
+- **批 2 复跑 m1**（链路用例落地之后）：`utest_terminal_osc` 6 红 **+** `itest_notifications` 8 红＝**14** 枚证人；同批 `utest_term_notification` 16 案**全绿**，这不是空转而是分层的事实——纯件不经 `do_osc` 分表，删一支分表当然打不到它。
+- **m6** → 恰好 `the_body_reaches_the_channel_as_utf8_bytes` 一案红。**等价变异（指名原因）**：其余 11 案在注入下仍绿，因为它们的素材全是 ASCII，而 ASCII 档下「码点值」与「字节值」同值，两种写法产出同一串字节；只有非 ASCII 素材能把这条链分开，故本案必须带一枚四字节码点（`U+1F600`，写成十六进制转义以守 §4.3 第 14 条）。
+- **m9** → 2 红（首案的 tag 断言 + `two_sessions_on_the_same_tab_get_different_tags`）。
+- **m10** → 4 红。**等价变异（指名原因）**：`a_pending_notification_dies_with_the_session` 在注入下仍绿，因为该案在 `retire_session()` 之后不再排帧，注入改的那条「无待发也照投」路径物理上走不到——它的证人不是这条注入，而是「析构后没有任何东西再调 `drain`」这一结构事实。
+- **m8** → 无自动化证人，如实登记（见上表与本条，不冒充读数）。
+
+等价变异若出现须指名等价原因（项目口径）：**批 1 预计「没有」，实测出现两处（m6、m10 各一条），已在上面指名**。除此之外八条注入各打得到独立断言。

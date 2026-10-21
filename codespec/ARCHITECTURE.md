@@ -50,7 +50,7 @@ Borealis 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨�
 | `include/borealis/vt/` | 解析器、序列定义 |
 | `include/borealis/term/` | 终端状态机、编码解码、字符集指派与映射、宽度判定 |
 | `include/borealis/grid/` | cell / 行 / 环形缓冲 / 主备屏 / 脏区 |
-| `include/borealis/session/` | 会话抽象、背压队列、生命周期 |
+| `include/borealis/session/` | 会话抽象、背压队列、生命周期；两份「锁内留存、锁外 IO」的落地件都在 `src/session/`——`clipboard_outbox`（52 写与读应答，全仓唯一触达框架剪贴板处）与 `notification_outbox`（9／777 投递，全仓唯一触达框架通知处，裁决 7.128），二者的公共头都不含框架类型 |
 | `include/borealis/conn/` | 连接类型与档案、凭据句柄 |
 | `include/borealis/ui/` | 终端视口、标签栏、pane 树、搜索浮层、设置面板 |
 | `include/borealis/config/` | 配置 schema、原子写与降级、profile；逐窗几何记忆另起第二枚框架接缝，实现与头都在 `src/config/`（`window_geometry_store`，裁决 7.126） |
@@ -215,11 +215,13 @@ UI 事件 → 键映射（`SPEC.FEAT.INTERACT.01`）→ **文本按会话编码�
 
 `OSC 0/2` 标题、`OSC 7` 工作目录、`OSC 8` 超链接、`OSC 52` 剪贴板、`OSC 133` 命令块（`SPEC.FEAT.TERM.07`、`SPEC.FEAT.INTEG.01/02`）。标题消费链路：OSC 标题覆盖标签名，用户手动重命名优先级更高（可配）。
 
-**落地形态**（裁决 7.21）：派发在 `Terminal::do_osc`，产物是**状态快照 + 一个取走型动作**——`term::OscState` 给最近一次的标题 / 目录原文 / 133 边界与退出码 / 计数，超链接以「标识 → URI」有界表配合 §4.1 的行侧表，`OSC 52` 写方向的文本走 `Terminal::take_clipboard_write()` 的取走语义。不选事件队列的理由是 §3.4 的锁纪律：状态机跑在读线程的网格锁内，锁内只能留存不能投递。`OSC 52` 的真正落地是主线程的 IO，故由 `session::ClipboardOutbox::drain()` 转调 Aurora `Clipboard::set_text`（框架依赖只出现在 `src/`，公共头不含框架头，§2.3）；`52;c;?` 的读方向默认禁止但**回写空响应**，不让远端程序干等。未识别的命令号计入 `unhandled_count` 走 §5.5 的降级口径，不整体吞掉。`OSC 7` 的消费腿（`SPEC.FEAT.INTEG.02`，裁决 7.122）分两段：`term` 只原样留存原文，`ui::osc7` 把本机 host 的 `file://` 折成本机绝对目录，装配层只在新建默认本地标签时取用；远端 host、SSH／串口／Telnet 与显式本地档案都不继承。`OSC 133` 的消费腿（`SPEC.FEAT.INTEG.01`，裁决 7.123）另起一份有界块历史 `term::CommandBlockTracker`，`OscState` 维持「最近一次」的快照原义；块区间与三层界面消费见 §10.7。
+**落地形态**（裁决 7.21，动作型那一半由裁决 **7.128** 扩成两条）：派发在 `Terminal::do_osc`，产物是**状态快照 + 取走型动作**——`term::OscState` 给最近一次的标题 / 目录原文 / 133 边界与退出码 / 计数，超链接以「标识 → URI」有界表配合 §4.1 的行侧表，`OSC 52` 写方向的文本走 `Terminal::take_clipboard_write()` 的取走语义，`OSC 9` / `777` 折成的通知走 `Terminal::take_notification()`。不选事件队列的理由是 §3.4 的锁纪律：状态机跑在读线程的网格锁内，锁内只能留存不能投递。`OSC 52` 的真正落地是主线程的 IO，故由 `session::ClipboardOutbox::drain()` 转调 Aurora `Clipboard::set_text`（框架依赖只出现在 `src/`，公共头不含框架头，§2.3）；`52;c;?` 的读方向默认禁止但**回写空响应**，不让远端程序干等。未识别的命令号计入 `unhandled_count` 走 §5.5 的降级口径，不整体吞掉。`OSC 7` 的消费腿（`SPEC.FEAT.INTEG.02`，裁决 7.122）分两段：`term` 只原样留存原文，`ui::osc7` 把本机 host 的 `file://` 折成本机绝对目录，装配层只在新建默认本地标签时取用；远端 host、SSH／串口／Telnet 与显式本地档案都不继承。`OSC 133` 的消费腿（`SPEC.FEAT.INTEG.01`，裁决 7.123）另起一份有界块历史 `term::CommandBlockTracker`，`OscState` 维持「最近一次」的快照原义；块区间与三层界面消费见 §10.7。`OSC 9` / `777` 的消费腿（`SPEC.FEAT.INTEG.03`，裁决 7.128）分三段：`src/term/notification.cpp` 只做切分、三级标题兜底与码点截断（纯函数，会话标题作形参递进来，故脱界面可单测）；状态机只留**一枚**最近通知（后到覆盖先到并计一次 `notification_superseded`，取走即空，RIS 连槽一起撤）；`session::NotificationOutbox::drain(session, tab_id, pane_id)` 是全仓**唯一**触达 Aurora `NotificationCenter` 的编译单元，在主线程帧边界升格 UTF-8、组 tag 并投递——框架头不出这个文件（§2.3），与 `ClipboardOutbox` 同一副形态。tag 里的 `(TabId, PaneId)` 由装配层那一格循环给：`Session` 自身没有标识，而 OS 侧「同 tag 替换」正是本条的节流腿（同一会话的多条提醒合并成一条不断更新的横幅），故本仓不做队列。
 
 ### 5.5 未识别序列与降级
 
 未识别序列**不得中断解析**；计数进可观测面板（`SPEC.NF.RELI.01`），并按 Aurora「降级而非中止」的既有口径产出诊断而非异常（Aurora 主仓 `codespec/ARCHITECTURE.md` §11）。
+
+**同一口径下新添的一类降级**（裁决 7.128）：`OSC 777` 下面还挂着别的子命令（`popup` 等），首段不是 `notify` 者**整条**按未识别处理并计一次 `unhandled_count`——不猜语义、不部分消费、不投递；这与「命令号在册但载荷不合形态」是两处不同的账（后者如空正文，只进本条自己的 `notification_requests`），用例各有一枚独立证人。
 
 ---
 
@@ -276,7 +278,7 @@ UTF-8 为本地终端与 SSH 默认；**串口默认 GB18030**（裁决 7.6）�
 
 ### 7.5 SSH 之上的子系统归属
 
-SFTP（`SPEC.FEAT.CONN.04`）、隧道（`SPEC.FEAT.CONN.08`）、公钥推送的执行通道（`SPEC.FEAT.CONN.10`）是 SSH 会话之上的附加通道，归 `borealis::conn`；档案与凭据句柄（`SPEC.FEAT.CONN.03` / `SPEC.FEAT.CONN.09`）归 `borealis::conn`，其持久化经 `borealis::config`；连接管理器 UI（`SPEC.FEAT.CONN.07`）归 `borealis::ui`；会话日志（`SPEC.FEAT.CONN.11`）由会话层落盘、路径配置归 `borealis::config`。系统通知（`SPEC.FEAT.INTEG.03`）的框架依赖已解除（G11 于 2026-10-02 以 `NotificationCenter` 公共 API 闭合，裁决 7.29④），落期仍在观察池，届时落点归 `borealis::session` 的 OSC 消费出口 + `borealis::ui` 的转发。
+SFTP（`SPEC.FEAT.CONN.04`）、隧道（`SPEC.FEAT.CONN.08`）、公钥推送的执行通道（`SPEC.FEAT.CONN.10`）是 SSH 会话之上的附加通道，归 `borealis::conn`；档案与凭据句柄（`SPEC.FEAT.CONN.03` / `SPEC.FEAT.CONN.09`）归 `borealis::conn`，其持久化经 `borealis::config`；连接管理器 UI（`SPEC.FEAT.CONN.07`）归 `borealis::ui`；会话日志（`SPEC.FEAT.CONN.11`）由会话层落盘、路径配置归 `borealis::config`。系统通知（`SPEC.FEAT.INTEG.03`）的框架依赖已解除（G11 于 2026-10-02 以 `NotificationCenter` 公共 API 闭合，裁决 7.29④），**本仓两条腿已于 2026-10-22 落地**（裁决 **7.128**）：落点是 `borealis::term` 的切分与留存（`src/term/notification.cpp` + 状态机那枚取走型槽，§5.4）＋ `borealis::session` 的 `NotificationOutbox` 投递腿（全仓唯一触达框架通知处的 TU，§2.3）＋ 装配层那条逐会话排帧循环的一行转发；**不经 `borealis::ui`**——本条没有界面本体，本行此前那句「届时落点归 `borealis::session` 的 OSC 消费出口 + `borealis::ui` 的转发」按实测落定为此形态。
 
 ---
 
@@ -584,7 +586,7 @@ Windows 便携 zip + 安装包；Linux tar 通用 + AppImage；产物含第三�
 |:---|:---|:---|
 | G1 网格 / 批量文本绘制原语 + 整像素 cell 度量 + East Asian Width 判定 | **三腿全部闭合（2026-10-01 实测）**：宽度判定 = Aurora `unicode_cell_width`（裁决 7.20）；批量文本 run = `Painter::draw_text_runs(std::span<const render::TextRun>)`；整像素单格度量 = `render::FontEngine::monospace_cell` → `render::CellMetrics`（形态、逐位一致判据与「时间门禁改判为像素级回归」见裁决 7.22） | 绘制层直接按 §9.2 消费两原语，应用侧自绘过渡备路径不再启用；网格模型、脏行 diff 与颜色合成仍在本仓；宽度腿已接真表，状态机与网格层不再挂单宽缺省（§6.3） |
 | G2 `MouseEvent` 多击语义 | **已闭合（2026-10-02 实测）**：`MouseEvent::click_count`（1..3，Release / Move 恒为 1）由 `EventDispatcher::dispatch_mouse` 在派发前集中判定，阈值是库内常量 500ms / 4dp（未接系统双击速度），形态与判据见裁决 7.29② | 双击 / 三击能力**不再受框架阻塞**，实装随 `SPEC.FEAT.INTERACT.02` 那一棒；本仓未自算多击 |
-| G9 OS 级全局热键 / G11 跨平台系统通知 | **均已闭合（2026-10-02 实测）**：`OsHotkeyRegistry` + `OsHotkeyHandle`（裁决 7.29③）、`NotificationCenter::notify` + 激活回传 + 「仅记录」测试后端（裁决 7.29④） | 两条的框架依赖解除；本仓消费者分别在 `SPEC.FEAT.WS.12` 与 `SPEC.FEAT.INTEG.03` 的落期上，未提前实装 |
+| G9 OS 级全局热键 / G11 跨平台系统通知 | **均已闭合（2026-10-02 实测）**：`OsHotkeyRegistry` + `OsHotkeyHandle`（裁决 7.29③）、`NotificationCenter::notify` + 激活回传 + 「仅记录」测试后端（裁决 7.29④） | G11 的本仓消费者 `SPEC.FEAT.INTEG.03` **已于 2026-10-22 落地**（裁决 **7.128**：term 切分与留存腿 + `session::NotificationOutbox` 投递腿，M5 落期提前收口）；G9 的消费者 `SPEC.FEAT.WS.12` 仍在观察池（其另一项硬依赖「无边框贴边窗口形态」未落），落期不变 |
 | G13 批量入口的排版选项 | **已闭合（2026-10-02 实测）**：`draw_text_runs` 另有 `(runs, opts)` / `(runs, aa_mode, opts)` 重载，opts 整批共用、框架刻意不做 per-run opts（裁决 7.29①） | §9.2 的逐片段分流已撤销，改按「是否斜体」分两批；像素用例以变异自证守住 |
 | G14 `Tab` 派发 / G15 Win32 Alt 系 / G16 小键盘与 NumLock | **均已闭合（2026-10-02 回货并本仓接线）**：`Widget::wants_tab_keys()` 缺省 `false` 且计入 `has_input_semantics()`，焦点路由因此仍归框架、控件只声明接管；Win32 的 `WM_SYSKEYDOWN/UP` 与 `WM_KEYDOWN/UP` 合流走同一按键入口；`KeyCode` 末尾新增显式初值段 `KP_Insert`..`KP_9`，`ModifierKey::NumLock` **只作修饰位**（框架不做二次翻译，`KP_Enter` 并入 `Enter`），形态与两档 keypad 编码口径见裁决 7.36② | `SPEC.FEAT.INTERACT.01` 的「完整转发」与 keypad 应用模式腿已接线；`SPEC.FEAT.PREF.05` 的 Alt 系快捷键不再受 G15 制约。**一条后端不对称在册**：`KP_Insert/Delete/Begin/End/Home/Prior/Next` 七项只有 X11 / Wayland 产出（GLFW 无 `KP_*` 导航常量；Win32 两区共用同一组 `VK` 而仅 `Home` 可由扫描码判别），Win32 侧因此走主键盘那一族，而主键盘 `Insert` 曾未建模即 **G20**（2026-10-03 回货闭合，裁决 7.44） |
 | G17 DPI 缩放真值源不统一 | **已闭合（2026-10-02 回货并真机复验，裁决 7.36④）**：Aurora 侧把 `refresh_scale()`（`GetDpiForWindow`）做成唯一 DPI 读点、`to_logical` / `to_physical` 做成唯二换算点，并解除其自有两例 known-gap SKIP 作为证人；本仓复验＝三态（启动 / 最大化 / 还原）底色均铺满客户区，实测格宽 `15.3` 物理 px = `10.2` dp @150% | 150% 屏上「网格覆盖不足」与「还原后比启动还窄」两条判据的阻塞解除；`HeadlessSurface` 像素用例与纯逻辑层不受影响（scale 由测试注入）。**同一成因的另一条腿当时未闭合**：建窗时的读数仍为 `1.0`，登记为 **G21**（首屏行列数），与 G17 的记账发散成因不同；**该腿亦已于 2026-10-03 回货并经本仓真机复验闭合**（裁决 7.45） |
