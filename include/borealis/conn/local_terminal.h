@@ -29,6 +29,9 @@ struct LocalTerminalSpec {
     std::string working_directory;
     /// 追加环境变量，同名时覆盖继承来的那份。键值均为 UTF-8。
     std::map<std::string, std::string> environment;
+
+    /// @brief 逐字段全等比较（会话恢复快照的往返断言用，与 `conn` 各档案类型同形态）。
+    [[nodiscard]] auto operator==(const LocalTerminalSpec &other) const noexcept -> bool = default;
 };
 
 /// PTY 环境注入的默认变量（`SPEC.FEAT.CONN.01`）：终端类程序据此选择色深与能力集。

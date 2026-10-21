@@ -91,6 +91,7 @@ add_library(borealis_core STATIC
         ui/tunnel_panel.cpp
         ui/url.cpp
         ui/workspace_keys.cpp
+        ui/workspace_snapshot.cpp
         ui/workspace_view.cpp)
 
 # 平台层实现按目标平台编入：共享路径只见接口，ConPTY 句柄与 Win32 API 留在 src/platform/ 内
