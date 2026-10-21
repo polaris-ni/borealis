@@ -3,7 +3,9 @@
 /// 测试说明: `SPEC.FEAT.INTEG.04` 单实例通道的 POSIX 腿。判据落在三条真行为上：
 ///           ① 认领权威是锁文件——第二个进程拿 `Existing`，首实例析构后名字可立刻复用；
 ///           ② 转交帧往返与串行处理——handler 在 transport 线程上收帧，回执原样送回；
-///           ③ 失败面不猜——空键、缺实例、超限帧与 0755 目录都在本地拒绝。
+///           ③ 失败面不猜——空键、缺实例、超限帧与 0755 目录都在本地拒绝；
+///           ④ 通道只见不透明字节——一帧真的 `SPEC.FEAT.INTEG.04` 请求（含零字节与第三个动作值）
+///              原样过去、收侧解回同一份请求，平台腿不需要懂协议。
 ///           另证崩溃残留：socket 路径上留一个普通文件时，首实例仍能认领并覆盖。
 ///
 ///           本文件只在非 Win32 编译（`cmake/BorealisTests.cmake` 按文件名把平台专属套件
@@ -19,6 +21,8 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -26,6 +30,8 @@
 #include "framework/aurora_test.h"
 // 私有头：平台通道接口在 src/ 树内（测试目标已带 src/ 的 include 路径）。
 #include "platform/instance_channel.h"
+// 公共头：判据 ④ 要把真的协议载荷交给通道，编解码归纯逻辑件（`SPEC.FEAT.INTEG.04` 稿 §6）。
+#include "borealis/cli/handoff.h"
 
 namespace borealis::test_cases::itest_posix_instance_channel {
 
@@ -140,6 +146,56 @@ AURORA_TEST_CASE(forward_round_trip_and_sequential_requests) {
             AURORA_TEST_CHECK(received[1] == large_payload);
         }
     }
+}
+
+AURORA_TEST_CASE(a_real_startup_frame_crosses_the_channel_unchanged) {
+    // 判据 ④：通道对载荷只见字节。这一帧是 `cli` 真编出来的请求（`SPEC.FEAT.WS.03` 稿 D10 新加的
+    // 第三个动作值），头部第 7 字节的 reserved 与 `cwd_len` 的高字节都是 0——**每帧必然带零字节**，
+    // 通道若按 C 串处理就会在第一个 0 处截断，而生产里 `main.cpp` 递进来的正是这种字节串。
+    TempDir dir;
+    std::mutex mutex;
+    std::optional<std::string> arrived;
+    auto listener = instance_listen(
+        dir.key(), [&mutex, &arrived](std::shared_ptr<InstanceRequest> request) -> void {
+            std::string frame;
+            {
+                const std::lock_guard lock{mutex};
+                frame = request->frame();
+                arrived = frame;
+            }
+            request->complete("ack:" + frame);
+        });
+    AURORA_TEST_CHECK(listener.role == InstanceRole::Primary);
+
+    const borealis::cli::StartupRequest sent{
+        .action = borealis::cli::StartupAction::NewWindow,
+        .profile = "dev",
+        .cwd = {},
+        .new_window = true,
+    };
+    const auto encoded = borealis::cli::encode_startup_request(sent);
+    AURORA_TEST_REQUIRE_TRUE(encoded.has_value());
+    const std::string wire(reinterpret_cast<const char *>(encoded->data()), encoded->size());
+    AURORA_TEST_CHECK(wire.find('\0') != std::string::npos);
+
+    const auto result = instance_forward(dir.key(), std::string_view{wire}, 2000);
+    AURORA_TEST_CHECK(result.delivered);
+    AURORA_TEST_CHECK(result.reply == "ack:" + wire);
+
+    AURORA_TEST_CHECK(wait_until([&mutex, &arrived]() -> bool {
+        const std::lock_guard lock{mutex};
+        return arrived.has_value();
+    }));
+    std::string received;
+    {
+        const std::lock_guard lock{mutex};
+        received = arrived.value_or(std::string{});
+    }
+    AURORA_TEST_CHECK(received == wire);
+    const auto decoded = borealis::cli::decode_startup_request(
+        std::span(reinterpret_cast<const std::uint8_t *>(received.data()), received.size()));
+    AURORA_TEST_REQUIRE_TRUE(decoded.has_value());
+    AURORA_TEST_CHECK(*decoded == sent);
 }
 
 AURORA_TEST_CASE(oversized_frame_is_refused_before_the_wire) {

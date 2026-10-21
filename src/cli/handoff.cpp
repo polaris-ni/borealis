@@ -20,6 +20,9 @@ constexpr std::array<std::uint8_t, 4> kRequestMagic{'B', 'O', 'R', 'I'};
 constexpr std::array<std::uint8_t, 4> kReplyMagic{'B', 'O', 'R', 'R'};
 constexpr std::uint8_t kVersion = 1;
 constexpr std::uint8_t kFlagNewWindow = 0x01;
+// 认识的最大 action 值。界取自本版的枚举而不是写死一个数：旧版实例收到它没见过的那一档，
+// 靠这一界整帧 fail-closed 拒掉（`SPEC.FEAT.WS.03` 稿 D10 记的混版代价）。
+constexpr std::uint8_t kMaxActionValue = static_cast<std::uint8_t>(StartupAction::NewWindow);
 
 [[nodiscard]] auto has_nul(std::string_view text) -> bool {
     return text.find('\0') != std::string_view::npos;
@@ -49,7 +52,8 @@ auto append_u16(std::vector<std::uint8_t> &out, std::size_t value) -> void {
 
 auto encode_startup_request(const StartupRequest &request)
     -> std::optional<std::vector<std::uint8_t>> {
-    if (request.action != StartupAction::NewTab && request.action != StartupAction::SplitPane) {
+    const auto action = static_cast<std::uint8_t>(request.action);
+    if (action > kMaxActionValue) {
         return std::nullopt;
     }
     if (!value_fits(request.profile) || !value_fits(request.cwd)) {
@@ -64,7 +68,7 @@ auto encode_startup_request(const StartupRequest &request)
     out.reserve(total);
     out.insert(out.end(), kRequestMagic.begin(), kRequestMagic.end());
     out.push_back(kVersion);
-    out.push_back(request.action == StartupAction::SplitPane ? 1U : 0U);
+    out.push_back(action);
     out.push_back(request.new_window ? kFlagNewWindow : 0U);
     out.push_back(0U);  // reserved
     append_u16(out, request.profile.size());
@@ -82,8 +86,8 @@ auto decode_startup_request(std::span<const std::uint8_t> bytes)
     if (bytes[4] != kVersion || (bytes[6] & ~kFlagNewWindow) != 0U || bytes[7] != 0U) {
         return std::nullopt;
     }
-    if (bytes[5] > 1U) {
-        return std::nullopt;
+    if (bytes[5] > kMaxActionValue) {
+        return std::nullopt;  // 本版不认识的 action 整帧拒，不猜半个请求。
     }
     const std::size_t profile_len = read_u16(bytes, 8);
     const std::size_t cwd_len = read_u16(bytes, 10);
@@ -101,7 +105,8 @@ auto decode_startup_request(std::span<const std::uint8_t> bytes)
         return std::nullopt;
     }
     return StartupRequest{
-        .action = bytes[5] == 1U ? StartupAction::SplitPane : StartupAction::NewTab,
+        // 界已在上面把过，这里的值必然是表内三档之一；直接折枚举，免得再加一档就漏一个分支。
+        .action = static_cast<StartupAction>(bytes[5]),
         .profile = std::move(profile),
         .cwd = std::move(cwd),
         .new_window = (bytes[6] & kFlagNewWindow) != 0U,

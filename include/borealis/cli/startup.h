@@ -13,6 +13,8 @@
 //            [--new-window] [--help]
 //
 // 缺省动作是 `new-tab`；`--help` 在本地消费，不占用单实例通道。
+// `--new-window` 是第三个动作的写法（不是修饰符）：它与两个子命令互斥，因为「在新窗里切当前窗的
+// 那一格」没有可读的语义。冷启动那一侧它与缺省 `new-tab` 同一条腿——正要建的这一扇就是那扇新窗。
 // ============================================================
 
 #include <cstddef>
@@ -31,6 +33,7 @@ namespace borealis::cli {
 enum class StartupAction : std::uint8_t {
     NewTab,     ///< 在当前窗口新开一个标签（冷启动即首标签）。
     SplitPane,  ///< 切分当前标签的焦点 pane。
+    NewWindow,  ///< 开一扇新窗，窗里落一个标签（`SPEC.FEAT.WS.03` 稿 D10；线格式 action 的第 3 值）。
 };
 
 /// @brief 单个字符串参数的上限（profile 名 / cwd）；超出即用法错误。
@@ -41,8 +44,9 @@ struct StartupRequest {
     StartupAction action{StartupAction::NewTab};
     std::string profile;     ///< `--profile` 原值（id 或展示名）；空＝未指定。
     std::string cwd;         ///< `--cwd` 原值；空＝未指定。
-    bool new_window{false};  ///< `--new-window` 是否出现。
-
+    bool new_window{false};  ///< `--new-window` 是否出现；解析产出里它与 `action == NewWindow` 同真同假。
+                             ///< 解码侧按线格式独立还原旗标，故「动作 0 + 旗标 1」这一格仍可能出现——
+                             ///< 那是旧版 CLI 转交过来的帧，含义同一条（用户要的是新窗）。
     /// @brief 逐字段全等比较（用例断言用）。
     [[nodiscard]] auto operator==(const StartupRequest &) const noexcept -> bool = default;
 };
@@ -85,6 +89,8 @@ struct ProfileResolution {
 /// 而切分工厂是同步返回的——异步弹框与同步工厂互斥，那条补链属独立一件（稿 `WS02_PANE_SESSION` §9
 /// 第 4 条）。`split-pane --cwd` 已放开，当前标签是不是本地腿属运行期事实，由装配层判、不在这里。
 /// `--cwd` 只对本地语义生效（缺省本地或 Local 档案）那一条不变。
+/// `--new-window`（`SPEC.FEAT.WS.03` 稿 D10）与 `--profile` / `--cwd` 相容：新窗那一格吃的就是这一份料，
+/// 与 `new-tab` 同一条判定，本件对它不设拒绝档。
 /// @param request 已解析的请求。
 /// @param profile_type `--profile` 命中档案的类型；未指定档案时为空（未解析即按非本地处置）。
 /// @return 空串表示通过；否则为 ASCII 诊断。

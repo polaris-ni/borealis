@@ -1027,6 +1027,11 @@ auto main(int argc, char **argv) -> int {
     // 那支 `std::function`，点击时读最新那一份）。缺钩即这一键只被认领、什么都不做。
     std::function<void()> open_new_window_request;
 
+    // 只开一扇新窗、**不**落首标签，回该窗指针（没建成回 nullptr）。CLI `--new-window` 那一腿要用它：
+    // 首标签吃哪份料（`--profile` 的档案或 `--cwd` 的目录）由请求决定，先落一格缺省本地标签再补一条
+    // 就成了两格。`open_new_window_request` 是它加 D1 缺省首标签的那一层壳。
+    std::function<WorkspaceWindow *()> open_new_window;
+
     // ---- 每格一会话的三条公共件（`SPEC.FEAT.WS.02`，稿 §3／§5）------------------------------
     //
     // 地基实测 F3／F4 的成因是「三处构造点各写一遍接缝」：重启腿与撤销重开那两处的 `teardown_pane`
@@ -1333,16 +1338,20 @@ auto main(int argc, char **argv) -> int {
                             make_local_pane_factory(id));
     };
 
-    // 首标签与冷启动请求的关系（稿 §5.1 / §5.4）：只有「`new-tab` 且带 `--profile`」要把这一格**换掉**，
-    // 否则会多出一条没人要的缺省标签；缺省 `new-tab`（无档案）在这一格就把 `--cwd` 折进去，
+    // 首标签与冷启动请求的关系（稿 §5.1 / §5.4）：只有「开标签那一档动作且带 `--profile`」要把这一格
+    // **换掉**，否则会多出一条没人要的缺省标签；无档案那一档在这一格就把 `--cwd` 折进去，
     // `split-pane` 则照旧建这一格、等接线齐备后再对它切一刀。
-    const bool cold_startup_profile_tab = startup_request.has_value() &&
-                                          startup_request->action == borealis::cli::StartupAction::NewTab &&
-                                          !startup_request->profile.empty();
+    // 冷启动的 `--new-window` 与缺省 `new-tab` 同一条腿（稿 §5.3「接受且不产生额外动作」）：此刻还没有
+    // 别的窗，正要建的这一扇就是那扇新窗，`apply_startup_request` 里也只按转交侧才另开。
+    const bool cold_first_tab_is_tab_action =
+        startup_request.has_value() &&
+        (startup_request->action == borealis::cli::StartupAction::NewTab ||
+         startup_request->action == borealis::cli::StartupAction::NewWindow);
+    const bool cold_startup_profile_tab =
+        cold_first_tab_is_tab_action && !startup_request->profile.empty();
     // 缺省 `new-tab` 已由上面那一格交付（含 `--cwd`），`app.run()` 前不再重复开标签。
-    const bool cold_startup_plain_tab_done = startup_request.has_value() &&
-                                             startup_request->action == borealis::cli::StartupAction::NewTab &&
-                                             startup_request->profile.empty();
+    const bool cold_startup_plain_tab_done =
+        cold_first_tab_is_tab_action && startup_request->profile.empty();
     const std::optional<std::string> startup_cwd_override =
         (startup_request.has_value() && !startup_request->cwd.empty())
             ? std::optional<std::string>{startup_request->cwd}
@@ -1797,32 +1806,42 @@ auto main(int argc, char **argv) -> int {
         }
     }
 
-    // 新开一扇工作区窗（`SPEC.FEAT.WS.03` 批 3，稿 D1／D2）：地基、内容、首标签三段**全部复用主窗那
-    // 一套定义**（`open_workspace_window()` → `assemble_window_content()` → `create_new_tab(window)`），
-    // 于是第二扇窗不是主窗的特例复制，主窗那条路径也第一次有了第二个调用点。次序是承重的三处：
+    // 新开一扇工作区窗（`SPEC.FEAT.WS.03` 批 3，稿 D1／D2）：地基与内容两段**全部复用主窗那
+    // 一套定义**（`open_workspace_window()` → `assemble_window_content()`），于是第二扇窗不是主窗的
+    // 特例复制，主窗那条路径也第一次有了第二个调用点。次序是承重的三处：
     // ① 先入根再折场景——`Scene` 收的是浮层宿主外面那一层的**所有权**，根 Column 必须已经在树里；
     // ② 号要等 `open_window()` 返回才有效，而首标签那一只视口要按号取焦点管理器（`window_focus`），
     //    建标签排在登记之前就会把键入打进主窗那一份焦点（稿 §0 的 F3）；
     // ③ 入容器排在 `take_window()` 之后、用 `window` 引用之前——容器是 `unique_ptr` 的 vector，搬走的
-    //    是指针而不是对象，堆上那一格的地址在窗的生命周期内不动。
-    open_new_window_request = [&app, &workspace_windows, &assemble_window_content, &make_window_scene,
-                               &create_new_tab, &tab_workspaces, &rebuild_root_children,
-                               &next_window_index]() -> void {
+    //    是指针而不是对象，堆上那一格的地址在窗的生命周期内不动（故返回的裸指针在窗关掉之前有效）。
+    // 首标签不在这一段：`Ctrl+Shift+N` 要的是 D1 那一格缺省本地标签，而 CLI `--new-window` 要的那一格
+    // 吃 `--profile` / `--cwd`（稿 D10），两档共用同一条开窗腿、各自决定料，故拆成下面两支。
+    open_new_window = [&app, &workspace_windows, &assemble_window_content, &make_window_scene,
+                       &next_window_index]() -> WorkspaceWindow * {
         auto created = open_workspace_window("Borealis", next_window_index++);
         if (created == nullptr) {
             // 建窗失败原文已在工厂里落日志。这里不入容器、不登记宿主，于是稿 §5 那条「没建成窗就不
             // 留下半个账目」在第二扇窗这条路上同样成立。
-            return;
+            return nullptr;
         }
         WorkspaceWindow &window = *created;
         assemble_window_content(window);
         window.id = app.open_window(window.take_window(), make_window_scene(window), window.options);
         workspace_windows.push_back(std::move(created));
+        return &window;
+    };
+
+    open_new_window_request = [&open_new_window, &create_new_tab, &tab_workspaces,
+                               &rebuild_root_children]() -> void {
+        WorkspaceWindow *const window = open_new_window ? open_new_window() : nullptr;
+        if (window == nullptr) {
+            return;
+        }
         // 首标签是一个**缺省本地**标签（D1）：新窗此刻没有当前标签，`create_new_tab` 的继承腿因此自动
         // 落在配置的启动目录那一档，不继承发起窗的 OSC 7——「新窗跟着旧窗的目录走」是另一件尚未
         // 裁决的事，不在本条里猜。
-        create_new_tab(window, std::nullopt);
-        rebuild_root_children(window, tab_workspaces);
+        create_new_tab(*window, std::nullopt);
+        rebuild_root_children(*window, tab_workspaces);
     };
 
     // 设置页自己那份句柄留给下面两条腿现读：`hooks.preview_wake` 要叫醒的是**面板此刻挂着的那一扇**，
@@ -3501,10 +3520,17 @@ auto main(int argc, char **argv) -> int {
     };
     auto apply_startup_request = [&](const borealis::cli::StartupRequest &pending, bool forwarded)
         -> std::string {
-        if (forwarded && pending.new_window) {
-            // 稿 §5.3：单实例进程模型下不能靠再起一个进程冒充新窗口，多窗口本体（WS.03）还没落地；
-            // 冷启动那一侧这个标志本就无额外语义，故只拒绝「转交过来的新窗口」。
-            return "--new-window needs SPEC.FEAT.WS.03, which is not implemented yet";
+        // `--new-window`（稿 D10，批 6 放开）：转交侧把它落成一扇新窗，窗里那一格吃随行的 `--profile` /
+        // `--cwd`。冷启动那一侧不另开——正要建的这一扇就是它，上面 `cold_first_tab_is_tab_action` 已按
+        // `new-tab` 同一条腿消化掉。旗标与动作两个都认：本版 CLI 两者同真，而旧版转来的帧只有旗标
+        // （动作还是 `new-tab`），用户的这一根手指不该随版本错开而失效。
+        const bool wants_new_window =
+            forwarded && (pending.new_window ||
+                          pending.action == borealis::cli::StartupAction::NewWindow);
+        if (wants_new_window && pending.action == borealis::cli::StartupAction::SplitPane) {
+            // 纯逻辑件产不出这一格（`--new-window` 与两个子命令互斥），能走到这里的只有手工拼的帧：
+            // 「开一扇新窗去切另一扇窗的焦点格」没有可读的语义，整条拒绝而不是猜一半。
+            return "--new-window cannot be combined with split-pane";
         }
         const borealis::conn::Profile *profile = nullptr;
         std::optional<borealis::conn::ConnectionType> profile_type{};
@@ -3573,11 +3599,24 @@ auto main(int argc, char **argv) -> int {
             }
             return {};
         }
-        // 落点窗现取（稿 §6 批 4-A）：这一段要把新格子挂到哪扇窗，取的是 tracker 记下的最近被碰过的那一扇。
-        // 取不到即窗已散 ⇒ 整条请求作废并回诊断，不再像旧腿那样吃主窗别名（那时别名指向的是已销毁的窗）。
-        WorkspaceWindow *const landing = tab_host_or_none("startup request");
+        // 落点窗：`--new-window` 是「现开一扇再往里放」，其余仍取 tracker 记下的最近被碰过的那一扇
+        //（稿 §6 批 4-A：取不到即窗已散 ⇒ 整条请求作废并回诊断，不再像旧腿那样吃主窗别名）。
+        WorkspaceWindow *landing = nullptr;
+        if (wants_new_window) {
+            landing = open_new_window ? open_new_window() : nullptr;
+            if (landing != nullptr) {
+                // 四条档案腿（ssh / local / serial / telnet）都经 `tab_host_or_none` 现取落点，故这里把
+                // 刚落地的新窗交进 tracker，随行的 `--profile` 才连进**这一扇**而不是用户上一回碰过的
+                // 那一扇。新窗此刻也是 OS 焦点窗、下一笔派发照会报它，这一跳只是把同一件事说在前面——
+                // 说要紧的那一处是凭据询问那条异步腿：框答完再连时读的仍是 tracker。
+                active_window_tracker.report(landing->id);
+            }
+        } else {
+            landing = tab_host_or_none("startup request");
+        }
         if (landing == nullptr) {
-            return "there is no window to open the requested tab in";
+            return wants_new_window ? "failed to open a new window for --new-window"
+                                    : "there is no window to open the requested tab in";
         }
         if (profile != nullptr) {
             borealis::conn::Profile target = *profile;

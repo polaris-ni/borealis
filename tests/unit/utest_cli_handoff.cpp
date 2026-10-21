@@ -62,7 +62,7 @@ AURORA_TEST_CASE(request_rejects_bad_magic_version_reserved_and_action) {
     AURORA_TEST_CHECK(!decode_startup_request(bad_version).has_value());
 
     auto bad_action = encoded;
-    bad_action[5] = 2;
+    bad_action[5] = 3;
     AURORA_TEST_CHECK(!decode_startup_request(bad_action).has_value());
 
     auto bad_flags = encoded;
@@ -72,6 +72,41 @@ AURORA_TEST_CASE(request_rejects_bad_magic_version_reserved_and_action) {
     auto bad_reserved = encoded;
     bad_reserved[7] = 1;
     AURORA_TEST_CHECK(!decode_startup_request(bad_reserved).has_value());
+}
+
+AURORA_TEST_CASE(new_window_action_crosses_the_wire_and_the_old_flag_still_reads) {
+    // 第三个动作值（2）是本版新档：编得出去也解得回来，且旗标位不动（稿 D10 的线格式只多一个值）。
+    StartupRequest fresh;
+    fresh.action = StartupAction::NewWindow;
+    fresh.profile = "dev";
+    fresh.cwd = "/tmp/目录";
+    fresh.new_window = true;
+    const auto encoded = encode_startup_request(fresh);
+    AURORA_TEST_REQUIRE_TRUE(encoded.has_value());
+    AURORA_TEST_CHECK((*encoded)[5] == 2U);
+    AURORA_TEST_CHECK((*encoded)[6] == 0x01U);
+    const auto decoded = decode_startup_request(*encoded);
+    AURORA_TEST_REQUIRE_TRUE(decoded.has_value());
+    AURORA_TEST_CHECK(*decoded == fresh);
+
+    // 混版那一档（旧 CLI 只发旗标、动作仍是 new-tab）必须原样解回，不能被当成坏帧丢掉——
+    // 装配层认这一格，用户的 `--new-window` 才不会随版本错开而失效。
+    StartupRequest legacy;
+    legacy.profile = "dev";
+    legacy.new_window = true;
+    const auto legacy_bytes = encode_startup_request(legacy);
+    AURORA_TEST_REQUIRE_TRUE(legacy_bytes.has_value());
+    AURORA_TEST_CHECK((*legacy_bytes)[5] == 0U);
+    const auto legacy_decoded = decode_startup_request(*legacy_bytes);
+    AURORA_TEST_REQUIRE_TRUE(legacy_decoded.has_value());
+    AURORA_TEST_CHECK(*legacy_decoded == legacy);
+
+    // 表外的动作值编不出去：本件宁可回空，也不交出一帧对面只能整帧拒的东西。
+    StartupRequest out_of_table;
+    out_of_table.action = static_cast<StartupAction>(3);
+    AURORA_TEST_CHECK(!encode_startup_request(out_of_table).has_value());
+    out_of_table.action = static_cast<StartupAction>(0xFFU);
+    AURORA_TEST_CHECK(!encode_startup_request(out_of_table).has_value());
 }
 
 AURORA_TEST_CASE(request_rejects_truncation_trailing_bytes_and_bad_lengths) {

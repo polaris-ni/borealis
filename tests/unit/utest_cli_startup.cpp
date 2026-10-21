@@ -1,6 +1,6 @@
 /// 测试类型: unit
 /// 目标单元: include/borealis/cli/startup.h + src/cli/startup.cpp
-/// 测试说明: `SPEC.FEAT.INTEG.04` 的纯逻辑面——语法解析（缺省 new-tab、两个子命令互斥、
+/// 测试说明: `SPEC.FEAT.INTEG.04` 的纯逻辑面——语法解析（缺省 new-tab、三个动作互斥、
 ///           选项顺序无关、缺值 / 重复 / 未知 / 位置参数拒绝、--help 本地消费、值上限与 NUL）、
 ///           档案解析（id → 精确名 → 唯一大小写不敏感名；重名不取第一条）、以及切分与 `--cwd`
 ///           的策略档位。本套件不碰文件系统、不建窗。
@@ -75,18 +75,52 @@ AURORA_TEST_CASE(subcommands_select_action_and_are_mutually_exclusive) {
 }
 
 AURORA_TEST_CASE(options_parse_in_any_order) {
-    const StartupParse parsed =
-        parse({"--profile", "dev", "--new-window", "--cwd", "/tmp/work", "split-pane"});
+    const StartupParse parsed = parse({"--profile", "dev", "--cwd", "/tmp/work", "split-pane"});
     AURORA_TEST_REQUIRE_TRUE(parsed.request.has_value());
     AURORA_TEST_CHECK(parsed.request->action == StartupAction::SplitPane);
     AURORA_TEST_CHECK(parsed.request->profile == "dev");
     AURORA_TEST_CHECK(parsed.request->cwd == "/tmp/work");
-    AURORA_TEST_CHECK(parsed.request->new_window);
+    AURORA_TEST_CHECK(!parsed.request->new_window);
 
-    const StartupParse reordered =
-        parse({"split-pane", "--cwd", "/tmp/work", "--new-window", "--profile", "dev"});
+    const StartupParse reordered = parse({"split-pane", "--cwd", "/tmp/work", "--profile", "dev"});
     AURORA_TEST_REQUIRE_TRUE(reordered.request.has_value());
     AURORA_TEST_CHECK(*reordered.request == *parsed.request);
+}
+
+AURORA_TEST_CASE(new_window_flag_folds_into_the_third_action) {
+    // 裸旗标折成第三个动作：请求与线格式各只表达一件事（`SPEC.FEAT.WS.03` 稿 D10）。
+    const StartupParse bare = parse({"--new-window"});
+    AURORA_TEST_REQUIRE_TRUE(bare.request.has_value());
+    AURORA_TEST_CHECK(bare.request->action == StartupAction::NewWindow);
+    AURORA_TEST_CHECK(bare.request->new_window);
+
+    // 幂等：重复出现不改语义。
+    const StartupParse twice = parse({"--new-window", "--new-window"});
+    AURORA_TEST_REQUIRE_TRUE(twice.request.has_value());
+    AURORA_TEST_CHECK(twice.request->action == StartupAction::NewWindow);
+
+    // `--profile` / `--cwd` 与新窗动作相容：料要跟着进那一格，不能被解析侧吃掉。
+    const StartupParse with_payload =
+        parse({"--new-window", "--profile", "dev", "--cwd", "/tmp/work"});
+    AURORA_TEST_REQUIRE_TRUE(with_payload.request.has_value());
+    AURORA_TEST_CHECK(with_payload.request->action == StartupAction::NewWindow);
+    AURORA_TEST_CHECK(with_payload.request->profile == "dev");
+    AURORA_TEST_CHECK(with_payload.request->cwd == "/tmp/work");
+}
+
+AURORA_TEST_CASE(new_window_conflicts_with_both_subcommands) {
+    // `--new-window` 是动作而不是修饰符：与两个子命令互斥，两个方向同一条诊断
+    //（顺序无关是本件的基本口径，故两侧都得判）。
+    AURORA_TEST_CHECK(rejects({"new-tab", "--new-window"}));
+    AURORA_TEST_CHECK(rejects({"--new-window", "split-pane"}));
+    const StartupParse conflict = parse({"--profile", "dev", "split-pane", "--new-window"});
+    AURORA_TEST_CHECK(!conflict.request.has_value());
+    AURORA_TEST_CHECK(conflict.error.find("--new-window") != std::string::npos);
+    AURORA_TEST_CHECK(conflict.error.find("split-pane") != std::string::npos);
+    // 拒绝发生在本地：不建窗、不占单实例通道（同 `--help` 那一条纪律）。
+    const StartupParse other_noise = parse({"--new-window", "--unknown"});
+    AURORA_TEST_CHECK(!other_noise.request.has_value());
+    AURORA_TEST_CHECK(other_noise.error.find("--unknown") != std::string::npos);
 }
 
 AURORA_TEST_CASE(missing_duplicate_unknown_and_positional_arguments_are_rejected) {
@@ -215,7 +249,8 @@ AURORA_TEST_CASE(policy_lets_local_split_through_and_refuses_nonlocal_profile) {
 
     // `--cwd` 只对本地语义生效那一条不变，且与动作无关。
     request.profile.clear();
-    for (const StartupAction action : {StartupAction::SplitPane, StartupAction::NewTab}) {
+    for (const StartupAction action :
+         {StartupAction::SplitPane, StartupAction::NewTab, StartupAction::NewWindow}) {
         request.action = action;
         AURORA_TEST_CHECK(startup_policy_error(request, std::nullopt).empty());
         AURORA_TEST_CHECK(startup_policy_error(request, ConnectionType::Local).empty());
@@ -224,11 +259,20 @@ AURORA_TEST_CASE(policy_lets_local_split_through_and_refuses_nonlocal_profile) {
         }
     }
     // 没有 `--cwd` 时新开远端标签本就是正路；那条切分拒绝也只跟着 `split-pane` 走。
+    request.action = StartupAction::NewTab;
     request.cwd.clear();
     request.profile = "dev";
     for (const ConnectionType remote : kRemoteTypes) {
         AURORA_TEST_CHECK(startup_policy_error(request, remote).empty());
     }
+    // `--new-window` 与 `--profile` 相容（稿 D10）：新窗那一格吃的就是这份料，判定与 `new-tab` 同一条，
+    // 连「类型未知」那一档也不额外收紧——远端档案在新窗里同样要先问材料，那是运行期的事。
+    request.action = StartupAction::NewWindow;
+    for (const ConnectionType remote : kRemoteTypes) {
+        AURORA_TEST_CHECK(startup_policy_error(request, remote).empty());
+    }
+    AURORA_TEST_CHECK(startup_policy_error(request, std::nullopt).empty());
+    AURORA_TEST_CHECK(startup_policy_error(request, ConnectionType::Local).empty());
     request.action = StartupAction::SplitPane;
     AURORA_TEST_CHECK(startup_policy_error(request, ConnectionType::Ssh) == kSplitProfileRefusal);
 }
@@ -238,6 +282,10 @@ AURORA_TEST_CASE(usage_is_ascii_and_names_both_subcommands) {
     AURORA_TEST_CHECK(usage.find("Usage:") != std::string_view::npos);
     AURORA_TEST_CHECK(usage.find("new-tab") != std::string_view::npos);
     AURORA_TEST_CHECK(usage.find("split-pane") != std::string_view::npos);
+    // `--new-window` 的文案要说的是「开一扇新窗」，不是旧那句「已有实例时」（批 6 放开）。
+    AURORA_TEST_CHECK(usage.find("--new-window") != std::string_view::npos);
+    AURORA_TEST_CHECK(usage.find("open a new window") != std::string_view::npos);
+    AURORA_TEST_CHECK(usage.find("when an instance is already running") == std::string_view::npos);
     for (const char ch : usage) {
         const auto byte = static_cast<unsigned char>(ch);
         AURORA_TEST_CHECK(byte < 0x80U);

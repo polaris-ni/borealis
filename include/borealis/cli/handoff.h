@@ -8,6 +8,7 @@
 //
 // 请求： "BORI" | version u8 | action u8 | flags u8 | reserved u8
 //        | profile_len u16le | cwd_len u16le | profile | cwd
+//        （action：0=new-tab 1=split-pane 2=new-window；flags bit0＝旧版 CLI 的 `--new-window` 旗标）
 // 回复： "BORR" | version u8 | status u8 | message_len u16le | message
 //
 // 长度先于越界检查；magic / version / reserved / 尾随字节 / 超限任一不符即整帧
@@ -30,7 +31,7 @@ inline constexpr std::size_t kMaxHandoffRequestBytes = 16 * 1024;
 /// @brief 回复载荷上限（不含平台通道的 4 字节外层长度）。
 inline constexpr std::size_t kMaxHandoffReplyBytes = 4 * 1024;
 
-/// @brief 编码请求；字段超限 / 含 NUL / 总长越界时回空。
+/// @brief 编码请求；action 不在本版表内 / 字段超限 / 含 NUL / 总长越界时回空。
 [[nodiscard]] auto encode_startup_request(const StartupRequest &request)
     -> std::optional<std::vector<std::uint8_t>>;
 

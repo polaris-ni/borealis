@@ -52,7 +52,7 @@ auto startup_usage() -> std::string_view {
            "  split-pane    split the focused pane of the current tab\n"
            "  --profile     connect using the named profile (id or display name)\n"
            "  --cwd         starting directory for a local session\n"
-           "  --new-window  open a new window when an instance is already running\n"
+           "  --new-window  open a new window instead of touching the running one\n"
            "  --help        print this text and exit\n";
 }
 
@@ -60,6 +60,7 @@ auto parse_startup_args(std::span<const std::string> args) -> StartupParse {
     StartupParse out;
     StartupRequest request;
     bool action_seen = false;
+    std::string action_spelling;
     bool profile_seen = false;
     bool cwd_seen = false;
 
@@ -72,6 +73,9 @@ auto parse_startup_args(std::span<const std::string> args) -> StartupParse {
             return out;
         }
         if (arg == "--new-window") {
+            if (action_seen) {
+                return parse_error(out, "--new-window cannot be combined with " + action_spelling);
+            }
             request.new_window = true;  // 幂等：重复出现不改变语义。
             continue;
         }
@@ -96,7 +100,11 @@ auto parse_startup_args(std::span<const std::string> args) -> StartupParse {
             if (action_seen) {
                 return parse_error(out, "only one action may be specified");
             }
+            if (request.new_window) {
+                return parse_error(out, "--new-window cannot be combined with " + arg);
+            }
             action_seen = true;
+            action_spelling = arg;
             request.action = arg == "split-pane" ? StartupAction::SplitPane
                                                  : StartupAction::NewTab;
             continue;
@@ -105,6 +113,12 @@ auto parse_startup_args(std::span<const std::string> args) -> StartupParse {
             return parse_error(out, "unknown option: " + arg);
         }
         return parse_error(out, "unexpected argument: " + arg);
+    }
+
+    // `--new-window` 是第三个动作的写法而不是修饰符，故折进 `action`：请求与线格式各只表达一件事。
+    // 旗标本身保留——旧版 CLI 转来的帧只有旗标（动作还是 `new-tab`），接收侧两种读法都要认。
+    if (request.new_window) {
+        request.action = StartupAction::NewWindow;
     }
 
     out.request = std::move(request);
