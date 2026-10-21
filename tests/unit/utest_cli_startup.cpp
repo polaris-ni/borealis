@@ -2,12 +2,14 @@
 /// 目标单元: include/borealis/cli/startup.h + src/cli/startup.cpp
 /// 测试说明: `SPEC.FEAT.INTEG.04` 的纯逻辑面——语法解析（缺省 new-tab、两个子命令互斥、
 ///           选项顺序无关、缺值 / 重复 / 未知 / 位置参数拒绝、--help 本地消费、值上限与 NUL）、
-///           档案解析（id → 精确名 → 唯一大小写不敏感名；重名不取第一条）、以及
-///           split-pane / --cwd 的策略拒绝。本套件不碰文件系统、不建窗。
+///           档案解析（id → 精确名 → 唯一大小写不敏感名；重名不取第一条）、以及切分与 `--cwd`
+///           的策略档位。本套件不碰文件系统、不建窗。
 
+#include <array>
 #include <cstddef>
 #include <initializer_list>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "borealis/cli/startup.h"
@@ -187,24 +189,48 @@ AURORA_TEST_CASE(id_match_wins_over_another_profiles_display_name) {
     AURORA_TEST_CHECK(resolved.profile->name == "First");
 }
 
-AURORA_TEST_CASE(policy_rejects_split_with_profile_or_cwd_and_nonlocal_cwd) {
+AURORA_TEST_CASE(policy_lets_local_split_through_and_refuses_nonlocal_profile) {
+    constexpr std::string_view kSplitProfileRefusal =
+        "split-pane --profile needs a per-pane credential prompt";
+    const std::array<ConnectionType, 3> kRemoteTypes{ConnectionType::Ssh, ConnectionType::Serial,
+                                                     ConnectionType::Telnet};
+
     StartupRequest request;
     request.action = StartupAction::SplitPane;
+    // 每 pane 一会话落地后（`SPEC.FEAT.WS.02` 稿 §7）裸切分与 `--cwd` 切分都放开：「当前标签是不是本地
+    // 腿」是运行期事实，由装配层判，纯逻辑件不看。
     AURORA_TEST_CHECK(startup_policy_error(request, std::nullopt).empty());
-
-    request.profile = "dev";
-    AURORA_TEST_CHECK(!startup_policy_error(request, ConnectionType::Local).empty());
-
-    request.profile.clear();
     request.cwd = "/tmp/work";
-    AURORA_TEST_CHECK(!startup_policy_error(request, std::nullopt).empty());
-
-    request.action = StartupAction::NewTab;
     AURORA_TEST_CHECK(startup_policy_error(request, std::nullopt).empty());
     AURORA_TEST_CHECK(startup_policy_error(request, ConnectionType::Local).empty());
-    AURORA_TEST_CHECK(!startup_policy_error(request, ConnectionType::Ssh).empty());
-    AURORA_TEST_CHECK(!startup_policy_error(request, ConnectionType::Serial).empty());
-    AURORA_TEST_CHECK(!startup_policy_error(request, ConnectionType::Telnet).empty());
+
+    // Local 档案切分放开；非 Local 维持拒绝，且拒绝语说的是此刻真实成立的那一条。
+    request.profile = "dev";
+    AURORA_TEST_CHECK(startup_policy_error(request, ConnectionType::Local).empty());
+    for (const ConnectionType remote : kRemoteTypes) {
+        AURORA_TEST_CHECK(startup_policy_error(request, remote) == kSplitProfileRefusal);
+    }
+    // 类型未知＝调用方没解析过 `--profile`，按非本地处置（宁可拒错，不能让新格等同步工厂给不出的材料）。
+    AURORA_TEST_CHECK(startup_policy_error(request, std::nullopt) == kSplitProfileRefusal);
+
+    // `--cwd` 只对本地语义生效那一条不变，且与动作无关。
+    request.profile.clear();
+    for (const StartupAction action : {StartupAction::SplitPane, StartupAction::NewTab}) {
+        request.action = action;
+        AURORA_TEST_CHECK(startup_policy_error(request, std::nullopt).empty());
+        AURORA_TEST_CHECK(startup_policy_error(request, ConnectionType::Local).empty());
+        for (const ConnectionType remote : kRemoteTypes) {
+            AURORA_TEST_CHECK(!startup_policy_error(request, remote).empty());
+        }
+    }
+    // 没有 `--cwd` 时新开远端标签本就是正路；那条切分拒绝也只跟着 `split-pane` 走。
+    request.cwd.clear();
+    request.profile = "dev";
+    for (const ConnectionType remote : kRemoteTypes) {
+        AURORA_TEST_CHECK(startup_policy_error(request, remote).empty());
+    }
+    request.action = StartupAction::SplitPane;
+    AURORA_TEST_CHECK(startup_policy_error(request, ConnectionType::Ssh) == kSplitProfileRefusal);
 }
 
 AURORA_TEST_CASE(usage_is_ascii_and_names_both_subcommands) {

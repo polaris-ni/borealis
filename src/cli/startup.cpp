@@ -162,12 +162,13 @@ auto resolve_profile(const std::vector<conn::Profile> &profiles, std::string_vie
 
 auto startup_policy_error(const StartupRequest &request,
                           std::optional<conn::ConnectionType> profile_type) -> std::string {
-    if (request.action == StartupAction::SplitPane) {
-        if (!request.profile.empty()) {
-            return "split-pane --profile requires multi-session panes (SPEC.FEAT.WS.02)";
-        }
-        if (!request.cwd.empty()) {
-            return "split-pane --cwd requires multi-session panes (SPEC.FEAT.WS.02)";
+    if (request.action == StartupAction::SplitPane && !request.profile.empty()) {
+        // 类型未知按「非本地」处理：调用方没解析就递进来，这一支给不出可靠判断，宁可拒错也不让新格
+        // 在同步工厂里等一份弹框材料。
+        const bool profile_is_local =
+            profile_type.has_value() && profile_type.value() == conn::ConnectionType::Local;
+        if (!profile_is_local) {
+            return "split-pane --profile needs a per-pane credential prompt";
         }
     }
     if (!request.cwd.empty() && profile_type.has_value() &&

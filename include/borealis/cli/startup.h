@@ -80,10 +80,13 @@ struct ProfileResolution {
 
 /// @brief 动作与参数组合的策略检查（纯逻辑，不看运行期状态）。
 ///
-/// 已定的两档拒绝：`split-pane` 不能配 `--profile` / `--cwd`（多会话 pane 待
-/// `SPEC.FEAT.WS.02`）；`--cwd` 只对本地语义生效（缺省本地或 Local 档案）。
+/// 每 pane 一会话落地后（`SPEC.FEAT.WS.02`），`split-pane` 只留一条拒绝：`--profile` 指向**非本地**
+/// 档案。本地腿没有凭据链，目录与命令都能当场给全；SSH / 串口 / Telnet 的新格要先问密码或选串口，
+/// 而切分工厂是同步返回的——异步弹框与同步工厂互斥，那条补链属独立一件（稿 `WS02_PANE_SESSION` §9
+/// 第 4 条）。`split-pane --cwd` 已放开，当前标签是不是本地腿属运行期事实，由装配层判、不在这里。
+/// `--cwd` 只对本地语义生效（缺省本地或 Local 档案）那一条不变。
 /// @param request 已解析的请求。
-/// @param profile_type `--profile` 命中档案的类型；未指定档案时为空。
+/// @param profile_type `--profile` 命中档案的类型；未指定档案时为空（未解析即按非本地处置）。
 /// @return 空串表示通过；否则为 ASCII 诊断。
 [[nodiscard]] auto startup_policy_error(const StartupRequest &request,
                                         std::optional<conn::ConnectionType> profile_type)
