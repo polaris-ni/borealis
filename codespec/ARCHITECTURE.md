@@ -53,8 +53,9 @@ Borealis 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨�
 | `include/borealis/session/` | 会话抽象、背压队列、生命周期 |
 | `include/borealis/conn/` | 连接类型与档案、凭据句柄 |
 | `include/borealis/ui/` | 终端视口、标签栏、pane 树、搜索浮层、设置面板 |
-| `include/borealis/config/` | 配置 schema、原子写与降级、profile |
+| `include/borealis/config/` | 配置 schema、原子写与降级、profile；逐窗几何记忆另起第二枚框架接缝，实现与头都在 `src/config/`（`window_geometry_store`，裁决 7.126） |
 | `include/borealis/cli/`、`src/cli/` | CLI 启动参数语法与档案解析、单实例转交的请求 / 回复编解码（纯逻辑，不碰文件系统与 UI，裁决 7.124） |
+| `src/ui/`（私有头） | 触达框架类型的控件实现（绘制侧类声明含 Aurora 类型，故不入公共头）；其中 `active_window_tracker.{h,cpp}` 是纯逻辑件，判「命令与快捷键落哪一扇窗」，为框架缺口 G42 的代偿（裁决 7.126） |
 | `src/platform/win/`、`src/platform/posix/` | 平台相关实现（**平台假设不得渗入共享路径**，裁决 7.11）；含单实例通道与进程参数两腿（`instance_channel` / `process_args`，裁决 7.124），共享侧只见 `src/platform/` 下的同名接口头 |
 
 ### 2.3 依赖方向不变量
@@ -286,7 +287,7 @@ SFTP（`SPEC.FEAT.CONN.04`）、隧道（`SPEC.FEAT.CONN.08`）、公钥推送�
 - 多标签（`SPEC.FEAT.WS.01`）；框架 `TabBar`（`widget/tab_bar.h`）**仅覆盖选中切换与关闭**——事件只有 `on_change` / `on_close`，属性为选中序号、栏高、四个**全局**配色、指示器粗细、字号与内边距。`SPEC.FEAT.WS.01` 要求的**拖拽重排**与**逐标签图标**、`SPEC.FEAT.WS.04` 要求的**逐标签状态角标与活动高亮**均无对应能力（配色是全局的，无法区分单个标签），须应用侧自研标签栏或在其外自绘这些元素。不得因 `TabBar` 的存在而低估本项工作量（与下条 `Splitter` 同理）。
   - `ui::TabStrip`（`include/borealis/ui/tab_strip.h` + `src/ui/tab_strip.cpp`，纯逻辑、公共头不含 Aurora 也不含 `config` 类型）承载**与绘制与会话无关的那一半**：顺序本身、当前选中格、以及这一格该显示哪个名字。它不是 `TabBar` 的壳，而是重排、逐标签名称与三名优先级这三处的唯一真值源；`TabBar` 至多是呈现件。九条口径见裁决 7.43①–⑨。
   - **名称折算在自由函数里**：`resolve_tab_name(TabNames, TabNamePriority)` 是唯一的判定点（档案名 / `OSC 0/2` 标题 / 手动重命名三来源，照 `SPEC.FEAT.TERM.07`），`TabStrip` 的显示名入口只按 id 取来源再转调它。**空串即「该来源未设置」**，故撤销重命名与 OSC 设回空是同一条让位规则，没有「重置为默认名」这个动作。优先级是入参而非写死（需求把 manual-vs-OSC 明标「可配」），配置键 `appearance.tab_name_priority` 缺省 `manual_wins`。
-  - **界面腿另棒**：栏位宽度与溢出滚动、逐标签图标与角标、拖拽落点折成 `move` 的下标、关闭按钮命中、「关闭前确认（有运行中进程时）」的对话框，以及末位标签关闭 → 关窗口（`SPEC.FEAT.WS.03`）那条路径。图标与角标、「有运行中进程」的判据刻意不入本件——存了会话指针，标签列表就再也无法脱离会话单测（AGENTS.md §4.4 第 20 条）。**其交互态判据已出稿并拍板**（2026-10-03，`codespec/UI_WORKSPACE_INTERACT.draft.md`，裁决 7.47⑥⑦⑧）：栏位宽按显示名实测并钳 `[96, 240]` dp、溢出走横向偏移而非压缩栏位（压缩会让「实测宽」成第二个真值源），「＋」固定右端不参与滚动；就地重命名是框架 `TextInput` 的**子类**（该件无取消与失焦回调，覆写按键与焦点钩子补齐，属公共 API 可组合、不登记缺口），`Enter` / `Esc` / 失焦三口收，**空串提交即撤销重命名**（即 7.43③ 的让位规则，不另立「恢复默认名」）；关闭确认的判据是「该标签**任一** pane 的会话进程仍在」且**一次确认关整张标签**（逐 pane 追问在多 pane 时是 N 次对话框，只看选中 pane 会静默杀掉未选中 pane 里跑着的任务）。
+  - **界面腿另棒**：栏位宽度与溢出滚动、逐标签图标与角标、拖拽落点折成 `move` 的下标、关闭按钮命中、「关闭前确认（有运行中进程时）」的对话框。图标与角标、「有运行中进程」的判据刻意不入本件——存了会话指针，标签列表就再也无法脱离会话单测（AGENTS.md §4.4 第 20 条）。**本条曾挂的「末位标签关闭 → 关窗口（`SPEC.FEAT.WS.03`）那条路径」已改口为不做**（2026-10-21，裁决 **7.126** 的稿 D3）：`WS.01` 的末位标签本来就没有关闭按钮（`has_close_button` 按 `tab_strip.count() > 1` 给），多窗口落地后也没有加上那条腿，关窗只有 OS 关闭钮——稿 D3 推荐档里并列的 `workspace.close_window` 命令**未落**（批 3-B 只落了 `workspace.new_window`），登记为在册欠项而非漏项，因为需求没要求程序化关窗入口。**其交互态判据已出稿并拍板**（2026-10-03，`codespec/UI_WORKSPACE_INTERACT.draft.md`，裁决 7.47⑥⑦⑧）：栏位宽按显示名实测并钳 `[96, 240]` dp、溢出走横向偏移而非压缩栏位（压缩会让「实测宽」成第二个真值源），「＋」固定右端不参与滚动；就地重命名是框架 `TextInput` 的**子类**（该件无取消与失焦回调，覆写按键与焦点钩子补齐，属公共 API 可组合、不登记缺口），`Enter` / `Esc` / 失焦三口收，**空串提交即撤销重命名**（即 7.43③ 的让位规则，不另立「恢复默认名」）；关闭确认的判据是「该标签**任一** pane 的会话进程仍在」且**一次确认关整张标签**（逐 pane 追问在多 pane 时是 N 次对话框，只看选中 pane 会静默杀掉未选中 pane 里跑着的任务）。
 - **pane 树须自研**：框架 `Splitter` 为二元分割器，只能表达「两个子节点 + 一个比例」；本需求要求每一层为**多子 pane 容器**并满足任意方向 / 任意深度 / 任意比例 / 任意 pane 数四义（裁决 7.10）。
   - `ui::PaneTree`（`include/borealis/ui/pane_tree.h` + `src/ui/pane_tree.cpp`，纯逻辑、公共头不含 Aurora 类型）已承载这棵树**与绘制无关的那一半**：拓扑编辑（`split` / `close`）、每层沿轴的相对长度、等分与把手拖拽（`equalize` / `move_divider`）、方向键路由（自由函数 `ui::route_focus`）。十一条口径见裁决 7.42①–⑪。界面腿（pane 容器 widget、把手命中与拖拽接线、焦点描边、逐 pane 下发尺寸）另棒；其前置的**分屏交互视觉稿已于 2026-10-03 出稿并拍板**（`codespec/UI_WORKSPACE_INTERACT.draft.md`，裁决 7.47①–⑤⑨）：最小 pane 按 `max(20 列 × 格宽, 3 行 × 格高)` 现算（`min_pane_dp` 的 48 dp 只是库内保守下界，界面腿须按当帧格步长传入）、等分＝把手双击 + `Ctrl+Shift+0` 而步进＝`Ctrl+Alt+方向键` 且与拖拽共用 `move_divider` / `equalize` 一条算式、切分新 pane 挂**新会话**（复制输出属 `SPEC.FEAT.WS.09`）、「当前 pane 视觉标识」取 2 dp `accent` **内**描边且仅分屏态（内描边不改行列数，故焦点态变化不触发尺寸下发）。
   - **树不持几何记忆**：只存每层的相对长度，绝对尺寸只存在于 `layout()` 的产物里（const，且与 `move_divider()` 共用同一条折算算式）。于是窗口 resize、pane 增删、把手拖拽三条路径走同一次折算，不会出现「界面记了一份尺寸、模型记了另一份」的分叉，历史拖拽也不会因缩放而「回弹」。
@@ -305,11 +306,11 @@ SFTP（`SPEC.FEAT.CONN.04`）、隧道（`SPEC.FEAT.CONN.08`）、公钥推送�
 
 ### 8.3 布局持久化与恢复
 
-布局记忆、会话恢复、撤销关闭标签——属计划能力，详见 `SPEC.FEAT.WS.10` / `SPEC.FEAT.WS.11`；本文件不在需求之外扩展其语义。
+**窗口几何的分别记忆已落**（2026-10-21，裁决 **7.126**）：按框架 `persist_id` 键控（主窗 `main`、其余 `window-2`、`window-3`… 创建序且号不复用），经 `src/config/window_geometry_store.{h,cpp}` 这**第二枚** `preferences::Preferences` 落配置目录的 `windows.json`，`flush()` 取在「任一窗关闭后」与「退出前」两处；恢复那一跳写在框架的 `Application::register_host` 尾部，所以运行中新开的窗自动恢复自己的几何格，本仓零新增接缝。它**不进** `config::Settings` schema、**不进** `PREF.07` 导出件——几何是本机屏幕相关值，跨机导出即坏值，这是特性不是漏项；框架的 `WindowGeometry::mode` 存而不取（本仓不补偿）。**标签页级的会话恢复**（`SPEC.FEAT.WS.11`）仍属计划能力；**撤销关闭标签**（`SPEC.FEAT.WS.10`）的本地腿已落，其 `ClosedTabStack` 自多窗口起改**每窗一份**——撤销是把标签放回「关它的那扇窗」，跨窗撤销不在需求内。本文件不在需求之外扩展其语义。
 
 ### 8.4 其余工作区能力归属
 
-多窗口（`SPEC.FEAT.WS.03`）消费 `Application::open_window`（附录 A.1）；全屏（`SPEC.FEAT.WS.06`）依赖的框架窗口接口以开工实测为准；pane 缩放（`SPEC.FEAT.WS.08`）是 pane 树的视图状态；广播输入（`SPEC.FEAT.WS.09`）在 `borealis::ui` 输入分发层实现——`BroadcastGroup` / `BroadcastRouter` 纯逻辑件持有 app 级单组与跨标签扇出（成员按 `(TabId, PaneId)` 复合键、按会话身份去重），`TerminalView` 只补「已发完自己那一份」的镜像接缝并按本视口模式/编码重编，`WorkspaceView` 只转交四条 Hooks，标签与会话生命周期留在装配层（裁决 7.121）。
+多窗口（`SPEC.FEAT.WS.03`）**已落**（2026-10-21，裁决 **7.126**），消费 `Application::open_window`（附录 A.1）：装配层的「一扇窗 + 十处散装局部」换成 `WorkspaceWindow`（每窗各一份 `surface`／`id`／`overlay_host`／`root_column`／`tab_bar`／`banner`／`tab_strip`／`closed_tab_stack`／`current_tab_id`）由 `std::vector<std::unique_ptr<WorkspaceWindow>>` 持有，主窗走同一条构造路径；**app 级单例仍是单例**（广播组、快捷键表、四张连接表、`tab_workspaces`）。三处归属本层的接缝：**命令与快捷键落哪一扇**由 `ui::ActiveWindowTracker`（`src/ui/active_window_tracker.{h,cpp}`，纯逻辑件）判——它是框架缺口 **G42**「应用级快捷键表不知道派发给了哪扇窗」的代偿，三处上报点为视口的按键与指针按下、标签条空白栏带 Press、横幅 Press，查不到回主窗，Aurora 回货后只替换那一枚解析器；**面板与浮层「搬窗」而非各一份**（七只瞬态面板的 `set_overlay_host`、两只常驻框的 `set_overlay_destination` 与散窗兜底腿 `abandon_overlay_destination`，代价是两扇窗不能同时各开一块 SFTP）；**关窗撤账链**挂在框架的 `on_window_closed` 上（理由是销毁序而非时机：`on_frame` 排在同帧 `render_all` 之前，在那里 `erase` 会让这一帧为已析构的窗绘制），`ExitPolicy` 保持框架缺省 `LastWindowClosed`，`run()` 返回后按窗走「关该窗名下全部会话 → 摘该窗的根 → 撤那些格的账」。**关闭否决不在本条**（框架无否决入口），故点 X 时正在跑的进程被静默带走，登记为边界。全屏（`SPEC.FEAT.WS.06`）依赖的框架窗口接口以开工实测为准；pane 缩放（`SPEC.FEAT.WS.08`）是 pane 树的视图状态；广播输入（`SPEC.FEAT.WS.09`）在 `borealis::ui` 输入分发层实现——`BroadcastGroup` / `BroadcastRouter` 纯逻辑件持有 app 级单组与跨标签扇出（成员按 `(TabId, PaneId)` 复合键、按会话身份去重），`TerminalView` 只补「已发完自己那一份」的镜像接缝并按本视口模式/编码重编，`WorkspaceView` 只转交四条 Hooks，标签与会话生命周期留在装配层（裁决 7.121）；多窗口之后广播组**跨窗成立**、横幅改每窗一枚且只列本窗成员（裁决 7.126 的稿 D5）。
 
 ---
 
@@ -504,7 +505,7 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 
 落盘形态另有三条由**裁决 7.27** 定死的硬约束，它们来自框架 `Preferences::reconcile()` 的实现（拍平成点号复合键再按点号重建嵌套，只有数组是叶子）而不是本仓的选择：**⑤键名不得含点号**——对象键里的点会被拆成一层层嵌套对象，`shortcuts.overrides` 里的命令 id（`terminal.new_tab` 形态）因此不能作键；**⑥可空的映射落为数组**——空对象在拍平时不产生条目、重建后即消失，故覆盖表落 `[{command, combo}, ...]`，内存模型仍是映射，元素形态不合只丢该元素并留痕其下标；**⑦色值的回落线以「本文件点名的主题」为基准**——`palette.cursor` 缺键回落该主题的光标色并留痕，显式 null 才是「未配」（绘制侧回落 `default_foreground`，裁决 7.25③），开关与阈值不属色值、回落一律随 `Settings{}`。
 
-`borealis::config` 的模块边界：`settings.h` 是唯一默认值来源（`Settings{}` 即首次启动那份），`themes.{h,cpp}` 是色值唯一来源（`AppearanceSettings` 的默认调色板由它派生，开关不入库表以免成为第二真值源），`store.{h,cpp}` 是与框架的唯一读写接缝（`Preferences` 藏在 PIMPL 内，本头与 `settings.h` 均不含 Aurora 类型，架构 §2.2）。三者的验收判据是「写盘再读回逐域等值」，故 `ui::PaletteSpec` 与四域结构各带默认比较（C++20 不隐式声明 `==`，缺了就整份配置的等值被静默删除）。
+`borealis::config` 的模块边界：`settings.h` 是唯一默认值来源（`Settings{}` 即首次启动那份），`themes.{h,cpp}` 是色值唯一来源（`AppearanceSettings` 的默认调色板由它派生，开关不入库表以免成为第二真值源），`store.{h,cpp}` 是与框架 `Preferences` 的读写接缝（`Preferences` 藏在 PIMPL 内，本头与 `settings.h` 均不含 Aurora 类型，架构 §2.2）——**「唯一」自 2026-10-21 起不再成立**：`SPEC.FEAT.WS.03` 的逐窗几何另起第二枚同类接缝 `window_geometry_store.{h,cpp}`（裁决 **7.126** 的稿 D9），落同一配置目录的 `windows.json` 而**不进** `Settings` schema，理由是几何是本机屏幕相关值、跨机导出即坏值；两枚接缝各自独立，互不读写对方的键空间。三者的验收判据是「写盘再读回逐域等值」，故 `ui::PaletteSpec` 与四域结构各带默认比较（C++20 不隐式声明 `==`，缺了就整份配置的等值被静默删除）。
 
 ### 11.4 i18n
 
