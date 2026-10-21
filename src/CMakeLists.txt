@@ -51,6 +51,7 @@ add_library(borealis_core STATIC
         session/screen_mirror.cpp
         session/session.cpp
         session/session_log.cpp
+        ui/active_window_tracker.cpp
         ui/broadcast.cpp
         ui/broadcast_banner.cpp
         ui/cell_layout.cpp

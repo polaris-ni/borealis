@@ -84,7 +84,10 @@
 2. **批 2（逐窗接线）**：
    - **2-A（已落，2026-10-21）**：`TabWorkspace` 补 `owner`（指针而非 `WindowId`）、会话 `frame_wake` 与视口浮层宿主/焦点管理器按属主窗取（`wire_view` 加形参、`window_focus` 按 `app.window_host(id)` 取）。
    - **2-B（已落，2026-10-21）**：`set_on_frame` 的角标/标签名/OSC/退出态四条写给 `owner.tab_strip`，窗口标题改为遍历 `workspace_windows` 逐窗差分写回（每窗一份 `last_title`）。四处 `app.focus()` 只收敛了视口那一条，`DebugPanel`／`StartupNotice`／`SettingsPanel` 三条与布局重建的按窗过滤留在批 4（面板「搬窗」＝D6，落点窗＝§7 撤销重开那条），口径与台账见 §13。
-3. **批 3（新窗入口与命令落点）**：`ui::ActiveWindowTracker` 纯逻辑件 + `utest`；命令 `workspace.new_window` + `Ctrl+Shift+N`（第十五条保留键）+ 面板一条；`search.open`／`session.restart`／`serial.set_baud`／`workspace.toggle_fullscreen`／`tab.undo_close` 五类闭包按 tracker 解析目标窗。
+3. **批 3（新窗入口与命令落点）**：
+   - **3-A（已落，2026-10-21）**：`ui::ActiveWindowTracker` 纯逻辑件 + `utest_active_window_tracker`（五例、四则变异见 §14）。生产侧一行未动，件是「已测而未用」，同批 1-A 那一档次序。
+   - **3-B（待落）**：把主窗的「标签栏 hooks + 关闭确认 + 布局重建」收成按窗可复用的一段，`open_workspace_window()` 走到全形；命令 `workspace.new_window` + `Ctrl+Shift+N`（第十五条保留键，`utest_workspace_keys` 的认领集 14→15）+ 面板一条。
+   - **3-C（待落）**：三处上报点接线（视口按键／标签条 Press／横幅 Press）＋ `search.open`／`session.restart`／`serial.set_baud`／`workspace.toggle_fullscreen`／`tab.undo_close` 五类闭包按 tracker 解析目标窗。
 4. **批 4（拆窗账目）**：关窗撤该窗名下全部标签（同 `perform_close` 一条链）、每窗横幅与每窗 `ClosedTabStack`、`ExitPolicy` 缺省确认与退出序遍历全部窗、面板「搬窗」而非「各一份」（D6）。
 5. **批 5（几何分别记忆）**：`persist_id` 分配 + `preferences::Preferences` 落配置目录 + 两处 `flush()` + 「恢复后首帧只下发一次」用例。
 6. **批 6（CLI）**：`StartupAction::NewWindow` + 编码/解码 + `parse_startup_args` 旗标语义 + `--help` 文案 + 撤 2898-2901 那条拒绝 + `utest_cli_startup`／`utest_cli_handoff`／`itest_posix_instance_channel` 扩案。
@@ -92,7 +95,7 @@
 
 ## 7 判据与变异计划（结项三件齐：ctest 全绿 + runner 案数增量 + 变异证人逐条转红）
 
-- `utest_active_window_tracker`（新）：多窗上报次序、失配回主窗、窗关闭后该号不再被返回、并发上报只留最后一次。
+- `utest_active_window_tracker`（新）：多窗上报次序、失配回主窗、窗关闭后该号不再被返回、并发上报只留最后一次。**已落（批 3-A，五例，台账与四则变异见 §14）**；其中「窗关闭后该号不再被返回」实现为撤掉当前落点即**回主窗**而不是回上一个上报过的窗（本件不做栈），该档形态选择与理由见 §14②。
 - `itest_workspace_window`（新）：两扇窗的标签互不串（`current_tab_id` 各一份）、横幅只列本窗成员、撤销重开回到关它的那扇窗、逐窗标题差分写回、关一扇不退出而关最后一扇走同一条退出序、窗拆后 `tab_workspaces`/四张连接表/广播成员三处账目为空。**批 1-A 已落该套件的前五案**（harness 地基＋§5 四条不变量的窗侧形态，台账见 §11）；上面列的其余判据都要求生产侧先有第二扇窗，随批 2–批 4 扩案，本批不冒充。
 - `utest_workspace_keys`：认领集 14→15 条。
 - `utest_cli_startup`／`utest_cli_handoff`：`--new-window` 的旗标解析与 `NewWindow` 的编解码往返、未知 action 仍整帧拒。
@@ -160,3 +163,24 @@
 **担保档位（如实记）**：`main.cpp` 不进 runner ⇒ 本批**没有可注入的自动化证人**（裁决 7.83、§10 第一条）。这同时意味着 §7 变异表里与装配层同名的那几则（`frame_wake` 全部捕主窗 surface、`current_tab_id` 回全局一份、`ClosedTabStack` 回全局）现在**注入也不会转红**——它们要等批 3 的 `utest_active_window_tracker` 与批 4 的 `itest_workspace_window` 扩案成为判据之后才是可注入证人，本批不冒充读数。本批的担保只有两条：门不变（行为不变的读数面）+ 源码审查（按 owner 取的那几处逐条对照 §2 那份「每窗一份」清单）。
 
 **边界**：生产仍只开一扇窗，第二调用点在批 3；两扇窗并存时的真实行为（键入落活动窗、逐窗标题、关窗撤账）全部未验，§9 七条照欠，本批不称「可用」。
+
+## 14 批 3-A 台账（`ui::ActiveWindowTracker` 纯逻辑件与 `utest`，2026-10-21）
+
+**落到的形状**：新增 `src/ui/active_window_tracker.{h,cpp}`（私有头，理由同裁决 D1①：声明里吃 `au::WindowId` 与 `AURORA_INVALID_WINDOW_ID` 两枚框架标识）与 `tests/unit/utest_active_window_tracker.cpp`。三格状态：构造期传入的兜底落点 `main_window_`、`optional<WindowId> last_reported_`、以及 `forget()` 的撤账。四条判据的形态口径：①无记录回主窗＝**兜底而非猜测**（命令永远有一个明确落点，不是「取不到就谁也不做」）；②最近者胜，A→B→A 之后落点是 A——本件**不做计数也不做栈**，故「撤掉当前落点」之后回的是主窗而不是「上一个上报过的窗」，这一档在 §7 原文里只写了「窗关闭后该号不再被返回」，实现选前者，理由就是 D7 那句「落点要的是最近谁被碰过」；③无效号（0＝那扇窗还没登记进宿主）不改动任何记录，宁可留着上一个真实落点；④兜底落点自己被撤即置**无效号**，由调用方经 `window_host()` 取空后按「无落点」处理——「主窗易主后谁接任兜底」是关窗那一棒的账目（§6 批 4），本件不自己挑，也**不**为此预留一个现在没人调的 setter（§4.1 第 3 条）。
+
+**装配面**：`src/CMakeLists.txt` 的 `borealis_core` 源表加一行——库侧是**显式清单**，AGENTS §7 那条「新增 `.cpp` 经 `CONFIGURE_DEPENDS` GLOB 自动进构建」只覆盖 `tests/`，新私有件不登记就只有一处链接错误（本棒首跑即撞上）。生产侧 `src/main.cpp` 本批**一行未动**：上报点（视口/标签条/横幅各一次 Press 或按键）与「命令按 tracker 解析目标窗」在批 3 的后续笔，故这枚件此刻是**已测而未用**，形态与批 1-A 那笔「先跑通 harness 再动生产」同一档选择。
+
+**读数**：`cmake --build --preset linux` 通过且无警告；`ctest --preset linux -E etest_` **97/97**、runner 全跑 **1217 案**全绿。门迁移形态：**96 项／1212 案 → 97 项／1217 案（+新套件 `utest_active_window_tracker` 5 案，−历史排除 0）**，既有 1212 案零改动照绿。三处文档（`PLAN.md`／`SPECIFICATIONS.md`／`ARCHITECTURE.md`）的同口径计数按 §6 批 7 收口时一次性改，登记为在册欠项。
+
+**变异自证**（§4.4 第 22 条，每条只注 `active_window_tracker.cpp` 一处、跑完即还原，生产码零改动）：
+
+| 注入 | 指名红案 |
+|---|---|
+| `report` 只记首次（不覆盖） | 2 红：`the_last_window_that_received_a_dispatch_wins`／`a_closed_window_is_never_returned_again` |
+| `active()` 兜底回无效号而非主窗 | 3 红：`without_a_single_report_…`／`an_unregistered_window_id_changes_nothing`／`a_closed_window_is_never_returned_again` |
+| `report` 撤掉无效号那一条拦截 | 1 红：`an_unregistered_window_id_changes_nothing` |
+| `forget` 整条空实现 | 2 红：`without_a_single_report_…`（撤主窗后仍回主窗）／`a_closed_window_is_never_returned_again` |
+
+无「注入后全绿」的空转档，也无编译失败的不算读数项（四则均一次编过）。首轮用例本身有一处把「回主窗」写成了「回上一个上报过的窗」，跑测现形后按实现的形态口径改正用例并在上面②登记——不是把实现改去迁就用例。
+
+**边界**：本件与生产派发事实之间还没有接线，故「键入落活动窗」那一档在本批既没有证人也没有读数（属批 3 后续笔与 §9 第 2 条走查）；真机走查全部照欠，不称「可用」。
