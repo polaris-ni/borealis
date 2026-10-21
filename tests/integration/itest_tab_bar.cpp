@@ -14,12 +14,17 @@
 ///           - 退出是逐格的事实而不是整栏的（两格各自点亮且互不牵连）；
 ///           - 真点一次标签把 BEL 取走并**从屏幕上撤掉**（`SPEC.FEAT.WS.04` 的取走语义；判据是全帧
 ///             逐位复现点击前那一帧，因此残影、错位、连带改动都红）。
+///           本棒（`SPEC.FEAT.WS.04` 的最后一项）追加的**逐标签连接类型图标**也在这里验收，判据形态
+///           照旧走差分而不是比色（稿 **7.129** 的 D4／D5／D7 与 §2 判据 ②～⑤）：未登记类型 ⇒ 左槽
+///           单一底色（不画也不占位）、登记 ⇒ 栏位宽恰 +18 dp（锚＝右上那颗 BEL 的落位）、图标与三枚
+///           角标四带互不相交、逐格类型改动不牵连邻格、四型四帧两两不同。
 ///           像素一律比 RGBA 四通道含 alpha（与 `itest_render_viewport` 同一条口径：Headless 帧底色是
 ///           全透明黑，只比 RGB 会把「画了个纯黑」与「什么都没画」混为一谈）。
 ///           角标的**色值**不在这里断：那三档颜色是本棒拍的实现细节（裁决 7.91③），真机目视才判得出
 ///           「认不认得出那是铃铛」，故这里只按差分定位形状与位置，不把实现里的三个十六进制数复述一遍。
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -51,6 +56,7 @@ using borealis::ui::TabId;
 using borealis::ui::TabNamePriority;
 using borealis::ui::TabStrip;
 using borealis::ui::TabVisual;
+using borealis::conn::ConnectionType;
 
 constexpr int kWindowWidth = 640;
 constexpr int kWindowHeight = 64;
@@ -58,8 +64,21 @@ constexpr int kWindowHeight = 64;
 constexpr std::size_t kBadgeEdgePx = 6U;
 constexpr std::size_t kHollowRingPx = kBadgeEdgePx * kBadgeEdgePx - (kBadgeEdgePx - 2U) * (kBadgeEdgePx - 2U);
 constexpr std::size_t kFilledDotPx = kBadgeEdgePx * kBadgeEdgePx;
+/// @brief 活动角标是 4×4 实心点（裁决 7.82② 的档位），与铃铛那枚 6×6 分档。
+constexpr std::size_t kActivityDotPx = 4U * 4U;
+/// @brief 栏位钳位区间（`src/ui/tab_bar.cpp` 的 `tab_min_width_`／`tab_max_width_`）：判据 ③ 只在
+///        两界之间才谈得上「恰为 18 dp」，故那里各有一枚边界断言（Headless 下 dp＝px）。
+constexpr std::size_t kTabMinWidthPx = 96U;
+constexpr std::size_t kTabMaxWidthPx = 240U;
 /// @brief 铃铛（y 6..11）与退出环（y 30..35）的分簇线：栏高 42 的中点。
 constexpr std::size_t kUpperHalfRow = 20U;
+/// @brief 类型图标槽的档位（`SPEC.FEAT.WS.04` 的 D4／F9）：字形盒占 x 12..23，实绘行带 21..32
+///        （13 pt 探针实测，dp＝px 于 Headless），名称原点由 12 挪到 30 ⇒ 占用总宽 18 dp。
+constexpr std::size_t kGlyphSlotX0 = 12U;
+constexpr std::size_t kGlyphSlotX1 = 23U;
+constexpr std::size_t kGlyphTopRow = 21U;
+constexpr std::size_t kGlyphBottomRow = 32U;
+constexpr std::size_t kTypeSlotTotal = 18U;
 
 using Frame = std::vector<std::uint8_t>;
 using Points = std::set<std::pair<std::size_t, std::size_t>>;
@@ -86,6 +105,9 @@ class Harness {
   public:
     /// @param names 各格的连接档案显示名（缺省一格，够装绝大多数判据；两格及以上的角标逐格独立另配）。
     explicit Harness(std::vector<std::u32string> names = std::vector<std::u32string>{U"alpha"}) {
+        // 逐格类型缺省全空＝「装配层未登记」那一档（判据 ②）：既有八案的像素读数因此与本棒之前
+        // 逐位相同，图标这条腿不可能悄悄改掉它们的差分值。
+        kinds_.assign(names.size(), std::nullopt);
         for (std::size_t index = 0; index < names.size(); ++index) {
             (void)strip_.add(static_cast<TabId>(index), names[index]);
         }
@@ -120,6 +142,31 @@ class Harness {
 
     auto mark_activity(TabId id) -> void {
         static_cast<void>(strip_.mark_activity(id));
+        render();
+    }
+
+    auto clear_activity(TabId id) -> void {
+        static_cast<void>(strip_.take_activity(id));
+        render();
+    }
+
+    auto clear_bell(TabId id) -> void {
+        static_cast<void>(strip_.take_bell_triggered(id));
+        render();
+    }
+
+    /// @brief 推第 `index` 格的连接类型并排帧（`SPEC.FEAT.WS.04`；空＝未登记那一档）。
+    ///
+    /// 类型不是 `TabStrip` 的真值源而是装配层从 `tab_kind` 表折来的事实（裁决 7.129①），故本驱动台
+    /// 另存一份按栏位下标索引的表，`.tabs` 腿照 `src/main.cpp` 那一行取它。
+    ///
+    /// 生产路径上类型在建标签那一刻就有 ⇒ 首帧即含图标，没有「中途改类型」这件事；本件为了差分需要
+    /// 两态对照，故须像 `TabStrip` 的变更钩子那样把绘制侧标脏——不标脏就是布局缓存复用上一帧尺寸并
+    /// 跳过 `on_layout`，`.tabs` 根本不重读（这条正是本套件第一条判据钉的那个缓存条件）。
+    auto set_kind(std::size_t index, std::optional<conn::ConnectionType> kind) -> void {
+        kinds_[index] = kind;
+        bar_->mark_needs_layout();
+        bar_->mark_needs_paint();
         render();
     }
 
@@ -216,6 +263,36 @@ class Harness {
         return true;
     }
 
+    /// @brief 两簇的公共像素个数（碰撞判据：非零即撞）。判据 ④ 的四簇各与同一基线帧差分而得，
+    ///        故「哪两枚在同一条墨迹上」在这里就是一个数，不必先把簇折成外接矩形再比矩形（那会漏掉
+    ///        「同带但不相交」与「矩形相交但墨迹不相交」两种情形）。
+    [[nodiscard]] static auto overlap(const Points &a, const Points &b) -> std::size_t {
+        std::size_t out = 0U;
+        for (const auto &point : a) {
+            if (b.find(point) != b.end()) {
+                ++out;
+            }
+        }
+        return out;
+    }
+
+    /// @brief 矩形之内是否只有**一种**像素值（「这里什么都没画」的颜色无关说法：矩形落在单一底色上）。
+    [[nodiscard]] static auto is_uniform(const Frame &frame, std::size_t x0, std::size_t y0, std::size_t x1,
+                                         std::size_t y1) -> bool {
+        const std::size_t width = buffer_width();
+        const auto pixel = [&](std::size_t x, std::size_t y) -> const std::uint8_t * {
+            return frame.data() + (y * width + x) * 4U;
+        };
+        for (std::size_t y = y0; y <= y1; ++y) {
+            for (std::size_t x = x0; x <= x1; ++x) {
+                if (std::memcmp(pixel(x, y), pixel(x0, y0), 4U) != 0) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
   private:
     [[nodiscard]] static auto buffer_width() -> std::size_t { return static_cast<std::size_t>(kWindowWidth); }
     [[nodiscard]] static auto buffer_height() -> std::size_t { return static_cast<std::size_t>(kWindowHeight); }
@@ -228,10 +305,13 @@ class Harness {
 
     au::Window window_ = make_window();  ///< 最先声明、最后析构：帧缓冲须活到取样结束。
     TabStrip strip_;
+    /// @brief 逐格连接类型（与 `src/main.cpp` 的 `tab_kind` 表同位，按栏位下标索引）。
+    std::vector<std::optional<conn::ConnectionType>> kinds_;
     std::shared_ptr<TabBarWidget> bar_ = std::make_shared<TabBarWidget>(TabBarHooks{
         .tabs = [this]() -> std::vector<TabVisual> {
             std::vector<TabVisual> out;
             const std::optional<TabId> selected = strip_.selected();
+            std::size_t index = 0U;
             for (const auto &tab : strip_.tabs()) {
                 out.push_back(TabVisual{
                     .id = tab.id,
@@ -241,7 +321,11 @@ class Harness {
                     .bell_triggered = tab.bell_triggered,
                     .has_activity = tab.has_activity,
                     .exited = tab.exited,
+                    // 类型由装配层那张表折来（`SPEC.FEAT.WS.04` 判据 ⑦ 说这一行在本仓无自动化证人，
+                    // 本件是它的同形替身：被测的是绘制腿，不是这一行的存在性）。
+                    .kind = index < kinds_.size() ? kinds_[index] : std::nullopt,
                 });
+                ++index;
             }
             return out;
         },
@@ -461,6 +545,169 @@ AURORA_TEST_CASE(two_exited_tabs_light_two_badges_that_do_not_teach_each_other) 
     AURORA_TEST_CHECK_EQ(a.y0, b.y0);
     AURORA_TEST_CHECK_GT(b.x0, a.x1);  // 后一颗在前一颗之右，两簇不相交
     AURORA_TEST_CHECK_EQ(Harness::changed(plain, two_lit).size(), kHollowRingPx * 2U);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(an_unregistered_kind_draws_nothing_and_the_registered_one_lands_in_the_slot) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 判据 ②（稿 §2）：`kind` 空 ⇒ 左槽**不画也不占位**（裁决 7.38⑥「缺席的入口整枚不画」同口径，
+    // D5）。空名格用来给「这一带根本没有墨」一个颜色无关的证人——名称本身也从 x+12 起画，有名格判不出
+    // 「没有占位符」。反空转在后半：同一台驱动台把类型登记上，同一矩形立刻不再单一。
+    Harness h{std::vector<std::u32string>{U""}};
+    AURORA_TEST_CHECK_TRUE(Harness::is_uniform(h.pixels(), kGlyphSlotX0, kGlyphTopRow, kGlyphSlotX1,
+                                               kGlyphBottomRow));
+
+    h.set_kind(0U, ConnectionType::Local);
+    AURORA_TEST_CHECK_FALSE(Harness::is_uniform(h.pixels(), kGlyphSlotX0, kGlyphTopRow, kGlyphSlotX1,
+                                                kGlyphBottomRow));
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_registered_kind_widens_the_slot_by_exactly_eighteen_dp) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 判据 ③：栏位宽＝今日公式 + 18 dp。几何证人取右上角那颗 BEL 的**落位**——它在栏位右端
+    // （`x + w - 6`），是 `tab_width()` 的读数锚，而锚本身的大小不变（6×6）。两态各与自己的「铃铛灭」
+    // 基线差分，故每簇就是一颗干净的 6×6，横向差恰为槽宽。
+    // 名称取中等长度：短名贴 96 下限、长名贴 240 上限，两端都会把槽宽吃掉一截（D4 记的就是这条代价），
+    // 只有落在两界之间时「恰为 18 dp」才谈得上。下面两枚边界断言就是「本例没被钳位吃掉」的证人。
+    Harness h{std::vector<std::u32string>{U"checkpoint-pipeline"}};
+    const auto plain = h.pixels();
+    h.mark_bell(TabId{0U});
+    const Box without_slot = Harness::box_of(Harness::changed(plain, h.pixels()));
+    AURORA_TEST_CHECK_EQ(without_slot.width(), kBadgeEdgePx);
+    AURORA_TEST_CHECK_EQ(without_slot.height(), kBadgeEdgePx);
+    AURORA_TEST_CHECK_GT(without_slot.x1, kTabMinWidthPx);  // 未落下限：这一格的宽是实测值而不是钳位值
+
+    h.clear_bell(TabId{0U});
+    const auto widened = h.pixels();
+    h.set_kind(0U, ConnectionType::Local);
+    AURORA_TEST_CHECK_FALSE(Harness::changed(widened, h.pixels()).empty());  // 先证「这一动真的发生」
+    const auto with_slot = h.pixels();
+    h.mark_bell(TabId{0U});
+    const Box with_slot_bell = Harness::box_of(Harness::changed(with_slot, h.pixels()));
+    AURORA_TEST_CHECK_EQ(with_slot_bell.width(), kBadgeEdgePx);
+    AURORA_TEST_CHECK_EQ(with_slot_bell.height(), kBadgeEdgePx);
+    AURORA_TEST_CHECK_LT(with_slot_bell.x1, kTabMaxWidthPx);  // 也未顶上限
+    AURORA_TEST_CHECK_EQ(with_slot_bell.x0 - without_slot.x0, kTypeSlotTotal);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_icon_and_the_three_badges_land_in_four_disjoint_bands) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 判据 ④＝本棒对**既有判据**负责的证人（裁决 7.82／7.91 的地盘）：图标与三枚角标同格并存时，四簇
+    // 像素两两不相交。四簇各与**同一基线帧**差分得到（基线里四枚都未点亮），故每簇就是那一枚自己的墨迹；
+    // 两簇有公共像素即几何相撞，`overlap()` 把它折成一个数。
+    //
+    // 三条实测出来的约束：① 角标逐枚点亮再取走，中间每次都回到基线帧，否则簇会互相污染；② 两格都登记
+    // 类型 ⇒ 栏位几何在本例内一步都不变（`kind` 从无到有会挪动邻格，那属判据 ⑤ 的另一半）；③ 活动角标
+    // 只在**未选中**格显形（裁决 7.82①）而新建即选中末位，故四枚都点在第一格上。
+    Harness h{std::vector<std::u32string>{U"alpha", U"beta"}};
+    h.set_kind(0U, ConnectionType::Serial);
+    h.set_kind(1U, ConnectionType::Serial);
+    const auto base = h.pixels();
+
+    h.mark_bell(TabId{0U});
+    const Points bell = Harness::changed(base, h.pixels());
+    h.clear_bell(TabId{0U});
+
+    h.mark_activity(TabId{0U});
+    const Points activity = Harness::changed(base, h.pixels());
+    h.clear_activity(TabId{0U});
+
+    h.set_exited(TabId{0U}, true);
+    const Points exit = Harness::changed(base, h.pixels());
+    h.set_exited(TabId{0U}, false);
+
+    // 字形簇：同槽宽的两枚字形互差（Local 的 `>` 对 Serial 的 `S`），几何不动 ⇒ 这一簇就是字形本身。
+    Harness glyph{std::vector<std::u32string>{U"alpha", U"beta"}};
+    glyph.set_kind(0U, ConnectionType::Local);
+    const auto local_frame = glyph.pixels();
+    glyph.set_kind(0U, ConnectionType::Serial);
+    const Points icon = Harness::changed(local_frame, glyph.pixels());
+
+    AURORA_TEST_REQUIRE(!bell.empty());
+    AURORA_TEST_REQUIRE(!activity.empty());
+    AURORA_TEST_REQUIRE(!exit.empty());
+    AURORA_TEST_REQUIRE(!icon.empty());
+    AURORA_TEST_CHECK_EQ(bell.size(), kFilledDotPx);
+    AURORA_TEST_CHECK_EQ(activity.size(), kActivityDotPx);
+    AURORA_TEST_CHECK_EQ(exit.size(), kHollowRingPx);
+    AURORA_TEST_CHECK_EQ(Harness::holes_in(exit), (kBadgeEdgePx - 2U) * (kBadgeEdgePx - 2U));
+    // 字形留在它自己的槽里：左带 x 12..23、行带 y 21..32（F9 实测 + D4 拍的槽）。
+    AURORA_TEST_CHECK_GE(Harness::box_of(icon).x0, kGlyphSlotX0);
+    AURORA_TEST_CHECK_LE(Harness::box_of(icon).x1, kGlyphSlotX1);
+    AURORA_TEST_CHECK_GE(Harness::box_of(icon).y0, kGlyphTopRow);
+    AURORA_TEST_CHECK_LE(Harness::box_of(icon).y1, kGlyphBottomRow);
+    // 六对两两不相交（这条红了就是本棒撞了 7.82／7.91 的地盘，或角标之间本就撞了）。
+    AURORA_TEST_CHECK_EQ(Harness::overlap(icon, bell), std::size_t{0U});
+    AURORA_TEST_CHECK_EQ(Harness::overlap(icon, activity), std::size_t{0U});
+    AURORA_TEST_CHECK_EQ(Harness::overlap(icon, exit), std::size_t{0U});
+    AURORA_TEST_CHECK_EQ(Harness::overlap(bell, activity), std::size_t{0U});
+    AURORA_TEST_CHECK_EQ(Harness::overlap(bell, exit), std::size_t{0U});
+    AURORA_TEST_CHECK_EQ(Harness::overlap(activity, exit), std::size_t{0U});
+    AURORA_TEST_CHECK_GT(Harness::box_of(icon).y0, Harness::box_of(activity).y1);  // 图标在活动点之下
+    AURORA_TEST_CHECK_LT(Harness::box_of(icon).x1, Harness::box_of(exit).x0);      // 与右下退出环横向分离
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(changing_one_tabs_kind_leaves_its_neighbour_bit_for_bit_identical) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 判据 ⑤：类型是逐格事实而不是整栏的。这里只在**同槽宽**的两档之间换型（`>` 对 `S` 对 `T`），
+    // 栏位几何因此一步不动，差分出来的就只有那一枚字形。第一格的墨迹由它自己换型给出，用作「逐位
+    // 相同」的候选点集——这一句红了就是「改一格牵连整栏重排」。
+    Harness h{std::vector<std::u32string>{U"alpha", U"beta"}};
+    h.set_kind(0U, ConnectionType::Local);
+    h.set_kind(1U, ConnectionType::Local);
+    const auto both_local = h.pixels();
+
+    h.set_kind(0U, ConnectionType::Ssh);  // 第一格换型：这一簇就是它的墨迹所在
+    const Points first_cell = Harness::changed(both_local, h.pixels());
+    AURORA_TEST_REQUIRE(!first_cell.empty());
+    h.set_kind(0U, ConnectionType::Local);  // 换回基线
+
+    h.set_kind(1U, ConnectionType::Telnet);  // 第二格换型：第一格须逐位不动
+    const auto second_changed = h.pixels();
+    AURORA_TEST_CHECK_TRUE(Harness::same_at(both_local, second_changed, first_cell));
+
+    const Points second_cell = Harness::changed(both_local, second_changed);
+    AURORA_TEST_REQUIRE(!second_cell.empty());
+    AURORA_TEST_CHECK_EQ(Harness::overlap(first_cell, second_cell), std::size_t{0U});
+    AURORA_TEST_CHECK_GT(Harness::box_of(second_cell).x0, Harness::box_of(first_cell).x1);  // 后一格在前一格之右
+    AURORA_TEST_CHECK_GE(Harness::box_of(second_cell).y0, kGlyphTopRow);  // 两簇都只在文本行带内
+    AURORA_TEST_CHECK_LE(Harness::box_of(second_cell).y1, kGlyphBottomRow);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_four_kinds_land_four_pairwise_different_frames) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 判据 ① 的屏幕形态（表本体由 `utest_connection_glyph` 逐档钉死）：同名同槽，四档各画各的。
+    // 两枚型别折成同一字形（＝7.110 那张两值表的复活形态）在这里现形，而不必等真机走查。
+    static constexpr std::array<ConnectionType, 4U> kKinds{ConnectionType::Local,
+                                                           ConnectionType::Ssh,
+                                                           ConnectionType::Serial,
+                                                           ConnectionType::Telnet};
+    std::vector<Frame> frames;
+    for (const auto kind : kKinds) {
+        Harness h;
+        h.set_kind(0U, kind);
+        frames.push_back(h.pixels());
+    }
+    for (std::size_t i = 0U; i < frames.size(); ++i) {
+        for (std::size_t j = i + 1U; j < frames.size(); ++j) {
+            AURORA_TEST_CHECK_MSG(frames[i] != frames[j],
+                                  "two connection types rendered the very same frame");
+        }
+    }
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif
