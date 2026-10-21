@@ -100,9 +100,9 @@
    - **3-B（已落，2026-10-21）**：把主窗的「标签栏 hooks + 关闭确认 + 布局重建」收成按窗可复用的一段，`open_workspace_window()` 走到全形；命令 `workspace.new_window` + `Ctrl+Shift+N`（第十五条保留键，`utest_workspace_keys` 的认领集 14→15）+ 面板一条。形态、承重次序与四则变异见 §15。
    - **3-C（已落，2026-10-21）**：三处上报点接线（视口＝按键与指针按下两条腿／标签条 Press／横幅 Press）＋ `search.open`／`session.restart`／`serial.set_baud`／`workspace.toggle_fullscreen`／`tab.undo_close` 五类闭包按 tracker 解析目标窗。形态、闭包接线次序、统一兜底与四则变异见 §16。
 4. **批 4（拆窗账目）**，拆三棒，**次序是硬约束**：
-   - **4-A（别名收口，先做）**：把装配层仍然按别名吃第一扇窗的读法（`first_window` 及其 `surface`／`host`／`tab_strip`／`current_tab_id`／`broadcast_banner` 五枚别名，加上 `open_search` 的 `view_of(1)`、波特率选择器的浮层宿主）一律改成「按窗现取」。**必须在拆账链之前**：`workspace_windows` 一旦 `erase`，`first_window` 是它的引用（批 1-B 的台账记过这一点），五枚别名连同 `au::Surface &surface` 全部悬空——先收别名，erase 才是可做的动作。本棒行为不变、单窗形状不变。
+   - **4-A（别名收口，先做，已落 2026-10-21）**：把装配层仍然按别名吃第一扇窗的读法（`first_window` 及其 `surface`／`tab_strip`／`current_tab_id`／`banner`／`overlay_host` 五枚别名）一律改成「按窗现取」。**必须在拆账链之前**：`workspace_windows` 一旦 `erase`，`first_window` 是它的引用（批 1-B 的台账记过这一点），五枚别名连同 `au::Surface &` 全部悬空——先收别名，erase 才是可做的动作。本棒行为不变、单窗形状不变。落进来的两件事与两件事**没**落进来的，见 §17：横幅的逐窗分流（D5）与别名是同一处代码，一并收；`Ctrl+F` 的窗内 `view_of(1)` 属 `SPEC.FEAT.INTERACT.04`，波特率选择框的浮层落点属 D6＝4-C。
    - **4-B（关窗撤账链）**：`retire_window` ＝按 `perform_close` 同一条链关掉该窗名下全部标签（不弹确认，理由见 D4／F18）→ 摘广播成员 → `active_window_tracker.forget(id)` → 重指或清空 `startup_wake` → 从 `workspace_windows` 移除。触发点用 `set_on_frame` 里轮询 `should_close()`（F17：帧序 `on_frame → render_all → reap_closed`，这是唯一销毁前可观测点），**不用** `set_on_window_closed`（F19：触发在销毁之后，且关最后一扇宿主时根本不触发）。证人用 `HeadlessSurface::set_should_close(true)` 真驱动（F24），无头可跑（F21）。
-   - **4-C（横幅与面板按窗）**：每窗横幅只列本窗成员（D5）、面板「搬窗」而非「各一份」（D6）、剩余三处 `app.focus()`（`DebugPanel`／`StartupNotice`／`SettingsPanel`）改按窗取（F19／F22 之后这一条不能再拖）、`ExitPolicy` 缺省确认与退出序遍历全部窗（F21：无头不可证，进 §9 走查）。
+   - **4-C（面板按窗与退出序）**：面板「搬窗」而非「各一份」（D6，含波特率那只框的浮层落点与 `hooks.preview_wake` 那条 `TODO`）、剩余三处 `app.focus()`（`DebugPanel`／`StartupNotice`／`SettingsPanel`）改按窗取（F19／F22 之后这一条不能再拖）、`ExitPolicy` 缺省确认与退出序遍历全部窗（F21：无头不可证，进 §9 走查）。
 5. **批 5（几何分别记忆）**：`persist_id` 分配 + `preferences::Preferences` 落配置目录 + 两处 `flush()` + 「恢复后首帧只下发一次」用例。
 6. **批 6（CLI）**：`StartupAction::NewWindow` + 编码/解码 + `parse_startup_args` 旗标语义 + `--help` 文案 + 撤 2898-2901 那条拒绝 + `utest_cli_startup`／`utest_cli_handoff`／`itest_posix_instance_channel` 扩案。
 7. **批 7（收口）**：`SPECIFICATIONS.md` 的 WS.03 现状句与裁决、`CHANGELOG.md` 新版本、`PLAN.md` 的 WS.03／INTEG.04／WS.10 行、`ARCHITECTURE.md` §8.1 那句「末位标签关闭 → 关窗口属 WS.03」改口与 §8.4 多窗口段、本稿追加「§8 结项读数」。
@@ -110,14 +110,14 @@
 ## 7 判据与变异计划（结项三件齐：ctest 全绿 + runner 案数增量 + 变异证人逐条转红）
 
 - `utest_active_window_tracker`（新）：多窗上报次序、失配回主窗、窗关闭后该号不再被返回、并发上报只留最后一次。**已落（批 3-A，五例，台账与四则变异见 §14）**；其中「窗关闭后该号不再被返回」实现为撤掉当前落点即**回主窗**而不是回上一个上报过的窗（本件不做栈），该档形态选择与理由见 §14②。
-- `itest_workspace_window`（新）：两扇窗的标签互不串（`current_tab_id` 各一份）、横幅只列本窗成员、撤销重开回到关它的那扇窗、逐窗标题差分写回、关一扇不退出而关最后一扇走同一条退出序、窗拆后 `tab_workspaces`/四张连接表/广播成员三处账目为空。**批 1-A 已落该套件的前五案**（harness 地基＋§5 四条不变量的窗侧形态，台账见 §11），**批 3-C 加落落点记档一案**（§16③）。上面列的其余判据里，「关一扇不退出」「窗拆后三处账目为空」在批 4-B 用 `HeadlessSurface::set_should_close(true)` 真驱动后可证（F21／F24）；**「关最后一扇走同一条退出序」在无头面物理上不可证**（F21：全为无头宿主时框架永不驱动退出），只进 §9 第 3 条走查，本稿不把它算进案数账。
+- `itest_workspace_window`（新）：两扇窗的标签互不串（`current_tab_id` 各一份）、横幅只列本窗成员、撤销重开回到关它的那扇窗、逐窗标题差分写回、关一扇不退出而关最后一扇走同一条退出序、窗拆后 `tab_workspaces`/四张连接表/广播成员三处账目为空。**批 1-A 已落该套件的前五案**（harness 地基＋§5 四条不变量的窗侧形态，台账见 §11），**批 3-C 加落落点记档一案**（§16③）。上面列的其余判据里，「关一扇不退出」「窗拆后三处账目为空」在批 4-B 用 `HeadlessSurface::set_should_close(true)` 真驱动后可证（F21／F24）；**「关最后一扇走同一条退出序」在无头面物理上不可证**（F21：全为无头宿主时框架永不驱动退出），只进 §9 第 3 条走查，本稿不把它算进案数账。「横幅只列本窗成员」这条的**折算点**在 `main.cpp` 的 `refresh_broadcast_ui`（批 4-A 落的逐窗分流，§17⑵）——同属无自动化证人那一段（裁决 7.83）；控件侧「喂什么状态画什么」在 `itest_workspace_broadcast` 已有案，本稿也不把它算进案数账。
 - `utest_workspace_keys`：认领集 14→15 条。**已落（批 3-B）**，同时新增 `itest_workspace_layout.ctrl_shift_n_is_claimed_and_only_handed_to_the_assembly_layer`——认领与「只转交、不自己开窗」这一接缝是唯一有自动化证人的部分，`main.cpp` 里真正开窗那一段仍无证人（§15）。
 - 三处上报点（稿 D7，**已落（批 3-C）**）各有证人，`main.cpp` 那一段接线本身无证人（裁决 7.83）：
   - `itest_workspace_layout.the_viewport_reports_each_key_and_mouse_press_exactly_once`：视口的两条腿（键＝按下、鼠＝按下）各报一次，被工作区层认领的键同样报（上报先于前置过滤），抬起与移动不报，转发腿不因上报而改变。
   - `itest_workspace_window.a_tab_bar_press_moves_the_active_window_record`：经**该窗宿主**派发一次栏带按下即把本窗号交进 `ui::ActiveWindowTracker`，且落点取的是**空白栏带**——上报不挂在命中分支里（§16③ 记这条的第一版落点是栏位、因此对 M3 等价）。
   - `itest_workspace_broadcast.the_banner_reports_the_press_that_cleared_the_group`：横幅那一次按下先于清组判定上报（上报时组仍满），抬起与失活后的第二次点击不重复报。
 - `utest_cli_startup`／`utest_cli_handoff`：`--new-window` 的旗标解析与 `NewWindow` 的编解码往返、未知 action 仍整帧拒。
-- 变异候选（每条一个判据，注入后按 §4.4 第 22 条点名转红）：新窗继承发起窗目录（应为配置目录）、`frame_wake` 全部捕主窗 surface、`current_tab_id` 回全局一份、横幅恒列全组成员、`ClosedTabStack` 回全局、关窗不撤标签账、`persist_id` 恒空、`--new-window` 仍走拒绝支、tracker 无记录时不回主窗。
+- 变异候选（每条一个判据，注入后按 §4.4 第 22 条点名转红）：新窗继承发起窗目录（应为配置目录）、`frame_wake` 全部捕主窗 surface、`current_tab_id` 回全局一份、横幅恒列全组成员、`ClosedTabStack` 回全局、关窗不撤标签账、`persist_id` 恒空、`--new-window` 仍走拒绝支、tracker 无记录时不回主窗。**其中「`current_tab_id` 回全局一份」「横幅恒列全组成员」「关窗不撤标签账」三条的注入点在 `main.cpp`**（批 4-A 之后那两枚别名与逐窗分流都在装配层）——第 22 条要求的变异自证在这一件上只能落进 §9 走查与源码审查，本稿不冒充读数（与 §16 末段「未做的两则」同一档，理由同一条：`main.cpp` 不进 runner，裁决 7.83）。
 
 ## 8 与既有裁决的相接处
 
@@ -317,3 +317,27 @@
 
 **边界**：批 3 到此收口（新窗入口＋命令落点）；关窗撤账与逐窗横幅（批 4）、几何各自记忆（批 5）、CLI
 `--new-window`（批 6）、文档回写与三处同口径计数（批 7）均未落。§9 七条真机走查照欠，本批不称「可用」。
+
+## 17 批 4-A 台账（装配层主窗别名收口＋逐窗横幅，2026-10-21）
+
+**落到的形状**（`src/main.cpp` 255 增／137 删；控件、纯逻辑件与三套测试一行未动）：
+
+⑴ **两条现取腿取代五枚别名**：`fallback_window()` 每次重读容器首格（空即「没有兜底窗」），只给应用级面板的唤醒与浮层落点用；`command_window`（`std::function<WorkspaceWindow *()>`）＝`target_window()` 的转发，是命令、快捷键、档案连接与 CLI 转交的落点；`command_tab_id()` 在它之上再取落点窗自己那一格。`command_window` 与 `report_dispatch`／`restore_window_keyboard_focus` 同形态——**先声明、按引用捕、赋值排在 tracker 建钩之后**，于是更早建好的闭包在调用那一刻读到的永远是最新那一份。`surface`／`tab_strip`／`current_tab_id`／`banner`／`overlay_host` 五枚别名连同 `first_window` 引用全部删除；`workspace_windows.front()` 的现取只剩装配早期四处（建首标签、入根、场景、`Application` 构造与 `id` 登记），它们都在 `app` 建成之前，那一刻既不可能有第二格也不可能被 `erase`，故安全——这条理由写在代码注释里，不留给读者猜。
+
+⑵ **逐窗横幅（稿 D5，与别名同一处代码故一并收）**：`refresh_broadcast_ui` 改成遍历 `workspace_windows`，成员归属只问 `TabWorkspace::owner`（批 2-A 那枚指针，本仓唯一真源）——不另立「这张标签属于谁」的账，也不去别窗的标签栏里找一个本不存在的号。两处**档位选择**在此登记：① `state.active` 取「本窗有成员」而不是「全组非空」，否则 B 窗会出现一条高着却空名单的横幅（眼见事实与画面自相矛盾）；② `session_count` 仍取全组去重数（D5 原文：批量操作是一件事，数字要能对上总数，别窗的成员在本法眼里是看得见的名字但列不出的一行）。取不到属主的成员在各窗都被跳过，这一支只在标签撤账时出现（4-B 的窗口期），按「本窗不列」处理而不是猜一扇。
+
+⑶ **兜底档统一改口**：§16 在册欠项① 那六处（逐窗横幅、`hooks.broadcast`、串口建标签写 `serial_by_tab`、SFTP 三条钩子、`current_tab_session`＋`logging_toggle_action`、CLI `SplitPane`）在此闭合，另外把批 3-C 留的五类命令闭包里「取不到窗即回主窗别名／主窗对象／应用级主宿主」那三档兜底一并收掉——**4-B 之后别名指着的可能正是那一扇已经关掉的窗**，退回它不再是兜底而是读已销毁对象。现在的形态只剩一种：取不到落点窗 ⇒ 什么都不做（新开格与 CLI 转交那两条各留一条 ASCII 诊断日志／诊断串）。档案连接的四条腿（SSH／本地／串口／Telnet）从此经 `tab_host_or_none` 按 tracker 解析，「在 B 窗点档案、标签开进 A 窗」这一档消除。`hooks.broadcast` 是唯一**不按 tracker** 的那条：设置页是应用级单实例（D6），这一腿的语义是「刚落盘的配置即时生效」，生效面按窗遍历全部可见工作现场——把它解析成「最近被碰过的那一扇」就变成「在 B 窗改设置，A 窗还停在旧配色」，那是另一件没裁决的事。
+
+⑷ **`host` 从引用别名改成按值留一份 `shared_ptr`**：四块面板与降级提示持的是 `au::OverlayHost &`（非拥有，`SettingsPanel`／`SftpPanel`／`DebugPanel`／`StartupNotice` 的头文件都是这个形态）。若装配层只留一枚指着容器元素的引用，4-B 把首格 `erase` 时面板就悬空；按值留副本则对象随 `main()` 一起活，最坏形态是「浮层挂在一扇已经关掉的窗上」（看不见，但不是野指针）。**可见的那一半没做**——面板「搬窗」而非「各一份」是 D6、落点在 4-C，届时这一支连 `hooks.preview_wake` 那条 `TODO(SPEC.FEAT.WS.03)` 一起改按发起窗取。
+
+⑸ **串口连接表的号源**：`open_serial_tab` 此前在 `create_new_tab_with` 之后回读「当前标签号」再写 `serial_by_tab`，那是「落点窗那一刻的选中项」而不是这一格的身份——两者只在单窗下巧合相等。改成与 SSH／Telnet 两条腿同形的**本支预取号**（`next_tab_id` 在 `create_new_tab_with` 里 `++` 是本仓唯一取号点，两处之间不夹别的发号），于是「把串口绑定挂到别的标签上」只可能是真 bug 而不是一次串窗。
+
+⑹ **`startup_wake`**：冷启动交出唤醒指针那一处改成现取首格（取不到即不写，原子量保持空），4-B 的撤账链负责在 `erase` 之后重指或清空。本棒不提前做。
+
+**读数**：`cmake --build --preset linux` 通过且无 error／warning；`ctest --preset linux -E etest_` **97/97**（9.90 s）、runner 全跑 **1221/1221**（22.10 s）。门迁移形态：**97 项／1221 案 → 97 项／1221 案（+0 案／−0 案）**——本棒不新增 TU，既有 1221 案零改动照绿是「单窗行为逐字不变」那一侧的证据（同批 1-B 那一次的用法）；它**不**是本棒改动的证人：`main.cpp` 不进 runner（裁决 7.83），逐窗分流与兜底改口两处都没有自动化判据可读。三处文档的同口径计数照例归 §6 批 7 一次性改。
+
+**变异自证**：本棒**无可转红的注入**，如实记不冒充读数——§7 变异表里落得下来的三条（`current_tab_id` 回全局一份、横幅恒列全组成员、`ClosedTabStack` 回全局的读取侧）注入点全在 `main.cpp` 之外无判据可指。§16 那一条教训在这里反过来用：装配层的账目要由**控件侧接缝**留出可断言之形，而本棒的改动正是把「读者只有一处」这个事实做实——4-B 的 `HeadlessSurface::set_should_close(true)` 那一枚证人（F24）才是本件第一次能真驱动「窗散了之后账目为空」。
+
+**在册欠项（如实记，交批 4-B／4-C）**：① `ActiveWindowTracker::forget` 仍无调用方（4-B）；② `startup_wake` 的重指与清空（4-B）；③ 面板与浮层落点按发起窗（D6，含波特率那只框）、`hooks.preview_wake` 的 `TODO`、剩余三处 `app.focus()`（`DebugPanel`／`StartupNotice`／`SettingsPanel`）＝4-C；④ `Ctrl+F` 在窗内仍取 1 号视图（逐格搜索属 `SPEC.FEAT.INTERACT.04`）；⑤ OS 激活态与派发事实可答非所问的两档（§9 第 2 条），无头面不可证。
+
+**边界**：批 4-A 到此收口（别名归零，`main.cpp` 内已无「第一扇窗」的长期引用，`erase` 从此是可做的动作）；关窗撤账链（4-B）、面板搬窗与退出序（4-C）、几何各自记忆（批 5）、CLI `--new-window`（批 6）、文档回写与三处同口径计数（批 7）均未落。§9 七条真机走查照欠，本批不称「可用」。
