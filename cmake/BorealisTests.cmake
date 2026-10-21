@@ -21,6 +21,13 @@ if (PYTHON3_EXE)
     add_test(NAME check_agents_size
             COMMAND ${PYTHON3_EXE} "${CMAKE_CURRENT_SOURCE_DIR}/tools/check/check_agents_size.py"
             WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    # 双语的覆盖面上限（`SPEC.FEAT.PREF.05` 批 7 定案）：上屏短语的唯一真值源是词条表那一个文件。
+    # 表外多一枚引号内中文就是英文档下的一处空白（`LocalizedString::tr()` 的 `text` 恒空，查表失败
+    # 回退空白而非回落中文），而这条链在本仓**没有别的自动化证人**：`main.cpp` 不链进 runner（裁决 7.83），
+    # 视口那枚对话框到今天才按 key 名断言。批 6 实测把命中数从 6 压到 0，本条把 0 锁住。
+    add_test(NAME check_display_literals
+            COMMAND ${PYTHON3_EXE} "${CMAKE_CURRENT_SOURCE_DIR}/tools/check/check_display_literals.py"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 endif ()
 
 option(BOREALIS_BUILD_E2E "Build end-to-end tests that need a real window backend" ON)
