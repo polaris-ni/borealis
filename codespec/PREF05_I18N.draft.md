@@ -194,4 +194,16 @@
 
 同批可见事实两处：两档同字（对等式与金样两侧都无分辨力）由段 1 的 7 条增至 **10 条**，新增的正是 `settings.chain.up`／`down`／`remove` 那三枚字形；金样案挑的 5 枚因此刻意避开同字条目。还原后 `ctest --preset linux` **106/106**、`ctest --preset linux -E etest_` **103/103**、`borealis_test_runner` **1304 案全绿**（段 1 基线 1303 ＋ 本案）。判据 ② 的反向等式、③ 的复数形态与 m7 仍随段 4；`settings.*` 之外的三条旁注（`settings.note.session_log`／`clipboard_read`／`link_confirm`）在中文表里是多行拼接条目，本段按同一形态保持拼接，故一次性探针的严格单行正则会漏计它们（与批 2 那条 462／466 的教训同源）。
 
+**批 3 段 3 读数**（终端与会话侧本体那笔，本棒实测）。英文档由 223 条长成 **316 条**（本段 93 条：`search.*` 12／`workspace.*` 8／`tab.*` 1／`session.*` 22／`terminal.*` 22（提示卡 2 ＋ 设置行 20）／`menu.*` 4／`links.*` 12／`command_palette.*` 4／`diagnostics.*` 8），未译余数 **150**＝段 4 那一笔。本段**不新增案**（证人上一段已补齐，本段只让它们的逐 key 读数变厚），复跑七条注入如下（每条测完即还原）。
+
+- **m1 全形态**：**2 案红 / 6 条**（金样案 5 ＋ 进程 locale 案 1）；等式案仍 0 红，与段 2 同因（`§4.1` 第 6 条）。
+- **m1 弱形态**：**1 案红 / 1 条**（进程 locale 案）。
+- **m1b（源表取反）**：**4 案红 / 13 条**，与段 2 逐案同数（金样 10 ＋ `the_on_disk_name_...` 1 ＋ 等式案的 ③ 腿 1 ＋ 进程 locale 案 1）。
+- **m2**（删英文档一枚 key，本段取 `search.prev`）：仍 **0 红**，等价原因照旧：反向等式排在段 4（`§4.1` 第 3 条）。
+- **m3**：**2 案红 / 151 条**——`the_on_disk_name_...` 1 条 ＋ 子集案 150 条，后者与本段探针的未译余数**同数**（段 2 那笔是 243，本段随本体落地降到 150，这条读数自此就是「还差多少」的常驻形态）。
+- **p1**（英文表加一枚中文档没有的 key，取 `search.probe.en_only_key`）：**恰 1 案红 / 1 条**。
+- **p2**（改既有英文条目为空串，取 `tab.action.undo_close`）：**2 案红 / 2 条**（子集案报空串占位，等式案报中间态）。
+
+同批两处可见事实：两档同字的条目由 10 增至 **12**（新增 `links.confirm.uri` 与 `search.count_cap`，两枚都是纯位置参数模板 `{0}` / `{0}+`，本来就没有可译的东西），金样案的 5 枚 pin 仍避开它们。英文侧的**措辞对齐**在本段有一处必须与真标签同源的硬约束：`terminal.notice.unrepresentable.action` 那句路径三段（`Settings > Terminal > …`）逐字取 `settings.page.terminal` 与 `terminal.unrepresentable` 的英文档读数，故该枚行名定的是 "Unrepresentable character policy"，路径尾串必须与它一字不差。还原后 `ctest --preset linux` **106/106**、`ctest --preset linux -E etest_` **103/103**、`borealis_test_runner` **1304 案全绿**（与段 2 同数，本段无新案）。判据 ② 的反向等式、③ 的复数形态与 m7 的红案数一律随段 4 落齐一起补。
+
 **结项读数**：待补（批 7 回填实测三项数与逐条注入的红案数，含等价变异指名道因）。
