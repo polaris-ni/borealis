@@ -50,7 +50,7 @@
 
 1. **语言档就是上屏档**：`appearance.language` 取 `zh` 时全界面为中文、取 `en` 时为英文，两档由同一条装填腿产出。证人形态＝同一批 key 在两种装填下 `settings_label(key)` 分别命中中／英两档（不比对具体译文，只比对「档位决定命中哪一层」这一事实），**外加 F19 那半条**：绘制侧的文案（框架 `Text`／`Button` 经 ctx 解析的那一路）也随档位走，其证人只能是装了 `LocaleProvider` 的驱动台上取 `accessibility_label()` 之类的**解析后显示串**——G28 那一案就是现成的宿主（F19 读的正是它先红）。这条挡住的正是 F3 那个反转：**没有它，补上 en 档就等于把界面默认换成英文**。（落地形态到批 3 段 2 定为三件：等式案、金样案、进程 locale 案——第一件与装填腿共享 `source_tier()` 读点，对 m1 失明，故补第二件，见 `§4.1` 第 5／6 条。）（**批 3 段 4 更正**：F19 那半条的证人形态要撤——摘掉驱动台那枚 provider 实测 **0 红**，`§4.1` 第 7 条给出等价链条，G28 那一案自此退出本条证人列；本条的自动化半边只剩那三件，绘制侧那半边与判据 ⑦ 同档（只有编译＋链接＋§6 走查）。）
 2. **两档 key 集合逐字相等，且逐 key 两档都非空**：新增套件 `utest_i18n_tiers`（新纯逻辑接缝 `settings_string_keys(tag)` 给用例侧列出某一档的全部 key）断 ①zh 的 key 集与 en 的 key 集排序后逐字相等 ②每个 key 在两档 `lookup` 均有值 ③两档条数同为 464。这条是 F7/F13 那两条读数唯一的结构式守卫，也是 7.25⑬「新增命令须同步词条」第一次有自动化证人。
-3. **英文档的计数短语走复数**：那 13 条 key 在数值 1 与 2 下渲染出两个不同串（`one` 与 `other` 分支），中文档在同一 key 同一两个数值下**同串**（`other_only`）。证人独立成案，不与判据 ② 合并——② 红是漏 key，这条红是分支选错。
+3. **英文档的计数短语走复数**：那 13 条 key 在数值 1 与 2 下渲染出两个不同串（`one` 与 `other` 分支），中文档在同一 key 同一两个数值下**同串**（`other_only`）。证人独立成案，不与判据 ② 合并——② 红是漏 key，这条红是分支选错。（**批 4 落地期更正**：13 条里只有 5 条在英文侧是数词紧邻可数名词的形态，其余 8 条写不出 `one`／`other` 的差异，故本条的范围与「不同串／同串」的可观测形态按 `§4.1` 第 8 条收窄；证人随批 4 落 `the_count_phrases_decline_in_english_but_not_in_chinese`。）
 4. **表外那四条中文消失**：关标签确认框、多行粘贴确认框、默认标签名「本地终端」三处改消费词条；英文档下这三处上屏为英文且**不再需要 `CJK-LITERAL` 标记**（该标记随字面量一起消失，不是加一条例外）。默认标签名复用既有 `connections.type.local`，表内不新增 key。
 5. **面板那一行的档位是真话**：`appearance.language` 在 catalog 里恰有一行、`ConsumerStatus::Wired`、`EffectLevel::NextLaunch`；面板上该行挂「重启后生效」角标，其余 69 行的档位与角标逐字不动（证人＝逐行读 `effect` 字段比对，新枚举值只被这一行取用）。
 6. **五处死条目收敛后界面按选定那份走**：`settings.shortcut.column.*` 与 `unbound` 各只注册一次，中文档逐字断言为 D10 选定的那五串（表头四列「动作名／分组／当前组合键／标注」＋「未绑定」），且**英文档**同五 key 也逐字断言一份。证人形态是指验字符串而不是指验条数——F8 那条注说了为什么条数类断言对这一处天然无感。
@@ -70,7 +70,7 @@
 | **D4** | 表形态 | **两张表同文件相邻**（`kStringsZh` 之后紧跟 `kStringsEn`），`install_settings_strings()` 收一枚语言参数、两档都装、缺省档随参数 | ②按域拆多个文件＝464 条 key 的「两档相等」证人要跨文件聚合；③en 独立 TU＝同 ②，且 `settings_i18n.cpp` 现在是唯一装填点，拆它就是把 F2 那句「全仓 `Locale` 引用只在这一处」主动打破 | 按 ①。文件从约 700 行涨到约 1150 行，换来的是「同一条目两档相邻可并排校对」；行数不是本仓的门禁项。**落地期改形（批 2）**：原写「两档都装」改为**只装选定那一档**（`§4.1` 第 2 条）——两档齐装会让 F5 那几处写死 `Locale{}` 的解析口在中文档下命中英文层，正是 F19 探针实测到的那一件事；只装选定档并把缺省档随参数，`Locale{}` 的第一级 miss 才回落得到用户真正选的那一档。判据 ② 的「两档 key 集相等」因此读**源表**（新接缝 `settings_string_keys(Language)`），不读装填后的 `StringTable`。 |
 | **D5** | 面板那一行的生效档 | **`EffectLevel` 扩一枚 `NextLaunch`**（+一处分支 +一枚角标词条） | ②挂 `NextSession`＝角标说「下次会话生效」而事实是重启，把一条错口径写进界面；③不给角标＝用户改完看不到任何后果说明 | 按 ①。代价如实登记：动了 `settings_catalog.h` 这个纯逻辑公共头的枚举（追加式、成员与可见性不动，与 7.110 D1①／7.112 D1① 同形态） |
 | **D6** | `settings_label` 那 249 处 | **一处不改**（继续急切解析） | ②全量改 `settings_text`＝控件侧要能收 `LocalizedString` 才有意义，而 249 处里多数入口（`Command::title`、角标拼接、`placeholder`）本就不收（G28 那棒已把这条口径写进文件头）；③改一半＝第二处真值源 | 按 ①。启动定档下急切解析是**正确的**：解析时点已在装填之后，档位一经定下整进程不变 |
-| **D7** | 英文复数 | **13 条计数短语写 `plural` 块**，其余 `{0}` 直译 | ②全不写＝"Imported 1 items"；③全部写＝47 条里 34 条的位置参数根本不是计数（版本号、路径、色值），写复数块是把语法判断塞进不需要它的模板 | 按 ①。中文档同条也一并写成 plural 块（`other_only` 恒走 `other`，行为不变、形态统一，判据 ③ 的中文侧断言由此可证） |
+| **D7** | 英文复数 | **13 条计数短语写 `plural` 块**，其余 `{0}` 直译 | ②全不写＝"Imported 1 items"；③全部写＝47 条里 34 条的位置参数根本不是计数（版本号、路径、色值），写复数块是把语法判断塞进不需要它的模板 | 按 ①。中文档同条也一并写成 plural 块（`other_only` 恒走 `other`，行为不变、形态统一，判据 ③ 的中文侧断言由此可证；**批 4 实测：中文侧的块与非块渲染逐字同串，m4_zh 注入 0 红，故中文侧那半边只有形态收益、没有证人，见 `§4.1` 第 8 条与 §8 批 4 读数**）。13 条按落地期收窄为「5 条成块 + 8 条不成块」，逐枚理由见 §8 批 4 读数 |
 | **D8** | 语言键的域与页 | **`appearance.language`，外观页第一区段** | ②放 `general` 域＝schema 没有这一域（`config::Settings` 四域＝appearance/terminal/connection/shortcuts）；③放终端页＝与终端语义无关 | 按 ①。「界面语言」在既有四域里唯一归属就是外观 |
 | **D9** | OS 对话框标题／主题名／命令 id | **三类都不进表**（F11／F12／7.25⑬ 三条既有口径原样维持） | ②标题也翻＝两套文案纪律并存，且 OS 呈现不受本仓字号与字体腿影响；③主题名翻＝用户认不出自己选的哪套 | 按 ①。§7 逐条在册 |
 | **D10** | 快捷键表头那五处死条目取舍 | **让「动作名」那一份生效**（列头显示「动作名」），物理落点取靠前那段 | ②让「动作」生效＝丢掉更准的措辞；③两份都留并把容器换成 `std::vector`＝给表加一层「同 key 后者覆盖」的语义，而框架 `add` 本来就是这个语义，多此一举 | 按 ①。**出稿后的就地更正**：稿面原写「删掉靠前那五行、让快捷键域那段生效」，实现时改形——靠前的『快捷键只读表』段注释自陈「表体四列的列名是本件自己的排版量而非 catalog 键」，那才是这五串的真实归属，故**删掉后面那五行、把前面那一份的 `title` 值改成「动作名」**。可见结果与本条原文一致（列头是「动作名」），变的只是五条注册住在哪一段；此改动**可见**（列头四字改三字），故须走 §6 走查第 ⑤ 条并被判据 ⑥ 钉住 |
@@ -87,16 +87,16 @@
 | **批 1** | 表本体收敛：删五处死条目（D10，「动作名」生效、五行住在『快捷键只读表』段）、`settings_i18n.h` 那条「十三」改口（F9）、`kStrings` 更名 `kStringsZh`；判据 ⑥ 的中文半边随本批落（证人放 `itest_settings_panel.cpp`——它是唯一已 include 该私有头的套件，新建 `utest_*` 去引 `src/ui/` 私有头本仓无先例）。本批**行为零变化**，除列头「动作名」一处 | `src/ui/settings_i18n.{h,cpp}` + `tests/integration/itest_settings_panel.cpp` |
 | **批 2** | **接缝与那一行**（原表把这一行拆到批 2／批 5 两处，现合并，理由见 §4.1 第 1 条）：① 语言接缝——`install_settings_strings(Language)` 参数化 + 一枚收 `StringTable &` 的同名重载（装进指定表，判据 ①② 的无副作用宿主）、`settings_locale()` 随启动档位、新增 `settings_string_keys(Language)`；**只装选定那一档**（D4 落地期改形，见该行）② `appearance.language` 的六处同步全套：结构体字段 + `kInterfaceLanguageNames` 与 `language_tag()` + store 读写 + `form_transfer` 的 Binding（次序随 catalog）+ catalog 那一行 + 中文词条两行 ③ `EffectLevel::NextLaunch` 与面板角标分支 ④ **装 `au::LocaleProvider`**（F19 的必需项：生产那一层场景根 ＋ 用例侧驱动台各装一枚）⑤ 装配腿＝启动读键 → 装填参数（原表写在批 6，随 ① 同批才有产出方）⑥ 判据 ①⑤ 的证人与两处计数闸 69→70 | `include/borealis/{config/settings.h,ui/settings_catalog.h}` + `src/config/{schema_names.h,store.cpp,form_transfer.cpp}` + `src/ui/{settings_i18n.{h,cpp},settings_catalog.cpp,settings_panel.cpp}` + `src/main.cpp` + `tests/unit/utest_i18n_tiers.cpp`（新）+ `tests/unit/{utest_config.cpp,utest_settings_catalog.cpp}` + `tests/integration/itest_settings_panel.cpp` |
 | **批 3** | 英文文案本体，按域四段推：连接侧（`connections.*`／`keys.*`）→ 面板侧（`settings.*`）→ 终端与会话侧（`terminal.*`／`session.*`／`workspace.*`／`links.*`／`search.*`／`diagnostics.*`／`menu.*`／`tab.*`／`command_palette.*`）→ 连接域与其余（`connection.*`／`serial.*`／`sftp.*`／`tunnel.*`／`shortcuts.*`／`appearance.*`）。**判据 ② 的等式与 m7 随本批最后一段落定**（§4.1 第 3 条；段 4 实测：等式案成立，m7 是等价变异 ⇒ 判据 ① 的绘制侧半边无证人，见 `§4.1` 第 7 条），判据 ③ 的复数形态随批 4；四段中途的「还差多少 key」用一次性探针读数 | `src/ui/settings_i18n.cpp`（`kStringsEn`）+ `tests/unit/utest_i18n_tiers.cpp` |
-| **批 4** | 复数：13 条计数短语两档改写 `plural` 块 + 判据 ③ 的案 | `src/ui/settings_i18n.cpp` + `tests/unit/utest_i18n_tiers.cpp` |
+| **批 4** | 复数：13 条计数短语两档改写 `plural` 块 + 判据 ③ 的案（落地期按 `§4.1` 第 8 条收窄为「5 条成块 + 8 条不成块」，判据 ③ 那一案同时记录「两串不等」这一句对 m4 空转的事实） | `src/ui/settings_i18n.cpp` + `tests/unit/utest_i18n_tiers.cpp` |
 | **批 5** | **（取消）** 内容即上面批 2 的 ②③⑥ 与批 3 的判据 ② —— 六处同步跨批会让 `utest_settings_catalog` 的双向比对先红，而面板角标分支不能与它自己的生效档分家（§4.1 第 1 条）。编号按「只追加、不重排」留位不复用 | — |
 | **批 6** | 表外那四处进表（D11）+ 判据 ② 扩到「覆盖闸两档都查」 | `src/main.cpp` + `src/ui/terminal_view.cpp` + `src/ui/settings_i18n.cpp` + `tests/integration/itest_settings_panel.cpp` + `tests/integration/itest_startup_notice.cpp`（若列头那处有证人） |
 | **批 7** | 文档回写与变异自证：`SPECIFICATIONS.md` 的 PREF.05 现状句 + 新裁决 + `CHANGELOG.md` + `PLAN.md` 的 M4 行 + `ARCHITECTURE.md` 的词条表归属 + `UI_SETTINGS.draft.md` 那一行 | `codespec/` |
 
 批 3 之所以按域切四段而不是一笔：464 条英文文案是一笔里最难复核的体量，而判据 ② 在每一段完就能独立给出「还差多少个 key」的读数——这是本棒能在中途被纠偏的唯一机制。
 
-### 4.1 批次边界的落地期更正（批 2 开工时定，批 3 段 1 补第 5 条、段 2 补第 6 条、段 4 补第 7 条；AGENTS.md §4.2 第 11／12 条）
+### 4.1 批次边界的落地期更正（批 2 开工时定，批 3 段 1 补第 5 条、段 2 补第 6 条、段 4 补第 7 条、批 4 补第 8 条；AGENTS.md §4.2 第 11／12 条）
 
-七条读数让上面那张表不能照原样执行。**改的只有批次切分、装填形态与证人形态**，§2 的七条判据与 §3 的十二条裁决一律不动。
+八条读数让上面那张表不能照原样执行。**改的只有批次切分、装填形态与证人形态**，§2 的七条判据与 §3 的十二条裁决一律不动——第 8 条是本前言的第一次例外，改的是判据 ③ 的范围而不是它的口径。
 
 1. **一枚新键的六处同步不能跨批**（原表把 `appearance.language` 的结构体/schema/store 放批 2，把 catalog 行、`form_transfer` 的 Binding 与两处计数闸放批 5）。`utest_settings_catalog.table_covers_exactly_the_written_schema_keys` 拿**落盘叶子集**与 **catalog 键集**做排序后的双向逐字比对，只落前三处的中间态就是「落盘里有而表里没有」⇒ 该案当场转红，批 2 便无法以「全绿 + 本地提交」结项（AGENTS.md §4.4 第 33 条）。面板角标分支同理：catalog 那一行的生效档一旦先挂 `NextSession`，就是把 D5 已裁掉的错口径画上界面再改一次。故六处同步 + `NextLaunch` + 角标分支 + 计数闸**整体并入批 2**，原批 5 取消。
 2. **「两档都装」改为「只装选定那一档」**（D4 的落地期改形，逐字记在该行）。理由与 F5／F19 同源：`lookup` 的第一级用调用方给的 tag，而框架内那几处不经 ctx 的解析口写死 `Locale{}`（＝`en`）——两档齐装会让它们**在中文档下命中英文层**，即把「未装 provider」的那一处重新变成 F19 的事故。只装选定档 + 缺省档随参数，才让「回落」落回用户选的那一档。
@@ -105,6 +105,7 @@
 5. **证人形态改成等式（批 3 段 1 开工时就地更正，AGENTS.md §4.2 第 11 条）**：批 2 落的那两句「另一档查不到」在英文档还是空表时成立，而**第一段本体一落就必然翻转**——正是第 3 条自己禁止的那一类断言。新形态是「**装填表的读数＝源表模板**」的等式：新增私有接缝 `settings_string_text(Language, key)`（读源表，该档没这一 key 回空串），用例把「按另一档的 tag 去查也只能拿回选定那一档」写成逐 key 等式，于是这条证人在英文档从 0 条长到 466 条的全过程中形态不变，且它比原句更强——等式案还能抓到「模板是空串」这种 `lookup` 报命中而 `settings_string_text` 报缺失的中间态（见 §8 段 1 读数的 p2）。判据 ② 同口径拆成**子集**先行（`every_english_entry_has_a_non_empty_chinese_twin`：英文档每一 key 都在中文档有非空孪生条目），反向等式与「两档 key 集逐字相等」随段 4 落齐一起补。§8 的 m1／m3 落点随本次改形重述。
 6. **等式证人对 m1 失明，故补一份不共享读点的金样案（批 3 段 2 实测，AGENTS.md §4.4 第 22 条）**：段 2 复跑第 5 条改形后的注入，发现 m1 的两种形态（只写死 tag／连源表一起写死）在 `installing_registers_only_the_selected_tier` 上都是 **0 条读数红**——等式右边经由 `settings_string_text()` 读的就是被变异写死的同一个 `source_tier()`，两侧同串即自反成立。段 1 那笔「m1 全形态 459 条红」的读数按本条更正（该探针不可复现，且段 2 的复现结果与它相反），m1 的落点自此改记为：全形态⇒金样案＋进程 locale 案，弱形态⇒进程 locale 案。补的案是 `installed_tiers_answer_templates_pinned_in_the_test`：五对期望串**抄在测试里**（不经被测接缝），代价是改措辞要同步改金样，收益是 m1 由「读点共享」变成「可抓事实」。同一批里 m1 弱形态不再是等价变异（段 1 记的 0 红随之作废）：进程级 `settings_locale()` 的 tag 是唯一观测面，而它确实被写死了。
 7. **`LocaleProvider` 在四段落齐后仍然不可观测，m7 自此按等价变异结项（批 3 段 4 实测，AGENTS.md §4.4 第 22 条）**：段 3 末那句「m7 的红案数随段 4 落齐一起补」落空了——摘掉 `itest_settings_panel` 的 `Harness` 里那枚 provider（绘制侧从此按 `Locale{}`＝`en` 查表）之后，全量 runner **1305 案 0 红**。等价原因的链条是完整的：装填腿只装选定那一档（`§4.1` 第 2 条）⇒ 表里根本没有另一档的条目 ⇒ `en` 那一级的 miss 必然回落到表的缺省档，而缺省档随参数＝用户选的那一档 ⇒ 有无 provider 答回同一串。也就是说 **F19 那处事故的前提是「两档齐装」，第 2 条的改形把事故的前提一并消掉了**，本稿 §5 第 7 条「现场与驱动台都装 provider」那条不变量自此只有 §6 走查与编译期可观测，不能称变异自证；判据 ① 的绘制侧半边（F19 那半条）因此**没有自动化证人**，G28 那一案不是它的证人（该预期自本条作废，见 §8 m7 行）。同一条改形还让 **m3 退化为等价变异**：两档 key 集逐字相等之后，`settings_string_keys(En)` 返回中文档那份与返回英文档那份是同一份数据，注入后 **0 红**；它的自证角色由 m2（删一枚 key ⇒ 等式案 1 案 2 条）与 p1（加一枚另一档没有的 key ⇒ 2 案 2 条）接任，两者自段 4 起都有牙。
+8. **判据 ③ 的范围在批 4 落地期收窄为 5 枚（本小节前言那句「§2 的七条判据一律不动」的第一次例外，AGENTS.md §4.2 第 11 条）**：判据 ③ 原句是「那 13 条 key 在数值 1 与 2 下渲染出两个不同串」。逐枚核过调用点参数语义后的事实是：13 枚里只有 **5 枚**在英文侧是「数词紧邻可数名词」的形态（`connections.notice.imported`／`keys.header.count`／`workspace.broadcast.title`／`session.reconnect.exhausted`／`terminal.notice.unrepresentable.line`），其余 **8 枚**写不出 `one=`／`other=` 的差异——序数与分母、单位、索引标签、纯数字、以及「名词在前、数在后」的报告式语序（逐枚理由见 §8 批 4 读数那笔）。让那 8 枚满足判据原句要先改英文措辞（如把 `{0} running` 改成 `{0} tunnel running`），那是 D7 明令排除的润色，不是复数形态。故判据 ③ 自本条起写作：**5 枚成块词条在英文档 1／2 两值剥掉计数之后仍须不等，13 枚计数词条在中文档剥掉计数之后须逐字相等**。证人 `the_count_phrases_decline_in_english_but_not_in_chinese` 的形态与红案数随批 4 记在 §8。附带登记的证人形态教训：**「1／2 两串不等」这一句本身对 m4 空转**——计数就在串里，块退化到只剩 `other=` 时 "1 keys" 与 "2 keys" 照样不等，实测 m4_all 的那 2 条红全部来自金样而非该句；有牙的形态是「剥掉计数之后仍不等」（见 §8 m4 行）。
 
 ---
 
@@ -153,7 +154,7 @@
 | m1 | 装填时把缺省档写死回 `zh`（忽略参数）。**批 3 段 1 起重述**：只把 tag／缺省档写死而源表仍随参数是一种形态，**连源表一起**写死（`locale_for` 与 `source_tier` 两处）是另一种，两种都要测。**批 3 段 2 起重述落点**：等式案 `installing_registers_only_the_selected_tier` 对两种形态都是 0 红（读点与被测函数共享，见 `§4.1` 第 6 条），故本行的证人列作废，改由下两案分抓 | 全形态⇒`installed_tiers_answer_templates_pinned_in_the_test` ＋ `the_process_locale_moves_with_the_installed_language`；弱形态⇒后者单独抓 |
 | m2 | `kStringsEn` 删掉一条 key | 判据 ② 的「两档 key 集相等」。段 1–3 期间该证人未立项 ⇒ 0 红；段 4 立了 `the_two_tiers_share_the_same_key_space` 之后本行自此有牙 |
 | m3 | 让 `settings_string_keys("en")` 返回 zh 的 key 集 | 判据 ②（证件自身被反证，说明它不是空转）。**批 3 段 4 起退化为等价变异**：两档 key 集逐字相等之后返回哪一份都是同一份数据，注入后 0 红，自证角色由 m2／p1 接任（`§4.1` 第 7 条） |
-| m4 | 13 条计数短语里的 `plural` 块退化为 `other` 单形态 | 判据 ③ 的 `en` 档 1／2 两串不等那条 |
+| m4 | 计数短语里的 `plural` 块退化为 `other` 单形态（原计划 13 条，落地期按 `§4.1` 第 8 条收窄为成块的那 5 条）。**批 4 实测后重述证人**：预期的「1／2 两串不等」那一句**不是本行的落点**（数在串里，退化后 "1 keys"≠"2 keys"，实测 m4_all 的 2 条红全来自金样），有牙的是「剥掉计数之后仍不等」那一句 | `the_count_phrases_decline_in_english_but_not_in_chinese`：摘一枚⇒1 案 2 条，摘五枚⇒1 案 7 条，改错分支名词⇒1 案 2 条（逐条见下面的批 4 读数）；中文侧的对应注入 m4_zh **0 红**，按等价变异结项 |
 | m5 | catalog 那一行的 `effect` 改成 `Immediate` | 判据 ⑤（角标与档位断言） |
 | m6 | 在生效那五行的**前面**重新加一份 `{"settings.shortcut.column.title", "动作"}`（把 F8 的形态注回去；加在后面的重复会被 `std::map` 吸收，打不中任何断言——这正是 F8 那条注说的「条数类断言天然无感」） | 判据 ⑥（表头那五串逐字验） |
 | m7 | 摘掉场景根外那枚 `LocaleProvider`（批 2 的接线撤回，其余不动） | 判据 ① 的绘制侧半边（F19 已实测：这条注入在 en 档有内容时**必然**打红 G28 那一案；批 3 之前 en 档为空，故 m7 只登记形态、红案数随批 3 收尾复跑给）。**批 3 段 4 复跑后本列作废**：摘掉驱动台那枚 provider 后全量 runner **0 红**，等价原因见 `§4.1` 第 7 条——只装选定那一档让 `Locale{}` 那一级必然 miss 并回落到用户那一档，有无 provider 答回同一串。判据 ① 的绘制侧半边自此**无自动化证人**，与判据 ⑦ 同档登记 |
@@ -219,5 +220,27 @@
 - **m7（摘掉 `itest_settings_panel` 的 `Harness` 那枚 `LocaleProvider`，其余不动）**：**0 红**（全量 runner 1305 案全绿）。这是本段唯一**预期落空**的注入：§8 那行原写「en 档有内容时必然打红 G28 那一案」，实测与它相反，等价链条与影响面（判据 ① 的绘制侧半边自此无自动化证人、§5 第 7 条那条不变量只剩走查）逐字记在 `§4.1` 第 7 条。生产侧 `src/main.cpp` 那枚自批 2 起就没有宿主（裁决 7.83），本次同样无从复跑。
 
 同批两处可见事实：两档文本逐字相同的条目由 12 增至 **13**（新增 `tunnel.kind.dynamic` = `SOCKS5 -D`，本来就是一串协议名与开关），金样案的 5 枚 pin 仍避开同字条目；`kStringsEn` 的头注释按落齐后的形态改写，并给表内那两类共九枚非 ASCII 字面量补了 `CJK-LITERAL: locale-output`（三枚字形条目 ＋ 六枚 `" · "` 分隔符，后者沿 `serial_format.cpp`／`settings_panel.cpp` 同类别已标的既定视觉形态）。还原后 `ctest --preset linux` **106/106**、`ctest --preset linux -E etest_` **103/103**、`borealis_test_runner` **1305 案全绿**（段 3 基线 1304 ＋ 等式案 1）。判据 ③ 的复数形态仍随批 4；§6 走查在本通道一律未做，批 3 不称「可用」。
+
+**批 4 读数**（复数形态那笔，本棒实测）。F17 记「带 `{0}` 的模板 47 条，其中计数短语 13 条」，当时没逐枚列名；本批按**调用点参数语义**把它们点齐并分成两堆，成块的是英文侧「数词紧邻可数名词」的 **5 枚**，两档同批改写：
+
+| key | 计数参数（实测调用点） | 英文侧形态 |
+|:---|:---|:---|
+| `connections.notice.imported` | `connection_sidebar.cpp` 的导入条数 | `Imported {0, plural, one={0} profile other={0} profiles}` |
+| `keys.header.count` | `keys_panel.cpp` 的 `painted_rows_.size()` | `{0, plural, one={0} key other={0} keys}` |
+| `workspace.broadcast.title` | `broadcast_banner.cpp` 的 `state_.session_count`（第二参数位） | `…, {1, plural, one={1} session other={1} sessions}` |
+| `session.reconnect.exhausted` | `terminal_view.cpp` 的 `progress->attempt` | `Still failing after {0, plural, one={0} try other={0} tries} · stopped` |
+| `terminal.notice.unrepresentable.line` | `terminal_view.cpp` 的 `unrepresentable_notice_->count`（第二参数位） | `…{1, plural, one={1} character other={1} characters} in this block`（超 120 列，拆相邻字面量两行） |
+
+中文侧同 5 枚写成 `other`-only 块（`已导入 {0, plural, other={0} 条}` 等）。**其余 8 枚不成块，逐枚理由**：`settings.chain.full`「已达上限 {0} 项」与 `settings.chain.truncated`「链长超过上限 {0}」——英文是 `The limit of {0}`，数词后没有名词；`workspace.broadcast.pane`「窗格 {0}」＝`Pane {0}` 是索引标签，名词在数词前且恒单数；`session.reconnect.line`「第 {0} / {1} 次」＝`reconnect {0} of {1}` 是序数加分母；`session.reconnect.countdown`「{0} 秒后」＝`in {0} s` 是单位；`tunnel.row.retry_wait`「第 {0} 次重试 · {1}s 后」两枚参数各是序数与单位；`tunnel.header.running`「运行中 {0}」＝`{0} running` 数词后无名词；`search.count_cap`「{0}+」是纯数字触顶标记。让它们变格要先改英文措辞（如 `{0} tunnel running`），那是 D7 排除的润色而非复数形态，故按 `§4.1` 第 8 条收窄判据。`diagnostics.*` 那一类「名词在前、数在后」的报告式短语（`Unknown sequences {0}`、`overloads {2}`）本就不在 F17 的 13 枚里，同一理由。
+
+证人 `the_count_phrases_decline_in_english_but_not_in_chinese` 走真解析链路（`StringTable::resolve`，`lookup` 只回模板），5 枚各渲染 n=1／n=2 两值，填充位取不含数字的 `"A"`。四条注入的读数：
+
+- **m4_one**（摘 `keys.header.count` 的 `one=` 分支）：**1 案 / 2 条**——「剥掉计数之后仍不等」那一句（`"1 keys"` 剥完得 `"2 keys"`，与 n=2 同串）＋ 金样 `"1 key"`。n=2 那两条金样仍绿：`other=` 分支没动。
+- **m4_all**（五枚全摘 `one=`）：**1 案 / 7 条**＝五枚各 1 条「剥完仍相等」＋ 2 条 n=1 金样。这是本行的正式读数。
+- **m4_noun**（`one={0} key` 写成 `one={0} keys`，形状对、文本错）：**1 案 / 2 条**（同上两句）。金样那半因此不是装饰：它守的是分支文本，形态断言守的是分支存在。
+- **m4_zh**（中文侧五枚块全部退回裸 `{0}`）：**0 红**，按等价变异结项。等价原因指名：`plural_category` 对 `language=="zh"` 恒返回 `Other`，块与非块渲染逐字同串，全量 1306 案（含 `itest_*` 里断中文上屏的那些）无一能分辨——**这 0 红同时是「中文侧改块行为不变」的正证**，中文侧那半边自此只有形态收益、没有证人（已回写 D7 行）。
+- 同批复跑判据 ② 的两侧未受影响：两档 key 集仍 466 对 466 逐字相等，改写只动模板值不动 key；两档同字条目仍 **13** 枚（5 枚成块条目的两档文本本来就不同）。
+
+还原后 `ctest --preset linux` **106/106**、`ctest --preset linux -E etest_` **103/103**、`borealis_test_runner` **1306 案全绿**（段 4 基线 1305 ＋ 判据 ③ 案 1）。§6 走查在本通道一律未做，批 4 不称「可用」。
 
 **结项读数**：待补（批 7 回填实测三项数与逐条注入的红案数，含等价变异指名道因）。
