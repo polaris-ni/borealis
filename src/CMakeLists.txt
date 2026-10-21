@@ -13,6 +13,7 @@ add_library(borealis_core STATIC
         config/store.cpp
         config/themes.cpp
         config/window_geometry_store.cpp
+        config/workspace_store.cpp
         conn/key_model.cpp
         conn/key_push.cpp
         conn/key_store.cpp

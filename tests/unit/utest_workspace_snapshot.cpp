@@ -1,12 +1,18 @@
 /// 测试类型: unit
 /// 目标单元: include/borealis/ui/workspace_snapshot.h + src/ui/workspace_snapshot.cpp
-/// 测试说明: 会话恢复快照的三条判据（`SPEC.FEAT.WS.11`，稿 §2 的 ②⑥⑦）：含四腿与多层分屏的样本
+///           + src/config/workspace_store.{h,cpp}（批 3 的落盘腿）
+/// 测试说明: 会话恢复快照的四条判据（`SPEC.FEAT.WS.11`，稿 §2 的 ②③⑥⑦）：含四腿与多层分屏的样本
 ///           「模型 → JSON → 模型」全等（相对长度按位比，稿 F24 的同一条口径）、坏文档逐例**整份**
 ///           拒绝且拒因必然落在被改那一处（顶层类型／缺键／元素类型／枚举域外／计数·深度·节点数超界／
 ///           序位与数组对位不合，稿 D9① 与 F25 的「文档闸」分工——一棵形状自身合不合法归
 ///           `PaneTree::restore` 的六道自检，本件判它第二遍就是造第二真值源）、明文凭据进不了这份文档
 ///           （键名五枚禁列子串 + 两种凭据形态的值侧断言，AGENTS.md §4.5 第 24 条）、同一份档案在
 ///           `config::Store` 的落盘与本件里写出逐字相同的 JSON（稿 F12 那处在册代价的缓解证人）。
+///           判据 ② 的落盘那条腿走真文件：写出 → 交 `config::WorkspaceStore` 的唯一顶层键 → 提交
+///           → 换一个实例读回 → 模型全等，并断言那份文件的顶层**只有这一枚键**、`schema_version`
+///           留在值内部（稿 D1① 的「与设置本体分家」）。判据 ③ 的档位半边是同一路盘上的另一例：
+///           只提交、不写入的进程里那份快照原样还在（本件无删除入口，清它的账归用户）；提交失败回一条
+///           ASCII 原因而不是抛出——装配层要拿它落一条 WARN（稿 D2①／D8①）。
 
 #include <algorithm>
 #include <cstddef>
@@ -18,10 +24,12 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 #include "aurora/core/json.h"
+#include "aurora/preferences/preferences.h"
 
 #include "borealis/config/settings.h"
 #include "borealis/config/store.h"
@@ -29,6 +37,9 @@
 #include "borealis/conn/profile.h"
 #include "borealis/ui/pane_tree.h"
 #include "borealis/ui/workspace_snapshot.h"
+
+#include "config/workspace_store.h"
+
 #include "framework/aurora_test.h"
 
 namespace borealis::test_cases::utest_workspace_snapshot {
@@ -37,8 +48,11 @@ namespace au = aurora;
 namespace fs = std::filesystem;
 
 using au::json::Value;
+using borealis::config::kWorkspaceFileName;
+using borealis::config::kWorkspaceLayoutKey;
 using borealis::config::Settings;
 using borealis::config::Store;
+using borealis::config::WorkspaceStore;
 using borealis::conn::ConnectionType;
 using borealis::conn::InMemoryCredentialStore;
 using borealis::conn::KnownHostsPolicy;
@@ -109,6 +123,17 @@ namespace {
     return *held;
 }
 
+/// @brief 「这份存储的面上有没有删除与清空这两跳」——判据 ③ 那句结构事实的编译期证人。
+///
+/// 写成 concept 而不是 `requires(WorkspaceStore &)` 直陈：后者对**非模板**类的成员名查找失败是硬错误
+/// （GCC 实测），只有把类型放在模板形参上才走替换失败→为假这条路。哪天有人给落盘件补了删除入口，
+/// 这一枚就红，逼他重读一遍判据 ③ 那句「关掉开关不清盘」。
+template <typename Target>
+concept HasDeleteEntry = requires(Target &target) {
+    target.remove(std::string{kWorkspaceLayoutKey});
+    target.clear();
+};
+
 /// @brief 在文本里把唯一一处 `from` 换成 `to`（换成空串即「这个键不存在」）。
 ///
 /// 两处都进断言：找不到就是用例的变异点拼错（目标判据根本没被碰到），出现两处就是「改的不是那一槽」。
@@ -133,6 +158,13 @@ namespace {
 /// @brief 走一遍「自家写侧写出 → 读侧读回」：判据 ② 的往返腿就是这一句，正例全靠它给结论。
 [[nodiscard]] auto reparse(const WorkspaceSnapshot &snapshot) -> SnapshotDecodeResult {
     return WorkspaceSnapshot::from_json(written(snapshot));
+}
+
+/// @brief 模型 → 一棵 `json::Value`：落盘那两案往 `Preferences` 里放的就是这一棵（键名由调用方给）。
+[[nodiscard]] auto layout_of(const WorkspaceSnapshot &snapshot) -> Value {
+    const auto layout = parse(written(snapshot));
+    AURORA_TEST_REQUIRE_MSG(layout.has_value(), "snapshot writer produced an unparseable document");
+    return *layout;
 }
 
 /// @brief 收集全部对象键名（照 `utest_config` 的凭据扫描同形态，判据 ⑥ 的键名半边用它）。
@@ -958,6 +990,116 @@ AURORA_TEST_CASE(the_profile_blocks_are_the_same_json_the_config_store_writes) {
                               std::string{key} + " block differs: " + bytes_of(store_side) + " vs " +
                                   bytes_of(snapshot_side));
     }
+}
+
+AURORA_TEST_CASE(the_snapshot_flushes_to_its_own_file_under_one_top_level_key) {
+    // 判据 ② 的落盘那条腿：交第三枚 `Preferences`、提交、换一个实例读回，模型仍逐字段全等。
+    const WorkspaceSnapshot sample = sample_snapshot();
+    const Value layout = layout_of(sample);
+    // 夹具名刻意**不等于**生产文件名：生产那枚名字只在默认绑定那一跳断，显式构造那一跳才分得开。
+    const auto file = make_path("store_round_trip.json");
+    {
+        WorkspaceStore store{file};
+        AURORA_TEST_REQUIRE(store.preferences() != nullptr);
+        AURORA_TEST_CHECK(store.preferences()->is_persistent());  // 内存模式的 `flush` 是恒失败的空转
+        AURORA_TEST_CHECK_EQ(store.path(), file);
+        store.preferences()->set(std::string{kWorkspaceLayoutKey}, layout);
+        AURORA_TEST_CHECK(!store.flush().has_value());
+    }
+    AURORA_TEST_CHECK(fs::exists(file));  // 框架无隐式 I/O：不提交就没有这份文件
+
+    WorkspaceStore reopened{file};
+    AURORA_TEST_REQUIRE(reopened.preferences() != nullptr);
+    const auto back = reopened.preferences()->get<Value>(std::string{kWorkspaceLayoutKey}, Value{});
+    const auto decoded = WorkspaceSnapshot::from_json(bytes_of(back));
+    AURORA_TEST_CHECK_MSG(decoded.reason.empty(), decoded.reason);
+    AURORA_TEST_REQUIRE(decoded.snapshot.has_value());
+    AURORA_TEST_CHECK_TRUE(*decoded.snapshot == sample);
+
+    // 稿 D1① 那句「与设置本体分家」在盘上的形态：顶层只有 `layout` 这一枚业务键（框架那枚 `…meta__`
+    // 不在 `keys()` 里），且快照自己的 `schema_version` 留在**值内部**——与 `borealis.json` 的顶层
+    // 版本档各走各的（裁决 7.87④ 同源的那条设计），文件名也与另两枚两两不同。
+    const auto top = reopened.preferences()->keys();
+    AURORA_TEST_REQUIRE_EQ(top.size(), 1U);
+    AURORA_TEST_CHECK_EQ(top.front(), std::string{kWorkspaceLayoutKey});
+    const auto on_disk = parse(read_file(file));
+    AURORA_TEST_REQUIRE(on_disk.has_value());
+    AURORA_TEST_CHECK(on_disk->at("schema_version") == nullptr);
+    AURORA_TEST_CHECK_EQ(field(*on_disk, {"layout", "schema_version"}).as_int().value_or(std::int64_t{-1}),
+                         kWorkspaceSnapshotSchemaVersion);
+    for (std::string_view other : {"borealis.json", "windows.json"}) {
+        AURORA_TEST_CHECK_NE(std::string{file.filename()}, std::string{other});
+    }
+    // 装配层走的是默认绑定：落点须是配置目录那一层（与另两枚同层、不含应用子目录）。
+    WorkspaceStore at_default{};
+    AURORA_TEST_REQUIRE(at_default.preferences() != nullptr);
+    const auto expected = au::preferences::Preferences::default_config_dir() / kWorkspaceFileName;
+    AURORA_TEST_CHECK_EQ(at_default.path(), expected);
+    AURORA_TEST_CHECK(at_default.preferences()->is_persistent());
+}
+
+AURORA_TEST_CASE(committing_without_writing_keeps_the_previous_snapshot) {
+    // 判据 ③ 的档位半边：`connection.restore_sessions` 关掉那一程，装配层只构造与提交、从不写入。
+    // 本件的面上**没有删除与清空这两跳**（`HasDeleteEntry` 那枚 concept 是这一形态的编译期证人），
+    // 故那句「关掉之前已有的快照文件不被删除」是结构事实，清这份账归用户（稿 D9① 的在册代价）。
+    static_assert(!HasDeleteEntry<WorkspaceStore>);
+
+    const WorkspaceSnapshot sample = sample_snapshot();
+    // 夹具名刻意**不等于**生产文件名：生产那枚名字只在默认绑定那一跳断，显式构造那一跳才分得开。
+    const auto file = make_path("keep_previous.json");
+    {
+        WorkspaceStore writer{file};
+        AURORA_TEST_REQUIRE(writer.preferences() != nullptr);  // 缺这一跳下面全是空指针
+        writer.preferences()->set(std::string{kWorkspaceLayoutKey}, layout_of(sample));
+        AURORA_TEST_CHECK(!writer.flush().has_value());
+    }
+    WorkspaceStore before_store{file};
+    AURORA_TEST_REQUIRE(before_store.preferences() != nullptr);
+    const auto before = before_store.preferences()->keys();  // 只读，不动盘
+    AURORA_TEST_REQUIRE_EQ(before.size(), 1U);
+
+    WorkspaceStore idle{file};
+    AURORA_TEST_REQUIRE(idle.preferences() != nullptr);
+    AURORA_TEST_CHECK(!idle.flush().has_value());
+    AURORA_TEST_CHECK(fs::exists(file));
+    AURORA_TEST_CHECK(idle.preferences()->contains(std::string{kWorkspaceLayoutKey}));
+    AURORA_TEST_CHECK_EQ(idle.preferences()->keys(), before);
+    const auto kept = idle.preferences()->get<Value>(std::string{kWorkspaceLayoutKey}, Value{});
+    const auto decoded = WorkspaceSnapshot::from_json(bytes_of(kept));
+    AURORA_TEST_CHECK_MSG(decoded.snapshot.has_value(), decoded.reason);
+    AURORA_TEST_REQUIRE(decoded.snapshot.has_value());
+    AURORA_TEST_CHECK_TRUE(*decoded.snapshot == sample);
+
+    // 反空转：一枚**没写过布局**的存储上这两跳确实读不出东西——于是上面那一串「还在」不是恒真的空话。
+    // 刻意不走框架的 `remove` 那条腿当对照：实测（独立探针，稿 F28）对象值的键删不掉——框架的墓碑按
+    // `flatten` 的**叶子**复合键记账，`remove("layout")` 打的是容器层的键，重算 `root_` 时叶子照旧复活，
+    // 盘上那一棵原样不动。这条对本棒只有好处：判据 ③ 那句「不被删除」因此连框架那跳都挡得住。
+    WorkspaceStore fresh{make_path("absent.json")};
+    AURORA_TEST_REQUIRE(fresh.preferences() != nullptr);
+    AURORA_TEST_CHECK_FALSE(fresh.preferences()->contains(std::string{kWorkspaceLayoutKey}));
+    AURORA_TEST_CHECK_TRUE(fresh.preferences()->get<Value>(std::string{kWorkspaceLayoutKey}, Value{}).is_null());
+    AURORA_TEST_CHECK_TRUE(fresh.preferences()->keys().empty());
+}
+
+AURORA_TEST_CASE(a_failed_snapshot_flush_comes_back_as_a_reason) {
+    // 装配层拿这一句去落一条 WARN（稿 D2① 的落盘点与 D8① 的「只留日志」都靠它）：把原因吞了就等于
+    // 「布局没落盘、日志却说落了」。形态照 `utest_window_geometry_store` 里那条 blocker 案。
+    const auto dir = make_path("flush_blocked");
+    std::error_code ec;
+    fs::create_directories(dir, ec);  // 先有目录，`blocker` 才当得起「普通文件占了父目录这一格」
+    const auto blocker = dir / "blocker";
+    {
+        auto out = std::ofstream{blocker, std::ios::binary | std::ios::trunc};
+        out << "not a directory";
+    }
+    const auto file = blocker / kWorkspaceFileName;
+    WorkspaceStore store{file};
+    AURORA_TEST_REQUIRE(store.preferences() != nullptr);
+    store.preferences()->set(std::string{kWorkspaceLayoutKey}, layout_of(sample_snapshot()));
+    const auto reason = store.flush();
+    AURORA_TEST_REQUIRE(reason.has_value());
+    AURORA_TEST_CHECK(!reason->empty());
+    AURORA_TEST_CHECK_FALSE(fs::exists(file));  // 失败就是真没写出去，不是「写了但报了个错」
 }
 
 }  // namespace borealis::test_cases::utest_workspace_snapshot
