@@ -94,8 +94,10 @@ if (WIN32)
     target_sources(borealis_core PRIVATE
             platform/win/conpty_connection.cpp
             platform/win/file_secure.cpp
+            platform/win/instance_channel.cpp
             platform/win/local_terminal.cpp
             platform/win/open_url.cpp
+            platform/win/process_args.cpp
             platform/win/serial.cpp
             platform/win/tcp.cpp
             platform/win/user_dir.cpp
@@ -104,8 +106,10 @@ elseif (UNIX)
     target_sources(borealis_core PRIVATE
             platform/posix/file_secure.cpp
             platform/posix/forkpty_connection.cpp
+            platform/posix/instance_channel.cpp
             platform/posix/local_terminal.cpp
             platform/posix/open_url.cpp
+            platform/posix/process_args.cpp
             platform/posix/serial.cpp
             platform/posix/tcp.cpp
             platform/posix/user_dir.cpp)
