@@ -297,6 +297,21 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     AURORA_TEST_CHECK_EQ(keys.size(), 69U);
 }
 
+AURORA_TEST_CASE(command_block_separator_is_a_wired_immediate_terminal_switch) {
+    // INTEG.01 的三条落点各是一句可执行的判据（裁决 7.123 D6①／D9①）：悬停分隔线是纯视觉消费方，
+    // 故为 Wired；开关即时生效（视口每帧取用），故为 Immediate；缺省关是「新增视觉默认不打扰」的
+    // 落点——改真会让用户一开终端就看到未要求的装饰线。
+    const SettingsControl *control = borealis::ui::find_settings_control("terminal.command_block_separator");
+    AURORA_TEST_CHECK(control != nullptr);
+    if (control == nullptr) {
+        return;
+    }
+    AURORA_TEST_CHECK(control->page == SettingsPage::Terminal);
+    AURORA_TEST_CHECK(control->consumer == ConsumerStatus::Wired);
+    AURORA_TEST_CHECK(control->effect == EffectLevel::Immediate);
+    AURORA_TEST_CHECK(!Settings{}.terminal.command_block_separator);
+}
+
 AURORA_TEST_CASE(keys_are_unique_and_rows_are_addressable) {
     const auto &catalog = borealis::ui::settings_catalog();
 

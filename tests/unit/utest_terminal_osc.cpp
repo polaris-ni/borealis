@@ -322,6 +322,36 @@ AURORA_TEST_CASE(osc_133_missing_exit_code_reads_as_zero) {
     AURORA_TEST_CHECK_TRUE(term.command_blocks().back().failed());
 }
 
+AURORA_TEST_CASE(osc_133_prompt_part_between_c_and_d_keeps_output_start) {
+    // 只断「D 之后再发 P」不足以守住映射：那时块已收，任何标记都进不来。真实的右提示符可以落在
+    // C 与 D 之间，若 P 被当成输出起点，复制会从那一行（或那一列）起算而丢掉前段输出。
+    auto term = make_terminal(narrow_only);
+    term.feed(osc_bel(U"133;A") + U"$ " + osc_bel(U"133;B") + U"run\r\n" + osc_bel(U"133;C") +
+              U"a\r\n");
+    term.feed(osc_bel(U"133;P;k=r"));
+    term.feed(U"b\r\n" + osc_bel(U"133;D;0"));
+
+    AURORA_TEST_CHECK_EQ(term.command_blocks().size(), std::size_t{1});
+    const auto &block = term.command_blocks().front();
+    AURORA_TEST_CHECK_EQ(block.output_start_row, std::int64_t{1});
+    AURORA_TEST_CHECK_EQ(block.output_start_column, std::size_t{0});
+    AURORA_TEST_CHECK_EQ(block.output_end_row, std::int64_t{3});
+    AURORA_TEST_CHECK_EQ(block.output_end_column, std::size_t{0});
+}
+
+AURORA_TEST_CASE(osc_133_prompt_part_without_c_never_opens_output) {
+    // 只发 A/B/P 的集成（Warp 一类）不产可复制输出——P 不是 C。若把 P 当输出起点，这里会凭空
+    // 得到一段从提示符行开始的「输出」，正是需求明令排除的内容（裁决 7.123 D2① 的 fail-closed）。
+    auto term = make_terminal(narrow_only);
+    term.feed(osc_bel(U"133;A") + U"$ " + osc_bel(U"133;B") + U"run\r\n" +
+              osc_bel(U"133;P;k=r") + U"out\r\n" + osc_bel(U"133;D;0"));
+
+    AURORA_TEST_CHECK_EQ(term.command_blocks().size(), std::size_t{1});
+    const auto &block = term.command_blocks().front();
+    AURORA_TEST_CHECK_FALSE(block.has_output_start);
+    AURORA_TEST_CHECK_FALSE(block.has_copyable_output());
+}
+
 AURORA_TEST_CASE(ed3_and_ris_clear_command_blocks) {
     auto term = make_terminal(narrow_only);
     term.feed(osc_bel(U"133;A") + U"p" + osc_bel(U"133;B") + U"cmd\r\n" + osc_bel(U"133;C") +
