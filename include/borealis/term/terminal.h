@@ -13,7 +13,9 @@
 // `SPEC.FEAT.TERM.05`（滚动区域、光标定位/保存恢复/可见性、擦除与插删、制表位）、
 // `SPEC.FEAT.TERM.07`（OSC 0/2/7/8/52/133 的消费，结果形态见 `term/osc.h`）、
 // `SPEC.FEAT.TERM.08` 的占位机制（格数由注入的 WidthPolicy 给出，本模块不查表）、
-// `SPEC.FEAT.RENDER.04` 的状态机前置（DECSCUSR 光标形态与闪烁档；形态绘制归渲染侧）。
+// `SPEC.FEAT.RENDER.04` 的状态机前置（DECSCUSR 光标形态与闪烁档；形态绘制归渲染侧）、
+// `SPEC.FEAT.INTEG.03` 的通知来源（OSC 9 / 777 在此**只留存**，投递归主线程的
+// `session::NotificationOutbox`；切分与折算见 `term/notification.h`）。
 // ============================================================
 
 #include <array>
@@ -33,6 +35,7 @@
 #include "borealis/term/charset.h"
 #include "borealis/term/clipboard_read.h"
 #include "borealis/term/command_block.h"
+#include "borealis/term/notification.h"
 #include "borealis/term/osc.h"
 #include "borealis/term/width.h"
 #include "borealis/vt/parser.h"
@@ -221,6 +224,16 @@ class Terminal final : public vt::SequenceSink {
     /// @return 待写文本；无待写请求时为 `std::nullopt`（空文本是合法请求，故用 has_value 判别）。
     auto take_clipboard_write() -> std::optional<std::u32string>;
 
+    /// @brief 取走待投递的系统通知（`OSC 9` / `OSC 777`，`SPEC.FEAT.INTEG.03`）。
+    ///
+    /// 与 `take_clipboard_write` 同一条锁纪律的第二个现形（架构 §3.4、§5.4）：投递是 main-thread
+    /// only 的 OS IO（Aurora `notification.h` 的线程栏原文），故锁内只留一份待发。取走即清空；
+    /// 同一帧窗口内的第二条**覆盖**第一条并计一次 `OscState::notification_superseded`——这不是
+    /// 本仓单方面的合并，`Notification::tag` 在支持去重的服务上本就是「同 tag 替换前一条」
+    /// （稿 D3①／D4① 与其实测依据 F7）。
+    /// @return 待发通知；无待发时为 `std::nullopt`。
+    auto take_notification() -> std::optional<PendingNotification>;
+
     /// @brief 挂上 OSC 52 读方向的授权闸门（`SPEC.FEAT.CONN.12`；会话层在构造后接线）。
     ///
     /// 与 `set_response_sink` 同一套观察指针形态：闸门是 app 级一份，生命周期由装配层担保。
@@ -276,6 +289,7 @@ class Terminal final : public vt::SequenceSink {
     auto apply_hyperlink(std::u32string_view args) -> void;
     auto apply_clipboard(std::u32string_view args) -> void;
     auto apply_prompt_marker(std::u32string_view args) -> void;
+    auto apply_notification(std::int32_t code, std::u32string_view args) -> void;
 
     /// @brief 把当前游标折成绝对行并喂给命令块记录件；备屏期间忽略。
     auto record_prompt_marker(PromptMarker marker, std::optional<std::int32_t> exit_code = std::nullopt)
@@ -346,6 +360,8 @@ class Terminal final : public vt::SequenceSink {
     grid::HyperlinkId next_hyperlink_id_ = 1;
     grid::HyperlinkId current_hyperlink_ = grid::kNoHyperlink;  ///< 笔上挂着的链接（`OSC 8` 区间）。
     std::optional<std::u32string> clipboard_write_;  ///< 待写剪贴板文本：锁内留存、主线程取走落地。
+    std::optional<PendingNotification>
+        pending_notification_;  ///< 待发通知：与上一行同一条锁纪律的第二个现形（`SPEC.FEAT.INTEG.03`）。
     /// 读方向的授权闸门（app 级一份，装配层担保生命周期；未接线即 `Deny`，见 `clipboard_read.h`）。
     const ClipboardGate *clipboard_gate_ = nullptr;
     /// 待答读请求，登记序即应答序；有界 `kMaxClipboardReadRequests`，满档当场回空响应而非丢弃。

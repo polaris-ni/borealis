@@ -814,12 +814,34 @@ auto Terminal::do_osc(const vt::Sequence &seq) -> void {
         case 133:
             apply_prompt_marker(args);
             break;
+        case 9:   // 只有正文的老约定（xterm / iTerm2）；标题由会话标题兜底（稿 D2①）。
+        case 777:  // `notify ; <title> ; <body>`：带子命令的扩展形态，其余子命令不归本件。
+            apply_notification(code, args);
+            break;
         default:
             // 未消费的命令号（`4`/`10`/`110` 那一族调色板与颜色设置）计数进可观测面板，
             // 不中断解析（架构 §5.5）。
             ++osc_state_.unhandled_count;
             break;
     }
+}
+
+auto Terminal::apply_notification(std::int32_t code, std::u32string_view args) -> void {
+    const auto draft = draft_notification(code, args, osc_state_.title);
+    if (draft.drop == NotificationDrop::NotNotify) {
+        // `777` 下面别的子命令与拆不出子命令的形态都不归本件：留成 §5.5 那条降级账，
+        // 而不是替远端程序猜一个「它大概想弹横幅」。
+        ++osc_state_.unhandled_count;
+        return;
+    }
+    ++osc_state_.notification_requests;
+    if (draft.drop == NotificationDrop::EmptyBody) {
+        return;  // 空白横幅是纯噪音（判据 ⑥）；账已经记上，屏上一条都不发。
+    }
+    if (pending_notification_.has_value()) {
+        ++osc_state_.notification_superseded;
+    }
+    pending_notification_ = draft.text;
 }
 
 auto Terminal::apply_hyperlink(std::u32string_view args) -> void {
@@ -931,6 +953,12 @@ auto Terminal::take_clipboard_write() -> std::optional<std::u32string> {
     auto text = std::move(clipboard_write_);
     clipboard_write_.reset();
     return text;
+}
+
+auto Terminal::take_notification() -> std::optional<PendingNotification> {
+    auto pending = std::move(pending_notification_);
+    pending_notification_.reset();
+    return pending;
 }
 
 auto Terminal::take_clipboard_reads() -> std::vector<ClipboardReadRequest> {
@@ -1137,6 +1165,7 @@ auto Terminal::reset_to_default() -> void {
     current_hyperlink_ = grid::kNoHyperlink;
     clipboard_write_.reset();
     clipboard_read_pending_.clear();
+    pending_notification_.reset();  // 动作型槽随 RIS 一起撤：RIS 的语义是「会话回到初始态」
     pending_wrap_ = false;
     parser_.reset();
     set_tab_stops_default();

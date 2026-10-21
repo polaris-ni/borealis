@@ -42,6 +42,7 @@ add_library(borealis_core STATIC
         term/command_block.cpp
         term/keymap.cpp
         term/mouse.cpp
+        term/notification.cpp
         term/osc.cpp
         term/paste.cpp
         term/width.cpp
