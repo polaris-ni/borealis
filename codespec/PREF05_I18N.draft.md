@@ -143,7 +143,7 @@
 
 ## 8 判据与变异计划＋实测读数（结项三件齐：ctest 全绿 + runner 案数增量 + 变异证人逐条转红）
 
-计划六条注入，每条都要指名它打到的**独立**断言；打出零红或一片红的，按等价变异处理并写明等价原因（AGENTS.md §4.4 第 22 条）。
+计划七条注入（表随批 2 补到 m7），每条都要指名它打到的**独立**断言；打出零红或一片红的，按等价变异处理并写明等价原因（AGENTS.md §4.4 第 22 条）。
 
 | 号 | 注入 | 预期转红的证人 |
 |:---|:---|:---|
@@ -156,5 +156,16 @@
 | m7 | 摘掉场景根外那枚 `LocaleProvider`（批 2 的接线撤回，其余不动） | 判据 ① 的绘制侧半边（F19 已实测：这条注入在 en 档有内容时**必然**打红 G28 那一案；批 3 之前 en 档为空，故 m7 只登记形态、红案数随批 3 收尾复跑给） |
 
 **批 1 读数**（表本体收敛那笔，本棒实测）：m6 注入形态＝在生效那五行**前面**加回一份 `{"settings.shortcut.column.title", "动作"}`（即 F8 的原始形态），`ctest --preset linux -R itest_settings_panel` 转红、`--filter five_shortcut` 读数**恰 1 案红**且红的正是 `title` 那一行断言（`"??????"` vs `"?????????"`，即三字对四字）；还原后 `ctest --preset linux` **105/105**、`borealis_test_runner` **1296 案全绿**（开工基线 1295 + 本案）。同批可见变化一处：快捷键只读表列头从「动作」变成「动作名」（D10 选的正是这一份）。
+
+**批 2 读数**（接缝与那一行那笔，本棒实测）。三条注入各自打到**独立**断言，逐条红案数如下。
+
+- **m1**（装填腿忽略参数、写死中文档）：`ctest --preset linux -R utest_i18n_tiers` **恰 1 案红**，红的是 `installing_registers_only_the_selected_tier`，案内逐条报 **466** 条 `zh entry leaked into the en table`——即中文档全部 key 都出现在按 `en` 装填的表里。这一案就是判据 ① 装填腿的半边证人，也是 D4 那条「只装选定那一档」改形的直接守卫（`§4.1` 第 2 条）。
+- **m3**（`settings_string_keys(en)` 返回中文档 key 集）：**2 案红**——`the_on_disk_name_is_the_locale_tag`（按落盘名 `en` 在英文表里逐条解析不中，因为那张表其实根本没装英文档）与 `installing_registers_only_the_selected_tier`（反方向那句 `en entry leaked into the zh table` 被同一份 key 集打中）。m3 打的是**证件自身**，故这两案红正好说明判据 ①② 的读点不是空转。
+- **m5**（catalog 那一行的 `effect`）：两种越界形态各打不同断言，故都记。改 `Immediate` ⇒ **2 案红**（`utest_settings_catalog` 的 `language_row_is_a_wired_next_launch_choice` 与 `itest_settings_panel` 的 `deferred_and_next_session_rows_carry_their_badges`——角标为空而期望「重启后生效」）；改 `NextSession` ⇒ **3 案红**，除上面两案外还多出 `itest_settings_panel` 的 `grade_columns_match_the_two_physical_boundaries`。第三案不在判据 ⑤ 的预期证人列里，是**额外证人**：那一案手抄了「Wired ∧ NextSession」的 20 键全集，新行一旦挂进 `NextSession` 就让实际集合涨到 21，于是「新档行加错生效档」结构上抓得住（§4.1 第 1 条末尾那句「面板角标分支不能与它自己的生效档分家」由此有证）。
+- **m7**（摘掉场景根外那枚 `LocaleProvider`）：**本批仍打不红，且等价原因已实测定位**——摘掉后绘制侧按 `Locale{}`（＝`en`）查表，而 `lookup` 的第一级 miss 回落到表的缺省档 tag，那一 tag 随装填参数＝`zh`，于是文案照旧是中文。这条与 `§4.1` 第 3 条同源：判据 ②③ 与 m7 的常驻证人一律排在英文档本体之后（批 3）。批 2 只把**接线**做完：`src/main.cpp` 与 `itest_settings_panel` 的 `Harness` 各装了一枚 `au::LocaleProvider(settings_locale(), …)`，驱动台那半边从此与生产同形态，红案数随批 3 收尾复跑给。
+
+还原后 `ctest --preset linux` **106/106**、`ctest --preset linux -E etest_` **103/103**、`borealis_test_runner` **1302 案全绿**（批 1 基线 1296 ＋ 新套件 `utest_i18n_tiers` 5 案 ＋ 新 catalog 案 1）。中文词条 **464 → 466**（`appearance.language` 与 `settings.badge.next_launch`）；`settings_catalog` 键数 **69 → 70**、`Absent` 计数闸 **19 → 19** 不动（新行是 `Wired`）。
+
+两处连带更正如实登记。① 外观页多一行把设置浮层的可用高度吃掉一档，`itest_settings_panel` 的字体候选案先红在「no font candidate is dispatch-reachable」上。改的是**用例侧的挑选启发**而不是实现：`reveal_font_trigger` 增加 `room_below_dp` 形参，只由真要探候选的那一例传 `120.0F`，其余三处保持缺省 `0.0F`——第一版曾在函数内硬编码这 120 dp，结果把锚点案的 A4-b 那条（通知条必须画在触发器下方）打红，形参化之后 `ctest -R itest_settings_panel` 64/64 绿。② 生产侧（`src/main.cpp`）那枚 `LocaleProvider` 注入在本通道**没有自动化证人**：runner 不装配 `main.cpp`（裁决 7.83），故 §5 第 7 条「现场与驱动台都装 provider」这一不变量只有编译＋链接＋§6 走查第 ①② 条兜底，与判据 ⑦ 同档登记；本通道亦无真机，§6 全部条项**未走查**，批 2 不称「可用」。
 
 **结项读数**：待补（批 7 回填实测三项数与逐条注入的红案数，含等价变异指名道因）。
