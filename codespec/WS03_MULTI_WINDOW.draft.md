@@ -2,11 +2,11 @@
 
 需求：`SPEC.FEAT.WS.03` 独立多窗口（依赖 Aurora `Application::open_window`）；窗口布局分别记忆。与单实例参数转交的交互见裁决 **7.7**（`--new-window` 显式开新窗口）。
 分期：`PLAN.md` 记 P2 / M4，现状只有一句「M4」（`SPECIFICATIONS.md` §7 无该条裁决，`ARCHITECTURE.md` §8.4 只写了「消费 `Application::open_window`」）。
-本稿状态：**§4 的 D1–D14 每条都给了推荐档，未经人逐条裁决**（常存授权「遇到问题按推荐去做」下的自决收口，与 `INTERACT.05`（裁决 7.119）、`WS.08`（7.120）同形态）。§0 的 F1–F16 是本会话读源与读装配层的实测事实，标「未实测」者除外。
+本稿状态：**§4 的 D1–D14 每条都给了推荐档，未经人逐条裁决**（常存授权「遇到问题按推荐去做」下的自决收口，与 `INTERACT.05`（裁决 7.119）、`WS.08`（7.120）同形态）。§0 的 F1–F16 是本会话读源与读装配层的实测事实，标「未实测」者除外；F17–F24 是批 4 开工前补读 Aurora 活动分支的实测事实。
 
 ---
 
-## 0 地基实测（F1–F16）
+## 0 地基实测（F1–F24）
 
 **框架面（Aurora 活动分支，读源）**
 
@@ -30,6 +30,17 @@
 - **F15 单实例转交的唤醒与落点**：`startup_wake` 是 `std::atomic<au::Surface *>`（517，置址 3105、清址 3119、transport 线程读 545/554），`app.run()` 的帧循环由 `Application` 统一驱动**所有**宿主（`application.h` 帧循环注释）⇒ 叫醒任意一扇 surface 就会跑到 `set_on_frame`，唤醒腿不需要「叫醒每一扇」；需要的是 `apply_startup_request`（2896）有一个明确的落点窗。`--new-window` 现在被拒：2898-2901，诊断 `--new-window needs SPEC.FEAT.WS.03, which is not implemented yet`，且只拒转交那一支（冷启动同标志无额外动作）。`cli` 的线格式是 `BORI | version u8 | action u8 | flags u8 | reserved u8 | …`（`include/borealis/cli/handoff.h` §头部注释），`StartupAction` 现只两值（`startup.h` 31-33），解码侧对未知 action **fail-closed 整帧拒**（`utest_cli_handoff` 在册）。
 - **F16 窗口几何与 DPI 在本仓是零**：`src/main.cpp` 无 `set_size`/`set_position` 读写、无 `opts.persist_id`、无 `set_window_geometry_store` 调用；`include/borealis/config/settings.h` 的键表里**没有任何窗口几何键**；窗口尺寸只有 598-600 那一句硬编码 960×640。⇒ 「窗口布局分别记忆」是从零起，且**不该**进 `config::Settings`（见 D9）。
 - ~~**未实测项**（本稿不冒充读数）：本仓无头 itest 里同时开两扇 `au::Window{HeadlessSurface}` 的可行为~~ **已闭合（批 1-A，2026-10-21）**：`tests/integration/itest_workspace_window.cpp` 五例全绿，台账与本批变异读数见 §11。余下判据仍以该 harness 为前提，但「两扇无头窗各渲染各自的 `TabBar`」不再是没有读数的假设。
+
+**批 4 开工实测（2026-10-21 补，读的是 Aurora 活动分支源码，路径按其仓内记法）**
+
+- **F17 关闭链路的形状与时序**：OS 事件 → `Surface::should_close()`（虚函数，`window/surface.h`）→ `Window::should_close()` → `WindowHost::should_close()`（`app/window_host.h`，`return close_requested_ || window_->should_close()`）→ `Application::reap_closed()`。`Application::step_frame` 的顺序是 `on_frame_ → render_all → reap_closed` ⇒ **`set_on_frame` 里轮询 `should_close()` 是唯一「销毁前」可观测点**，本批的撤账入口据此选它。
+- **F18 没有否决机制**：全仓无 `close_requested` 回调、无返回 bool 的拦截点、无可撤销关闭的 API（框架文档 `codespec/specification/06-app-platform.md` 亦无该提案）。⇒ **D4 的「本棒不做关窗确认」由推测升级为实测**；真要做 veto 只能自绘标题栏（CSD）或在 `set_on_frame` 里抢在帧末之前弹框——而抢了之后**关不下来**，只会变成「弹框还开着、窗已经没了」。跨仓接缝属 Aurora 的账，登记为候选缺口。
+- **F19 `set_on_window_closed` 有两处不能用于撤账**：① 触发点在宿主 `teardown()` + `hosts_.erase()` **之后**，此刻 `Scene`／`FocusManager`／控件树已散；② `reap_closed` **保留最后一个宿主**，于是「关掉唯一那扇窗」（＝主窗且无兄弟窗）时该回调**根本不触发**（框架 `utest_window_lifecycle` 只断非主窗 id 进回调）。⇒ 撤账不能只挂它；判活也不许只判 `window_host(id) != nullptr`，要读 `should_close()`。
+- **F20 `WindowId` 单调递增、永不复用**（`register_host` 里 `next_id_++`），宿主注销后 `window_host(id)` 回空。⇒ `tracker.forget(id)` 之后该号不可能被下一扇窗撞上（与 `next_tab_id`、`PaneId` 同一条理由）。
+- **F21 `ExitPolicy` 缺省 `LastWindowClosed`，但全为无头宿主时永不驱动退出**（`should_exit()` 里 `any_window` 为假 ⇒ 不退出）。⇒ 无头 itest 可以「关掉一扇而进程不退」，这正是本批机制证人的地基；反过来，退出序那条判据在无头面**不可证**，只能走查。
+- **F22 宿主按值拥有 `Scene` 与 `FocusManager`，`teardown()` 先 `focus_.clear()`**；应用侧另存的控件 `shared_ptr` 在宿主销毁后仍存活（`Node` 是共享所有权包装），框架**不提供销毁前通知**。另实测：`Dialog`/`Popup` 无析构触发点 ⇒ **关窗路径上 `set_on_close` 不会被调用**。本仓四件用了它：`DebugPanel`、`StartupNotice`（`scope_pushed_ = false`）、`SearchOverlay`（`on_popup_closed()`）、`SettingsPanel` 只是注释——四处都随本控件一起析构，故「没回调」不产生悬垂，只产生「内部状态在销毁链上一度不一致」，登记为观察项（若日后有件靠它做外部副作用，那条会静默丢失）。
+- **F23 遍历入口只有 `windows()`**（回登记序的 `std::vector<WindowHost *>`）＋ `window_host(id)` ＋ `window_count()` ＋ `main_window()`；**无** `window_ids()` / `for_each_window_host`。
+- **F24 无头后端可模拟「用户点了关闭」**：`HeadlessSurface::set_should_close(bool)` 是框架自带的测试 seam（`window/surface.h` 注释即「多窗口测试需驱动『某一窗口被关闭』」），框架侧 `utest_multi_window.closing_one_window_keeps_others_running` / `close_window_requests_reap_at_frame_end` 与 `utest_window_lifecycle` 全用它。⇒ 本批的窗侧判据可在 `itest_workspace_window` 里真驱动关闭。
 
 ---
 
@@ -57,14 +68,14 @@
 - **D1 一扇新窗的初始内容**：① 推荐＝**一个新缺省本地标签**，目录取**配置值**、**不**继承发起窗的 OSC 7（新窗没有「当前标签」，`INTEG.02` 的判据「当前标签是活着的本地终端」在结构上不成立）。备选＝继承发起窗焦点格（代价：两扇同名标签同一目录，与「新窗是独立工作现场」的直觉相反）。代价：用户想要「把这格挪到新窗」时只能手工再开。
 - **D2 新窗入口**：① 推荐＝命令 `workspace.new_window` + `Ctrl+Shift+N`（分屏保留键表的**第十五条**，`utest_workspace_keys` 的认领集随之 14→15 条）+ 命令面板一条 + 标签条不加「＋新窗」按钮（「＋」已归新标签）。备选＝只做命令不做键（与 WT 习惯不符）。
 - **D3 关窗的判据与出口**：① 推荐＝**不做**「末位标签关闭 ⇒ 关窗」（`WS.01` 的末位标签本来就没有关闭按钮，`ARCHITECTURE.md` §8.1 把那条路径挂在本条名下，但按现状它不需要存在）；关窗只有 OS 关闭钮与 `workspace.close_window`（**不给缺省键**，`Ctrl+Shift+W` 留给「关标签」的既有直觉）。代价：架构 §8.1 那句话要就地改口（见 §10 文档回写）。
-- **D4 关窗要不要确认「还有会话在跑」**：① 推荐＝**本棒不做**——框架没有「关闭请求可否决」的公共入口（只有 `close_window` 立即 `Window::close()`，`F1`），做 veto 需先有 Aurora 侧接缝。关窗即随窗析构会话，与关标签的确认判据不同档，登记为边界。备选＝向 Aurora 提关闭否决任务（跨仓，另棒）。代价：用户点 X 时正在跑的进程被静默带走 ⇒ 这条必须写进 §10 的「不称可用」账。
+- **D4 关窗要不要确认「还有会话在跑」**：① 推荐＝**本棒不做**——框架没有「关闭请求可否决」的公共入口（**F18 已实测**：全仓无 `close_requested` 回调、无返回 bool 的拦截点；原先只按 F1 推断，现升级为读数）。即便在 `set_on_frame` 里抢在帧末弹框也**关不下来**（F17 的 `reap_closed` 紧跟在 `render_all` 之后），结果只会是「框还开着、窗已经没了」。做 veto 需先有 Aurora 侧接缝，登记为候选缺口。关窗即随窗析构会话，与关标签的确认判据不同档，登记为边界。备选＝向 Aurora 提关闭否决任务（跨仓，另棒）。代价：用户点 X 时正在跑的进程被静默带走 ⇒ 这条必须写进 §10 的「不称可用」账。
 - **D5 广播组跨不跨窗**：① 推荐＝**跨窗成立**（组本就 app 级、成员键 `(TabId, PaneId)` 全局唯一，F10/F14），横幅改**每窗一枚**且只列本窗成员，计数按全组去重会话数（与 `WS.09` 现口径同一条算式）。备选＝组按窗隔离（代价：切窗丢组，违背「批量操作」的初衷）。
 - **D6 面板与浮层的单例性**：① 推荐＝设置页／密钥／SFTP／隧道／侧栏／命令面板保持 **app 级单实例**，浮层挂到**发起命令的那一扇窗**的 `OverlayHost`（关闭即摘回），同一面板换窗打开时先从原窗摘掉；凭据询问链同一条规则。备选＝每窗各一套面板（代价：`pending_*` 挂起态、worker 队列、密钥扫盘缓存全部要复制，本棒做不完）。代价：两扇窗不能同时各开一块 SFTP 面板；设置页在两窗间是「搬过去」而不是「各有一份」。
 - **D7 命令与快捷键落哪一扇窗**：① 推荐＝本仓自持 `ui::ActiveWindowTracker`（纯逻辑件：每窗在「本窗的视口/标签条/横幅收到一次按键或一次指针 Press」时上报自己的 `WindowId`，tracker 记最近一次；查不到回主窗）。备选＝向 Aurora 提 G42（§3），等回货再开工。代价：OS 层「哪扇在活动」与本仓「最近收到派发的窗」在无头与失焦场景下可能不同（真机走查项），且回货后要替换一处；换来的是**本棒不跨仓、不阻塞**。
 - **D8 窗口标题**：① 推荐＝**每窗各写各的**（本窗选中格的 `resolve_tab_name`，沿用 `WS.06` 的逐帧差分写法），标题内容不含窗序号。备选＝加「窗口 N」后缀（代价：OS 任务栏噪音，且单窗常态下多一枚后缀）。
 - **D9 几何分别记忆的键与载体**：① 推荐＝用框架 `persist_id` + `preferences::Preferences`（F6），文件落配置目录另起一枚（`windows.json`），键＝`main`（主窗）与 `window-2`、`window-3`…（创建序）；`flush()` 取在「任一窗关闭后」与「退出前」两处。明确**不**进 `config::Settings` schema（代价：设置核对表 69 键不动、`PREF.07` 的导出件不含几何——几何是本机屏幕相关值，跨机导出即坏值，这条是特性不是漏项）。备选＝自写 `Settings.windows[]`（违背 AGENTS §5.2「原语须以公共 API 存在，本仓只消费」）。
 - **D10 `--new-window` 放开**：① 推荐＝`StartupAction` 加 `NewWindow`（线格式 magic/version/action 字段都不动，action 多一个值），转交侧收到即开一扇新窗并按 D1 落一个缺省本地标签，**`--profile`/`--cwd` 与 `NewWindow` 相容**（新窗的首标签吃该档案/目录）；`--help` 文案补一条。旧实例若收到它不认识的 action 值 ⇒ 整帧 fail-closed 拒（F15），诊断照旧退 2。代价：混版（旧实例 + 新 CLI）时该旗标不生效。
-- **D11 新窗的退出与「最后一扇」**：① 推荐＝保持框架缺省 `LastWindowClosed`（F8）——关掉最后一扇窗即退出，退出序沿用现主窗那一条（先 `startup_wake.store(nullptr)` → `instance_listener.reset()` join 线程 → 遍历**全部窗全部格**的会话 `close()`），`ExplicitOnly` 与 `MainWindowClosed` 都否。代价：主窗先关时「主窗」身份随 F8 的帧末回收保留最后宿主，`app.focus()` 语义仍指主宿主 ⇒ 本仓不得再依赖 `app.focus()`（F3 那一处改按窗取）。
+- **D11 新窗的退出与「最后一扇」**：① 推荐＝保持框架缺省 `LastWindowClosed`（F8，且 **F21 实测**：缺省即此值）——关掉最后一扇窗即退出，退出序沿用现主窗那一条（先 `startup_wake.store(nullptr)` → `instance_listener.reset()` join 线程 → 遍历**全部窗全部格**的会话 `close()`），`ExplicitOnly` 与 `MainWindowClosed` 都否。代价：主窗先关时「主窗」身份随帧末回收落在保留的最后宿主上（**F19 实测**：`reap_closed` 保留最后一个宿主，于是关唯一那扇时 `set_on_window_closed` **根本不触发**），`app.focus()` 语义仍指主宿主 ⇒ 本仓不得再依赖 `app.focus()`（F3 那一处改按窗取）；也正因 F19②，**关窗撤账的入口不能只挂 `set_on_window_closed`**，要用 `set_on_frame` 里轮询 `should_close()`（F17 的唯一销毁前可观测点）。退出序本身在无头面**不可证**（F21：全为无头宿主时 `should_exit()` 永假），只能进 §9 走查清单。
 - **D12 撤销重开（`WS.10`）跨不跨窗**：① 推荐＝`ClosedTabStack` 改**每窗一份**（撤销是把标签放回「我关它的那扇窗」），栈上限与顺序语义不变（`utest_closed_tab_stack` 零改动）。代价：跨窗撤销不再可能（本条需求没要求），`tab.undo_close` 的动作按 D7 解析目标窗。
 - **D13 逐窗尺寸下发与去抖**：① 推荐＝不改一件现有代码——去抖表与 `Session::resize` 的归属在 `WorkspaceView`（每窗各一份），`dispatch_grid` 按格取会话（7.125）；新窗的 surface 由 `WindowOptions::size` 给初值 960×640，之后走既有布局派生。代价：D9 的恢复几何落在**开窗那一刻**，首帧行列数随恢复后的尺寸算（须验一条「恢复后首帧只下发一次」）。
 - **D14 本条的验收面**：① 推荐＝批 1 起每批带无头用例（两扇 `HeadlessSurface` 窗），真机走查列 §9 清单、未走完不称「可用」（§4.4 第 33 条）；`main.cpp` 不进 runner 这条物理事实不变（裁决 7.83），故「两扇窗真能各开各的」那一档只有源码审查 + 走查。
@@ -88,7 +99,10 @@
    - **3-A（已落，2026-10-21）**：`ui::ActiveWindowTracker` 纯逻辑件 + `utest_active_window_tracker`（五例、四则变异见 §14）。生产侧一行未动，件是「已测而未用」，同批 1-A 那一档次序。
    - **3-B（已落，2026-10-21）**：把主窗的「标签栏 hooks + 关闭确认 + 布局重建」收成按窗可复用的一段，`open_workspace_window()` 走到全形；命令 `workspace.new_window` + `Ctrl+Shift+N`（第十五条保留键，`utest_workspace_keys` 的认领集 14→15）+ 面板一条。形态、承重次序与四则变异见 §15。
    - **3-C（已落，2026-10-21）**：三处上报点接线（视口＝按键与指针按下两条腿／标签条 Press／横幅 Press）＋ `search.open`／`session.restart`／`serial.set_baud`／`workspace.toggle_fullscreen`／`tab.undo_close` 五类闭包按 tracker 解析目标窗。形态、闭包接线次序、统一兜底与四则变异见 §16。
-4. **批 4（拆窗账目）**：关窗撤该窗名下全部标签（同 `perform_close` 一条链）、每窗横幅与每窗 `ClosedTabStack`、`ExitPolicy` 缺省确认与退出序遍历全部窗、面板「搬窗」而非「各一份」（D6）。
+4. **批 4（拆窗账目）**，拆三棒，**次序是硬约束**：
+   - **4-A（别名收口，先做）**：把装配层仍然按别名吃第一扇窗的读法（`first_window` 及其 `surface`／`host`／`tab_strip`／`current_tab_id`／`broadcast_banner` 五枚别名，加上 `open_search` 的 `view_of(1)`、波特率选择器的浮层宿主）一律改成「按窗现取」。**必须在拆账链之前**：`workspace_windows` 一旦 `erase`，`first_window` 是它的引用（批 1-B 的台账记过这一点），五枚别名连同 `au::Surface &surface` 全部悬空——先收别名，erase 才是可做的动作。本棒行为不变、单窗形状不变。
+   - **4-B（关窗撤账链）**：`retire_window` ＝按 `perform_close` 同一条链关掉该窗名下全部标签（不弹确认，理由见 D4／F18）→ 摘广播成员 → `active_window_tracker.forget(id)` → 重指或清空 `startup_wake` → 从 `workspace_windows` 移除。触发点用 `set_on_frame` 里轮询 `should_close()`（F17：帧序 `on_frame → render_all → reap_closed`，这是唯一销毁前可观测点），**不用** `set_on_window_closed`（F19：触发在销毁之后，且关最后一扇宿主时根本不触发）。证人用 `HeadlessSurface::set_should_close(true)` 真驱动（F24），无头可跑（F21）。
+   - **4-C（横幅与面板按窗）**：每窗横幅只列本窗成员（D5）、面板「搬窗」而非「各一份」（D6）、剩余三处 `app.focus()`（`DebugPanel`／`StartupNotice`／`SettingsPanel`）改按窗取（F19／F22 之后这一条不能再拖）、`ExitPolicy` 缺省确认与退出序遍历全部窗（F21：无头不可证，进 §9 走查）。
 5. **批 5（几何分别记忆）**：`persist_id` 分配 + `preferences::Preferences` 落配置目录 + 两处 `flush()` + 「恢复后首帧只下发一次」用例。
 6. **批 6（CLI）**：`StartupAction::NewWindow` + 编码/解码 + `parse_startup_args` 旗标语义 + `--help` 文案 + 撤 2898-2901 那条拒绝 + `utest_cli_startup`／`utest_cli_handoff`／`itest_posix_instance_channel` 扩案。
 7. **批 7（收口）**：`SPECIFICATIONS.md` 的 WS.03 现状句与裁决、`CHANGELOG.md` 新版本、`PLAN.md` 的 WS.03／INTEG.04／WS.10 行、`ARCHITECTURE.md` §8.1 那句「末位标签关闭 → 关窗口属 WS.03」改口与 §8.4 多窗口段、本稿追加「§8 结项读数」。
@@ -96,7 +110,7 @@
 ## 7 判据与变异计划（结项三件齐：ctest 全绿 + runner 案数增量 + 变异证人逐条转红）
 
 - `utest_active_window_tracker`（新）：多窗上报次序、失配回主窗、窗关闭后该号不再被返回、并发上报只留最后一次。**已落（批 3-A，五例，台账与四则变异见 §14）**；其中「窗关闭后该号不再被返回」实现为撤掉当前落点即**回主窗**而不是回上一个上报过的窗（本件不做栈），该档形态选择与理由见 §14②。
-- `itest_workspace_window`（新）：两扇窗的标签互不串（`current_tab_id` 各一份）、横幅只列本窗成员、撤销重开回到关它的那扇窗、逐窗标题差分写回、关一扇不退出而关最后一扇走同一条退出序、窗拆后 `tab_workspaces`/四张连接表/广播成员三处账目为空。**批 1-A 已落该套件的前五案**（harness 地基＋§5 四条不变量的窗侧形态，台账见 §11）；上面列的其余判据都要求生产侧先有第二扇窗，随批 2–批 4 扩案，本批不冒充。
+- `itest_workspace_window`（新）：两扇窗的标签互不串（`current_tab_id` 各一份）、横幅只列本窗成员、撤销重开回到关它的那扇窗、逐窗标题差分写回、关一扇不退出而关最后一扇走同一条退出序、窗拆后 `tab_workspaces`/四张连接表/广播成员三处账目为空。**批 1-A 已落该套件的前五案**（harness 地基＋§5 四条不变量的窗侧形态，台账见 §11），**批 3-C 加落落点记档一案**（§16③）。上面列的其余判据里，「关一扇不退出」「窗拆后三处账目为空」在批 4-B 用 `HeadlessSurface::set_should_close(true)` 真驱动后可证（F21／F24）；**「关最后一扇走同一条退出序」在无头面物理上不可证**（F21：全为无头宿主时框架永不驱动退出），只进 §9 第 3 条走查，本稿不把它算进案数账。
 - `utest_workspace_keys`：认领集 14→15 条。**已落（批 3-B）**，同时新增 `itest_workspace_layout.ctrl_shift_n_is_claimed_and_only_handed_to_the_assembly_layer`——认领与「只转交、不自己开窗」这一接缝是唯一有自动化证人的部分，`main.cpp` 里真正开窗那一段仍无证人（§15）。
 - 三处上报点（稿 D7，**已落（批 3-C）**）各有证人，`main.cpp` 那一段接线本身无证人（裁决 7.83）：
   - `itest_workspace_layout.the_viewport_reports_each_key_and_mouse_press_exactly_once`：视口的两条腿（键＝按下、鼠＝按下）各报一次，被工作区层认领的键同样报（上报先于前置过滤），抬起与移动不报，转发腿不因上报而改变。
@@ -122,6 +136,8 @@
 ## 10 边界（登记在册，不在本棒解决）
 
 `main.cpp` 不进 runner ⇒ 批 2/批 4 的装配腿无自动化证人（裁决 7.83）；D4 的关闭否决缺框架公共入口（若提任务书按 §5.1 走 Aurora 侧）；G42（§3）以本仓 tracker 代偿，回货后替换一处；D6 的面板单例意味着「两窗不能同时各开一块 SFTP」；几何不进设置导出件（D9 是特性）；混版 CLI 的 `--new-window` 不生效（D10 代价）；WS.11 会话恢复**不**在本条做（多窗之后那一件的形状是「每窗的标签与分屏快照」，另棒裁决）。
+
+**观察项（F22 补记）**：宿主销毁路径上 `Dialog`／`Popup` 的 `set_on_close` **不会被调用**，框架也不提供销毁前通知。本仓现有四处用它（`DebugPanel`、`StartupNotice`、`SearchOverlay`、`SettingsPanel` 那条只是注释）都只清自己的内部状态、随控件一起析构，因此「没回调」不产生悬垂，只产生销毁链上一度不一致。**若日后有件要靠它做外部副作用（摘全局表、归还焦点、落盘），那条会在关窗路径上静默丢失** ⇒ 批 4-B 的撤账只能挂在装配层自己的 `retire_window` 里显式做，不许指望控件的 `on_close`。
 
 ## 11 批 1-A 实测台账（`itest_workspace_window`，2026-10-21）
 
