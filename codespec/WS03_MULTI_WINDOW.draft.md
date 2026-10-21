@@ -80,7 +80,7 @@
 
 1. **批 1（拆分，行为不变）**：
    - **1-A（已落，2026-10-21）**：itest harness 先跑通「两扇无头窗各渲染各自 `TabBar`」——只加测试 TU，生产一行未动。
-   - **1-B（待落）**：`WorkspaceWindow` 结构 + `open_workspace_window()` + `std::vector` 持有；主窗走同一条构造路径。生产仍只开一扇 ⇒ 现有全部用例零改动即须绿；`main.cpp` 不进 runner，本批无自动化证人，只有源码审查（裁决 7.83）。
+   - **1-B（已落，2026-10-21）**：`WorkspaceWindow` 结构 + `open_workspace_window()` + `std::vector` 持有；主窗走同一条构造路径。生产仍只开一扇 ⇒ 现有全部用例零改动即须绿；`main.cpp` 不进 runner，本批无自动化证人，只有源码审查（裁决 7.83）。**落到的形状与差的那一截见 §12**——装配闭包此刻仍按别名吃第一扇窗，`open_workspace_window()` 只造地基半区（窗 + 浮层宿主 + 根 Column），标签栏与横幅两支仍由装配层在原处填进成员。
 2. **批 2（逐窗接线）**：会话 `frame_wake` 按 owner 取 surface、`set_on_frame` 逐窗泵、标题与标签名逐窗、四处 `app.focus()` 改按窗取、`tab_workspaces` 补 `owner`。
 3. **批 3（新窗入口与命令落点）**：`ui::ActiveWindowTracker` 纯逻辑件 + `utest`；命令 `workspace.new_window` + `Ctrl+Shift+N`（第十五条保留键）+ 面板一条；`search.open`／`session.restart`／`serial.set_baud`／`workspace.toggle_fullscreen`／`tab.undo_close` 五类闭包按 tracker 解析目标窗。
 4. **批 4（拆窗账目）**：关窗撤该窗名下全部标签（同 `perform_close` 一条链）、每窗横幅与每窗 `ClosedTabStack`、`ExitPolicy` 缺省确认与退出序遍历全部窗、面板「搬窗」而非「各一份」（D6）。
@@ -134,3 +134,15 @@
 无「注入后全绿」的空转档。**注**：首版第四则写成类内 `static std::shared_ptr<…> host_ = make_shared<…>()`，编译失败（非字面类型不可类内初始化静态成员），那次跑的是上一则的旧二进制，**不算读数**；改写成 lambda 内函数级静态后重编重跑，得上表那一行。
 
 **已知噪声（如实记，不判为本件缺陷）**：本套件退出时 `OverlayHost` / `TabBarWidget` 那条 `layout parent detached while the child widget is still alive` WARN 会刷约 20 行。按套件计数比对既有通道：`itest_tab_bar`／`itest_startup_notice`／`itest_command_palette`／`itest_debug_panel` **0 条**，`itest_search_overlay` **34 条**、`itest_settings_panel` **18 条**——形态与本件相同（浮层宿主活得比被渲染的树久），故它是本仓无头 harness 的既有特征，不是批 1-A 引入的缺陷；但它意味着**无头用例不能判「析构次序本身」那一档**，拆窗时的真实析构序仍归 §9 第 3 条真机走查。
+
+## 12 批 1-B 台账（`WorkspaceWindow` 归属与 vector 持有，2026-10-21）
+
+**落到的形状**：`src/main.cpp` 匿名命名空间里新增 `WorkspaceWindow`（§2 那份「每窗一份」清单：`options`/`window`/`surface`/`id`/`overlay_host`/`root_column`/`tab_bar`/`banner`/`tab_strip`/`closed_tab_stack`/`current_tab_id`）与 `open_workspace_window(std::string title)`——工厂只造**地基半区**（后端窗 + 浮层宿主 + 撑满窗宽的根 Column），建窗失败即回空指针并把后端错误原文落日志，调用方不接宿主（§5「建窗」不变量）。`main()` 里那十处散装局部（原 598-607／622-623／655／681／1172／1176／1276）改为**同一批对象的别名**，持有容器是 `std::vector<std::unique_ptr<WorkspaceWindow>>`：按值 vector 一次扩容就把对象搬走，而闭包按引用吃成员，悬垂是当场的事。`au::Application` 那一跳改用 `first_window.take_window()` 交所有权，随后 `first_window.id = app.main_window()` 回填（框架 `next_id_` 实测从 1 起、0 留作无效值，故未登记的窗取宿主必空）。
+
+**本批没做的那一截（批 2 的入口）**：标签栏的 hooks 要摸二十来条装配闭包、横幅的 `exit_all` 要摸广播组本体，两处都还在应用级作用域里，故 `tab_bar`/`banner` 由装配层在原处填进成员，而不是工厂造出来。别名过渡是刻意留下的形状：它让「归属换了、闭包还没逐窗化」这件事在源码面上看得见，批 2 每接一条就少一支别名。
+
+**读数**：`cmake --build --preset linux` 通过且无警告；`ctest --preset linux -E etest_` **96/96**、runner 全跑 **1212 案**全绿——与批 1-A 之后的门（96 项／1212 案）**逐字相同**，本件零新增用例、零用例改动，正是「拆分不改变行为」那条判据的读数面。产品侧只跑了不触达真打开腿的一档：`Borealis --help` 退出码 0 且输出纯 ASCII（`--help` 在建窗、读盘、认领通道之前就地消化，`SPEC.FEAT.INTEG.04`）。
+
+**析构次序这一档怎么过的**：把 `root_column` 挪进「比 `tab_workspaces` 更晚析构」的位置，看着像在违反 `SPEC.FEAT.WS.02` 批 2 那条「会话容器须活得比视口久」。实测口径是：容器多持一份只让当前那格的视口**散得更晚**，而每一格的视口与其会话的相对次序由 `TabWorkspace` 自己的成员次序保证（会话容器声明在 `workspace` 之前），不会被外层容器的次序翻转；会翻车的是 `perform_close` 那种**中途**撤账的路径，那边早已按「先摘根再 erase」写过。批 4「退出序遍历全部窗」要把这一段显式化，而不是继续依赖声明序。
+
+**边界**：本批「同一条构造路径」只有主窗走过一次——生产仍只开一扇，`open_workspace_window()` 的第二调用点要到批 3 的 `workspace.new_window` 才出现，故**工厂本身的正确性只由主窗那一次运行与源码审查担保**（裁决 7.83）；真机走查未做，§9 全部条目照欠，本批不称「可用」，也不称批 1 收口。
