@@ -3699,7 +3699,8 @@ auto main(int argc, char **argv) -> int {
     // 「销毁前要能看见关闭请求」那一半留给稿 D4（关闭确认／否决），本棒不做（F18：框架不给否决入口）。
     //
     // 代价照实记（F19）：关最后一扇时框架保留主宿主，这一跳**不触发**，于是那一扇的账目留到 `run()`
-    // 返回之后由退出序统一收（本函数末尾那条 `session->close()` 循环），形态与本棒之前完全一致。
+    // 返回之后由退出序统一收（本函数末尾那条逐窗关会话的腿，形态与批 4-C-2 之前的扫表读法等价），
+    // 于是那一扇的账目不靠这条链。
     app.set_on_window_closed([&workspace_windows, &perform_close, &erase_tab_ledger, &tab_workspaces,
                               &broadcast_router, &active_window_tracker, &fallback_window,
                               &startup_wake, &retarget_panel_to, &abandon_destination_to,
@@ -3839,12 +3840,73 @@ auto main(int argc, char **argv) -> int {
 
     // 关停在读线程仍可能唤醒 surface 之前：需要关闭所有标签的所有会话（稿 §5 的「退出」一行：
     // 一格一会话之后这里遍历的是每格，而不是每标签一份）。
-    for (auto &[tab_id, workspace] : tab_workspaces) {
-        static_cast<void>(tab_id);
+    //
+    // **退出序按窗走**（稿 D11／§6 批 4-C-2）：真值源是「每窗名下全部标签」，与 4-B 撤账链第 ① 步同一条
+    // 读法。这一跳存在的理由是 F19②：`reap_closed` 保留最后一个宿主，于是「关掉唯一那扇窗」时
+    // `set_on_window_closed` 根本不触发，那一扇名下的会话只能在这里收——`perform_close` 那条链不会为它走
+    // 第二遍（窗还在，撤账是「关标签」这个动作才做的）。
+    //
+    // **摘根那一跳是这一棒补上的**（批 1-B §12 留的那一句「要把这一段显式化，而不是继续依赖声明序」）：
+    // `root_column` 持着「当前那一格的视口」，而 `workspace_windows` 声明在最前、`tab_workspaces` 之后析构。
+    // 于是原形态下那份视口要等本函数返回才散，那时它背后的会话早就没了——`~TerminalView` 的 OSC 52 跨帧
+    // 承诺回写（`SPEC.FEAT.CONN.12` 判据 ⑤）走的正是这条腿，它的前提是「会话对象还在、只是已关」（写腿的
+    // closing 闸丢的是**已关**会话的写，不是已散对象）。先清根再撤账，视口就在自己那一格被销毁，而
+    // `TabWorkspace` 的成员次序保证会话在其后散——与 `perform_close` 那条「先摘根再 erase」同一条不变量。
+    //
+    // 逐窗腿不复用 `erase_tab_ledger`：它按「关标签」的语义走，会搬栏位表、会在当前号被关掉时
+    // `rebuild_root_children` 重排现场并给宿主排布局脏——`run()` 已返回，那些副作用一项都不需要，而重排那一跳
+    // 恰恰可能落在已请求关闭的宿主上（§18⑵ 同一条理由）。四张连接表在这里不撤：本函数此后没有任何读者，
+    // 而多撤一遍要付的就是那条重排。
+    //
+    // `ExitPolicy` 不在这里设置：稿 D11 的推荐档＝保持框架缺省，实测读数即 `ExitPolicy::LastWindowClosed`
+    //（Aurora 主仓 `include/aurora/app/application.h` 里 `exit_policy_` 的成员初值，本仓 `set_exit_policy` 零调用点），
+    // 语义正是「关掉最后一扇才退出」。显式再设一遍会把「本仓依赖框架缺省」这件事从代码面上抹掉，而框架哪天
+    // 改缺省正是本条要第一时间看见的变化。另外两档在 D11 里被否：`MainWindowClosed` 让「先关主窗」那一跳直接
+    // 终结进程，`ExplicitOnly` 让最后一扇关掉后进程不退出——终端类应用因此留着 PTY 子进程。
+    auto close_workspace_sessions = [](TabWorkspace &workspace) -> void {
         for (auto &[pane, session] : workspace.sessions_by_pane) {
             static_cast<void>(pane);
             session->close();
         }
+    };
+    for (const std::unique_ptr<WorkspaceWindow> &window : workspace_windows) {
+        if (window == nullptr) {
+            continue;
+        }
+        // 先取快照：下面 erase 要动 `tab_workspaces`，而 `tabs()` 给的是栏位表本体的视图。
+        std::vector<borealis::ui::TabId> strip_ids;
+        for (const auto &tab : window->tab_strip.tabs()) {
+            strip_ids.push_back(tab.id);
+        }
+        for (const borealis::ui::TabId id : strip_ids) {
+            const auto found = tab_workspaces.find(id);
+            if (found == tab_workspaces.end()) {
+                continue;  // 栏里留着一格而表里没有＝那格的账早已撤走，这里没有还能关的会话
+            }
+            close_workspace_sessions(found->second);
+        }
+        window->root_column->child_nodes_mut().clear();  // 摘根：见上面那段
+        for (const borealis::ui::TabId id : strip_ids) {
+            static_cast<void>(tab_workspaces.erase(id));
+        }
+    }
+    // 兜底腿：上面逐窗那一跳收走的是「活着的那几扇各自栏位里的每一格」，此刻表里还剩的就不属于任何一扇
+    // 窗的栏位——那是「栏位表与全局表分叉」的证人（形态同 4-B 撤账链第 ② 步），正常路径恒空。判据「关最后一
+    // 扇退出时无残留进程」（§9 第 3 条）要求这里**照收**并把分叉写进日志，而不是按静默丢掉处理：漏下一格就是
+    // 留一个 PTY 子进程在退出之后。此刻所有活着窗的根都已清空，故 erase 这一格同样落在会话之前散视口。
+    std::vector<borealis::ui::TabId> strays;
+    for (const auto &[tab_id, workspace] : tab_workspaces) {
+        static_cast<void>(workspace);
+        strays.push_back(tab_id);
+    }
+    for (const borealis::ui::TabId id : strays) {
+        AURORA_LOG_WARN("main", "exit: tab ", id, " is not listed by any live window's strip");
+        const auto found = tab_workspaces.find(id);
+        if (found == tab_workspaces.end()) {
+            continue;
+        }
+        close_workspace_sessions(found->second);
+        static_cast<void>(tab_workspaces.erase(found));
     }
     return 0;
 }
