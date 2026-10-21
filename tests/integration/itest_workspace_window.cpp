@@ -9,7 +9,7 @@
 ///           （裁决 7.83），「两扇窗真能各开各的」在生产路径上只有源码审查＋真机走查，所以先把
 ///           **机制**钉成可执行的证人，批 2 起逐窗接线的每条判据才有落脚处。
 ///
-///           五件事值得单独证（判据取自稿 §5 的不变量 1／2 与稿 §0 的 F9／F13）：
+///           六件事值得单独证（判据取自稿 §5 的不变量 1／2 与稿 §0 的 F9／F13）：
 ///           ① 逐窗 present 只动**自己**那扇的缓冲：A 窗加一格标签后把两扇都重排一遍，B 窗整帧
 ///              **逐位**不变——这条钉的是「跨窗连带」，也是拆分边界（稿 §2）的前置证人；
 ///           ② 两扇画的是**各自那份真值源**：内容相同时两幅画布逐位相同，各自加各自的格之后立刻分叉，
@@ -24,6 +24,17 @@
 ///           ⑤ 命令落点按**派发事实**记：经该窗宿主的一次栏带按下（落点在空白处也算），就把本窗号交给
 ///              `ui::ActiveWindowTracker`（批 3-C，稿 D7／G42），无上报时回主窗兜底、交叉上报只留
 ///              最后一次、撤账后不再返回。框架不给活动窗口查询，这条只能自己钉。
+///           ⑥ 关窗那一条链的**框架半区**（批 4-B）：用 `HeadlessSurface::set_should_close(true)` 真
+///              驱动一帧循环（F24），证「关一扇不退出而另一扇仍在渲染集合里、宿主在帧末被收走」
+///              「`on_frame` 那一跳还看得见活宿主、`on_window_closed` 之后看不见（稿 §6 改口的读数依据，
+///              同帧内 `on_frame → render_all` 的先后取框架自述的帧序契约，不冒充实测）」「主窗易主时
+///              应用级访问器整组跟着走（`set_fallback` 的来由）」「全关时保留主宿主、`on_window_closed`
+///              对最后一扇不触发（F19 的代价档）」。装配层那条撤账链本身在 `main.cpp`，无自动化证人
+///              （裁决 7.83）。
+///
+///           关窗案的两档设定：`WindowOptions::max_frames` 给有限值（帧预算取应用级那一份＝第一扇的
+///           options），`power_saving=false` 关省电档——无头后端没有 OS 等待通道，省电档下 `wait_once`
+///           会取到「无限等待」把 `run()` 挂死（Aurora 侧 `utest_multi_window` 同档处置）。
 ///
 ///           像素口径与 `itest_tab_bar` 一致：比 RGBA 四通道含 alpha，Headless 缩放为 1（dp 即像素）。
 ///           本套件不断言具体色值，只断**哪一扇的哪些像素动了、哪一扇逐位没动**——颜色是实现细节，
@@ -74,10 +85,16 @@ using Frame = std::vector<std::uint8_t>;
 /// 栏位的钩子捕获本件地址，构造后不许再搬动（驱动台以 `std::unique_ptr` 持有）。
 class WindowFace {
   public:
-    explicit WindowFace(std::string title) {
+    /// @param max_frames 写进本半区的 `WindowOptions`；只有**第一扇**那一份会被 `Application` 当成
+    ///        帧预算读（`frame_budget_left()` 取的是应用级 `opts_`），第二扇那份是装饰。
+    /// @param power_saving `false` 即让帧循环退回忙轮询——无头后端没有 OS 等待通道，省电档下
+    ///        `wait_once` 会取「无限等待」把 `run()` 挂死（Aurora 侧 `utest_multi_window` 同档处置）。
+    WindowFace(std::string title, int max_frames = -1, bool power_saving = true) {
         options_.size =
             au::Size{.width = static_cast<float>(kWindowWidth), .height = static_cast<float>(kWindowHeight)};
         options_.title = std::move(title);
+        options_.max_frames = max_frames;
+        options_.power_saving = power_saving;
         au::HeadlessOptions headless;
         static_cast<au::WindowOptions &>(headless) = options_;
         auto created = au::create_window(headless);
@@ -155,6 +172,11 @@ class WindowFace {
         overlay_->show();
     }
 
+    /// @brief 只标脏、不改内容：让本窗在**下一帧**真的出一次帧，而画布逐位不变。
+    ///        无头的脏区决策会整段跳过空闲帧（不 `present()` ⇒ `frame_count()` 不动），于是「另一扇还
+    ///        在渲染集合里」这件事不能靠计数字段的自然增长来读，得先给它一口脏。
+    auto touch() -> void { bar_->mark_needs_paint(); }
+
     [[nodiscard]] auto strip() noexcept -> TabStrip & { return strip_; }
     [[nodiscard]] auto options() const noexcept -> const au::WindowOptions & { return options_; }
 
@@ -176,9 +198,13 @@ class WindowFace {
 /// `app_` 的构造要用第一扇的窗口与场景，那一跳写在成员初始化表里，次序由声明序保证。
 class TwoWindowRig {
   public:
-    TwoWindowRig()
-        : face_a_(std::make_unique<WindowFace>("A")),
-          face_b_(std::make_unique<WindowFace>("B")),
+    /// @param frame_budget 帧预算，写进第一扇（＝应用级那一份）`WindowOptions::max_frames`；
+    ///        `-1` 即不限，只有靠关闭请求驱动的三条关窗案需要给它一个有限值。
+    /// @param power_saving `false`＝忙轮询；有限帧预算的案必须关掉省电档，否则 `run()` 里的
+    ///        `wait_once` 在无头后端取到「无限等待」而挂死。
+    explicit TwoWindowRig(int frame_budget = -1, bool power_saving = true)
+        : face_a_(std::make_unique<WindowFace>("A", frame_budget, power_saving)),
+          face_b_(std::make_unique<WindowFace>("B", frame_budget, power_saving)),
           app_(face_a_->scene(), face_a_->take_window(), face_a_->options()) {
         id_a_ = app_.main_window();
         id_b_ = app_.open_window(face_b_->take_window(), face_b_->scene(), face_b_->options());
@@ -186,6 +212,16 @@ class TwoWindowRig {
         tracker_.emplace(id_a_);
         face_a_->set_press_reporter([this]() -> void { report(id_a_); });
         face_b_->set_press_reporter([this]() -> void { report(id_b_); });
+        // 帧环观测点（批 4-B）：`on_frame` 数帧、`on_window_closed` 记宿主回收到的号。二者只在
+        // `run()` 里被调用，`render()` 那条直排宿主的路径不经过它们，故现有六案的行为不变。
+        app_.set_on_frame([this]() -> void {
+            ++frames_observed_;
+            if (frame_probe_) {
+                frame_probe_();
+            }
+        });
+        app_.set_on_window_closed(
+            [this](au::WindowId closed_id) -> void { closed_ids_.push_back(closed_id); });
         render(0U);  // 帧 0：布局与绘制都发生在这里，此后两幅缓冲才有东西可比。
         render(1U);
     }
@@ -206,9 +242,16 @@ class TwoWindowRig {
         render(0U);
     }
 
+    /// @brief 只标脏不改内容地碰那一扇一下：让它在帧循环的**下一帧**真出一次帧（见 `WindowFace::touch`）。
+    auto touch(std::size_t face) -> void { face_ref(face).touch(); }
+
     /// @brief 该窗当前帧缓冲的 RGBA8 副本（尚未 present 时为空表，断言因此红得可读）。
     [[nodiscard]] auto pixels(std::size_t face) const -> Frame {
-        au::Window *const window = host(face)->window();
+        // 宿主已被回收时**报失败**而不是解引用空指针：批 4-B 的案子里「取那一扇的画布」这件事本身就
+        // 可能是判据的落空档，裸 `->` 会把一次可读的失败变成整支 runner 段错误。
+        au::WindowHost *const owner = host(face);
+        AURORA_TEST_REQUIRE_MSG(owner != nullptr, "that window has been reaped, it has no canvas to read");
+        au::Window *const window = owner->window();
         AURORA_TEST_REQUIRE(window != nullptr);
         const std::uint8_t *const data = window->surface().data();
         if (data == nullptr) {
@@ -264,6 +307,43 @@ class TwoWindowRig {
     /// @brief 撤账（关窗那一棒的形态，本套件只测记录面，不真关窗）。
     auto forget(au::WindowId id) -> void { tracker_->forget(id); }
 
+    /// @brief 换兜底落点（批 4-B 装配层那一跳的同一枚接缝）。
+    auto set_fallback(au::WindowId id) -> void { tracker_->set_fallback(id); }
+
+    /// @brief 请求关闭指定那一扇（稿 §0 的 F24：无头后端没有 × 按钮，`set_should_close` 是唯一
+    ///        能把「用户点了关闭」这件事送进帧循环的入口）。
+    auto request_close(std::size_t face) -> void {
+        au::WindowHost *const target = host(face);
+        AURORA_TEST_REQUIRE_MSG(target != nullptr && target->window() != nullptr,
+                                "the window is not registered");
+        auto *const surface = dynamic_cast<au::HeadlessSurface *>(&target->window()->surface());
+        AURORA_TEST_REQUIRE_MSG(surface != nullptr, "the backend is not a HeadlessSurface");
+        surface->set_should_close(true);
+    }
+
+    /// @brief 真跑帧循环（批 4-B 的关窗案都要走这一跳：宿主回收只发生在 `run()` 的帧末）。
+    auto run() -> void { app_.run(); }
+
+    /// @brief 装一帧内的探针（`run()` 之前装；每一帧的 `on_frame` 时刻调一次）。稿 §6 原写的触发点
+    ///        就在这一时刻，探针用来把「这一时刻能看见什么」钉成读数而非叙述。
+    auto set_frame_probe(std::function<void()> probe) -> void { frame_probe_ = std::move(probe); }
+
+    /// @brief 宿主回收回调收到过的号，按触发序（F19 那一档「最后一扇不触发」就靠这条现形）。
+    [[nodiscard]] auto closed_windows() const -> const std::vector<au::WindowId> & { return closed_ids_; }
+
+    /// @brief `run()` 里 `on_frame` 被调过几次（＝装配层轮询 `should_close()` 那一档的可见帧数）。
+    [[nodiscard]] auto frames_observed() const -> std::size_t { return frames_observed_; }
+
+    /// @brief 该窗后端已 present 的帧数；宿主已被回收时为 `-1`（这一扇在本层已经没有账了）。
+    [[nodiscard]] auto surface_frames(std::size_t face) const -> int {
+        const au::WindowHost *const target = host(face);
+        if (target == nullptr || target->window() == nullptr) {
+            return -1;
+        }
+        const auto *const surface = dynamic_cast<const au::HeadlessSurface *>(&target->window()->surface());
+        return surface == nullptr ? -1 : surface->frame_count();
+    }
+
     /// @brief 两帧逐位相同（判据「另一扇整帧不动」比数差分更严：一个通道都不许差）。
     [[nodiscard]] static auto identical(const Frame &left, const Frame &right) -> bool {
         return !left.empty() && left.size() == right.size() &&
@@ -313,6 +393,12 @@ class TwoWindowRig {
     ///        声明在 `app_` **之前**：宿主析构里若还有一次派发，上报闭包会来解引用这一枚 optional，
     ///        于是它必须比宿主活得久一点（析构序＝声明序倒序）。
     std::optional<borealis::ui::ActiveWindowTracker> tracker_{};
+    /// @brief 关窗观测账（批 4-B）：宿主回收回调收到过的号与 `on_frame` 次数。
+    ///        同样声明在 `app_` **之前**——`~Application` 会销毁宿主，观测账必须比它活得久一点。
+    std::vector<au::WindowId> closed_ids_{};
+    std::size_t frames_observed_ = 0U;
+    /// @brief 帧内探针（`on_frame` 里调）：与 `closed_ids_` 同一档生存期理由，须在 `app_` 之前析构完。
+    std::function<void()> frame_probe_{};
     au::Application app_;
     au::WindowId id_a_ = au::AURORA_INVALID_WINDOW_ID;
     au::WindowId id_b_ = au::AURORA_INVALID_WINDOW_ID;
@@ -495,6 +581,159 @@ AURORA_TEST_CASE(a_tab_bar_press_moves_the_active_window_record) {
 
     rig.forget(rig.id_of(0U));
     AURORA_TEST_CHECK_EQ(rig.active(), au::AURORA_INVALID_WINDOW_ID);  // ③ 兜底自己没了才报无效号
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(closing_one_window_reaps_it_at_frame_end_without_stopping_the_other) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 批 4-B 的第一道证人（稿 §7「关一扇不退出」那条）。稿 §0 的 F21 说的是另一件事：全为**无头宿主**
+    // 时框架永不驱动退出——这里两扇都挂着真 `HeadlessSurface` 窗口，关闭请求由 `set_should_close`
+    // 送进帧循环（F24），于是「关一扇」这条在自动化面上第一次可跑。帧预算取 3、省电档关掉：无头没有
+    // OS 等待通道，省电档下 `wait_once` 会取到「无限等待」把 `run()` 挂死。
+    TwoWindowRig rig{3, false};
+    AURORA_TEST_REQUIRE(rig.preflight());
+
+    const auto a_before = rig.pixels(0U);
+    const int a_frames_before = rig.surface_frames(0U);
+    AURORA_TEST_REQUIRE(a_frames_before >= 0);
+
+    rig.request_close(1U);
+    // 请求那一刻宿主还在：回收是帧末那一步（F17），不在调用点销毁——稿 D4 要的「关闭否决」窗口期
+    // 正是这一截，而框架不给否决入口（F18），本层只能在这截里读、不能在里头痛改。
+    AURORA_TEST_CHECK_NOT_NULL(rig.host(1U));
+    AURORA_TEST_CHECK_EQ(rig.window_count(), std::size_t{2});
+    // 第二帧起给 A 一口脏：无头的脏区决策会整段跳过空闲帧（连 `present()` 都不走，`frame_count()`
+    // 自然不动），故「那一扇仍在渲染集合里」只能用「主动标脏 ⇒ 计数字段该涨」来读，而不是等它自己涨。
+    rig.set_frame_probe([&rig]() -> void {
+        if (rig.frames_observed() >= 2U) {
+            rig.touch(0U);
+        }
+    });
+
+    rig.run();
+
+    AURORA_TEST_CHECK_EQ(rig.window_count(), std::size_t{1});
+    AURORA_TEST_CHECK_NULL(rig.host(1U));      // 按窗现取的腿自此取空＝命令落空（装配层的 fail-closed 档）
+    AURORA_TEST_CHECK_NOT_NULL(rig.host(0U));
+    AURORA_TEST_REQUIRE_EQ(rig.closed_windows().size(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(rig.closed_windows().front(), rig.id_of(1U));  // 收到的是**关掉那一扇**的号
+    AURORA_TEST_CHECK_EQ(rig.app().main_window(), rig.id_of(0U));       // 还有一扇活着时主窗位不动
+    AURORA_TEST_CHECK_GT(rig.frames_observed(), std::size_t{0});
+    // 另一扇继续渲染：这是多窗帧循环的核心收益，也是稿 §9 第 3 条「关一扇后另一扇不受扰动」的无头半区。
+    AURORA_TEST_CHECK_GT(rig.surface_frames(0U), a_frames_before);
+    // 扰动到不了那一扇的画面：它画的是**自己**那份真值源，别人散了它逐位不变。
+    AURORA_TEST_CHECK_MSG(TwoWindowRig::identical(a_before, rig.pixels(0U)),
+                          "the surviving window's canvas moved when only the other one was reaped");
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_frame_callback_still_sees_the_host_the_closed_hook_does_not) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 这条钉的是稿 §6 批 4-B **改口**的依据。原写的触发点是「在 `set_on_frame` 里轮询 `should_close()`
+    // 并撤账」，看的是 F17 那句「销毁前唯一可观测点」；读数证明这一跳确实看得见它（下面 `seen_alive`
+    // ＝第一帧那一次），但也正因为看得见——宿主还在登记表里、本帧的布局与绘制还轮到它——本层的控件
+    // hooks 捕的是 `WorkspaceWindow &`，在那一跳里把元素从容器 `erase` 掉就是「为刚被析构的那一格
+    // 画一帧」。改到 `on_window_closed` 之后，宿主已从 `hosts_` 摘掉、这一扇再不会被渲染，落点才干净。
+    // 「`render_all` 排在 `on_frame` 之后」这一半取的是框架自述的帧序契约（Aurora 主仓
+    // `include/aurora/app/application.h` 里 `run()` 的八步注释），本棒不改 Aurora、
+    // 也不冒充实测：计数读数分不出同帧内的先后，故这里只报能报的两档。
+    TwoWindowRig rig{3, false};
+    AURORA_TEST_REQUIRE(rig.preflight());
+    rig.request_close(1U);
+
+    std::size_t seen_alive = 0U;
+    std::size_t seen_gone = 0U;
+    bool hook_had_already_fired = false;
+    rig.set_frame_probe([&rig, &seen_alive, &seen_gone, &hook_had_already_fired]() -> void {
+        if (rig.host(1U) != nullptr) {
+            ++seen_alive;
+            return;
+        }
+        ++seen_gone;
+        if (!rig.closed_windows().empty()) {
+            hook_had_already_fired = true;
+        }
+    });
+    rig.run();
+
+    AURORA_TEST_CHECK_EQ(rig.frames_observed(), std::size_t{3});  // 关一扇不让帧循环提前退
+    AURORA_TEST_CHECK_EQ(seen_alive, std::size_t{1});             // 只有第一帧的 `on_frame` 还看得见它
+    AURORA_TEST_CHECK_EQ(seen_gone, std::size_t{2});              // 其后两帧：宿主已在第一帧末被收走
+    // 撤账挂点的顺序前提：探针在「宿主已不在」的那些帧里读到的回调账目已经写上去了，
+    // 即 `on_window_closed` 排在**下一次** `on_frame` 之前——本层在那一跳里落地对象不会晚于任何读者。
+    AURORA_TEST_CHECK_TRUE(hook_had_already_fired);
+    AURORA_TEST_REQUIRE_EQ(rig.closed_windows().size(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(rig.closed_windows().front(), rig.id_of(1U));
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_main_window_slot_moves_to_a_surviving_window) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 主窗易主＝批 4-B 那枚 `set_fallback` 接缝的**来由**（F23：`reap_closed` 末尾把 `main_host_`
+    // 交给登记序里活着的第一扇）。不接这一跳，装配层的兜底落点就还指着已经散掉的那一扇，而 `forget`
+    // 之后取到的是无效号——命令于是永远落不进那扇唯一还活着的窗。
+    TwoWindowRig rig{3, false};
+    AURORA_TEST_REQUIRE(rig.preflight());
+    rig.request_close(0U);
+    rig.run();
+
+    AURORA_TEST_CHECK_NULL(rig.host(0U));
+    AURORA_TEST_CHECK_EQ(rig.window_count(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(rig.app().main_window(), rig.id_of(1U));
+    // 应用级访问器整组跟着易主（F2 那一条的反面：主宿主换了，`scene()`/`window()` 指的也是新的）。
+    AURORA_TEST_CHECK_EQ(&rig.app().scene(), &rig.host(1U)->scene());
+    AURORA_TEST_CHECK_EQ(rig.app().window(), rig.host(1U)->window());
+    AURORA_TEST_REQUIRE_EQ(rig.closed_windows().size(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(rig.closed_windows().front(), rig.id_of(0U));
+
+    // 装配层关窗撤账链后那一跳的形状（`main.cpp` 里第 ③⑤ 步）：撤掉散掉那一扇的账 ⇒ 落点取不到 ⇒
+    // 由本层把兜底换成账目里还活着的第一扇 ⇒ 命令重新有落点。
+    AURORA_TEST_CHECK_EQ(rig.active(), rig.id_of(0U));  // 起点：没人被碰过 ⇒ 兜底＝构造期主窗号
+    rig.forget(rig.id_of(0U));
+    AURORA_TEST_CHECK_EQ(rig.active(), au::AURORA_INVALID_WINDOW_ID);
+    rig.set_fallback(rig.id_of(1U));
+    AURORA_TEST_CHECK_EQ(rig.active(), rig.id_of(1U));
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_last_host_is_retained_so_the_closed_hook_skips_it) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // F19 的代价档，批 4-B 把它钉成读数而不是叙述：全关时框架**保留主宿主**（使 `scene()`/`focus()`/
+    // `window()` 在 `run()` 之后仍可用），被保留的那一扇既不会从 `hosts_` 摘掉，也**不会**触发
+    // `on_window_closed`。于是装配层的关窗撤账链在最后一扇上不跑——那一扇的账目留到 `run()` 返回之后
+    // 由退出序统一收（本仓 `main.cpp` 末尾那条 `session->close()` 循环）。
+    //
+    // 「最后一扇」必须在循环**进行中**才关：`run()` 的启动判据是「至少一扇有 Window 且未请求关闭」，
+    // 两扇都在进循环之前就请求关闭的话 `run()` 直接返回（连一帧都不排），既看不到回收、也看不到
+    // 保留这一档——那是「没启动」而不是「启动了又不退出」，两者不能混为一条读数。
+    TwoWindowRig rig{3, false};
+    AURORA_TEST_REQUIRE(rig.preflight());
+    rig.request_close(1U);  // 第一帧收走 B，主宿主仍是 A
+    rig.set_frame_probe([&rig]() -> void {
+        if (rig.frames_observed() == 2U) {
+            rig.request_close(0U);  // 第二帧起：A 成了唯一一扇，也是「最后一扇」
+        }
+    });
+    rig.run();
+
+    // 回调只报过被摘掉的那一扇：最后一扇走的是「保留」而不是「回收」。
+    AURORA_TEST_REQUIRE_EQ(rig.closed_windows().size(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(rig.closed_windows().front(), rig.id_of(1U));
+    AURORA_TEST_CHECK_NULL(rig.host(1U));
+    // 最后一扇没被摘走，也没报进回收回调。
+    AURORA_TEST_CHECK_EQ(rig.window_count(), std::size_t{1});
+    AURORA_TEST_CHECK_NOT_NULL(rig.host(0U));
+    AURORA_TEST_CHECK_EQ(rig.app().main_window(), rig.id_of(0U));
+    // 访问器在 `run()` 之后仍可用＝保留这一只的全部理由（本层若指望这一跳做外部副作用，最后一扇必丢）。
+    AURORA_TEST_CHECK_NOT_NULL(rig.app().window());
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif

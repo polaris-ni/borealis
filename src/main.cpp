@@ -1376,6 +1376,40 @@ auto main(int argc, char **argv) -> int {
         return false;
     };
 
+    // 一张标签的**账目半区**撤账：摘根、撤会话表、四张连接表与类型表。`perform_close`（用户关掉一格）
+    // 与批 4-B 的关窗撤账链（窗散了，它名下那几格跟着散）共用这一支，于是「窗拆后三处账目为空」与
+    // 「关掉这一格账目为空」是同一条代码而不是两处各写一遍。差别只在栏位摘除与闭包栈入栈留在
+    // `perform_close` 里：一扇散掉的窗，它的闭包栈随窗一起没，而栏外孤儿格本来就不在栏里。
+    // 次序承重（原 `perform_close` 那一段）：先把根上那份工作区摘掉再撤会话表（稿 §5「会话活过视口」），
+    // 此刻根上已不再持有任何一格的视口，视口在这一跳里散尽；反过来就是「会话先散、视口后散」，
+    // 而 `~TerminalView` 要往它背后的会话写撤账空响应。
+    auto erase_tab_ledger = [&](WorkspaceWindow &window, borealis::ui::TabId id) -> void {
+        if (window.current_tab_id.has_value() && window.current_tab_id.value() == id) {
+            // 选下一个或上一个（关窗那一路走到这里时栏已空，`selected()` 回空 ⇒ 当前号清掉）。
+            const auto next = window.tab_strip.selected();
+            if (next.has_value()) {
+                window.current_tab_id = next.value();
+            } else {
+                window.current_tab_id.reset();
+            }
+            // 更新显示的工作区
+            rebuild_root_children(window, tab_workspaces);
+        }
+        const auto it = tab_workspaces.find(id);
+        if (it == tab_workspaces.end()) {
+            return;
+        }
+        // 销毁对应的 WorkspaceView 和会话：`TabWorkspace` 的成员次序保证 `sessions_by_pane` 后析构。
+        tab_workspaces.erase(it);
+        // SFTP 面板接线数据随标签同撤（面板的 ssh_tab_alive 即以此判活，D8①）。
+        ssh_profile_by_tab.erase(id);
+        ssh_secret_by_tab.erase(id);
+        // 串口接线同撤：那条连接腿随本格的 Session 一起析构，裸指针不留过夜（批 3）。
+        serial_by_tab.erase(id);
+        telnet_by_tab.erase(id);  // Telnet 同撤（CONN.06 批 3）。
+        tab_kind.erase(id);       // 类型随标签同撤：重开那一支会重新登记（INTEG.02）。
+    };
+
     // 真正关闭一张标签：从标签条摘除、记进闭包栈、销毁工作区与会话、必要时切到相邻标签。
     // 「确认」与「直接关」两条路径共用这一支，差别只在要不要先问一句（裁决 7.47⑧）。
     // @p window 是这张标签的**属主窗**（稿 §2 的「呈现半区按窗一份」）：标签条、闭包栈与当前号都取
@@ -1391,27 +1425,11 @@ auto main(int argc, char **argv) -> int {
         // 不随工作区析构自动消失，漏这一笔会让横幅继续列着一张已经不存在的标签、并向其扇出。
         // 变更钩子负责刷新横幅与其余工作区的 pill，此处无须另调。
         broadcast_router.remove_tab(id);
-        // 关闭前记录到闭包栈（`SPEC.FEAT.WS.10`）
-        // 先把根上那份工作区摘掉，再撤会话表（稿 §5 的「会话活过视口」）：关的是当前标签时根 Column
-        // 还持着同一个 `shared_ptr`，先 erase 就等于让会话先散、视口后散，而 `~TerminalView` 要往它
-        // 背后的会话写撤账空响应。关后台标签时根本来不持它，这一句在那条路上是 no-op。
-        if (window.current_tab_id.has_value() && window.current_tab_id.value() == id) {
-            // 选下一个或上一个
-            const auto next = window.tab_strip.selected();
-            if (next.has_value()) {
-                window.current_tab_id = next.value();
-            } else {
-                window.current_tab_id.reset();
-            }
-            // 更新显示的工作区
-            rebuild_root_children(window, tab_workspaces);
-        }
-        auto it = tab_workspaces.find(id);
-        if (it != tab_workspaces.end()) {
+        // 关闭前记录到闭包栈（`SPEC.FEAT.WS.10`）：名称与位置都取 `close()` 记下的那份——此刻该标签
+        // 已不在表里，回查只会拿到空名，于是重开回来的标签变成一个无名格，那正是本件要避免的
+        // 「内容不可恢复」被扩大成「名字也丢了」。
+        if (tab_workspaces.find(id) != tab_workspaces.end()) {
             borealis::ui::ClosedTabSpec spec;
-            // 名称与位置都取 `close()` 记下的那份：此刻该标签已不在表里，回查只会拿到空名，
-            // 于是重开回来的标签变成一个无名格——那正是本件要避免的「内容不可恢复」被扩大成
-            // 「名字也丢了」。
             if (const auto closed = window.tab_strip.last_closed(); closed.has_value()) {
                 static_cast<void>(borealis::term::encode_utf8(closed->name, spec.name));
                 spec.index_in_strip = closed->index_in_strip;
@@ -1420,17 +1438,8 @@ auto main(int argc, char **argv) -> int {
             spec.local_shell = settings.connection.local_shell;
             spec.startup_directory = settings.connection.startup_directory;
             window.closed_tab_stack.push(std::move(spec));
-            // 销毁对应的 WorkspaceView 和会话：`TabWorkspace` 的成员次序保证 `sessions_by_pane` 后析构，
-            // 此刻根上已不再持有任何一格的视口，视口在这一跳里散尽。
-            tab_workspaces.erase(it);
-            // SFTP 面板接线数据随标签同撤（面板的 ssh_tab_alive 即以此判活，D8①）。
-            ssh_profile_by_tab.erase(id);
-            ssh_secret_by_tab.erase(id);
-            // 串口接线同撤：那条连接腿随本格的 Session 一起析构，裸指针不留过夜（批 3）。
-            serial_by_tab.erase(id);
-            telnet_by_tab.erase(id);  // Telnet 同撤（CONN.06 批 3）。
-            tab_kind.erase(id);       // 类型随标签同撤：重开那一支会重新登记（INTEG.02）。
         }
+        erase_tab_ledger(window, id);
     };
 
     // 关闭确认框**按窗一份**（稿 §2 的「每窗一份浮层」）：判据是该标签**任一** pane 的会话进程仍在
@@ -3543,10 +3552,87 @@ auto main(int argc, char **argv) -> int {
         keys_panel.tick();     // 密钥行表随快照刷新（D6① 同族；面板关着即空操作）
     });
 
+    // 关窗撤账链（`SPEC.FEAT.WS.03` 稿 §6 批 4-B）：一扇窗被框架收走时，挂在它名下的账目必须一起撤
+    // 干净——否则横幅继续列一张已经不存在的标签、命令落点指向已经析构的对象、四张连接表里留着一条
+    // 没人认领的绑定。稿 §5 第 4 条那句「窗拆后 `tab_workspaces`／四张连接表／广播成员三处账目为空」
+    // 就是这一跳的判据。
+    //
+    // **触发点与稿 §6 原写的不同，理由在销毁序而不是时机**：稿里选的是「`set_on_frame` 里轮询
+    // `should_close()`」（F17 那句「唯一销毁前可观测点」），但 `on_frame` 排在 `render_all` **之前**，
+    // 而本层的对象一旦在那一跳里从容器 `erase`，同一帧仍会为这扇已请求关闭的窗布局与绘制——
+    // `TabBarWidget` 与横幅的 hooks 捕的是 `WorkspaceWindow &`，读的就是刚被析构的那一格。宿主回收
+    // 之后（此刻）这扇窗再不会被渲染，控件树随宿主一起散，本层的对象才是可以安全落地的时点。
+    // 「销毁前要能看见关闭请求」那一半留给稿 D4（关闭确认／否决），本棒不做（F18：框架不给否决入口）。
+    //
+    // 代价照实记（F19）：关最后一扇时框架保留主宿主，这一跳**不触发**，于是那一扇的账目留到 `run()`
+    // 返回之后由退出序统一收（本函数末尾那条 `session->close()` 循环），形态与本棒之前完全一致。
+    app.set_on_window_closed([&workspace_windows, &perform_close, &erase_tab_ledger, &tab_workspaces,
+                              &broadcast_router, &active_window_tracker, &fallback_window,
+                              &startup_wake](au::WindowId closed_id) -> void {
+        std::size_t index = workspace_windows.size();
+        for (std::size_t probe = 0U; probe < workspace_windows.size(); ++probe) {
+            if (workspace_windows[probe]->id == closed_id) {
+                index = probe;
+                break;
+            }
+        }
+        if (index == workspace_windows.size()) {
+            return;  // 不是本层的工作区窗：账目不归这里，也不许猜一扇
+        }
+        WorkspaceWindow &window = *workspace_windows[index];
+        // `surface` 先抄下来：对象在下面 `erase` 那一刻就散，而唤醒指针的比较与重指要在那之后。
+        au::Surface *const closing_surface = window.surface;
+        // ① 本窗名下全部标签走与关标签**同一条**链。不弹确认：关闭请求已经发生且窗已回收，此刻问一句
+        //    只会把「窗没了、账还在」挂在一整轮答话上（稿 D4 的推荐档＝本棒不做）。
+        //    先取快照再逐张关：`perform_close` 会搬动栏位表，边遍历 `tabs()` 边关就是迭代器失效。
+        std::vector<borealis::ui::TabId> strip_ids;
+        for (const auto &tab : window.tab_strip.tabs()) {
+            strip_ids.push_back(tab.id);
+        }
+        for (const borealis::ui::TabId id : strip_ids) {
+            perform_close(window, static_cast<std::uint64_t>(id));
+        }
+        // ② 兜底清扫：归属是唯一真源，凡 `owner` 指着这扇窗而栏里已经没有它的格子（两处账目分叉的形态，
+        //    例如某格建起来却没进栏），一律走同一支撤账并记一条 WARN——正常路径恒空，扫到即为真 bug，
+        //    不能静默。这一跳才让 §5 那句「为空」成为结构性事实而不是巧合。
+        //    先收号再撤：`erase_tab_ledger` 会 erase 掉正在被遍历的那一节，边扫边撤就是迭代器失效。
+        std::vector<borealis::ui::TabId> strays;
+        for (const auto &[id, workspace] : tab_workspaces) {
+            if (workspace.owner == &window) {
+                strays.push_back(id);
+            }
+        }
+        for (const borealis::ui::TabId stray : strays) {
+            AURORA_LOG_WARN("main",
+                            "window retire: tab ", stray,
+                            " is owned by a closed window but is not in its strip");
+            broadcast_router.remove_tab(stray);
+            erase_tab_ledger(window, stray);
+        }
+        // ③ 落点记录器撤账（F20：号只增不复用，撤掉的号永远不会再被返回）。
+        active_window_tracker.forget(closed_id);
+        // ④ 本层对象落地：此刻宿主已散，控件树只剩这一格持着的 `shared_ptr`，随它一起散。
+        workspace_windows.erase(workspace_windows.begin() + static_cast<std::ptrdiff_t>(index));
+        // ⑤ 兜底落点易主：主窗自己散了才换（`forget` 之后取不到任何落点即那一档）。框架把主窗位交给
+        //    登记序里活着的第一扇，本层交出去的是自己账目里的第一扇——两者都是「还活着的第一扇」，
+        //    而本层的这一支才是与命令落点同源的账。
+        if (active_window_tracker.active() == au::AURORA_INVALID_WINDOW_ID) {
+            if (WorkspaceWindow *const next = fallback_window(); next != nullptr) {
+                active_window_tracker.set_fallback(next->id);
+            }
+        }
+        // ⑥ 单实例唤醒指针：正指着这扇已散窗的那一枚要重指到活着的第一扇，一格都不剩才清空
+        //    （转交线程此后只等下一帧或超时收尾，不会去唤醒一只已析构的 surface）。
+        if (startup_wake.load() == closing_surface) {
+            WorkspaceWindow *const next = fallback_window();
+            startup_wake.store(next == nullptr ? nullptr : next->surface);
+        }
+    });
+
     // 冷启动请求在接线齐备之后、进循环之前执行一次（稿 §5.4）：首帧直接画出目标标签或那一刀切分，
     // 不出现「先空一帧再补一格」。唤醒指针同样在这一刻交出去——此前入队的转交请求随首帧排空。
-    // 唤醒指针交出去的是**当前还在的第一扇窗**的 surface（转交线程按这一枚唤醒 UI，窗没了就退回「等下一帧」）。
-    // 批 4-B 的关窗撤账链会在 erase 之后重指或清空它，本棒不提前做。
+    // 唤醒指针交出去的是**当前还在的第一扇窗**的 surface（转交线程按这一枚唤醒 UI）；窗被关掉时
+    // 上面那条撤账链会把它重指到活着的第一扇，一格都不剩则清空。
     if (WorkspaceWindow *const wake_window = fallback_window(); wake_window != nullptr) {
         startup_wake.store(wake_window->surface);
     }

@@ -47,6 +47,15 @@ class ActiveWindowTracker {
     /// @param id 关闭的那扇窗号；命中最近记录即清除，命中兜底落点即置无效。
     auto forget(au::WindowId id) -> void;
 
+    /// @brief 换兜底落点（主窗易主时由装配层调用，`SPEC.FEAT.WS.03` 批 4）。
+    ///
+    /// 框架在宿主回收之后会把主窗位交给「登记序里还活着的第一扇」（`reap_closed` 末段），而本件构造期
+    /// 记下的那枚号届时已经消散——不换兜底，关一扇窗之后所有命令都要等用户在另一扇里点一下才有落点。
+    /// **只改兜底、不动派发事实**：这一跳与 `report` 是两件事，`report` 说「这扇窗刚被碰过」，这里只说
+    /// 「没人被碰过时该落哪一扇」。无效号（0＝还没登记进宿主）不安装，宁可与 `report` 同档——留旧兜底。
+    /// @param id 新的兜底落点；与 @p forget 不同，本跳不影响最近记录。
+    auto set_fallback(au::WindowId id) -> void;
+
   private:
     au::WindowId main_window_ = au::AURORA_INVALID_WINDOW_ID;  ///< 兜底落点（构造期传入）。
     std::optional<au::WindowId> last_reported_{};              ///< 最近一次上报；空即「没人被碰过」。
