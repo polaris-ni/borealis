@@ -1,0 +1,374 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="2420" viewBox="0 0 1560 2420" font-family="'Noto Sans CJK SC',sans-serif">
+<rect x="0" y="0" width="1560" height="2420" fill="#eef0f5"/>
+<text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">OSC 133 命令块：复制上一命令输出 · 失败输出高亮 · 悬停分隔线（SPEC.FEAT.INTEG.01）</text>
+<text x="30" y="56" font-size="12.5" fill="#5a6070">UI_INTEG_OSC133.draft.svg · 高保真草图（2026-10-21 评审收口 · D1–D12 按推荐档自决）· 1 dp == 1 px @100% · 圈号 1–8 对应 UI_INTEG_OSC133.draft.md §2 的判据标号 · 底部「实测口径」是该稿 §0 的读数</text>
+
+<!-- ============ 屏 A：命令块三段 + 失败输出高亮 + 悬停分隔线 ============ -->
+<g transform="translate(30,78)">
+  <rect x="-1" y="-1" width="1502" height="652" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">A</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 一条命令块的三段、失败块的输出底色、指针在块内时的分隔线</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="618" fill="#1E1F29"/>
+
+  <!-- A 终端窗格 -->
+  <g transform="translate(24,54)">
+    <rect x="0" y="0" width="900" height="560" fill="#282A36" stroke="#4D4F63"/>
+    <g font-family="monospace" font-size="11" fill="#F8F8F2">
+      <text x="16" y="30">lab@router:~$ ls -l /etc</text>
+      <text x="16" y="50" fill="#62728A">total 48</text>
+      <text x="16" y="70">-rw-r--r-- 1 root root 3028 Oct 12 09:02 adduser.conf</text>
+      <text x="16" y="90">-rw-r--r-- 1 root root 2319 Oct 12 09:02 bash.bashrc</text>
+      <text x="16" y="110">drwxr-xr-x 2 root root 4096 Oct 12 09:02 cron.d</text>
+      <text x="16" y="130">lab@router:~$ make test</text>
+
+      <!-- 失败块输出行：25% 红底（rows 7..11） -->
+      <rect x="0" y="136" width="900" height="100" fill="#5E353E"/>
+      <rect x="16" y="196" width="306" height="20" fill="#44475A" opacity="0.88"/>
+      <text x="16" y="150">[ 12%] Building CXX object src/term/terminal.cpp.o</text>
+      <text x="16" y="170">[ 71%] Linking CXX executable borealis_tests</text>
+      <text x="16" y="190">FAILED: utest_terminal_osc</text>
+      <text x="16" y="210">Error: expected PromptPart, got OutputStart</text>
+      <text x="16" y="230">make: *** [Makefile:12: test] Error 1</text>
+
+      <text x="16" y="250">lab@router:~$ printf 'x'</text>
+      <text x="16" y="270">x</text>
+      <text x="16" y="290">lab@router:~$</text>
+      <text x="106" y="290" fill="#BD93F9">_</text>
+    </g>
+
+    <!-- 悬停分隔线：块首行上沿 1 px -->
+    <line x1="0" y1="116" x2="900" y2="116" stroke="#BD93F9" stroke-width="1"/>
+    <text x="894" y="111" font-size="9.5" fill="#BD93F9" text-anchor="end">悬停 → 块首行上沿 card_line · 1 px</text>
+    <path d="M726 124 l0 16 l4 -4 l3 7 l3 -1 l-3 -7 l6 0 z" fill="#F8F8F2" stroke="#1E1F29" stroke-width="0.6"/>
+    <text x="742" y="137" font-size="9.5" fill="#F8F8F2">指针在块内</text>
+
+    <!-- 边界尺图例（屏 C 给精确坐标，这里只给读法） -->
+    <line x1="16" y1="332" x2="620" y2="332" stroke="#3A3C4C"/>
+    <g font-size="9.5">
+      <text x="16" y="352" fill="#50FA7B" font-weight="700">A</text>
+      <text x="28" y="352" fill="#62728A">提示符首行 →</text>
+      <text x="150" y="352" fill="#8BE9FD" font-weight="700">B</text>
+      <text x="162" y="352" fill="#62728A">输入区起点 →</text>
+      <text x="270" y="352" fill="#8BE9FD" font-weight="700">C</text>
+      <text x="282" y="352" fill="#62728A">输出起点（行+列）→</text>
+      <text x="410" y="352" fill="#FFB86C" font-weight="700">D</text>
+      <text x="422" y="352" fill="#62728A">收块（行+列+有无退出码）</text>
+    </g>
+    <text x="16" y="374" font-size="9.5" fill="#62728A">D 在列 0 时该行不是输出；失败块只把 C→D 的输出行铺红，提示符与命令行回显保持默认底色。</text>
+    <text x="16" y="394" font-size="9.5" fill="#50FA7B">P;k=r 只标记右提示符分段：不参与块、不改变 C 起点。</text>
+  </g>
+
+  <!-- A 注解列 -->
+  <g transform="translate(946,58)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">块的三段与失败高亮</text>
+    <g transform="translate(11,26)">
+      <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+      <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">1</text>
+      <text x="18" y="4" font-size="11.5" fill="#f2f4f8">失败块：只有输出行（C→D）铺 25% 红底</text>
+    </g>
+    <text x="30" y="50" font-size="10.5" fill="#62728A">提示符（A→B）与命令行回显（B→C）保持默认底色</text>
+    <text x="30" y="68" font-size="10.5" fill="#62728A">输出行预填 mix_half(mix_half(basic[1], default_bg), default_bg)</text>
+    <text x="30" y="86" font-size="10.5" fill="#62728A">选区（图中半行蓝带）/ 搜索命中 / 显式 cell 底色仍盖在其上</text>
+    <text x="30" y="104" font-size="10.5" fill="#62728A">失败判定：completed ∧ has_exit_code ∧ exit_code ≠ 0</text>
+    <text x="30" y="122" font-size="10.5" fill="#62728A">D 无数字 ⇒ has_exit_code = false ⇒ 不算失败、不高亮</text>
+    <text x="30" y="140" font-size="10.5" fill="#62728A">P;k=r 只标记右提示符分段，不参与块、不动 C 起点</text>
+
+    <text x="0" y="176" font-size="12" fill="#8BE9FD" font-weight="700">悬停分隔线（新键，缺省关）</text>
+    <g transform="translate(11,202)">
+      <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+      <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">4</text>
+      <text x="18" y="4" font-size="11.5" fill="#f2f4f8">指针在块内 → 块首行上沿 1 物理像素 card_line</text>
+    </g>
+    <text x="30" y="226" font-size="10.5" fill="#62728A">纯装饰：不写命中盒、不吃点击，线下的文字照常可选 / 右键</text>
+    <text x="30" y="244" font-size="10.5" fill="#62728A">块首行滚出可见区 ⇒ 不画；输出持续刷新 ⇒ 不摘</text>
+    <text x="30" y="262" font-size="10.5" fill="#62728A">设置关掉 ⇒ 立即摘；?1003 档 Move 归远端 ⇒ 与链接同一边界</text>
+
+    <rect x="0" y="292" width="530" height="126" rx="6" fill="#12131A" stroke="#4D4F63"/>
+    <text x="14" y="314" font-size="10.5" fill="#8BE9FD" font-weight="700">绘制层次（D8①）</text>
+    <text x="14" y="334" font-size="10.5" fill="#F8F8F2">整盒铺底 → paint_row 预填失败底色 → layout_row / 色带</text>
+    <text x="14" y="352" font-size="10.5" fill="#62728A">→ 光标 → 回看条 → 分隔线 → 链接悬停层 → 两张状态卡</text>
+    <text x="14" y="370" font-size="10.5" fill="#62728A">→ dead-session → 广播角标</text>
+    <text x="14" y="394" font-size="10.5" fill="#50FA7B">没有 OSC 133 ⇒ 三层全部静默；不做「猜命令块」的启发式</text>
+
+    <text x="0" y="448" font-size="10.5" fill="#62728A">图例：A 提示符首行 / B 输入区起点 / C 输出起点（行+列）</text>
+    <text x="0" y="466" font-size="10.5" fill="#62728A">D 收块（行+列+有无退出码）；D 在列 0 时该行不是输出</text>
+  </g>
+</g>
+
+<!-- ============ 屏 B：右键菜单两条形态 + 复制口径 ============ -->
+<g transform="translate(30,748)">
+  <rect x="-1" y="-1" width="1502" height="472" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">B</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 右键菜单：有可用块时多一条，无可用块时根本不出现（不是灰显）</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="438" fill="#1E1F29"/>
+
+  <!-- B-1 有块 -->
+  <g transform="translate(24,50)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">有可用块：复制 → 复制上一命令的全部输出 → 粘贴 → 打开链接 → 会话日志</text>
+    <rect x="0" y="12" width="520" height="330" fill="#282A36" stroke="#4D4F63"/>
+    <g font-family="monospace" font-size="11">
+      <text x="16" y="36" fill="#F8F8F2">lab@router:~$ make test</text>
+      <rect x="0" y="42" width="520" height="40" fill="#5E353E"/>
+      <text x="16" y="56" fill="#F8F8F2">FAILED: utest_terminal_osc</text>
+      <text x="16" y="74" fill="#F8F8F2">make: *** [Makefile:12: test] Error 1</text>
+      <text x="16" y="98" fill="#F8F8F2">lab@router:~$ _</text>
+    </g>
+    <rect x="150" y="104" width="360" height="208" rx="6" fill="#21222C" stroke="#62728A"/>
+    <g font-size="11.5" fill="#F8F8F2">
+      <text x="164" y="130">复制</text>
+      <line x1="156" y1="140" x2="504" y2="140" stroke="#3A3C4C"/>
+      <rect x="156" y="146" width="348" height="28" rx="4" fill="#342B47"/>
+      <text x="164" y="165" font-weight="600">复制上一命令的全部输出</text>
+      <line x1="156" y1="182" x2="504" y2="182" stroke="#3A3C4C"/>
+      <text x="164" y="202">粘贴</text>
+      <line x1="156" y1="212" x2="504" y2="212" stroke="#3A3C4C"/>
+      <text x="164" y="232">打开链接</text>
+      <text x="496" y="232" font-size="9" fill="#62728A" text-anchor="end">命中链接才在</text>
+      <line x1="156" y1="242" x2="504" y2="242" stroke="#3A3C4C"/>
+      <text x="164" y="262">会话日志</text>
+      <text x="496" y="262" font-size="9" fill="#62728A" text-anchor="end">日志可用才在</text>
+    </g>
+    <text x="0" y="338" font-size="10.5" fill="#8BE9FD">新枚举 MenuCommand::CopyCommandOutput；第五参 CommandOutputMenuState</text>
+    <text x="0" y="358" font-size="10.5" fill="#62728A">条件：最近一条 completed ∧ has_output_start ∧ 有可复制输出 ∧ 未滚出存储</text>
+    <text x="0" y="376" font-size="10.5" fill="#62728A">右键那一刻把块整份存进 menu_block_；点击时不再按当前状态重选</text>
+    <g transform="translate(128,148)">
+      <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+      <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">2</text>
+    </g>
+  </g>
+
+  <!-- B-2 无块 -->
+  <g transform="translate(576,50)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">无可用块：新条目不出现，其余条目逐字节不变</text>
+    <rect x="0" y="12" width="370" height="180" rx="6" fill="#21222C" stroke="#62728A"/>
+    <g font-size="11.5" fill="#F8F8F2">
+      <text x="14" y="38">复制</text>
+      <line x1="6" y1="48" x2="364" y2="48" stroke="#3A3C4C"/>
+      <text x="14" y="68">粘贴</text>
+      <line x1="6" y1="78" x2="364" y2="78" stroke="#3A3C4C"/>
+      <text x="14" y="98">打开链接</text>
+      <line x1="6" y1="108" x2="364" y2="108" stroke="#3A3C4C"/>
+      <text x="14" y="128">会话日志</text>
+    </g>
+    <text x="0" y="218" font-size="10.5" fill="#62728A">· 无 C / 无 D / cd 型空输出 / 块已滚出 ⇒ 不出现</text>
+    <text x="0" y="236" font-size="10.5" fill="#62728A">· 不留「点了什么也不发生」的空位（裁决 7.119）</text>
+    <text x="0" y="254" font-size="10.5" fill="#FFB86C">· plan_right_click 第三次签名改动</text>
+    <text x="0" y="272" font-size="10.5" fill="#62728A">  新参 CommandOutputMenuState；条目插在「复制」之后</text>
+    <text x="0" y="290" font-size="10.5" fill="#62728A">· 菜单开着时输出继续增长，点击复制的仍是右键时那条</text>
+  </g>
+
+  <!-- B-3 复制口径 -->
+  <g transform="translate(996,50)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">复制口径：C 游标 → D 游标</text>
+    <text x="0" y="24" font-size="10.5" fill="#F8F8F2">· 首行从 C 的列起算；中间行整行</text>
+    <text x="0" y="42" font-size="10.5" fill="#F8F8F2">· D 在列 0 ⇒ 该行不是输出（命令以换行结尾的常态）</text>
+    <text x="0" y="60" font-size="10.5" fill="#F8F8F2">· D 在列 &gt; 0 ⇒ 取 [0, end_column) 半行</text>
+    <text x="0" y="78" font-size="10.5" fill="#F8F8F2">· 逐行裁掉行尾网格填充空格；行间 LF；不合成结尾换行</text>
+    <text x="0" y="96" font-size="10.5" fill="#50FA7B">· 不含提示符、不含命令行回显</text>
+    <rect x="0" y="112" width="476" height="140" rx="6" fill="#12131A" stroke="#4D4F63"/>
+    <g font-family="monospace" font-size="10.5" fill="#F8F8F2">
+      <text x="14" y="136">$ printf 'a\nb\n'</text>
+      <text x="14" y="154" fill="#50FA7B">→ "a\nb"</text>
+      <text x="14" y="178">$ printf 'x'</text>
+      <text x="14" y="196" fill="#50FA7B">→ "x"（无结尾 LF）</text>
+      <text x="14" y="220">$ printf 'a\n\n'</text>
+      <text x="14" y="238" fill="#FFB86C">→ "a\n"（少一个结尾换行，在册 §8.3）</text>
+    </g>
+    <text x="0" y="278" font-size="10.5" fill="#62728A">拼接件：ui::copy_text 拆出 ui::copy_spans</text>
+    <text x="0" y="296" font-size="10.5" fill="#62728A">copy_text 行为逐字节不变；命令块复制走同一条拼接</text>
+    <text x="0" y="314" font-size="10.5" fill="#62728A">三项 CopyOptions 复用；读网格与写剪贴板都在帧边界</text>
+  </g>
+</g>
+
+<!-- ============ 屏 C：绝对行与区间模型 ============ -->
+<g transform="translate(30,1238)">
+  <rect x="-1" y="-1" width="1502" height="542" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">C</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 绝对行坐标、C→D 的两种右端、块的生命周期</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="508" fill="#1E1F29"/>
+
+  <g transform="translate(24,50)">
+    <rect x="0" y="0" width="850" height="44" rx="6" fill="#12131A" stroke="#4D4F63"/>
+    <text x="14" y="18" font-size="10.5" fill="#8BE9FD" font-family="monospace">absolute = storage_index + dropped_lines</text>
+    <text x="14" y="35" font-size="10" fill="#62728A">scroll_up 溢出 / set_rows 溢出与顶部补空 / scroll_down 补空 / clear() 推进 dropped；带内滚动不记</text>
+
+    <!-- C-1 D 列 0 -->
+    <text x="0" y="76" font-size="11.5" fill="#50FA7B" font-weight="700">D 在列 0（常态：命令以换行结尾）· 复制 = 输出行 249–251</text>
+    <g font-size="10.5" font-family="monospace">
+      <rect x="0" y="88" width="650" height="24" fill="#282A36" stroke="#3A3C4C"/>
+      <text x="8" y="105" fill="#FFB86C">abs 248</text>
+      <text x="72" y="105" fill="#F8F8F2">lab@router:~$ make test</text>
+      <text x="470" y="105" fill="#50FA7B" font-family="'Noto Sans CJK SC',sans-serif">A / B / C 起点</text>
+      <rect x="0" y="112" width="650" height="24" fill="#5E353E" stroke="#3A3C4C"/>
+      <text x="8" y="129" fill="#FFB86C">abs 249</text>
+      <text x="72" y="129" fill="#F8F8F2">[ 12%] Building CXX object ...</text>
+      <rect x="0" y="136" width="650" height="24" fill="#5E353E" stroke="#3A3C4C"/>
+      <text x="8" y="153" fill="#FFB86C">abs 250</text>
+      <text x="72" y="153" fill="#F8F8F2">FAILED: utest_terminal_osc</text>
+      <rect x="0" y="160" width="650" height="24" fill="#5E353E" stroke="#3A3C4C"/>
+      <text x="8" y="177" fill="#FFB86C">abs 251</text>
+      <text x="72" y="177" fill="#F8F8F2">make: *** [Makefile:12: test] Error 1</text>
+      <rect x="0" y="184" width="650" height="24" fill="#282A36" stroke="#3A3C4C"/>
+      <text x="8" y="201" fill="#FFB86C">abs 252</text>
+      <text x="72" y="201" fill="#F8F8F2">lab@router:~$ _</text>
+      <text x="470" y="201" fill="#FFB86C" font-family="'Noto Sans CJK SC',sans-serif">D 列 0 ⇒ 本行不算输出</text>
+    </g>
+    <line x1="682" y1="114" x2="682" y2="183" stroke="#50FA7B" stroke-width="2"/>
+    <text x="692" y="140" font-size="10" fill="#50FA7B">复制区间</text>
+    <text x="692" y="156" font-size="10" fill="#50FA7B">249..251</text>
+
+    <!-- C-2 D 列 > 0 -->
+    <text x="0" y="238" font-size="11.5" fill="#50FA7B" font-weight="700">D 在列 &gt; 0（命令没打换行）· 复制 = 该行 [0, end_column)</text>
+    <g font-size="10.5" font-family="monospace">
+      <rect x="0" y="250" width="720" height="24" fill="#282A36" stroke="#3A3C4C"/>
+      <text x="8" y="267" fill="#FFB86C">abs 260</text>
+      <text x="72" y="267" fill="#F8F8F2">lab@router:~$ printf 'x'</text>
+      <rect x="0" y="274" width="720" height="24" fill="#282A36" stroke="#3A3C4C"/>
+      <text x="8" y="291" fill="#FFB86C">abs 261</text>
+      <text x="72" y="291" fill="#F8F8F2">x</text>
+      <text x="80" y="291" fill="#62728A">lab@router:~$ _</text>
+      <text x="330" y="291" fill="#8BE9FD" font-family="'Noto Sans CJK SC',sans-serif">C 列 0 · D 列 1 ⇒ 只取 "x"</text>
+    </g>
+    <rect x="0" y="304" width="720" height="44" rx="4" fill="#12131A" stroke="#4D4F63"/>
+    <text x="12" y="321" font-size="10" fill="#62728A" font-family="monospace">$ printf 'a\nb\n'</text>
+    <text x="160" y="321" font-size="10" fill="#50FA7B">→ "a\nb"（中间行整行）</text>
+    <text x="12" y="339" font-size="10" fill="#62728A">每行裁掉行尾网格填充空格；行间 LF；不合成结尾换行</text>
+    <g transform="translate(744,288)">
+      <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+      <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">3</text>
+    </g>
+    <text x="0" y="370" font-size="10.5" fill="#62728A">首行从 C 的列起算，末行按 D 的列截断；中间行整行；每行裁掉行尾网格填充空格</text>
+    <text x="0" y="388" font-size="10.5" fill="#62728A">C 之后收到 P：只更新 OscState.prompt_marker，不改变块，更不改变输出起点</text>
+  </g>
+
+  <!-- C 右列 -->
+  <g transform="translate(900,50)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">块的生命周期与清空路径</text>
+    <g transform="translate(11,28)">
+      <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+      <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">6</text>
+      <text x="18" y="4" font-size="11.5" fill="#f2f4f8">存绝对行：回看 / resize / 溢出都不漂移</text>
+    </g>
+    <text x="30" y="52" font-size="10.5" fill="#62728A">块整体滚出存储 ⇒ 不可用：菜单不出现、红底不画、线找不到</text>
+    <text x="30" y="70" font-size="10.5" fill="#62728A">备屏：133 标记一律忽略；主屏块表保留，切回照旧可用</text>
+    <text x="30" y="88" font-size="10.5" fill="#62728A">ED 3（main_.clear()）与 RIS（reset_to_default()）清空全部块</text>
+    <text x="30" y="106" font-size="10.5" fill="#62728A">容量 256，满表淘汰最旧；serial 递增不复用</text>
+    <text x="30" y="124" font-size="10.5" fill="#62728A">新 A 把未收 D 的旧块标 superseded；不参与复制与高亮</text>
+    <text x="30" y="142" font-size="10.5" fill="#62728A">孤立 B / C / D 忽略，不产块；无 C 或 D 的块不可复制</text>
+
+    <rect x="0" y="176" width="570" height="150" rx="6" fill="#12131A" stroke="#4D4F63"/>
+    <text x="14" y="198" font-size="10.5" fill="#8BE9FD" font-weight="700">块记录（容量 256）</text>
+    <text x="14" y="220" font-size="9.8" fill="#F8F8F2" font-family="monospace">serial · prompt_row · prompt_end_row</text>
+    <text x="14" y="238" font-size="9.8" fill="#F8F8F2" font-family="monospace">output_start_row / column · output_end_row / column</text>
+    <text x="14" y="256" font-size="9.8" fill="#F8F8F2" font-family="monospace">exit_code · has_output_start · has_exit_code</text>
+    <text x="14" y="274" font-size="9.8" fill="#F8F8F2" font-family="monospace">completed · superseded</text>
+    <text x="14" y="300" font-size="10" fill="#50FA7B">会话视图：Session::command_blocks() 锁内副本，每帧取一次</text>
+
+    <text x="0" y="360" font-size="10.5" fill="#62728A">UI 折算：绝对行 − 当帧 dropped_lines ⇒ 存储行</text>
+    <text x="0" y="378" font-size="10.5" fill="#62728A">块快照与网格快照可差一帧，但绝不相错内容</text>
+    <text x="0" y="396" font-size="10.5" fill="#62728A">复制路径用右键存下的整份块，不依赖每帧快照时序</text>
+    <text x="0" y="414" font-size="10.5" fill="#FFB86C">本棒不做：命令块导航 / 耗时 / 退出码文本 / 持久化块表</text>
+  </g>
+</g>
+
+<!-- ============ 屏 D：设置行 + 上游静默 + 鼠标上报边界 ============ -->
+<g transform="translate(30,1798)">
+  <rect x="-1" y="-1" width="1502" height="472" fill="#1E1F29" stroke="#4D4F63"/>
+  <rect x="0" y="0" width="1500" height="34" fill="#21222C"/>
+  <circle cx="19" cy="17" r="7" fill="#BD93F9"/>
+  <text x="19" y="21" font-size="10" fill="#1E1F29" font-weight="700" text-anchor="middle">D</text>
+  <text x="36" y="22" font-size="12.5" fill="#F8F8F2" font-weight="600">Borealis — 设置页新增一行；上游不发 133 / 只发 A·B·P；鼠标上报的三档边界</text>
+  <text x="1486" y="22" font-size="12" fill="#62728A" text-anchor="end">— □ ✕</text>
+  <line x1="0" y1="34" x2="1500" y2="34" stroke="#3A3C4C"/>
+  <rect x="0" y="34" width="1500" height="438" fill="#1E1F29"/>
+
+  <g transform="translate(24,50)">
+    <text x="0" y="0" font-size="12" fill="#8BE9FD" font-weight="700">设置 › 终端（新增一行，缺省关）</text>
+    <rect x="0" y="12" width="640" height="366" rx="6" fill="#282A36" stroke="#4D4F63"/>
+    <text x="18" y="38" font-size="12.5" fill="#F8F8F2" font-weight="600">终端</text>
+    <text x="18" y="72" font-size="11.5" fill="#F8F8F2">复制时选中即复制</text>
+    <rect x="580" y="60" width="36" height="18" rx="9" fill="#50FA7B"/>
+    <circle cx="607" cy="69" r="7" fill="#F8F8F2"/>
+    <line x1="10" y1="90" x2="630" y2="90" stroke="#3A3C4C"/>
+
+    <text x="18" y="118" font-size="11.5" fill="#F8F8F2" font-weight="600">悬停命令块时显示分隔线</text>
+    <rect x="580" y="106" width="36" height="18" rx="9" fill="#44475A"/>
+    <circle cx="589" cy="115" r="7" fill="#F8F8F2"/>
+    <rect x="470" y="102" width="44" height="18" rx="4" fill="#342B47"/>
+    <text x="492" y="115" font-size="9.5" fill="#BD93F9" text-anchor="middle" font-weight="600">即时</text>
+    <text x="18" y="138" font-size="10" fill="#62728A">指针落在命令块内时，在块首行上沿画 1 px 分隔线（纯装饰，不吃点击）</text>
+    <text x="18" y="160" font-size="10" fill="#8BE9FD" font-family="monospace">terminal.command_block_separator</text>
+    <text x="18" y="177" font-size="10" fill="#62728A">bool · 缺省 false · Wired ∧ Immediate · 新键 68 → 69，Absent 仍 19</text>
+    <line x1="10" y1="194" x2="630" y2="194" stroke="#3A3C4C"/>
+
+    <text x="18" y="222" font-size="11.5" fill="#F8F8F2">链接：OSC 8 超链接</text>
+    <rect x="580" y="210" width="36" height="18" rx="9" fill="#50FA7B"/>
+    <circle cx="607" cy="219" r="7" fill="#F8F8F2"/>
+    <line x1="10" y1="238" x2="630" y2="238" stroke="#3A3C4C"/>
+    <text x="18" y="266" font-size="11.5" fill="#F8F8F2">链接：按规则识别裸 URL</text>
+    <rect x="580" y="254" width="36" height="18" rx="9" fill="#50FA7B"/>
+    <circle cx="607" cy="263" r="7" fill="#F8F8F2"/>
+    <line x1="10" y1="282" x2="630" y2="282" stroke="#3A3C4C"/>
+
+    <text x="18" y="310" font-size="10.5" fill="#62728A">六处同步：settings.h / store.cpp / form_transfer.cpp /</text>
+    <text x="18" y="328" font-size="10.5" fill="#62728A">settings_catalog.cpp / settings_i18n.cpp / main.cpp::make_interaction</text>
+    <text x="18" y="352" font-size="10.5" fill="#FFB86C">广播只到当前标签（与 terminal.link_* 同一条既有边界，非安全闸）</text>
+    <g transform="translate(610,104)">
+      <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+      <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">7</text>
+    </g>
+  </g>
+
+  <g transform="translate(700,50)">
+    <g transform="translate(11,0)">
+      <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+      <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">8</text>
+      <text x="18" y="4" font-size="11.5" fill="#f2f4f8">上游不发 133：三件全部静默</text>
+    </g>
+    <rect x="0" y="16" width="776" height="150" rx="6" fill="#12131A" stroke="#4D4F63"/>
+    <text x="14" y="40" font-size="10.5" fill="#F8F8F2">· 菜单不多条、无红底、无线；不做「猜命令块」的启发式</text>
+    <text x="14" y="60" font-size="10.5" fill="#F8F8F2">· 只发 A/B/P（Warp 一类）而不发 C/D ⇒ 不产块</text>
+    <text x="14" y="80" font-size="10.5" fill="#FFB86C">  复制条目按 fail-closed 不出现；不把提示符猜成输出</text>
+    <text x="14" y="100" font-size="10.5" fill="#F8F8F2">· P 是 PromptPart（右提示符分段），不是 OutputStart</text>
+    <text x="14" y="120" font-size="10.5" fill="#62728A">  改正前会把提示符整段算进输出——正是需求要排除的内容</text>
+    <text x="14" y="144" font-size="10.5" fill="#50FA7B">无 133 时的行为与改动前逐字节一致；不需要迁移或开关</text>
+
+    <g transform="translate(11,194)">
+      <circle cx="0" cy="0" r="11" fill="#FFB86C"/>
+      <text x="0" y="4" font-size="12" fill="#2a1b06" font-weight="700" text-anchor="middle">5</text>
+      <text x="18" y="4" font-size="11.5" fill="#f2f4f8">鼠标上报边界：分隔线与链接悬停同一条</text>
+    </g>
+    <rect x="0" y="210" width="776" height="168" rx="6" fill="#12131A" stroke="#4D4F63"/>
+    <text x="14" y="234" font-size="10.5" fill="#50FA7B">?1000 / ?1002</text>
+    <text x="120" y="234" font-size="10.5" fill="#F8F8F2">无键 Move 仍归本地 ⇒ 分隔线照常可悬停</text>
+    <text x="14" y="256" font-size="10.5" fill="#FF5555">?1003</text>
+    <text x="120" y="256" font-size="10.5" fill="#F8F8F2">Move 整笔归远端 ⇒ 分隔线不可得（不是漏判）</text>
+    <text x="14" y="278" font-size="10.5" fill="#F8F8F2">右键恒归本地 ⇒ 菜单与复制不受上报档影响</text>
+    <text x="14" y="300" font-size="10.5" fill="#62728A">块首行在可见区之上 ⇒ 不画；设置关掉 ⇒ 立即摘</text>
+    <text x="14" y="322" font-size="10.5" fill="#62728A">输出持续刷新 ⇒ 不摘（块顶没变，摘了会闪）</text>
+    <text x="14" y="350" font-size="10.5" fill="#FFB86C">本棒不做 shell 集成安装 / 探测 / 引导；无标记即无功能</text>
+  </g>
+
+  <text x="24" y="420" font-size="10.5" fill="#FF5555">真机走查九条（§7）一条未做 ⇒ 不称「可用」；Windows 腿（MSVC、ConPTY、P;k=r 字节流）未验证，只称「纯逻辑与无头链路已证」。</text>
+</g>
+
+<!-- ============ 底部实测口径 ============ -->
+<g transform="translate(30,2300)">
+  <text x="0" y="0" font-size="11.5" fill="#5a6070" font-weight="700">实测口径（2026-10-21 本沙箱 POSIX 腿 + 无头腿；Windows 腿未验证）</text>
+  <text x="0" y="20" font-size="11.5" fill="#5a6070">F1 OSC 133 有来源无消费 · F2 P 的现映射错误、必须改正 · F3 只留最近一次 · F4 绝对行 · F5 游标换算 · F6 备屏忽略 · F8 copy_text 无 span 入口 · F16 自动化全部喂字节 · F18 基线 CTest 92 项</text>
+  <text x="0" y="40" font-size="11.5" fill="#c2410c">推断／未验证：Windows 腿的 PromptMarker 改名编译与 ConPTY 下的 133 字节流；本沙箱无可复现的 P;k=r shell。外部语义依据：Contour 扩展表、WezTerm #115、Warp 集成脚本、Ghostty ble.sh。</text>
+  <text x="0" y="60" font-size="11.5" fill="#5a6070">设计稿：codespec/UI_INTEG_OSC133.draft.md · 裁决 7.123 / CHANGELOG v0.123 · 状态：评审收口，待批 1（term 记录件）／批 2（界面与设置）／批 3（集成证人与文档）。</text>
+</g>
+</svg>
