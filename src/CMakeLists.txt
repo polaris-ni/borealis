@@ -6,6 +6,8 @@
 # ============================================================
 
 add_library(borealis_core STATIC
+        cli/handoff.cpp
+        cli/startup.cpp
         config/form_transfer.cpp
         config/settings.cpp
         config/store.cpp
