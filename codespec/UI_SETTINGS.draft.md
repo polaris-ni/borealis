@@ -43,6 +43,7 @@
 | 键 | 控件 | 取值域 | 消费方现状 | 生效档位 |
 |:---|:---|:---|:---|:---|
 | `theme` | 主题卡（8 张 + 自定义） | 取值见 `config/themes.h` | 派生 palette 的回落基色 | 即时（语义见 S6） |
+| `language` | 下拉两档（`中文` / `English`） | 白名单名 `zh`／`en`——落盘名与 i18n 区域标签**同源**，唯一读点是 `config::language_tag()`（裁决 **7.130**）；域外值整枚回落 `zh` 并在 `rejected_keys` 留痕 | 装配阶段读一次并交 `ui::install_settings_strings(Language)` 装填**选定那一档**（同时把 `StringTable` 的缺省档随同一枚参数） | **重启后生效**（随本条扩出的 `EffectLevel::NextLaunch`，裁决 7.130 的 D2①／D5①；外观页上与 `cursor_shape`／`cursor_blinking` 同属「改了而本进程界面不变」那一档，区别只在生效点是重启而不是下次会话） |
 | `palette.basic[0..15]` | 16 格色板 + HEX 输入 | `#RRGGBB`（大小写不敏感；**alpha 不经配置往返**） | `ui::resolve` | 即时 |
 | `palette.default_foreground` / `default_background` | HEX 输入 ×2 | 同上 | `ui::resolve` | 即时 |
 | `palette.cursor_color` | HEX 输入 + 「未配」档 | `optional`（缺键与显式 null 两态，裁决 7.27③）；色值形态同上 | 视口层取用（不参与 `resolve`） | 即时 |
@@ -110,7 +111,7 @@
 
 1. **主题卡的第 7、8 张名字不同**：SVG 画 Tomorrow Night / Daylight，`include/borealis/config/themes.h` 实际八套是 dracula / nord / solarized-dark / one-dark / gruvbox-dark / monokai / **campbell / tokyo-night**。以代码为准（AGENTS.md §4.2 第 12 条：文档与代码冲突时以代码运行时为准并回填文档）。图标 2 那句「内置 ≥8 套」两边都成立，问题只在名字。
 2. **第五类「高级（韧性/日志）」撤销**：需求原文与 schema 都是**四分类**，多出一类就是「另起一套键名」。其两项内容各有归处——会话日志两键归**连接页**；配置韧性不是可配项而是**启动事件**，归 §7 的降级对话框。
-3. **「语言 Language」下拉不建可用态**：`SPEC.FEAT.PREF.05` 未开工——本仓从未向 `i18n::default_string_table()` 注册过译文，也没调过 `set_default_locale`（`src/`、`include/`、`tests/` 三处 grep 均零命中）；框架的语言走 `Provider<Locale>`，没有进程级 locale 量。按人已拍板① 画**灰置区段 + 延后角标**。
+3. **「语言 Language」下拉不建可用态**：`SPEC.FEAT.PREF.05` 未开工——本仓从未向 `i18n::default_string_table()` 注册过译文，也没调过 `set_default_locale`（`src/`、`include/`、`tests/` 三处 grep 均零命中）；框架的语言走 `Provider<Locale>`，没有进程级 locale 量。按人已拍板① 画**灰置区段 + 延后角标**。**就地更正（2026-10-22，裁决 7.130）**：那一行已从「灰置 + 延后角标」回到**正常行**——`appearance.language` 已入 schema（两枚白名单名 `zh`／`en`、缺省 `zh`、域外值整枚回落并留痕），页面上是一枚两档下拉（`中文` / `English`），本棒那句「框架的语言走 `Provider<Locale>`」的判断**成立且已被兑现**：装配阶段向 `install_settings_strings(语言档)` 交参数、只把**选定那一档**装进那张表并把缺省档随同一枚参数，另在生产的场景根与用例驱动台各装一枚 `au::LocaleProvider`；唯一与原口径不同的是生效档——它不是即时也不是「下次会话」，而是随裁决 7.130 的 D2① 取**重启后生效**，载体是本稿 S3 那张枚举追加的一枚 `EffectLevel::NextLaunch`。§2 外观域表随之补上 `language` 那一行。落点、判据与八条真机走查清单见 `codespec/PREF05_I18N.draft.md`（本条仍不称「可用」，§4.4 第 33 条）。
 4. **「跟随系统浅色」开关撤销**：框架 `environment/media_query.h` 的 `MediaQuery` 无亮度或 appearance 字段（全 include grep `brightness` 零命中），即**没有数据源**；且 `SPEC.FEAT.PREF.01` 原文只写「UI 主题暗色优先、跟随 Aurora `Theme::dark()` / `ThemeScope` 体系」，没要求跟随系统。这条属「图上画了需求没要的东西」，按 AGENTS.md §4.1 第 1 条不实现。
 5. **「多行粘贴警告」开关撤销**：`SPEC.FEAT.INTERACT.03` 把多行警告写成**固有行为**而非可配项，schema 里没有该键；逐行节流的块间隔按裁决 7.33④ 是库内常量、明确「暂不开配置键」。画一个没有键可写的开关就是空位。
 6. **「OSC 52 剪贴板读取（三态）」不画控件**：属 `SPEC.FEAT.CONN.12`（M4），schema 无键。处置与第 5 条同理，改在终端页脚注一行说明它随该条落期入 schema（S15 的「无键不画控件」档）。**就地更正（2026-10-12，裁决 7.118）**：那句「落期」已成既成事实——`terminal.clipboard_read` 已入 schema（缺省 `deny`，核对表 schema 键 64→65），终端页画的是**真控件而非脚注**（一枚三态下拉，行名「远端读取剪贴板」，候选按落盘名 `deny`/`allow`/`ask` 显示；其上一行旁注 `settings.note.clipboard_read` 讲三态各档后果与「同一会话最多挂 8 条」那档上限），于是本条既不在 S15 的「无键不画控件」档、也不在「有键无消费方 ⇒ 延后角标」档——它与同族 `terminal.right_click` 一样回到**正常行**（有键、有消费方、无角标），且它不走「只落盘」口径：`settings_catalog.cpp` 该行按 `Immediate` 定级、面板写盘后 app 级闸门当场翻档（判据见 `codespec/UI_CLIPBOARD.draft.md` §4 与 §6）。脚注那一行没有落点，页面上以那一行下拉自身的旁注承担说明位。
