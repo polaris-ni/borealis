@@ -212,7 +212,7 @@ UI（connection_wizard 第四型三行 / 侧栏档案行 / 重连浮层沿用已
 - **真 telnetd 的 etest**（F1）：`etest_telnet_server` 待有可用 telnetd 的环境补，与 `etest_serial_device`、待 sshd 的 CONN.08/10 两处欠账同档登记。
 - **Windows/MSVC 腿验证**（F12）：本沙箱无 MSVC；`src/platform/win/tcp.cpp` 既有件与本棒的 `set_nodelay` 追加均未经编译验证。
 - **quick connect 的 Telnet 分支**：`conn::parse_quick_connect` / `quick_connect_profile` 现属 SSH 语义（`src/conn/profile_views.cpp` 的 `parse_quick_connect` / `quick_connect_profile`，裁决 7.94 落的那件，建的是 SSH 档案）。给 Telnet 加语法要先定「前缀词法」，属新交互契约，本棒不扩面（在册，随 `CONN.07` 的 snippets 余腿一并看）。
-- **逐标签连接类型图标**：随 `SPEC.FEAT.WS.04` 余腿单开（口径同裁决 7.110 D12①）。代价：Telnet 标签本期与本地/SSH 标签画得一样，识别靠档案名。
+- **逐标签连接类型图标**：随 `SPEC.FEAT.WS.04` 余腿单开（口径同裁决 7.110 D12①）。代价：Telnet 标签本期与本地/SSH 标签画得一样，识别靠档案名。**〔已于 2026-10-22 出账，裁决 7.129——Telnet 格自此画 `T`，与串口 `S`／SSH `#`／本地 `>` 同出一张 `ui::connection_type_glyph()`，四档两两不等有 `utest_connection_glyph` 的成对案钉住；本句那句「画得一样」不再是现状。示意图不追画，理由同 `codespec/UI_WORKSPACE_ZOOM.draft.md` §5〕**
 - **终端类型可配**（TTYPE 报什么串）：`XTERM` 收在 `telnet_negotiation` 的一枚常量。理由是本仓没有 `TERM` 类型设置域（§1 前提），而 `CONN.06` 只要求「协商覆盖 TTYPE」，不要求报什么。代价：设备侧若按别的类型发序列则解释不合（走查第 ⑴ 条一并看）。
 - **`CR NUL` 数据段转义**（RFC 854 要求裸 CR 后跟 NUL）：不实现。本沙箱无真服务器可判其必要性，且主流 telnetd 宽容——属**推断／未验证**（AGENTS §4.2 第 11 条），`etest_telnet_server` 落地时取读数再决定。
 - **保活（keepalive）与半开检测**：`SO_KEEPALIVE`、应用层心跳都不做。F4 已说明写侧在半关时不报错，故「对端静默死亡」在本期表现为「一直等」，直到用户自己关标签——如实登记，不预建检测。
