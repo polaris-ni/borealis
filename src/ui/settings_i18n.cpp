@@ -651,7 +651,8 @@ const Tier kStringsZh{
 };
 
 /// @brief 英文档（`en`）的 key → 模板：批 3 按域四段推，**段 1 落了 `connections.*` 与 `keys.*` 共 146 条，
-/// 段 2 落了 `settings.*` 77 条，合计 223 条**，其余 243 条随该稿 §4 批 3 的段 3／段 4 补（计划／待建）。
+/// 段 2 落了 `settings.*` 77 条，段 3 落了终端与会话侧 93 条，合计 316 条**，其余 150 条随该稿 §4 的
+/// 段 4 补（`connection.*`／`serial.*`／`sftp.*`／`tunnel.*`／`shortcuts.*`／`appearance.*`，计划／待建）。
 ///
 /// 位置刻意紧跟中文表（该稿 D4），并排校对是这一档存在的唯一理由——466 条 key（批 1 收敛后的 464 条加
 /// 批 2 两枚）分在两个文件里，「两档同 key 集」那条判据就要跨文件聚合。段内条目序与中文表逐条一致，
@@ -954,6 +955,140 @@ const Tier kStringsEn{
     {"settings.issue.unset_not_allowed", "This setting must have a color"},
     {"settings.issue.slot_out_of_range", "The palette slot is outside 0 to 15"},
     {"settings.issue.table_size_wrong", "The palette must have exactly 16 slots"},
+
+    // ---- 终端内搜索浮层（批 3 段 3 起：终端与会话侧一族 93 条，段内序与中文表逐条一致）----
+    // chip 上的 `Aa` / `.*` 与按钮的 `↑` / `↓` 是符号不是文案，不进表；符号档的**无障碍标签**进表
+    //（同中文表那条注，A1-d 的宽度算式与 `set_accessibility_label` 一处兑现）。
+    {"search.action.open", "Open Search"},
+    {"search.placeholder", "Search terminal content"},
+    {"search.count_none", "No matches"},
+    {"search.count_cap", "{0}+"},
+    {"search.count_invalid", "Invalid expression"},
+    {"search.pending_enter", "Press Enter to apply"},
+    {"search.reopen_hint", "Press Enter to search"},
+    {"search.toggle_case", "Match case"},
+    {"search.toggle_regex", "Regular expression"},
+    {"search.prev", "Previous"},
+    {"search.next", "Next"},
+    {"search.close", "Close"},
+
+    // ---- 工作区操作与广播输入（WS.06 / WS.03 / WS.09）----
+    // 标题的 {0} 是成员名、{1} 是去重后的会话数，两者都是取值故走位置参数；「点击此处退出」是 D8
+    // 的落点（`Esc` 留给终端，横幅是退出整组的唯一入口）。
+    {"workspace.action.toggle_fullscreen", "Toggle fullscreen"},
+    {"workspace.action.new_window", "New window"},
+    {"workspace.broadcast.title", "Input broadcast is on: {0}, {1} sessions"},
+    {"workspace.broadcast.hint", "Sent to every pane in the group as you type; click here to exit"},
+    {"workspace.broadcast.exit", "Exit broadcast"},
+    {"workspace.broadcast.badge", "Broadcast B"},
+    {"workspace.broadcast.pane", "Pane {0}"},
+    {"workspace.broadcast.unnamed", "Unnamed session"},
+
+    // ---- 撤销关闭标签（WS.10 的命令标题）----
+    {"tab.action.undo_close", "Reopen the last closed tab"},
+
+    // ---- dead-session 一键重启与自动重连浮层（WS.05）----
+    // 终态三档只以快照里的**档位**分档，关闭原因本身不外传（D3），故「不自动重试」那一档必须同时
+    // 罩得住认证失败与主机密钥拒绝两种原因——英文也保持这一句不带原因。
+    {"session.restart.title", "Restart session"},
+    {"session.restart.hint", "The session has exited"},
+    {"session.restart.button", "Restart"},
+    {"session.reconnect.line", "Connection dropped · automatic reconnect {0} of {1}"},
+    {"session.reconnect.countdown", "Retrying automatically in {0} s"},
+    {"session.reconnect.retry_now", "Retry now"},
+    {"session.reconnect.stop", "Stop reconnecting"},
+    {"session.reconnect.exhausted", "Still failing after {0} tries · stopped"},
+    {"session.reconnect.not_reconnectable", "Authentication refused · no automatic retry"},
+    {"session.reconnect.user_stopped", "Automatic reconnect stopped"},
+    {"session.restart.by_profile", "Restart (from profile)"},
+    {"session.restart.retry_credential", "Retry with different credentials"},
+
+    // ---- 发送侧「不可表示字符」提示卡（TERM.09 的提示腿，裁决 7.104 D4①）----
+    // 第二行只指路径、不报当前处置档名：那一枚下拉显示的就是 ASCII 档名本身（replace / drop /
+    // pass_through_utf8），报第二种说法会对不上。路径三段与真标签同源（见 `settings.page.terminal`
+    // 与下面的 `terminal.unrepresentable`）。
+    {"terminal.notice.unrepresentable.line", "{0} cannot send {1} characters in this block"},
+    {"terminal.notice.unrepresentable.action",
+     "Sent under the current policy · change it in Settings > Terminal > Unrepresentable character policy"},
+
+    // ---- 右键菜单与「会话日志」一族（INTERACT.03 三条目 + CONN.11）----
+    // 这四条是既有菜单文案**换来源**而不是换措辞；日志一族六句同理，命令标题与菜单条目各一条。
+    {"menu.item.copy", "Copy"},
+    {"menu.item.copy_command_output", "Copy the output of the last command"},
+    {"menu.item.paste", "Paste"},
+    {"menu.item.open_link", "Open link"},
+    {"session.log.menu.start", "Start session log"},
+    {"session.log.menu.stop", "Stop session log"},
+    {"session.log.command.start", "Session log: start (current tab)"},
+    {"session.log.command.stop", "Session log: stop (current tab)"},
+    {"session.log.confirm.title", "Start session log"},
+    {"session.log.confirm.sensitive", "The log may contain passwords, tokens or other sensitive information."},
+    {"session.log.confirm.path", "Will be written to: {0}"},
+    {"session.log.alert.bad_pattern", "The added regex does not compile; the session log did not start: {0}"},
+    {"session.log.alert.cannot_open", "The log file could not be created; the session log did not start: {0}"},
+    {"session.log.alert.write_failed", "The log write failed; recording stopped"},
+
+    // ---- 打开链接的确认框与三档候选（INTERACT.05，判据 4／稿 D11①）----
+    // 标题、正文首行与来源两行逐字沿用已评审稿面；后两行回显的是**当前生效值**。三档候选括注落盘名
+    //（`never` / `ask_once` / `ask_always`）：面板的下拉直接吃落盘原文，只给另一种说法就对不上。
+    {"links.confirm.title", "Open this link?"},
+    {"links.confirm.uri", "{0}"},
+    {"links.confirm.source.osc8", "Source: explicit OSC 8 hyperlink"},
+    {"links.confirm.source.heuristic", "Source: heuristic text detection (not an explicit OSC 8 hyperlink)"},
+    {"links.confirm.whitelist", "Scheme allowlist: {0}; the two trust levels are configured separately"},
+    {"links.confirm.policy", "Confirmation policy: {0}"},
+    {"links.confirm.cancel", "Cancel"},
+    {"links.confirm.open_once", "Open this one only"},
+    {"links.confirm.remember_and_open", "Remember this domain and open"},
+    {"links.policy.never", "Open without asking (never)"},
+    {"links.policy.ask_once", "Ask the first time and remember the domain (ask_once)"},
+    {"links.policy.ask_always", "Ask every time (ask_always)"},
+
+    // ---- 命令面板（WS.07）----
+    // 占位符与空态两条的 key 由框架命名（`CommandPalette::AURORA_DEFAULT_*_KEY`），本件只登记取值，
+    // key 一漂移面板就静默回落英文（裁决 7.92②），故这两枚 key 不得自创。
+    {"command_palette.title", "Command palette"},
+    {"command_palette.placeholder", "Type a command..."},
+    {"command_palette.no_results", "No matching commands"},
+    {"command_palette.action.open", "Open Command Palette"},
+
+    // ---- 调试面板（`SPEC.NF.RELI.01`）----
+    // 模板里的 {n} 一律是取值（计数值与行标题的已解析串），措辞不含 ASCII 诊断通道。
+    {"diagnostics.title", "Diagnostics"},
+    {"diagnostics.action.open", "Open diagnostics"},
+    {"diagnostics.empty", "No active session"},
+    {"diagnostics.session", "Tab {0} · pane {1}"},
+    {"diagnostics.parse", "Unknown sequences {0}, interrupted {1}"},
+    {"diagnostics.decode", "Illegal bytes {0}, code points {1}"},
+    {"diagnostics.encode", "Unrepresentable on send {0}"},
+    {"diagnostics.queue", "Watermark {0} (peak {1}), overloads {2}, coalesced {3}, yields {4}"},
+
+    // ---- 终端域的设置行与那一族浮层 ----
+    // `terminal.clipboard_read` 的措辞按 D10① 收窄到「读取」：写方向不归这道闸管；三档候选不在本表
+    //（面板的下拉直接显示落盘名，同族的 `right_click` / `paste_newlines` 一样没有候选词条）。
+    // 打开链接前的两行要点明**是哪一来源**（D8①），白名单那行叫「允许打开的协议」而不是「协议」。
+    {"terminal.scrollback_limit", "Scrollback lines"},
+    {"terminal.ambiguous_width", "Ambiguous width handling"},
+    {"terminal.long_line", "Overlong line handling"},
+    {"terminal.bell", "Bell"},
+    {"terminal.encoding", "Session encoding"},
+    {"terminal.unrepresentable", "Unrepresentable character policy"},
+    {"terminal.paste_newlines", "Newline handling on paste"},
+    {"terminal.right_click", "Right-click behavior"},
+    {"terminal.clipboard_read", "Remote clipboard read"},
+    {"terminal.clipboard_read.title", "Remote requests a clipboard read"},
+    {"terminal.clipboard_read.body",
+     "The remote program wants to read the local clipboard and send the contents back to the session "
+     "(selection {0}). Allow this? A denial replies with a single empty response, so the remote does not hang."},
+    {"terminal.copy_on_select", "Copy on select"},
+    {"terminal.trim_pasted_trailing_space", "Trim trailing spaces on copy"},
+    {"terminal.smart_line_join", "Join wrapped lines"},
+    {"terminal.strip_tmux_border_chars", "Strip tmux border glyphs"},
+    {"terminal.word_delimiters", "Double-click word boundaries"},
+    {"terminal.link_osc8", "Before opening OSC 8 hyperlinks"},
+    {"terminal.link_heuristic", "Before opening detected links"},
+    {"terminal.link_schemes", "Schemes allowed to open"},
+    {"terminal.command_block_separator", "Show a divider while hovering a command block"},
 };
 
 
