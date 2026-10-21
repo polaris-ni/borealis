@@ -81,7 +81,9 @@
 1. **批 1（拆分，行为不变）**：
    - **1-A（已落，2026-10-21）**：itest harness 先跑通「两扇无头窗各渲染各自 `TabBar`」——只加测试 TU，生产一行未动。
    - **1-B（已落，2026-10-21）**：`WorkspaceWindow` 结构 + `open_workspace_window()` + `std::vector` 持有；主窗走同一条构造路径。生产仍只开一扇 ⇒ 现有全部用例零改动即须绿；`main.cpp` 不进 runner，本批无自动化证人，只有源码审查（裁决 7.83）。**落到的形状与差的那一截见 §12**——装配闭包此刻仍按别名吃第一扇窗，`open_workspace_window()` 只造地基半区（窗 + 浮层宿主 + 根 Column），标签栏与横幅两支仍由装配层在原处填进成员。
-2. **批 2（逐窗接线）**：会话 `frame_wake` 按 owner 取 surface、`set_on_frame` 逐窗泵、标题与标签名逐窗、四处 `app.focus()` 改按窗取、`tab_workspaces` 补 `owner`。
+2. **批 2（逐窗接线）**：
+   - **2-A（已落，2026-10-21）**：`TabWorkspace` 补 `owner`（指针而非 `WindowId`）、会话 `frame_wake` 与视口浮层宿主/焦点管理器按属主窗取（`wire_view` 加形参、`window_focus` 按 `app.window_host(id)` 取）。
+   - **2-B（已落，2026-10-21）**：`set_on_frame` 的角标/标签名/OSC/退出态四条写给 `owner.tab_strip`，窗口标题改为遍历 `workspace_windows` 逐窗差分写回（每窗一份 `last_title`）。四处 `app.focus()` 只收敛了视口那一条，`DebugPanel`／`StartupNotice`／`SettingsPanel` 三条与布局重建的按窗过滤留在批 4（面板「搬窗」＝D6，落点窗＝§7 撤销重开那条），口径与台账见 §13。
 3. **批 3（新窗入口与命令落点）**：`ui::ActiveWindowTracker` 纯逻辑件 + `utest`；命令 `workspace.new_window` + `Ctrl+Shift+N`（第十五条保留键）+ 面板一条；`search.open`／`session.restart`／`serial.set_baud`／`workspace.toggle_fullscreen`／`tab.undo_close` 五类闭包按 tracker 解析目标窗。
 4. **批 4（拆窗账目）**：关窗撤该窗名下全部标签（同 `perform_close` 一条链）、每窗横幅与每窗 `ClosedTabStack`、`ExitPolicy` 缺省确认与退出序遍历全部窗、面板「搬窗」而非「各一份」（D6）。
 5. **批 5（几何分别记忆）**：`persist_id` 分配 + `preferences::Preferences` 落配置目录 + 两处 `flush()` + 「恢复后首帧只下发一次」用例。
@@ -146,3 +148,15 @@
 **析构次序这一档怎么过的**：把 `root_column` 挪进「比 `tab_workspaces` 更晚析构」的位置，看着像在违反 `SPEC.FEAT.WS.02` 批 2 那条「会话容器须活得比视口久」。实测口径是：容器多持一份只让当前那格的视口**散得更晚**，而每一格的视口与其会话的相对次序由 `TabWorkspace` 自己的成员次序保证（会话容器声明在 `workspace` 之前），不会被外层容器的次序翻转；会翻车的是 `perform_close` 那种**中途**撤账的路径，那边早已按「先摘根再 erase」写过。批 4「退出序遍历全部窗」要把这一段显式化，而不是继续依赖声明序。
 
 **边界**：本批「同一条构造路径」只有主窗走过一次——生产仍只开一扇，`open_workspace_window()` 的第二调用点要到批 3 的 `workspace.new_window` 才出现，故**工厂本身的正确性只由主窗那一次运行与源码审查担保**（裁决 7.83）；真机走查未做，§9 全部条目照欠，本批不称「可用」，也不称批 1 收口。
+
+## 13 批 2 台账（装配层逐窗接线，2026-10-21）
+
+**落到的形状**（`src/main.cpp` 一处文件，102 增／46 删）：⑴ `TabWorkspace` 首字段加 `WorkspaceWindow *owner`，两处建表点（`create_new_tab_with`、撤销重开）各自填属主窗；存**指针**而不是 `WindowId`——首标签必须在 `au::Application` 登记之前建好（根 Column 先持着它才进得了场景根），那一刻号还不存在，而 `unique_ptr` 的 vector 保证堆上对象地址在窗的生命周期内不动，要号时读 `owner->id`。⑵ `build_pane_view` 加 `WorkspaceWindow &window` 形参：会话唤醒腿从「捕唯一 `surface` 引用」改成「捕属主窗、现读 `window.surface`」，`wire_view` 加同形参，把浮层宿主挂到 `*window.overlay_host`、把搜索依赖的焦点管理器换成 `window_focus(window)`（按 `app.window_host(id)` 取，取不到回主窗那一份＝兜底而非猜测）。三条建视口路径（新开格／切分／重启换会话）与首标签补挂循环同源走这一处，构造点不再各写一遍。⑶ `set_on_frame` 的帧泵循环首行取 `WorkspaceWindow &owner = *workspace.owner`，BEL／活动／OSC 标题／退出角标四条写给属主标签条；窗口标题段改为遍历 `workspace_windows`，每窗读自己的 `current_tab_id` 与 `tab_strip`、按 `window_host(id)->window()` 下发、差分账是每窗一份 `WorkspaceWindow::last_title`（原全局 `last_window_title` 已删）；回调捕获表随之从 `&current_tab_id`/`&tab_strip`/`&last_window_title` 换成 `&workspace_windows`。⑷ 切分新格继承本标签属主窗（`hooks.make_pane` 里读 `found->second.owner`）是刻意不跨窗：切出去的那一格与它背后的会话仍在同一扇窗，「切到别的窗」是另一件尚未裁决的事。
+
+**本批没做的那一截（不是漏，是边界）**：§6 批 2 原文写「四处 `app.focus()` 改按窗取」，实测口径是**视口那一处**按窗取了，`DebugPanel`／`StartupNotice`／`SettingsPanel` 三处仍捕 `app.focus()` 与主窗 `*host`——它们构造一次、活在应用级作用域，按窗取的前提是「面板随窗搬」（D6）或「每窗一份面板」，落点在批 4；`bind_shortcuts` 那条链吃的是应用级 `ShortcutRegistry`（F2 判给共享），本就不需要按窗取，故四处收敛为「一处已改 + 两处留批 4 + 一处不适用」。同理，布局重建（`rebuild_root_children`）与撤销重开的落点窗仍吃主窗别名，各带 `TODO(SPEC.FEAT.WS.03)` 在册。§7 那条「逐窗标题差分写回」判据此刻**还无可测落点**：这一段整段在 `main.cpp` 的帧回调里、不进 runner，要变成自动化判据得先把「本窗选中格的显示名 → 标题串」抽成纯件——本批不抽（§4.1 第 3 条：不加将来才用的抽象），归批 3 动命令落点时一并处理，此前由 §9 第 1/2 条真机走查担保。
+
+**读数**：`cmake --build --preset linux` 通过且无 error/warning；`ctest --preset linux -E etest_` **96/96**（9.24 s）、`borealis_test_runner` 全跑 **1212 案**全绿（21.0 s）——与批 1-B 的门**逐字相同**，本件零新增用例、零用例改动；产品侧仍只跑不触达真打开腿的那一档（`Borealis --help` 退出码 0、输出纯 ASCII）。
+
+**担保档位（如实记）**：`main.cpp` 不进 runner ⇒ 本批**没有可注入的自动化证人**（裁决 7.83、§10 第一条）。这同时意味着 §7 变异表里与装配层同名的那几则（`frame_wake` 全部捕主窗 surface、`current_tab_id` 回全局一份、`ClosedTabStack` 回全局）现在**注入也不会转红**——它们要等批 3 的 `utest_active_window_tracker` 与批 4 的 `itest_workspace_window` 扩案成为判据之后才是可注入证人，本批不冒充读数。本批的担保只有两条：门不变（行为不变的读数面）+ 源码审查（按 owner 取的那几处逐条对照 §2 那份「每窗一份」清单）。
+
+**边界**：生产仍只开一扇窗，第二调用点在批 3；两扇窗并存时的真实行为（键入落活动窗、逐窗标题、关窗撤账）全部未验，§9 七条照欠，本批不称「可用」。
