@@ -5,9 +5,9 @@
 
 ---
 
-## 0 地基实测（F1–F18，2026-10-22，POSIX 腿 + Headless；Windows/MSVC 一律标推断／未验证）
+## 0 地基实测（F1–F19，2026-10-22，POSIX 腿 + Headless；Windows/MSVC 一律标推断／未验证）
 
-本棒形态由下面十八条读数定形。与前几棒不同，本棒的**既有地基不是空的**：词条表、装填点、覆盖闸都已在了，所以 §0 读的全部是「这一套在加第二档时会从哪里断裂」，而不是「有没有接缝」。
+本棒形态由下面十九条读数定形。与前几棒不同，本棒的**既有地基不是空的**：词条表、装填点、覆盖闸都已在了，所以 §0 读的全部是「这一套在加第二档时会从哪里断裂」，而不是「有没有接缝」。**F19 是落地阶段（批 2 开工）才读得到的一条**（一次性探针，探针件跑完即删、不入册），按 AGENTS.md §4.2 第 11 条追加在本节而不是藏在 §4 的批次表里——它改的是批 2 的**必需项清单**。
 
 | 号 | 读数 | 它决定了什么 |
 |:---|:---|:---|
@@ -29,6 +29,7 @@
 | **F16** | **生效档位只有两档，语言那一行两档都不是真话**：`include/borealis/ui/settings_catalog.h` 的 `ui::EffectLevel{Immediate, NextSession}`；面板侧唯一消费点是 `settings_panel.cpp` 里 `if (control.effect == EffectLevel::NextSession)` 那一支（挂「下次会话生效」角标） | 语言既不是即时、也不是「下次会话」（会话正在跑，改完不动它；重启才换）。⇒ D5 取**扩一枚 `EffectLevel::NextLaunch`**（新枚举值 + 一处分支 + 一枚新角标词条），而不是把这一行挂进错的档。代价如实登记：这是本条动到 `settings_catalog.h` 这个纯逻辑公共头的唯一原因，判据 ⑤ 钉住「只有语言那一行是 NextLaunch，其余 69 行档位不动」 |
 | **F17** | **复数通道框架已有，zh 走 `other`**：`include/aurora/i18n/plural.h` 给 `PluralCategory{Zero,One,Two,Few,Many,Other}`、`plural_category_en`、`plural_category_other_only`；`StringTable::format` 认 `{0, plural, zero=… one=… other=…}` 块。表内带 `{0}` 的模板 **47 条**，其中**计数短语实测 13 条**（`connections.notice.imported`「已导入 {0} 条」、`settings.chain.full`「已达上限 {0} 项…」、`session.reconnect.exhausted`「重试 {0} 次仍失败…」、`terminal.notice.unrepresentable.line`「…里的 {1} 个字符」等） | 英文档若把这 13 条照位置占位直译，产出的就是 "Imported 1 items" 这类错句。zh 侧不受影响（`other_only` 恒走 `other`，故写 plural 块对中文档无害）⇒ D7 取「英文档的计数短语写复数块」，并配一条**独立 utest 证人**（同一 key 在 1／2 两个取值下两档文本），而不是靠目视 |
 | **F18** | **开工基线（本棒实测，2026-10-22）**：`ctest --preset linux` **105 项全绿**（`-E etest_` 102 项）、`borealis_test_runner` 全跑 **1295 案全绿**——逐字等于 WS.04 棒的结项读数（裁决 7.129 ⑩），其间本棒**未改一码** | 结项三件齐（ctest 全绿 + runner 案数增量 + 变异证人逐条转红）以这三个数为起点。本条的增量口径是「`utest_i18n_tiers` 新套件 + `itest_settings_panel` 的覆盖案扩形 + `utest_settings_catalog` 的 69→70 与 `NextLaunch` 案」 |
+| **F19** | **落地阶段读数（批 2 开工探针，跑完即删）**：往表里注册**一枚** `Locale{}`（＝`en`）档的 `settings.close`，其余全部仍是中文档，`ctest --preset linux` 立刻**一项转红**、runner 侧**恰 1 案红**——红的是 `itest_settings_panel.a_button_label_comes_from_the_framework_string_table_G28`，读数 `the button label matches none or several of the panel's entries: PROBE_EN_CLOSE`。F3 推出来的那一件事在帧上兑现了：`Button::resolved_label(ctx)` 取的是 `ctx.environment<Locale>()`，而测试宿主与生产现场都没有装 `LocaleProvider` ⇒ 走回落档 `Locale{}`＝`en`，**命中 en 档而不是缺省档 zh** | 三件事因此定形：**① 装 `au::LocaleProvider` 不是「运行期切换语言」的装饰，而是「补了英文档之后中文档仍然显中文」的必要条件**（批 2 的必需项，与语言键同批）；**② 本案是全仓目前唯一会为此转红的证人**——其余用例断的是 `settings_label()` 的返回值（显式带 `settings_locale()`），换档时对它们毫无影响，所以「没红」不等于「界面正确」，像素类案更是只看两帧之差而不知其语言；**③ 探针只注册一枚 key 就能定位到证人，说明这条读数的成本是接线而非文案**：本棒的接线面＝生产那一棵 `ThemeScope` 之外的一层 ＋ 用例侧的驱动台 |
 
 ---
 
@@ -47,7 +48,7 @@
 
 ## 2 交付判据（①③④⑤⑥ 有无头/纯逻辑证人；② 是结构式证人；⑦ 无证人）
 
-1. **语言档就是上屏档**：`appearance.language` 取 `zh` 时全界面为中文、取 `en` 时为英文，两档由同一条装填腿产出。证人形态＝同一批 key 在两种装填下 `settings_label(key)` 分别命中中／英两档（不比对具体译文，只比对「档位决定命中哪一层」这一事实）。这条挡住的正是 F3 那个反转：**没有它，补上 en 档就等于把界面默认换成英文**。
+1. **语言档就是上屏档**：`appearance.language` 取 `zh` 时全界面为中文、取 `en` 时为英文，两档由同一条装填腿产出。证人形态＝同一批 key 在两种装填下 `settings_label(key)` 分别命中中／英两档（不比对具体译文，只比对「档位决定命中哪一层」这一事实），**外加 F19 那半条**：绘制侧的文案（框架 `Text`／`Button` 经 ctx 解析的那一路）也随档位走，其证人只能是装了 `LocaleProvider` 的驱动台上取 `accessibility_label()` 之类的**解析后显示串**——G28 那一案就是现成的宿主（F19 读的正是它先红）。这条挡住的正是 F3 那个反转：**没有它，补上 en 档就等于把界面默认换成英文**。
 2. **两档 key 集合逐字相等，且逐 key 两档都非空**：新增套件 `utest_i18n_tiers`（新纯逻辑接缝 `settings_string_keys(tag)` 给用例侧列出某一档的全部 key）断 ①zh 的 key 集与 en 的 key 集排序后逐字相等 ②每个 key 在两档 `lookup` 均有值 ③两档条数同为 464。这条是 F7/F13 那两条读数唯一的结构式守卫，也是 7.25⑬「新增命令须同步词条」第一次有自动化证人。
 3. **英文档的计数短语走复数**：那 13 条 key 在数值 1 与 2 下渲染出两个不同串（`one` 与 `other` 分支），中文档在同一 key 同一两个数值下**同串**（`other_only`）。证人独立成案，不与判据 ② 合并——② 红是漏 key，这条红是分支选错。
 4. **表外那四条中文消失**：关标签确认框、多行粘贴确认框、默认标签名「本地终端」三处改消费词条；英文档下这三处上屏为英文且**不再需要 `CJK-LITERAL` 标记**（该标记随字面量一起消失，不是加一条例外）。默认标签名复用既有 `connections.type.local`，表内不新增 key。
@@ -84,7 +85,7 @@
 |:---|:---|:---|
 | **批 0** | 本稿与 §0 地基实测 | `codespec/PREF05_I18N.draft.md`（新） |
 | **批 1** | 表本体收敛：删五处死条目（D10，「动作名」生效、五行住在『快捷键只读表』段）、`settings_i18n.h` 那条「十三」改口（F9）、`kStrings` 更名 `kStringsZh`；判据 ⑥ 的中文半边随本批落（证人放 `itest_settings_panel.cpp`——它是唯一已 include 该私有头的套件，新建 `utest_*` 去引 `src/ui/` 私有头本仓无先例）。本批**行为零变化**，除列头「动作名」一处 | `src/ui/settings_i18n.{h,cpp}` + `tests/integration/itest_settings_panel.cpp` |
-| **批 2** | 语言接缝：`install_settings_strings(Language)`（或 `std::string_view tag`）参数化、`settings_locale()` 随启动档位、新增 `settings_string_keys(tag)`、装填两档、缺省档随参数（判据 ①② 的宿主）；`appearance.language` 的结构体字段与 schema 名与 store 读写（六处同步的前三处） | `src/ui/settings_i18n.{h,cpp}` + `include/borealis/config/settings.h` + `src/config/{schema_names.h,store.cpp}` + `tests/unit/utest_i18n_tiers.cpp`（新）+ `tests/unit/utest_config.cpp` |
+| **批 2** | 语言接缝：`install_settings_strings(Language)`（或 `std::string_view tag`）参数化、`settings_locale()` 随启动档位、新增 `settings_string_keys(tag)`、装填两档、缺省档随参数（判据 ①② 的宿主）；`appearance.language` 的结构体字段与 schema 名与 store 读写（六处同步的前三处）；**并装 `au::LocaleProvider`**（F19 的必需项：生产那一层场景根 ＋ 用例侧驱动台各装一枚，否则补上英文档就等于把中文档的绘制侧文案换成英文） | `src/ui/settings_i18n.{h,cpp}` + `src/main.cpp` + `include/borealis/config/settings.h` + `src/config/{schema_names.h,store.cpp}` + `tests/unit/utest_i18n_tiers.cpp`（新）+ `tests/unit/utest_config.cpp` + `tests/integration/itest_settings_panel.cpp`（G28 那一案的驱动台） |
 | **批 3** | 英文文案本体，按域四段推：连接侧（`connections.*`／`keys.*`）→ 面板侧（`settings.*`）→ 终端与会话侧（`terminal.*`／`session.*`／`workspace.*`／`links.*`／`search.*`／`diagnostics.*`／`menu.*`／`tab.*`／`command_palette.*`）→ 连接域与其余（`connection.*`／`serial.*`／`sftp.*`／`tunnel.*`／`shortcuts.*`／`appearance.*`）。每段完即跑判据 ②（未齐即红） | `src/ui/settings_i18n.cpp`（`kStringsEn`） |
 | **批 4** | 复数：13 条计数短语两档改写 `plural` 块 + 判据 ③ 的案 | `src/ui/settings_i18n.cpp` + `tests/unit/utest_i18n_tiers.cpp` |
 | **批 5** | 面板那一行与 `NextLaunch`：catalog 那一行、`EffectLevel` 追加值、面板角标分支与词条、`form_transfer` 的 Binding 插入位（次序纪律）、`utest_settings_catalog` 的 69→70 与 `Absent` 19 复核 | `include/borealis/ui/settings_catalog.h` + `src/ui/{settings_catalog.cpp,settings_panel.cpp,settings_i18n.cpp}` + `src/config/form_transfer.cpp` + `tests/unit/utest_settings_catalog.cpp` + `tests/unit/utest_form_transfer.cpp` + `tests/integration/itest_settings_panel.cpp` |
@@ -103,6 +104,7 @@
 4. **命令 id 恒英文**：`CommandRegistry` 的 id 与快捷键覆盖表不随语言变（7.25⑬），本棒不碰 id；面板与命令面板显示的是词条，落盘的是 id。
 5. **域校验只在装载侧**：`appearance.language` 的白名单 `{zh, en}` 由 `store.cpp` 把守（裁决 7.46② 分工），面板与装填侧都不夹紧、不自造回落。域外值＝rejected 留痕 + 回落缺省 `zh`。
 6. **词条表是上屏文案的唯一真值源**（对界面而言）：F10 那四处进表后，`src/` 与 `include/` 内不再有引号内 CJK 的上屏串（除词条表本体与用例侧的断言字面量）。这条可以做成一条**门禁式**核对，本棒先以判据 ④ 与 §6 走查覆盖，是否升为常驻脚本留批 7 定（AGENTS.md §4.4 第 22 条要求任何常驻脚本自带变异自证）。
+7. **绘制侧文案的语言由注入的 `Locale` 决定，而不是由表的缺省档决定**（F19）：`au::LocaleProvider` 一旦装上，`Text`／`Button` 走注入值；未装则一律按 `Locale{}`＝`en` 查，**en 档存在即命中**。于是本条的不变量是「现场与驱动台都装 provider」，而表的缺省档只兜住那几处不经 ctx 的解析口（F5）。这条是批 2 与批 3 的次序约束：provider 先落，英文档后落，反过来的中间态就是中英混排。
 
 ---
 
@@ -142,6 +144,7 @@
 | m4 | 13 条计数短语里的 `plural` 块退化为 `other` 单形态 | 判据 ③ 的 `en` 档 1／2 两串不等那条 |
 | m5 | catalog 那一行的 `effect` 改成 `Immediate` | 判据 ⑤（角标与档位断言） |
 | m6 | 在生效那五行的**前面**重新加一份 `{"settings.shortcut.column.title", "动作"}`（把 F8 的形态注回去；加在后面的重复会被 `std::map` 吸收，打不中任何断言——这正是 F8 那条注说的「条数类断言天然无感」） | 判据 ⑥（表头那五串逐字验） |
+| m7 | 摘掉场景根外那枚 `LocaleProvider`（批 2 的接线撤回，其余不动） | 判据 ① 的绘制侧半边（F19 已实测：这条注入在 en 档有内容时**必然**打红 G28 那一案；批 3 之前 en 档为空，故 m7 只登记形态、红案数随批 3 收尾复跑给） |
 
 **批 1 读数**（表本体收敛那笔，本棒实测）：m6 注入形态＝在生效那五行**前面**加回一份 `{"settings.shortcut.column.title", "动作"}`（即 F8 的原始形态），`ctest --preset linux -R itest_settings_panel` 转红、`--filter five_shortcut` 读数**恰 1 案红**且红的正是 `title` 那一行断言（`"??????"` vs `"?????????"`，即三字对四字）；还原后 `ctest --preset linux` **105/105**、`borealis_test_runner` **1296 案全绿**（开工基线 1295 + 本案）。同批可见变化一处：快捷键只读表列头从「动作」变成「动作名」（D10 选的正是这一份）。
 
