@@ -50,7 +50,7 @@
 **UI 腿**（`src/ui/workspace_view.{h,cpp}`，两处签名／入口变更）：
 
 - `PaneViewFactory` 由 `(PaneId pane)` 改为 `(PaneId pane, PaneId origin)`，`origin` 即被切那一格（`split_pane` 的 `target`）。装配层因此能拿到 `origin` 的会话读 OSC 7，而不必在工厂调用那一刻反过来猜「框架焦点此刻是谁」（F5／F6 那两条歧义正是这么来的）。生产侧本批仍返回同一视图，行为不变。
-- 新增 `auto replace_view(PaneId, std::shared_ptr<TerminalView>) -> bool`：换掉该格的视图并保住格的身份——`views_` 改指、旧 Node 就地替换、`debounce_.forget(pane)`、焦点与广播 pill 按原成员资格重算、`zoomed_` 若正是这一格保持缩放。这是 §6 重启腿不再拆树的前提。
+- 新增 `auto replace_view(PaneId, std::shared_ptr<TerminalView>) -> bool`：换掉该格的视图并保住格的身份——`views_` 改指、旧 Node 就地替换、`debounce_.forget(pane)`、焦点与广播 pill 按原成员资格重算、`zoomed_` 若正是这一格保持缩放（它按 `PaneId` 记，天然随格不动）。这是 §6 重启腿不再拆树的前提。**回 false 即什么都没动**，四种情形各一条：新视图为空、该格不存在、交进来的就是当前那份视图、这一格与别格共用同一份视图——子节点身份只能靠视图地址反查，共用时无从分辨该换哪一个，而今天的生产工厂正是这副形态（F5／F6），故宁可拒绝也不猜。三条承重次序写在声明处：先清框架焦点再销毁旧视图、手写换子后补 `note_pending_mount()`、按格清去抖旧账。
 
 ## 4 每类标签的切分语义
 
@@ -70,6 +70,7 @@
 - **关标签**：`perform_close` 的七笔账不变（F10），`tab_workspaces.erase` 一次带走该标签全部格的会话；`broadcast_router.remove_tab` 仍撤全部成员。
 - **退出**：`app.run()` 之后的双层循环改成遍历 `sessions_by_pane` 全部值，逐格 `close()`。
 - **登记时序**：工厂在 `split_pane` 栈内写 `tab_workspaces[id].sessions_by_pane`。这依赖 `std::map` 的节点稳定性（插入不搬动其他节点，故正在执行的 hook 不悬垂）。这一条写成注释留在代码里，因为把 `tab_workspaces` 换成 `unordered_map` 或换成按值搬运的容器就会当场破——与 F1 那条注释同级别的承重结论。
+- **重启腿的调用上下文**（批 1 实测）：`replace_view` 里「先清焦点再销毁旧视口」与「焦点归还本格」两条，只有在**派发栈内**才写到派发用的那份 `FocusManager`。栈外 `current_focus_manager()` 为空，`resolve_focus_manager` 退到按根缓存的兜底实例，派发用的那份因此仍指着刚销毁的旧视口——框架的 `live_focused()` 有弱指针守卫，读成空而不致悬垂（实测不崩），但用户此后第一下键入无处可去，得由装配层补一次设焦。生产的 `session.restart` 由菜单／按钮的指针事件带动，天然在栈内；两份 itest 驱动台都以 `set_current_focus_manager` 包住这一跳，判据测的才是真链路而非兜底件。
 
 ## 6 逐 pane 语义收口（现状 → 目标）
 
@@ -96,7 +97,7 @@
 
 ## 8 判据与自证
 
-自动化能担保的：UI 腿的工厂收到正确的 `origin`、工厂返回空时树不动、`replace_view` 保住成员资格与焦点、`teardown_pane` 撤两笔账、逐 pane 尺寸下发只碰本格会话（`itest_workspace_layout`／`itest_workspace_broadcast` 扩案 + 生产形态的 `shared_view` 档改造）。
+自动化能担保的：UI 腿的工厂收到正确的 `origin`（且 `origin` 跟着**模型焦点**走——栈外的 `split_focused` 只写得进模型投影，框架读数会落后一拍）、工厂返回空时树不动、`replace_view` 保住格身份／成员资格／焦点／缩放态并给新会话补一次 `resize`、共用视图时拒绝交换、`teardown_pane` 撤两笔账、逐 pane 尺寸下发只碰本格会话（`itest_workspace_layout`／`itest_workspace_broadcast` 扩案 + 生产形态的 `shared_view` 档改造）。
 
 自动化担保不了的（F14）：`main.cpp` 里那份工厂是否真给每一格造了正确类型的会话、串口标签切不开、重启只换一格。结项文须写明「生产装配最后一跳无自动化证人」，并以下面这份真机走查清单收口——**未走完不得称「可用」**（AGENTS §4.4 第 33 条）：
 

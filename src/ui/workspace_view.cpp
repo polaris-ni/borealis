@@ -255,6 +255,57 @@ auto WorkspaceView::split_focused(PaneAxis axis) -> void {
     split_pane(tree_.focused(), axis);
 }
 
+auto WorkspaceView::replace_view(PaneId pane, std::shared_ptr<TerminalView> next) -> bool {
+    if (next == nullptr) {
+        return false;
+    }
+    TerminalView *old = view_of(pane);
+    if (old == nullptr || old == next.get()) {
+        return false;  // 该格不存在，或交进来的就是同一份视图（换了等于没换，别把它当成功）
+    }
+    aurora::Node *slot = nullptr;
+    std::size_t holders = 0U;
+    for (aurora::Node &child : child_nodes_mut()) {
+        if (&child.widget() == old) {
+            slot = &child;
+            ++holders;
+        }
+    }
+    if (holders == 0U) {
+        AURORA_LOG_WARN("workspace", "replace_view: pane ", pane, " has no child node to swap");
+        return false;
+    }
+    if (holders > 1U) {
+        // 两格共用一份视图时「这一格的子节点」无从分辨，换下去必然让另一格指着已散的手柄。
+        // 今天的生产工厂正是这副形态（`SPEC.FEAT.WS.02` 的多会话欠账），故宁可拒，不猜。
+        AURORA_LOG_WARN("workspace", "replace_view: pane ", pane,
+                        " shares its view with another pane, replacement is ambiguous");
+        return false;
+    }
+    // ① 焦点先离格。旧视图若正持焦，它在本步之后即析构，而焦点表还指着它——下一次 `set_focus` 的
+    //    blur 就会摸到已消散的控件。次序与 `close_pane` 的「先交接再摘子」是同一条纪律。
+    const bool was_focused = old->is_focused();
+    if (auto *manager = aurora::resolve_focus_manager(*this); manager != nullptr && was_focused) {
+        manager->clear();
+    }
+    TerminalView *fresh = next.get();
+    *slot = aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(next))};
+    views_[pane] = fresh;
+    // ② 新视图的挂载仍不归本层：与 `split_pane` 里那句 `add` 同一个待补挂机制，手写换子不会自动置位。
+    note_pending_mount();
+    // ③ 清掉这一格的去抖旧账：新会话此刻还在标称网格上，而表里若留着旧格已下发的那份行列，
+    //    下一次折算值与之相等就会少发一次 `resize`，新格便永远停在 80×24（`close_pane` 同理）。
+    debounce_.forget(pane);
+    wire_view(*fresh, pane);
+    if (was_focused) {
+        apply_focus(pane, aurora::FocusArrival::Keyboard);
+    }
+    refresh_broadcast_badges();
+    mark_needs_layout();
+    mark_needs_paint();
+    return true;
+}
+
 auto WorkspaceView::on_layout(const aurora::Constraints &c, const aurora::BuildContext &ctx) -> aurora::Size {
     // 无限 max 与视口同因：Flex 主轴给非加权子项的「按需上限」不是可信的可视宽度，沿用上一次的盒。
     const aurora::Size box =
@@ -613,7 +664,7 @@ auto WorkspaceView::split_pane(PaneId target, PaneAxis axis) -> void {
         return;
     }
     const PaneId pane = next_pane_++;  // 标识只增不复用：回收掉的号不留给下一格
-    std::shared_ptr<TerminalView> created = hooks_.make_pane(pane);
+    std::shared_ptr<TerminalView> created = hooks_.make_pane(pane, target);
     if (created == nullptr) {
         AURORA_LOG_WARN("workspace", "pane factory returned null, tree unchanged for pane ", pane);
         return;

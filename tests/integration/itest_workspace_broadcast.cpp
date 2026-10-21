@@ -203,7 +203,8 @@ class Rig {
         }
 
         WorkspaceView::Hooks hooks;
-        hooks.make_pane = [this, id, encoding](PaneId pane) -> std::shared_ptr<TerminalView> {
+        hooks.make_pane = [this, id, encoding](PaneId pane, PaneId /*origin*/)
+            -> std::shared_ptr<TerminalView> {
             if (shared_view_[id]) {
                 TabFixture &tab = tabs_[id];
                 const std::shared_ptr<TerminalView> shared = shared_view_of_[id];
@@ -279,9 +280,27 @@ class Rig {
         render();
     }
 
+    /// @brief 复刻装配层的重启腿：换掉某格的会话与视口，格身份与成员资格都不动。
+    /// @return 交换是否发生（该格不存在或视口为空即 false）。
+    auto replace_pane(TabId tab, PaneId pane, const std::string &encoding = "UTF-8") -> bool {
+        const auto found = tabs_.find(tab);
+        if (found == tabs_.end() || found->second.workspace == nullptr) {
+            return false;
+        }
+        const std::shared_ptr<TerminalView> next = make_pane(tab, pane, encoding);
+        // 旧会话留在 `fixture.sessions` 里直到本函数返回：`replace_view` 内部就地销毁旧视口，
+        // 而 `~TerminalView` 要往它背后的会话写撤账空响应（与生产重启腿同一条次序）。生产的重启腿
+        // 由派发给菜单/按钮的指针事件带动，故这里以同一个派发上下文包住这一跳：栈外只能落到按根缓存
+        // 的兜底管理器，本表用来派发的那份焦点就不会跟着换新视口，判据就测不到真链路。
+        au::set_current_focus_manager(&focus_);
+        const bool swapped = found->second.workspace->replace_view(pane, next);
+        au::set_current_focus_manager(nullptr);
+        render();
+        return swapped;
+    }
+
     /// @brief 排一帧：先让各视口结算会话提交，再走真实布局与绘制。
-    auto render() -> void {
-        for (auto &[tab, fixture] : tabs_) {
+    auto render() -> void {        for (auto &[tab, fixture] : tabs_) {
             (void)tab;
             for (auto &[pane, view] : fixture.views) {
                 (void)pane;
@@ -683,6 +702,66 @@ AURORA_TEST_CASE(banner_height_tokens_and_pills_follow_the_group) {
     AURORA_TEST_CHECK_NEAR(rig.view(tab, 1U)->paint_bounds().origin.y, 0.0, 1.0);
     px = rig.pixels();
     AURORA_TEST_CHECK(rig.sample(px, au::Point{2.0F, 2.0F}) == rig.palette().default_background);
+}
+
+AURORA_TEST_CASE(restarting_one_pane_keeps_its_broadcast_membership) {
+    Rig rig;
+    const TabId tab = rig.add_tab(U"alpha");
+    rig.show(tab);
+
+    // 左格入组 → 分屏 → 右格入组：两格成员，各自一份独立会话。
+    AURORA_TEST_REQUIRE(rig.press(au::KeyCode::B, Rig::ctrl_shift()));
+    AURORA_TEST_REQUIRE(rig.press(au::KeyCode::D, Rig::ctrl_shift()));
+    rig.render();
+    AURORA_TEST_REQUIRE_EQ(rig.workspace(tab).pane_count(), 2U);
+    AURORA_TEST_REQUIRE(rig.press(au::KeyCode::B, Rig::ctrl_shift()));
+    rig.render();
+    AURORA_TEST_REQUIRE(rig.router().contains(tab, 2U));
+    AURORA_TEST_REQUIRE_EQ(rig.router().size(), 2U);
+    const void *before = rig.view(tab, 2U)->session_identity();
+
+    // 重启右格：格身份、拓扑、成员资格与角标都不动，只有会话换人。
+    AURORA_TEST_REQUIRE(rig.replace_pane(tab, 2U));
+    AURORA_TEST_CHECK_EQ(rig.workspace(tab).pane_count(), 2U);
+    AURORA_TEST_CHECK_EQ(rig.router().size(), 2U);
+    AURORA_TEST_CHECK(rig.router().contains(tab, 2U));
+    AURORA_TEST_CHECK(rig.view(tab, 1U)->broadcast_badge_box().has_value());
+    AURORA_TEST_CHECK(rig.view(tab, 2U)->broadcast_badge_box().has_value());
+    AURORA_TEST_CHECK_NE(rig.view(tab, 2U)->session_identity(), before);
+    AURORA_TEST_CHECK(rig.view(tab, 2U)->is_focused());  // 焦点没跟着旧视口一起散掉（派发用的那份管理器也换了）
+
+    // 焦点回左格后键入：新会话仍是扇出目标，重启没把它漏出组。
+    AURORA_TEST_REQUIRE(rig.press(au::KeyCode::ArrowLeft, au::ModifierKey::Alt));
+    rig.render();
+    rig.clear_written();
+    AURORA_TEST_REQUIRE(rig.type("z"));
+    AURORA_TEST_CHECK_EQ(rig.written(tab, 1U), "z");
+    AURORA_TEST_CHECK_EQ(rig.written(tab, 2U), "z");
+}
+
+AURORA_TEST_CASE(replacing_a_shared_view_is_refused_rather_than_guessed) {
+    Rig rig;
+    const TabId tab = rig.add_tab(U"alpha", "UTF-8", /*shared_view=*/true);
+    rig.show(tab);
+    AURORA_TEST_REQUIRE(rig.press(au::KeyCode::B, Rig::ctrl_shift()));
+    AURORA_TEST_REQUIRE(rig.press(au::KeyCode::D, Rig::ctrl_shift()));
+    rig.render();
+    AURORA_TEST_REQUIRE_EQ(rig.workspace(tab).pane_count(), 2U);
+    TerminalView *shared = rig.workspace(tab).view_of(1U);
+    AURORA_TEST_REQUIRE(shared != nullptr);
+    AURORA_TEST_REQUIRE(rig.workspace(tab).view_of(2U) == shared);  // 两格共用一份视图（F5 的生产形态）
+    AURORA_TEST_REQUIRE(rig.press(au::KeyCode::B, Rig::ctrl_shift()));
+    rig.render();
+    AURORA_TEST_REQUIRE_EQ(rig.router().size(), 2U);
+
+    // 子节点靠视图地址反查，共用时无从分辨「该换哪一格」——宁可拒绝，也不把另一格留在悬垂手柄上。
+    // 判据只问工作区自己的表：驱动台的 `make_pane` 会先把候选登记进本表，那一份不代表界面腿动了。
+    AURORA_TEST_CHECK_FALSE(rig.replace_pane(tab, 2U));
+    AURORA_TEST_CHECK_EQ(rig.workspace(tab).pane_count(), 2U);
+    AURORA_TEST_CHECK(rig.workspace(tab).view_of(1U) == shared);
+    AURORA_TEST_CHECK(rig.workspace(tab).view_of(2U) == shared);
+    AURORA_TEST_CHECK_EQ(rig.router().size(), 2U);
+    AURORA_TEST_CHECK(rig.router().contains(tab, 2U));
 }
 
 AURORA_TEST_CASE(a_shared_session_is_written_once_even_with_two_members) {

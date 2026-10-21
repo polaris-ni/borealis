@@ -45,7 +45,12 @@ namespace borealis::ui {
 class WorkspaceView final : public aurora::Container {
   public:
     /// @brief 切分新 pane 时造一份视图（连它自己的会话）；返回空即工厂失败，树因此不动。
-    using PaneViewFactory = std::function<std::shared_ptr<TerminalView>(PaneId pane)>;
+    ///
+    /// `origin` 是被切那一格（`split_pane` 的 target），不是工厂正在造的 `pane`：装配层要靠它取回
+    /// 源格的会话（本地腿的 OSC 7 继承、SSH 腿的档案与留档凭据都按那一格现读）。少这一个参数，
+    /// 工厂就只能反过来猜「此刻框架焦点在谁」——而把手刚按下时那份读数是空的（见 `note_framework_focus`）。
+    using PaneViewFactory =
+        std::function<std::shared_ptr<TerminalView>(PaneId pane, PaneId origin)>;
     /// @brief 去抖尾沿到点：把某 pane 的最新期望行列交出去（生产侧即 `Session::resize`）。
     using GridSizeDispatch = std::function<void(PaneId pane, GridSize size)>;
     /// @brief 视图已从容器摘除后回收该 pane 的会话；与工厂成对，故生命周期归属只在装配层。
@@ -122,6 +127,22 @@ class WorkspaceView final : public aurora::Container {
     /// （`SPEC.FEAT.WS.02` 尚欠），按视图反查会落到遍历次序里的第一格，不是模型焦点。
     /// @param axis `Horizontal` 为左右分（与 `Ctrl+Shift+D` 同轴），`Vertical` 为上下分。
     auto split_focused(PaneAxis axis) -> void;
+
+    /// @brief 就地换掉某一格的视图（装配层的重启腿：`SPEC.FEAT.WS.05` 换会话而不换格）。
+    ///
+    /// 格的身份全程不变：`PaneTree` 的叶子、广播成员资格、缩放态与焦点归属都按原样跟上，只有视图
+    /// 与它背后的会话换成新的。返回 false 即**什么都没动**，四种情形各对应一条拒绝：新视图为空、该格
+    /// 不存在、交进来的就是当前那份视图（换了等于没换）、这一格与别格共用同一份视图（子节点身份靠
+    /// 视图地址反查，共用时无法定位该换哪一个——多会话落地前的生产工厂正是这副形态）。
+    ///
+    /// 三条次序是承重的，不是排布偏好：① 先把框架焦点清掉再销毁旧视图——焦点管理器留着悬垂指针
+    /// 的话，下一次 `set_focus` 会去 blur 一个已析构的控件（与 `close_pane` 的「先交接再摘子」同源）；
+    /// ② 换 Node 之后须 `note_pending_mount()`，新视图的挂载仍交回框架在下一次布局做（文件头第三条
+    /// 实测事实，`Container::add` 之外的手写换子同样适用）；③ 去抖表按格清账，否则新会话会沿用旧格
+    /// 已下发的那份行列而少发一次 `resize`（与 `close_pane` 里那句 `debounce_.forget` 同一条理由）。
+    /// @param pane 目标格。
+    /// @param next 新的视图，本容器自此持有它。
+    auto replace_view(PaneId pane, std::shared_ptr<TerminalView> next) -> bool;
 
   protected:
     /// @brief 折算树、按矩形以紧约束排每个视图，并把矩形写回节点 bounds。

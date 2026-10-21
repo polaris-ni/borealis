@@ -878,10 +878,12 @@ auto main(int argc, char **argv) -> int {
         // 两枚闭包**按值**捕获 `shared_ptr<Session>` 是承重的，不是随手：`WorkspaceView::hooks_`
         // 声明在该类最前（故最后析构），这份值捕获替视口把会话撑到 `~TerminalView` 之后——
         // 视口析构那一步要往会话写撤账空响应。见上面 `TabWorkspace` 的成员次序注释。
-        ws_hooks.make_pane = [session, view](borealis::ui::PaneId /*pane*/) -> std::shared_ptr<borealis::ui::TerminalView> {
+        ws_hooks.make_pane = [session, view](borealis::ui::PaneId /*pane*/,
+                                            borealis::ui::PaneId /*origin*/)
+            -> std::shared_ptr<borealis::ui::TerminalView> {
             // TODO(SPEC.FEAT.WS.02): 多会话工厂落地前，新 pane 只能复用首会话；分屏的目录继承今天
-            // 因「同一会话」而天然成立。届时新 pane 的 LocalTerminalSpec 须按焦点 pane 的 OSC 7
-            // 走 `ui::choose_start_directory`，而不是复制首 pane 的启动目录。
+            // 因「同一会话」而天然成立。届时新 pane 的 LocalTerminalSpec 须按 `origin` 那格的 OSC 7
+            // 走 `ui::choose_start_directory`，而不是复制首 pane 的启动目录（形态见 `codespec/WS02_PANE_SESSION.draft.md` §3）。
             return view;
         };
         ws_hooks.dispatch_grid = [session](borealis::ui::PaneId /*pane*/, borealis::ui::GridSize size) -> void {
@@ -1381,7 +1383,8 @@ auto main(int argc, char **argv) -> int {
 
         borealis::ui::WorkspaceView::Hooks ws_hooks;
         // 值捕获 `shared_ptr<Session>` 的承重理由同 `create_new_tab_with` 处那一条注释。
-        ws_hooks.make_pane = [session, view](borealis::ui::PaneId) -> std::shared_ptr<borealis::ui::TerminalView> {
+        ws_hooks.make_pane = [session, view](borealis::ui::PaneId,
+                                            borealis::ui::PaneId) -> std::shared_ptr<borealis::ui::TerminalView> {
             return view;
         };
         ws_hooks.dispatch_grid = [session](borealis::ui::PaneId, borealis::ui::GridSize size) -> void {
@@ -2226,7 +2229,8 @@ auto main(int argc, char **argv) -> int {
 
         borealis::ui::WorkspaceView::Hooks ws_hooks;
         // 值捕获 `shared_ptr<Session>` 的承重理由同 `create_new_tab_with` 处那一条注释。
-        ws_hooks.make_pane = [session, view](borealis::ui::PaneId /*pane*/) -> std::shared_ptr<borealis::ui::TerminalView> {
+        ws_hooks.make_pane = [session, view](borealis::ui::PaneId /*pane*/,
+                                            borealis::ui::PaneId /*origin*/) -> std::shared_ptr<borealis::ui::TerminalView> {
             return view;
         };
         ws_hooks.dispatch_grid = [session](borealis::ui::PaneId /*pane*/, borealis::ui::GridSize size) -> void {

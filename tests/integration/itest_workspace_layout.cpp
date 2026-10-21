@@ -172,11 +172,12 @@ class Harness {
         palette_.default_background = RgbaColor{0x00, 0x00, 0x00, 255};
 
         WorkspaceView::Hooks hooks;
-        hooks.make_pane = [this](PaneId pane) -> std::shared_ptr<TerminalView> {
+        hooks.make_pane = [this](PaneId pane, PaneId origin) -> std::shared_ptr<TerminalView> {
             if (!with_factory_) {
                 return nullptr;
             }
             ++factory_calls;
+            last_origin = origin;
             return make_view(pane);
         };
         hooks.dispatch_grid = [this](PaneId pane, GridSize size) -> void {
@@ -458,6 +459,40 @@ class Harness {
         return it != seen_.end() && it->second.expired();
     }
 
+    /// @brief 该格**上一份**被换下来的视图是否真散了（`replace_view` 的证人：只改表不换对象不算）。
+    [[nodiscard]] auto replaced_view_expired(PaneId pane) const -> bool {
+        const auto it = history_.find(pane);
+        if (it == history_.end() || it->second.size() < 2U) {
+            return false;
+        }
+        return it->second[it->second.size() - 2U].expired();
+    }
+
+    /// @brief 复刻装配层重启腿的次序换掉该格的视图（会话与视口都换成新的）。
+    ///
+    /// 旧会话必须先移出记账表、但仍留在手里，等 `replace_view` 回来再散：那一步内部就地销毁旧视图，
+    /// 而 `~TerminalView` 要往它背后的会话写撤账空响应——先把会话 dispose 就是取用已消散的对象。
+    /// 生产侧同一跳见 `src/main.cpp` 的重启腿（稿 `WS02_PANE_SESSION.draft.md` §5）。
+    auto replace_pane_view(PaneId pane) -> bool {
+        retired_.push_back(std::move(sessions_[pane]));
+        sessions_.erase(pane);
+        connections_.erase(pane);
+        live_.erase(pane);
+        // 生产的重启腿由派发给菜单/按钮的指针事件带动，`resolve_focus_manager` 因此在栈内拿到派发
+        // 用的那份管理器。栈外调用只会落到按根缓存的兜底实例，那样本表用来派发的那份焦点仍指着刚销毁
+        // 的旧视图，判据就变成用已消散的控件按键——故这里以同一个上下文包住这一跳（稿 §5 的次序纪律）。
+        au::set_current_focus_manager(&focus_);
+        const bool swapped = workspace_->replace_view(pane, make_view(pane));
+        au::set_current_focus_manager(nullptr);
+        retired_.clear();
+        return swapped;
+    }
+
+    /// @brief 造一份不属于任何格的视图（判据「换到不存在的格」时交进去的那一个参数得是真视图）。
+    [[nodiscard]] auto make_orphan_view(PaneId spare) -> std::shared_ptr<TerminalView> {
+        return make_view(spare);
+    }
+
     /// @brief 清掉全部观测计数（判据只测「这一步之后新增了什么」）。
     auto reset_counters() -> void {
         dispatched_.clear();
@@ -499,6 +534,8 @@ class Harness {
     std::vector<std::pair<PaneId, GridSize>> dispatched_;
     std::vector<PaneId> torn_down_;
     std::size_t factory_calls = 0U;
+    /// @brief 工厂最后一次收到的 `origin`（判据「被切那一格交给工厂，而不是工厂自己猜焦点」）。
+    PaneId last_origin = 0U;
 
   private:
     [[nodiscard]] static auto make_window() -> au::Window {
@@ -537,6 +574,7 @@ class Harness {
         connections_.emplace(pane, raw);
         live_.emplace(pane, view.get());
         seen_.emplace(pane, view);
+        history_[pane].push_back(std::weak_ptr<TerminalView>{view});
         sessions_.emplace(pane, std::move(session));
         return view;
     }
@@ -545,9 +583,12 @@ class Harness {
     au::Scheduler scheduler_;
     PaletteSpec palette_{};
     std::map<PaneId, std::unique_ptr<Session>> sessions_;
+    /// @brief 换下来的旧会话：先离表、后销毁，为的是让旧视口的析构有一段会话仍可写撤账的窗口。
+    std::vector<std::unique_ptr<Session>> retired_;
     std::map<PaneId, FakeConnection *> connections_;
     std::map<PaneId, TerminalView *> live_;
     std::map<PaneId, std::weak_ptr<TerminalView>> seen_;
+    std::map<PaneId, std::vector<std::weak_ptr<TerminalView>>> history_;
     bool with_factory_ = true;
     std::shared_ptr<WorkspaceView> workspace_;
     au::Node root_;
@@ -945,6 +986,98 @@ AURORA_TEST_CASE(closing_a_pane_recycles_view_and_session) {
     h.render();
     AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 1U);
     AURORA_TEST_CHECK(h.torn_down_.empty());
+}
+
+AURORA_TEST_CASE(split_factory_receives_the_pane_being_split) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::D, Harness::ctrl_shift()));
+    h.render();
+    // 第一刀从格 1 切出格 2：工厂收到的 origin 是**被切那一格**，不是它正在造的号。
+    AURORA_TEST_CHECK_EQ(h.last_origin, 1U);
+
+    // 第二刀走装配层的启动入口：第一次切分把焦点交给了新格，因此这一刀的 origin 是 2。
+    h.workspace().split_focused(PaneAxis::Horizontal);
+    h.render();
+    AURORA_TEST_REQUIRE_EQ(h.workspace().pane_count(), 3U);
+    AURORA_TEST_CHECK_EQ(h.last_origin, 2U);
+
+    // 键盘把焦点搬回最左那一格再切：origin 跟着**模型焦点**走。栈外那两刀只写得进模型投影
+    // （`apply_focus` 拿不到派发栈里的管理器），框架读数因此落后一拍，而 `split_focused` 读的
+    // 正是 `tree_.focused()`——本层文件头第一条「框架焦点是焦点的唯一权威」管的是取焦点，
+    // 结构命令的目标始终是模型投影。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::ArrowLeft, au::ModifierKey::Alt));
+    h.render();
+    AURORA_TEST_REQUIRE_EQ(h.workspace().focused_pane(), 1U);
+    h.workspace().split_focused(PaneAxis::Horizontal);
+    h.render();
+    AURORA_TEST_REQUIRE_EQ(h.workspace().pane_count(), 4U);
+    AURORA_TEST_CHECK_EQ(h.last_origin, 1U);
+}
+
+AURORA_TEST_CASE(replacing_a_pane_view_keeps_the_pane_identity) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::D, Harness::ctrl_shift()));
+    h.render();
+    h.settle();
+    AURORA_TEST_REQUIRE(h.workspace().view_of(2U) != nullptr);
+    AURORA_TEST_REQUIRE(h.workspace().view_of(2U)->is_focused());  // 新格当场持焦
+    const Rect right = h.pane_box(2U);
+    h.reset_counters();
+
+    AURORA_TEST_REQUIRE(h.replace_pane_view(2U));
+
+    // 格的身份全程不动：树、矩形、焦点归属都按原样，只有视口与它背后的会话换成新的。
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 2U);
+    AURORA_TEST_CHECK_EQ(h.workspace().current_layout().dividers.size(), 1U);
+    const Rect after = h.pane_box(2U);
+    AURORA_TEST_CHECK_NEAR(after.x, right.x, 0.5);
+    AURORA_TEST_CHECK_NEAR(after.width, right.width, 0.5);
+    AURORA_TEST_CHECK(h.replaced_view_expired(2U));  // 旧视口真散了，不是只从表里摘掉
+    AURORA_TEST_REQUIRE(h.workspace().view_of(2U) != nullptr);
+    AURORA_TEST_CHECK(h.workspace().view_of(2U)->is_focused());
+    AURORA_TEST_CHECK_EQ(h.torn_down_.size(), 0U);   // 这不是关格：回收接缝不该响
+
+    // 换上来的新会话还停在标称网格上：去抖表里若留着旧格已下发的那份行列，这一格就永远少发一次。
+    h.render();
+    h.settle();
+    AURORA_TEST_CHECK(h.resize_count(2U) >= 1U);
+    bool pane_two_dispatched = false;
+    for (const auto &[pane, expected] : h.dispatched_) {
+        (void)expected;
+        pane_two_dispatched = pane_two_dispatched || pane == 2U;
+    }
+    AURORA_TEST_CHECK(pane_two_dispatched);
+
+    // 缩放态按格记，故重启一格的视图不该把它冲掉：缩放后再换一次视口，缩放仍是这一格。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::Z, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_REQUIRE(h.workspace().zoomed_pane().value_or(0U) == 2U);
+    AURORA_TEST_REQUIRE(h.replace_pane_view(2U));
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.workspace().zoomed_pane().value_or(0U), 2U);
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 2U);
+}
+
+AURORA_TEST_CASE(replacing_a_pane_is_refused_without_touching_the_tree) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::D, Harness::ctrl_shift()));
+    h.render();
+    const TerminalView *first = h.workspace().view_of(1U);
+    h.reset_counters();
+
+    // 空视图与不存在的格两条都要回 false，且什么都不动：装配层据此才不会把旧会话错手清掉。
+    // 视口本身不带格身份（一个 `TerminalView` 可以指向任意格），故这里只可能拒这两类。
+    AURORA_TEST_CHECK_FALSE(h.workspace().replace_view(1U, nullptr));
+    AURORA_TEST_CHECK_FALSE(h.workspace().replace_view(9U, h.make_orphan_view(9U)));
+
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 2U);
+    AURORA_TEST_CHECK_EQ(h.workspace().view_of(1U), first);
+    AURORA_TEST_CHECK(h.torn_down_.empty());
+    AURORA_TEST_CHECK(h.dispatched_.empty());
 }
 
 AURORA_TEST_CASE(zoom_fills_the_focused_pane_and_keeps_hidden_grids) {
