@@ -41,7 +41,7 @@ Borealis 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨�
 | 终端逻辑层 | 解码、VT/OSC 解析、终端状态机 | `borealis::vt`、`borealis::term` |
 | 网格与模型层 | cell/行/环形缓冲、主备屏、脏区、scrollback | `borealis::grid` |
 | UI 与工作区层 | 终端视口、标签、pane 树、交互、设置面板 | `borealis::ui` |
-| 应用装配层 | 进程入口、配置装载、命令注册、日志与诊断装配 | `borealis`、`borealis::config` |
+| 应用装配层 | 进程入口、配置装载、命令注册、日志与诊断装配 | `borealis`、`borealis::config`、`borealis::cli`（CLI 语法与转交载荷的纯逻辑件，只在装配层消费） |
 
 ### 2.2 模块目录映射
 
@@ -54,7 +54,8 @@ Borealis 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨�
 | `include/borealis/conn/` | 连接类型与档案、凭据句柄 |
 | `include/borealis/ui/` | 终端视口、标签栏、pane 树、搜索浮层、设置面板 |
 | `include/borealis/config/` | 配置 schema、原子写与降级、profile |
-| `src/platform/win/`、`src/platform/posix/` | 平台相关实现（**平台假设不得渗入共享路径**，裁决 7.11） |
+| `include/borealis/cli/`、`src/cli/` | CLI 启动参数语法与档案解析、单实例转交的请求 / 回复编解码（纯逻辑，不碰文件系统与 UI，裁决 7.124） |
+| `src/platform/win/`、`src/platform/posix/` | 平台相关实现（**平台假设不得渗入共享路径**，裁决 7.11）；含单实例通道与进程参数两腿（`instance_channel` / `process_args`，裁决 7.124），共享侧只见 `src/platform/` 下的同名接口头 |
 
 ### 2.3 依赖方向不变量
 
@@ -68,7 +69,7 @@ Borealis 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨�
 
 ### 3.1 进程与线程模型
 
-单进程 + **会话级后台线程**（裁决 7.8）：每个会话一个读线程负责 PTY/连接读取；不做会话崩溃隔离，靠 `SPEC.NF.RELI.01` 诊断留存兜底。已有实例运行时的参数转交（`SPEC.FEAT.INTEG.04`、裁决 7.7）经进程间通道由主线程消费，通道选型见 §16 E。
+单进程 + **会话级后台线程**（裁决 7.8）：每个会话一个读线程负责 PTY/连接读取；不做会话崩溃隔离，靠 `SPEC.NF.RELI.01` 诊断留存兜底。已有实例运行时的参数转交（`SPEC.FEAT.INTEG.04`、裁决 7.7）经进程间通道由主线程消费；通道选型**已拍板**（2026-10-21，原 §16 E，裁决 **7.124**）＝POSIX `AF_UNIX` + `flock` 认领 / Win32 命名管道 + `FILE_FLAG_FIRST_PIPE_INSTANCE`，形态与线程分工见 §3.8。
 
 ### 3.2 Aurora 单线程 UI 不变量的承接
 
@@ -128,6 +129,16 @@ UI 事件 → 键映射（`SPEC.FEAT.INTERACT.01`）→ **文本按会话编码�
 ### 3.7 尺寸同步
 
 视区网格尺寸变化（窗口 resize / 分屏拖拽 / pane 缩放 / 全屏 / 字体缩放）须下发新尺寸并重排（`SPEC.FEAT.XFER.01`）：Unix `ioctl(TIOCSWINSZ)` + `SIGWINCH`，Windows ConPTY `ResizePseudoConsole`；**去抖合并**，会话启动、分屏初始挂载、会话恢复时各下发一次初始尺寸。**去抖的归属层已拍板（2026-10-03，裁决 7.47⑩）**：50 ms 的取消-重排落在**工作区层**一处定时器（同一帧里所有 pane 一起变，视口层各自去抖会让下发次数变成 N 倍），故 `TerminalView` 把「期望行列」交给注入的 sink 而非自己直发——**缺省 sink 仍直发**，既有像素与集成用例零改动。把手拖拽期间「即时改布局、松手才下发」是同一条判据的两半（§8.2）。
+
+### 3.8 单实例通道与 CLI 转交（**已拍板**，2026-10-21，原 §16 E，裁决 7.124）
+
+`SPEC.FEAT.INTEG.04` 的进程间通道按「面向字节流、天然限本用户、无需窗口句柄」选 **POSIX 本地 socket + Windows 命名管道**；回环 TCP（端口占用 / 同机其他用户可连 / 还要令牌认证）与 `WM_COPYDATA`（必须先有窗口句柄，首个实例建窗前的竞态无解，且只能 Win32）均否。设计全文见 `codespec/CLI_STARTUP.draft.md` §3、§6。
+
+- **认领权威是锁，不是「能否 connect」**：POSIX 首实例在生命周期内持有同目录 `instance.lock` 上的 `flock(LOCK_EX)`，拿不到锁即「已有实例」；抢到锁后先 `unlink` 残留 socket 再 `bind`，所以上一进程崩在 `bind` 之后不会把用户永久挡在门外。Win32 以 `FILE_FLAG_FIRST_PIPE_INSTANCE` 认领同名管道，第二个进程得 `ERROR_ACCESS_DENIED` 即「已有实例」，进程退出由内核回收。键＝`$XDG_RUNTIME_DIR/borealis-<uid>/instance.sock`（缺失或不可用回落 `/tmp` 同形态）与 `\\.\pipe\borealis-<user>`；POSIX 侧目录 `0700` 且已存在时校验属主与权限、不符即拒，socket `0600`。
+- **帧与载荷分层**：平台层只见 `u32 little-endian 长度` + 不透明字节（上限 16 KiB，超限即拒不截断）；载荷语义归 `borealis::cli` 的 `BORI` / `BORR` 定长头 + UTF-8 变长段（回复上限 4 KiB），magic / version / reserved / 长度 / 尾随字节 / 超限任一不符即整帧 fail-closed。没有指针、句柄或明文凭据进入协议（AGENTS §4.5 第 24 条在此同样成立）。
+- **线程分工承 §3.1 / §3.2 的既有回投形态**：监听端只起**一条** transport 线程，做 `accept`（POSIX 以 `poll` 200 ms 轮询停止位）/ `ConnectNamedPipe` → 读帧 → 交 handler → 等回执 → 写帧；handler 只做「塞进装配层的有界队列（8 条，满时直接回「busy」）+ `Surface::request_wake()`」，解码、档案解析、开标签与切分全在主线程 `set_on_frame` 的帧边界执行，不新增第二条 UI 线程。转发端与监听端各有 2 s 上限，超时按退出码 3 收，不回落第二实例——单实例是硬语义。一次只处理一条连接（本地 CLI 无吞吐需求），排队由 `listen` backlog 承担。
+- **平台假设的落点**：`instance_channel` 与 `process_args` 都是 `src/platform/{win,posix}/` 的两腿，共享侧只见 `src/platform/instance_channel.h` 与 `process_args.h`（AGENTS §4.5 第 23 条）；Windows 的参数腿走 `GetCommandLineW` + `CommandLineToArgvW` 再折 UTF-8，窄 `argv` 在 CJK / 非 ANSI 路径上会丢字，不能作权威来源。**Windows 腿在本仓的验证状态＝未编译、未真机（推断／未验证）**，POSIX 腿有 `itest_posix_instance_channel` 八案。
+- **相对路径在发起进程折算**：`--cwd` 的相对形态在**发起进程**里折成绝对路径再进协议——转发之后首实例的进程目录与用户那个不是同一个，把折算留给接收侧等于让目录随首实例怎么起的而变。
 
 ---
 
@@ -588,7 +599,6 @@ Windows 便携 zip + 安装包；Linux tar 通用 + AppImage；产物含第三�
 
 | # | 议题 | 候选方案 | 状态 |
 |:---|:---|:---|:---|
-| E | 单实例转交通道（§3.1） | Windows 命名管道 / 本地 socket / `WM_COPYDATA` 定位既有窗口 | 待拍板——随 `SPEC.FEAT.INTEG.04` 开工 |
 | F | 配置 schema 版本升级策略（§11.3） | 启动时逐版本迁移链 / 拒绝旧版本并提示导出导入 | 待拍板——随首个 schema 变更裁决。**首版行为已定**（裁决 7.26③）：`schema_version` 高于本仓支持时不迁移，直接备份 + 回落默认；迁移链形态仍未决 |
 
 > 本清单随评审收敛；每项拍板后写入正文对应章节并从本表移除。

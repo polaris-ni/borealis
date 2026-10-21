@@ -1,7 +1,7 @@
 # CLI 启动参数与单实例转交 · 设计稿
 
 > 需求：`SPECIFICATIONS.md` **`SPEC.FEAT.INTEG.04`**；落点裁决 **7.7**。
-> 本稿只定形态与边界，不写实现叙述。状态：**设计收口、开工**（2026-10-21）。
+> 本稿只定形态与边界，不写实现叙述。状态：**四批全部落地、结项**（2026-10-21，裁决 **7.124**；§12 为结项读数与未验面）。
 > 地基读数均以当前工作树为准；未实测的标「推断 / 未验证」。
 
 ## 0 范围与不在范围
@@ -44,7 +44,7 @@ Borealis [new-tab | split-pane] [--profile <name-or-id>] [--cwd <dir>]
 
 **为何不做多动作**：需求只列子命令，未要求一次开多标签；多动作会把「一次请求对应一个回复」的协议与失败原子性一起复杂化。留作观察项，不预埋。
 
-## 3 单实例通道（D2；给 §16 E 的推荐）
+## 3 单实例通道（D2；原 §16 E 的推荐，2026-10-21 按此拍板，现见 `ARCHITECTURE.md` §3.8）
 
 ### 3.1 选型
 
@@ -159,13 +159,13 @@ offset 8   message bytes     UTF-8（ASCII 诊断；成功时为空）
 
 | 层 | 套件 | 判据 |
 |:--|:--|:--|
-| 纯逻辑 | `utest_cli_startup`（新） | 缺省动作、两个子命令互斥、选项顺序、重复 / 缺值 / 未知 / 位置参数、`--help`、ASCII 用法；档案解析的 id / 名 / 大小写 / 重名 / 缺失；`--cwd` + 非本地档案的拒绝策略 |
-| 纯逻辑 | `utest_cli_handoff`（新） | 请求与回复往返（含 UTF-8 目录 / 档案名）、magic / version / 长度 / 尾随字节 / 超限拒绝 |
-| 平台 | `itest_instance_channel`（新，POSIX） | 首实例认领、同键第二个监听得到 Existing、请求 / 回复往返、超长帧拒绝、监听析构后同键可再认领（陈旧 socket 清理）、并发两条请求串行完成、队列满拒绝 |
-| 界面腿 | 既有 `itest_workspace_*` 补案 | 公开的「按焦点切分」入口与既有按键切分同轴、单 pane 失败不改树 |
+| 纯逻辑 | `utest_cli_startup`（新，12 案） | 缺省动作、两个子命令互斥、选项顺序、重复 / 缺值 / 未知 / 位置参数、`--help`、ASCII 用法；档案解析的 id / 名 / 大小写 / 重名 / 缺失；`--cwd` + 非本地档案的拒绝策略 |
+| 纯逻辑 | `utest_cli_handoff`（新，6 案） | 请求与回复往返（含 UTF-8 目录 / 档案名）、magic / version / 长度 / 尾随字节 / 超限拒绝 |
+| 平台 | `itest_posix_instance_channel`（新，POSIX 腿，8 案） | 同键第二个认领得到 Existing 且首实例释放后名字可再认领、转发往返与两条请求串行完成、超长帧在上线前拒绝、陈旧 socket 文件被替换、非私有目录被拒、转发目标缺失报错、空键即拒、请求只保留首份回执且超时收尾 |
+| 界面腿 | 既有 `itest_workspace_layout` 补案（新增 1 案至 24 案） | 公开的「按焦点切分」入口按**模型焦点**落刀（新格插在当前焦点格的领地，与 `Ctrl+Shift+D` 同轴）、工厂缺失时只认领动作不改树 |
 | 装配 | 无自动化 | `main.cpp` 不进 runner（F1 / 裁决 7.83）：冷启动动作、转发落点、`--new-window` 拒绝只有源码审查 + 真机走查 |
 
-**变异自证**（每则必须让指定套件转红）：① 缺省动作改成 `split-pane`；② 重名档案取第一条；③ 请求长度上限放行多一个字节；④ POSIX 认领前不 `unlink` 陈旧 socket；⑤ `--cwd` + SSH 档案从拒绝改成静默忽略。
+**变异自证**（每则必须让指定套件转红；结果见 §12）：① 缺省动作改成 `split-pane`；② 重名档案取第一条；③ 请求长度上限放行多一个字节；④ POSIX 认领前不 `unlink` 陈旧 socket；⑤ `--cwd` + SSH 档案从拒绝改成静默忽略。
 
 ## 10 已知边界（不称「可用」）
 
@@ -178,13 +178,27 @@ offset 8   message bytes     UTF-8（ASCII 诊断；成功时为空）
 
 ## 11 落地切分（按 AGENTS §4.6 第 26 条）
 
-1. **纯逻辑**：`cli::parse_startup_args` / `resolve_profile` / 请求回复编解码 + 两个 utest。
-2. **平台**：`platform/instance_channel` 两腿 + `platform/process_args` 两腿 + POSIX itest；ARCHITECTURE §16 E 按本稿 §3 收口。
-3. **装配**：`main(argc, argv)`、认领 / 转发 / 冷启动动作、`WorkspaceView` 公开切分入口、`create_new_tab` 的显式目录覆盖 + 既有套件补案。
-4. **文档回写**：SPEC 现状句 + 裁决 7.124、CHANGELOG v0.124、PLAN 的 INTEG.04 行、ARCHITECTURE §3.1 / §16 E、本稿状态头与回填。
+1. **纯逻辑**：`cli::parse_startup_args` / `resolve_profile` / 请求回复编解码 + 两个 utest。→ `0ec5e99`
+2. **平台**：`platform/instance_channel` 两腿 + `platform/process_args` 两腿 + POSIX itest；原 `ARCHITECTURE.md` §16 E 按本稿 §3 收口（现写入该文档 §3.8）。→ `eebb931`
+3. **装配**：`main(argc, argv)`、认领 / 转发 / 冷启动动作、`WorkspaceView` 公开切分入口、`create_new_tab` 的显式目录覆盖 + 既有套件补案。→ `1855df1`
+4. **文档回写**：SPEC 现状句 + 裁决 7.124、CHANGELOG v0.124、PLAN 的 INTEG.04 行、ARCHITECTURE §2.1／§2.2／§3.1／§3.8 与 §16 E 撤行、本稿状态头与回填。设计稿本体 → `63270a2`
 
-## 12 待回填
+## 12 结项读数与未验面（2026-10-21）
 
-- 结项读数（CTest / runner 案数）。
-- 五项变异结果。
-- 真机走查：冷启动三档、转发落点、`--new-window` 拒绝、Windows 腿。
+**读数**：构建通过、无警告；`ctest --preset linux` **98/98**（注册 98 含 3 条 `etest_`，非 etest **95** 项，9.42 s）；`borealis_test_runner` 全跑 **1202 案**全绿（21.0 s；v0.123 基线 92／1175，本棒 +3 套件／+27 案）。分套件：`utest_cli_startup` 12、`utest_cli_handoff` 6、`itest_posix_instance_channel` 8、`itest_workspace_layout` 24（含新增 1 案）。
+
+**实跑退出码**（只走「在建窗之前就能返回」的那几档，无头环境不开窗口）：`--help`→0；未知选项→2 并打用法；`--profile nope`→2；子命令重复→2；`split-pane --profile nope`→2；相对 `--cwd ../rel` + 坏档案→2。
+
+**五项变异结果**（脚本注入 → 只跑指定套件 → 备份 `cp` 复原并重跑全绿；五则只改纯逻辑与 POSIX 认领路径，不触达任何「真打开」腿，故在册事故纪律 F15／D11 的断桥要求本棒无需）：
+
+| # | 变异 | 结果 |
+|:--|:--|:--|
+| ① | 缺省动作改成 `split-pane` | 红：`utest_cli_startup.default_invocation_is_new_tab_with_empty_fields` |
+| ② | 重名档案取第一条 | **草稿形态不红**（把 `name_matches > 1` 的歧义分支改成返回那一条精确名命中——用例的歧义来自大小写折叠那一档，精确名分支打不到）→ 改注 `folded_matches > 1` 的同一分支后红：`duplicate_names_are_ambiguous_not_first_wins` |
+| ③ | 请求长度上限放行多一个字节 | **草稿形态不红**（`total > kMaxHandoffRequestBytes` 加一枚字节：`--profile`／`--cwd` 各被 4096 钳住，总长到不了 16 KiB 外层判定）→ 改注单值上限 `value_fits` 后红：`utest_cli_handoff.request_encoding_enforces_value_and_value_cap_inclusive` |
+| ④ | POSIX 认领前不 `unlink` 陈旧 socket | 红：`itest_posix_instance_channel.stale_socket_file_is_replaced` |
+| ⑤ | `--cwd` + 非本地档案从拒绝改静默忽略 | 红：`utest_cli_startup.policy_rejects_split_with_profile_or_cwd_and_nonlocal_cwd` |
+
+**实现期抓到的两条真实缺陷**（均由 `Borealis --cwd /definitely/not/here` 实跑抓到，非推演）：① `std::string::assign(u8string 迭代器对)` 在 `--cwd` 折绝对路径那一步算出离谱容量（约 1.8e19）并抛 `std::length_error` → `terminate`（`gdb -batch` 回溯定位），改判为跨容器的字节搬运一律用指针 + 长度，深层机理未查故注释只写实测形态；② 排空队列时把回复状态写死成成功，首实例会一边执行失败一边回 `ok`、转发端据此退 0，改为先算诊断串再落状态位。
+
+**未验面（真机走查清单，做完才能称「可用」）**：冷启动三档（缺省 `new-tab`、`--profile` 命中档案、`--cwd` 覆盖目录）；转发两档（首实例在跑时 `new-tab --profile` 落在当前窗口新标签、`split-pane` 切当前焦点格）；`--new-window` 在已有实例上的拒绝文案；Windows 腿（命名管道认领、`GetCommandLineW` 折 UTF-8、CJK 目录名）；`main.cpp` 装配最后一跳无自动化证人（F1／裁决 7.83），以上四条只有源码审查与退出码可证。§10 的六条边界原样有效。
