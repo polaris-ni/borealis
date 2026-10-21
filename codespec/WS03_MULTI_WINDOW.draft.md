@@ -29,7 +29,7 @@
 - **F14 广播组是应用级一份**（666），成员类型 `(TabId, PaneId)`、按会话身份去重（`include/borealis/ui/broadcast.h`），刷新链 693-744 遍历**全部** `tab_workspaces`；但横幅只挂在唯一 `root_column` 的 index 1（1327）。⇒ 多窗下扇出会跨窗成立，而「哪些成员在我这扇窗里」这一眼见事实无处显示。
 - **F15 单实例转交的唤醒与落点**：`startup_wake` 是 `std::atomic<au::Surface *>`（517，置址 3105、清址 3119、transport 线程读 545/554），`app.run()` 的帧循环由 `Application` 统一驱动**所有**宿主（`application.h` 帧循环注释）⇒ 叫醒任意一扇 surface 就会跑到 `set_on_frame`，唤醒腿不需要「叫醒每一扇」；需要的是 `apply_startup_request`（2896）有一个明确的落点窗。`--new-window` 现在被拒：2898-2901，诊断 `--new-window needs SPEC.FEAT.WS.03, which is not implemented yet`，且只拒转交那一支（冷启动同标志无额外动作）。`cli` 的线格式是 `BORI | version u8 | action u8 | flags u8 | reserved u8 | …`（`include/borealis/cli/handoff.h` §头部注释），`StartupAction` 现只两值（`startup.h` 31-33），解码侧对未知 action **fail-closed 整帧拒**（`utest_cli_handoff` 在册）。
 - **F16 窗口几何与 DPI 在本仓是零**：`src/main.cpp` 无 `set_size`/`set_position` 读写、无 `opts.persist_id`、无 `set_window_geometry_store` 调用；`include/borealis/config/settings.h` 的键表里**没有任何窗口几何键**；窗口尺寸只有 598-600 那一句硬编码 960×640。⇒ 「窗口布局分别记忆」是从零起，且**不该**进 `config::Settings`（见 D9）。
-- **未实测项**（本稿不冒充读数）：本仓无头 itest 里同时开两扇 `au::Window{HeadlessSurface}` 的可行为——Aurora 侧 `utest_multi_window` 证明三宿主登记与逐窗 `scene/focus` 隔离成立，但本仓 harness（`itest_workspace_layout.cpp` 542 那一对 `make_window`）目前只造一扇，批 1 须先把它跑绿再谈其余判据。
+- ~~**未实测项**（本稿不冒充读数）：本仓无头 itest 里同时开两扇 `au::Window{HeadlessSurface}` 的可行为~~ **已闭合（批 1-A，2026-10-21）**：`tests/integration/itest_workspace_window.cpp` 五例全绿，台账与本批变异读数见 §11。余下判据仍以该 harness 为前提，但「两扇无头窗各渲染各自的 `TabBar`」不再是没有读数的假设。
 
 ---
 
@@ -78,7 +78,9 @@
 
 ## 6 分批（每批一个分层提交）
 
-1. **批 1（拆分，行为不变）**：`WorkspaceWindow` 结构 + `open_workspace_window()` + `std::vector` 持有；主窗走同一条构造路径；itest harness 先跑通「两扇无头窗各渲染各自 `TabBar`」。生产仍只开一扇 ⇒ 现有全部用例零改动即须绿。
+1. **批 1（拆分，行为不变）**：
+   - **1-A（已落，2026-10-21）**：itest harness 先跑通「两扇无头窗各渲染各自 `TabBar`」——只加测试 TU，生产一行未动。
+   - **1-B（待落）**：`WorkspaceWindow` 结构 + `open_workspace_window()` + `std::vector` 持有；主窗走同一条构造路径。生产仍只开一扇 ⇒ 现有全部用例零改动即须绿；`main.cpp` 不进 runner，本批无自动化证人，只有源码审查（裁决 7.83）。
 2. **批 2（逐窗接线）**：会话 `frame_wake` 按 owner 取 surface、`set_on_frame` 逐窗泵、标题与标签名逐窗、四处 `app.focus()` 改按窗取、`tab_workspaces` 补 `owner`。
 3. **批 3（新窗入口与命令落点）**：`ui::ActiveWindowTracker` 纯逻辑件 + `utest`；命令 `workspace.new_window` + `Ctrl+Shift+N`（第十五条保留键）+ 面板一条；`search.open`／`session.restart`／`serial.set_baud`／`workspace.toggle_fullscreen`／`tab.undo_close` 五类闭包按 tracker 解析目标窗。
 4. **批 4（拆窗账目）**：关窗撤该窗名下全部标签（同 `perform_close` 一条链）、每窗横幅与每窗 `ClosedTabStack`、`ExitPolicy` 缺省确认与退出序遍历全部窗、面板「搬窗」而非「各一份」（D6）。
@@ -89,7 +91,7 @@
 ## 7 判据与变异计划（结项三件齐：ctest 全绿 + runner 案数增量 + 变异证人逐条转红）
 
 - `utest_active_window_tracker`（新）：多窗上报次序、失配回主窗、窗关闭后该号不再被返回、并发上报只留最后一次。
-- `itest_workspace_window`（新）：两扇窗的标签互不串（`current_tab_id` 各一份）、横幅只列本窗成员、撤销重开回到关它的那扇窗、逐窗标题差分写回、关一扇不退出而关最后一扇走同一条退出序、窗拆后 `tab_workspaces`/四张连接表/广播成员三处账目为空。
+- `itest_workspace_window`（新）：两扇窗的标签互不串（`current_tab_id` 各一份）、横幅只列本窗成员、撤销重开回到关它的那扇窗、逐窗标题差分写回、关一扇不退出而关最后一扇走同一条退出序、窗拆后 `tab_workspaces`/四张连接表/广播成员三处账目为空。**批 1-A 已落该套件的前五案**（harness 地基＋§5 四条不变量的窗侧形态，台账见 §11）；上面列的其余判据都要求生产侧先有第二扇窗，随批 2–批 4 扩案，本批不冒充。
 - `utest_workspace_keys`：认领集 14→15 条。
 - `utest_cli_startup`／`utest_cli_handoff`：`--new-window` 的旗标解析与 `NewWindow` 的编解码往返、未知 action 仍整帧拒。
 - 变异候选（每条一个判据，注入后按 §4.4 第 22 条点名转红）：新窗继承发起窗目录（应为配置目录）、`frame_wake` 全部捕主窗 surface、`current_tab_id` 回全局一份、横幅恒列全组成员、`ClosedTabStack` 回全局、关窗不撤标签账、`persist_id` 恒空、`--new-window` 仍走拒绝支、tracker 无记录时不回主窗。
@@ -111,3 +113,24 @@
 ## 10 边界（登记在册，不在本棒解决）
 
 `main.cpp` 不进 runner ⇒ 批 2/批 4 的装配腿无自动化证人（裁决 7.83）；D4 的关闭否决缺框架公共入口（若提任务书按 §5.1 走 Aurora 侧）；G42（§3）以本仓 tracker 代偿，回货后替换一处；D6 的面板单例意味着「两窗不能同时各开一块 SFTP」；几何不进设置导出件（D9 是特性）；混版 CLI 的 `--new-window` 不生效（D10 代价）；WS.11 会话恢复**不**在本条做（多窗之后那一件的形状是「每窗的标签与分屏快照」，另棒裁决）。
+
+## 11 批 1-A 实测台账（`itest_workspace_window`，2026-10-21）
+
+**读数**：`cmake --build --preset linux` 通过且无警告；`ctest --preset linux -E etest_` **96/96**（注册 99 含 3 条 etest，9.22 s）、`borealis_test_runner` 全跑 **1212 案**全绿（21.1 s；v0.125 基线 95 项／1207 案 ⇒ 本件 **+1 套件／+5 案**，五案全长在新增 TU 内，既有 1207 案零改动照绿——生产 `src/main.cpp` 本批未动，这正是「拆分前行为不变」的那一侧证据）。
+
+**harness 形态**：一支 `au::Application` + 两扇 `AURORA_BACKEND_HEADLESS` 窗，每扇一份 `WindowFace`（`HeadlessOptions` → `create_window` → `au::Window`，根＝`OverlayHost`→`Column`→`TabBarWidget`，与 `main.cpp` 的 `chrome`→`host`→`root_column` 同形）。三处承重：⑴ 成员声明序让 `app_` **先析构**，宿主连同它接管的 `Scene` 一起散，`WindowFace` 后散——反序时宿主场景根指向已消散的控件树；⑵ 逐窗 present 走 `WindowHost::render_frame()`，**不碰**应用级 `scene()`；⑶ 每条「另一扇整帧不动」的判据都先要求两幅内容相同的画布**逐位相同**，这条前置排掉「第二扇根本没在画自己的根」与「两扇共用一支真值源」两种缺陷——否则那句「B 不动」会退化成恒真空转。
+
+**五条用例 ↔ §5 不变量**：注册与两扇都渲染（建窗）／加一格只动本窗画布且两份标签计数分离（泵＋真值源）／栏内实点只改收事件那扇的选中且另一扇逐位不动（唤醒）／浮层只遮挂载那扇（拆的前置：overlay 按窗挂）／应用级 `scene()`/`focus()`/`window()` 恒指主宿主且两宿主焦点管理器互不相同（**批 2 的开工依据**：装配层现有四处 `app.focus()` 与那条捕唯一 surface 的唤醒腿，在第二扇窗里指的仍是主窗，F3／F11 必须在自动化面现形，不许留给真机走查）。
+
+**变异自证**（§4.4 第 22 条，每条只注一处、跑完即还原，生产码零改动）：
+
+| 注入 | 指名红案 |
+|---|---|
+| `render(face)` 恒泵主宿主 | **5/5 红**——构造期第二次 `render(1U)` 没给 B 的缓冲 present ⇒ `preflight()` 里那幅空画布把五条全带倒，「第二扇压根没在画」这条判据覆盖全条 |
+| `face_ref(face)` 恒指 A（两扇共用一支 `TabStrip`） | 3 红（加标签／点击／浮层），注册案与访问器案照绿——宿主确实还是两扇，串的是真值源，红得对得上口径 |
+| `click(face,…)` 派发到另一扇宿主 | 1 红（`a_click_selects_only_in_the_window_that_received_it`） |
+| 两扇共用一支 `OverlayHost` | 3 红（加标签／点击／浮层）——共用根之后两幅画布本就同源，前置那句 `identical` 也一并红，符合预期 |
+
+无「注入后全绿」的空转档。**注**：首版第四则写成类内 `static std::shared_ptr<…> host_ = make_shared<…>()`，编译失败（非字面类型不可类内初始化静态成员），那次跑的是上一则的旧二进制，**不算读数**；改写成 lambda 内函数级静态后重编重跑，得上表那一行。
+
+**已知噪声（如实记，不判为本件缺陷）**：本套件退出时 `OverlayHost` / `TabBarWidget` 那条 `layout parent detached while the child widget is still alive` WARN 会刷约 20 行。按套件计数比对既有通道：`itest_tab_bar`／`itest_startup_notice`／`itest_command_palette`／`itest_debug_panel` **0 条**，`itest_search_overlay` **34 条**、`itest_settings_panel` **18 条**——形态与本件相同（浮层宿主活得比被渲染的树久），故它是本仓无头 harness 的既有特征，不是批 1-A 引入的缺陷；但它意味着**无头用例不能判「析构次序本身」那一档**，拆窗时的真实析构序仍归 §9 第 3 条真机走查。
