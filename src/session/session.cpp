@@ -215,6 +215,12 @@ auto Session::take_clipboard_write() -> std::optional<std::u32string> {
     return terminal_.take_clipboard_write();
 }
 
+auto Session::take_notification() -> std::optional<term::PendingNotification> {
+    // 与上一行同一条锁纪律的第二个现形：通知服务是 main-thread only 的 OS IO（架构 §3.4）。
+    const std::lock_guard lock{mutex_};
+    return terminal_.take_notification();
+}
+
 auto Session::set_clipboard_gate(const term::ClipboardGate *gate) noexcept -> void {
     // 取锁只为那个指针本身：读线程在 `feed` 期间现读它，主线程裸写就是数据竞争（裁决 D2① 的
     // 「改档即刻生效」靠的是闸门内部那枚 atomic，而不是这条赋值）。

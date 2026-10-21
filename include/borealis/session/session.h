@@ -220,6 +220,13 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// 在帧边界取走并落地（架构 §3.2、§3.4）。
     auto take_clipboard_write() -> std::optional<std::u32string>;
 
+    /// @brief 取走待投递的系统通知（`OSC 9` / `OSC 777`，`SPEC.FEAT.INTEG.03`）。
+    ///
+    /// 与上一行同一套「锁内留存、锁外 IO」：通知服务是 main-thread only 的 OS 调用（Aurora
+    /// `notification.h` 的线程栏原文），故状态机只留最近一条，取走与投递归 `NotificationOutbox`
+    /// 在帧边界做。取走即空，同一帧窗口内的第二条已在会话侧合并成后者并计一次账。
+    auto take_notification() -> std::optional<term::PendingNotification>;
+
     /// @brief 把 app 级 `OSC 52` 读方向闸门接到本会话的状态机（`SPEC.FEAT.CONN.12`，裁决 D2①）。
     ///
     /// 转发给状态机那枚非持有观察指针：闸门全 app 一份，装配层担保生命周期，故每会话只接一次，

@@ -31,6 +31,7 @@
 #include "borealis/config/store.h"
 #include "borealis/config/themes.h"
 #include "borealis/session/clipboard_outbox.h"
+#include "borealis/session/notification_outbox.h"
 #include "borealis/session/session.h"
 #include "borealis/session/session_log.h"
 #include "borealis/term/clipboard_read.h"
@@ -3682,8 +3683,14 @@ auto main(int argc, char **argv) -> int {
                 }
             }
             for (const auto &[pane, tag_session] : workspace.sessions_by_pane) {
-                static_cast<void>(pane);  // 下面四件都是「任一格」语义，无须分辨是哪一格
                 static_cast<void>(outbox.drain(*tag_session));
+
+                // 系统通知（`SPEC.FEAT.INTEG.03`）：与上一行同一条排帧范围、同一条「取走即空」纪律。
+                // 这里的 `(tab_id, pane)` 是 tag 的唯一来源——`Session` 自身没有标识，而 `PaneId`
+                // 只在**本标签的树内**只增不复用，故会话级恒定的那一对号只有这一格同时可得。
+                // 返回值刻意不看：一条远端发起的提醒不该改变排帧，投不出去的详情已在落地件留了诊断。
+                static_cast<void>(borealis::session::NotificationOutbox::drain(*tag_session, tab_id,
+                                                                              pane));
 
                 // 会话日志的写失败提示（`SPEC.FEAT.CONN.11`）：会话侧只上弦一次，取走与弹窗都在帧边界，
                 // 形态照上面 `outbox.drain` 与下面 `take_bell_triggered` 那两条（AGENTS §4.5 第 25 条）。
