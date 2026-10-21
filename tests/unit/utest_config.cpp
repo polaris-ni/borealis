@@ -171,6 +171,9 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     // 追加敏感正则（`SPEC.FEAT.CONN.11`，裁决 7.116 D10 改判）：刻意带反斜杠与竖线——漏写侧键会让它
     // 静默回空串（＝只用内置词表），这条往返等值是唯一能看见那一次的证人。
     next.connection.session_log_pattern = "(otp|secret)[ _-]?\\d+";
+    // 恢复开关（`SPEC.FEAT.WS.11` 稿 D3①）的缺省是**开**，故往返取 `false`：写侧漏那一枚键时装载会
+    // 回落缺省的 `true`，于是这条往返等值正好把「漏写」现形成一次不等。
+    next.connection.restore_sessions = false;
 
     next.shortcuts.overrides["terminal.new_tab"] = "Ctrl+T";
     next.shortcuts.overrides["app.settings"] = "Ctrl+Shift+Comma";
@@ -628,6 +631,9 @@ AURORA_TEST_CASE(defaults_are_the_first_launch_shape) {
     // 裁决 7.116 D10 改判：缺省**空串**不等于「不过滤」——空＝只用内置词表，缺键即默认这条宽容口径
     // （裁决 7.26④）因此不会把既有配置文件判坏，也不会让首次启动变成「配了而失效」。
     AURORA_TEST_CHECK_TRUE(defaults.connection.session_log_pattern.empty());
+    // 会话恢复缺省**开**（`SPEC.FEAT.WS.11` 稿 D3①）：既有配置文件缺这一枚键时必须回落到开，
+    // 否则「重启恢复工作区」这句验收要在用户先去设置页点亮一次才成立（裁决 7.26④ 的宽容口径）。
+    AURORA_TEST_CHECK_TRUE(defaults.connection.restore_sessions);
 
     AURORA_TEST_CHECK_TRUE(defaults.shortcuts.overrides.empty());
     // 「`Settings{}` 就是首次启动的那份配置」：与预置表首项同源。

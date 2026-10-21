@@ -422,6 +422,9 @@ auto assign_shortcuts(Settings &settings, const FormValue &value) -> void {
         Binding{"connection.session_log_pattern",
                 [](const Settings &s) -> FormValue { return FormValue::text(s.connection.session_log_pattern); },
                 [](Settings &s, const FormValue &v) { assign(s.connection.session_log_pattern, v); }},
+        Binding{"connection.restore_sessions",
+                [](const Settings &s) -> FormValue { return FormValue::boolean(s.connection.restore_sessions); },
+                [](Settings &s, const FormValue &v) { assign(s.connection.restore_sessions, v); }},
 
         // ---- 快捷键 ----
         Binding{"shortcuts.overrides", &shortcut_rows, &assign_shortcuts},

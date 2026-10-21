@@ -600,6 +600,7 @@ const Tier kStringsZh{
     {"connection.session_logging", "会话日志"},
     {"connection.session_log_dir", "日志目录"},
     {"connection.session_log_pattern", "追加敏感正则"},
+    {"connection.restore_sessions", "重启后恢复会话"},
 
     // ---- 快捷键域 ----
     // 表头四列与「未绑定」那五串不在此处（它们在上方『快捷键只读表』段，`SPEC.FEAT.PREF.05` 稿 F8／D10）。
@@ -1254,6 +1255,7 @@ const Tier kStringsEn{
     {"connection.session_logging", "Session log"},
     {"connection.session_log_dir", "Log directory"},
     {"connection.session_log_pattern", "Extra sensitive regex"},
+    {"connection.restore_sessions", "Restore sessions after restart"},
 
     // ---- 快捷键域（表头四列与「未绑定」在上方只读表段，这里只有组名那一枚）----
     {"shortcuts.overrides", "Key override table"},

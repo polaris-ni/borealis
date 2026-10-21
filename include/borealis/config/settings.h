@@ -280,6 +280,13 @@ struct ConnectionSettings {
     /// 非空时与内置词表取**并集**。编译点在「开启那一刻」而不在装载期，非法即拒绝开启（fail-closed）。
     std::string session_log_pattern{};
 
+    /// 会话恢复的总开关（`SPEC.FEAT.WS.11`，稿 D3①）：关 ⇒ **读写皆停**，且关掉之前已有的
+    /// `workspace.json` **不被删除**（落盘件面没有删除那两跳，稿判据 ③ 的结构事实）。
+    /// 缺省取**开**：`PLAN.md` 的 M4 出口判据原文是「重启恢复工作区」，缺省关会让验收只在改过
+    /// 设置的人身上成立。代价两档在册（稿 D3）：关时重启可能连弹几枚凭据询问框；关一阵再开会
+    /// 恢复出关掉之前那一份**很旧**的布局。
+    bool restore_sessions{true};
+
     /// @brief 最近连接（最近在前，定长 `kRecentConnectionLimit`）。
     ///
     /// 与 `SPEC.FEAT.WS.10` 撤销关闭标签的栈是两回事：那条栈记「关掉的会话」，这张表记

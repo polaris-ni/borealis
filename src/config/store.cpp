@@ -541,6 +541,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     put(node, "session_logging", connection.session_logging);
     put(node, "session_log_dir", connection.session_log_dir);
     put(node, "session_log_pattern", connection.session_log_pattern);
+    put(node, "restore_sessions", connection.restore_sessions);
 
     // 数组而不是「id 作键」的映射：理由同快捷键覆盖表（命令 id 里的点号会被拆成嵌套对象），
     // 且空表也必须留得下来——空对象在装载时会被拍平掉。
@@ -881,6 +882,9 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     connection.session_logging = scope.boolean("session_logging", defaults.connection.session_logging);
     connection.session_log_dir = scope.text("session_log_dir", defaults.connection.session_log_dir);
     connection.session_log_pattern = scope.text("session_log_pattern", defaults.connection.session_log_pattern);
+    // 缺省**开**（稿 D3①）：既有配置文件没有这一枚键时按开处理，即「本特性上线前就在用的人」重启后
+    // 直接得到恢复，而不是要先去设置页点亮——这一档只在「读侧回落缺省」这条路上成立。
+    connection.restore_sessions = scope.boolean("restore_sessions", defaults.connection.restore_sessions);
     connection.recent = scope.recent_list("recent", defaults.connection.recent);
     // 已记住的域走 `string_list` 那一份读法（坏一项只丢该元素并留痕）：这份表是**数据**而不是偏好，
     // 面板不画它，故没有表单侧的校验兜底——读回来的每一项都得自己站得住。

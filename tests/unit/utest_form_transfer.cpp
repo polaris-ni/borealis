@@ -103,6 +103,9 @@ constexpr std::size_t kPaletteSlots = 16U;
     // 会话日志三键里只有这一枚是新加的（`SPEC.FEAT.CONN.11`，裁决 7.116 D10 改判）：给它一个**非空**值，
     // 因为搬运漏一行时表单里那一格会取 `Settings{}` 的空串——空值断言看不出漏搬。
     settings.connection.session_log_pattern = "trace-\\d{6}";
+    // 恢复开关的缺省是**开**（`SPEC.FEAT.WS.11` 稿 D3①），故这里取离缺省最远的 `false`：Binding 若把
+    // 这行接到任何别的布尔成员上，读出来都是 `true`，唯有非缺省值能现形。
+    settings.connection.restore_sessions = false;
     settings.connection.ssh.port = 2222;
     settings.connection.ssh.auth_method = "password";
     settings.connection.ssh.agent_forwarding = true;
@@ -266,6 +269,9 @@ struct BoolProbe {
         BoolProbe{"connection.session_logging",
                   [](const Settings &s) -> bool { return s.connection.session_logging; },
                   [](Settings &s) -> void { s.connection.session_logging = !s.connection.session_logging; }},
+        BoolProbe{"connection.restore_sessions",
+                  [](const Settings &s) -> bool { return s.connection.restore_sessions; },
+                  [](Settings &s) -> void { s.connection.restore_sessions = !s.connection.restore_sessions; }},
     };
     return probes;
 }
@@ -385,6 +391,7 @@ AURORA_TEST_CASE(each_key_takes_the_member_it_names) {
     expect("connection.session_logging", FormValue::boolean(true));
     expect("connection.session_log_dir", FormValue::text("D:/logs"));
     expect("connection.session_log_pattern", FormValue::text("trace-\\d{6}"));
+    expect("connection.restore_sessions", FormValue::boolean(false));
     expect("shortcuts.overrides",
            FormValue::overrides({ShortcutOverride{"session.copy", "Ctrl+Shift+C"},
                                  ShortcutOverride{"workspace.split.right", "Ctrl+Alt+Right"}}));

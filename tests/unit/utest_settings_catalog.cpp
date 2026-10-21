@@ -295,8 +295,33 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // INTERACT.05 的三行（`link_osc8` / `link_heuristic` / `link_schemes`）随裁决 D8① 进表，
     // INTEG.01 的分隔线开关 `terminal.command_block_separator` 随裁决 7.123 D9① 进表，
     // PREF.05 的界面语言 `appearance.language` 随裁决 D1① 进表（键在外观域、消费方是启动路径的装填），
-    // 故停在 70。
-    AURORA_TEST_CHECK_EQ(keys.size(), 70U);
+    // WS.11 的会话恢复开关 `connection.restore_sessions` 随稿 D3① 进表（它决定「重启后要不要重连上次的
+    // 连接」，与 `connection.local_shell`／`startup_directory` 同域，故归连接页而非外观页），
+    // 故停在 71。
+    AURORA_TEST_CHECK_EQ(keys.size(), 71U);
+}
+
+AURORA_TEST_CASE(restore_sessions_is_a_wired_next_launch_connection_switch) {
+    // 判据 ③ 的 catalog 半边（`SPEC.FEAT.WS.11` 稿 D3①）：这一枚必须是一条**普通偏好行**——画得出
+    // 真控件、改得动、存得回。三条各抓一种走偏：`Toggle` 抓「塞进 `kNonPreferenceLeaves` 例外通道
+    // 就不画了」（D3③ 被否的那一档），`Connection` 抓「域与页分家」（本套件双向闸的一条），
+    // `NextLaunch` 抓「面板承诺了本进程做不到的即时性」——恢复料只在启动那一刻读一次，运行期改它
+    // 既不收已开的标签，也不重放上一份布局。
+    const SettingsControl *control = borealis::ui::find_settings_control("connection.restore_sessions");
+    AURORA_TEST_CHECK(control != nullptr);
+    if (control == nullptr) {
+        return;
+    }
+    AURORA_TEST_CHECK(control->page == SettingsPage::Connection);
+    AURORA_TEST_CHECK(control->kind == ControlKind::Toggle);
+    AURORA_TEST_CHECK(control->domain == ValueDomain::Boolean);
+    AURORA_TEST_CHECK(control->consumer == ConsumerStatus::Wired);
+    AURORA_TEST_CHECK(control->effect == EffectLevel::NextLaunch);
+    // 缺省**开**（稿 D3①）：`PLAN.md` 的 M4 出口判据原文是「重启恢复工作区」，缺省关会让这句验收
+    // 只在改过设置的人身上成立。这一句同时是批 5 装配腿的读侧基线：装载时缺键就回落到它。
+    AURORA_TEST_CHECK_TRUE(Settings{}.connection.restore_sessions);
+    // 判据 ③ 的另一半（关掉之后快照文件**不被删除**）不在本件：落盘件面上没有删除那两跳，
+    // 那是 `utest_workspace_snapshot` 的档位案与一枚编译期证人管的。
 }
 
 AURORA_TEST_CASE(language_row_is_a_wired_next_launch_choice) {

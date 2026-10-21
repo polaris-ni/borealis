@@ -410,6 +410,13 @@ namespace {
                           {},
                           ConsumerStatus::Wired,
                           EffectLevel::NextSession));
+    // 会话恢复开关（`SPEC.FEAT.WS.11`，稿 D3①）：归连接页而不是外观页——面板页必须与路径首段的域
+    // 一致（本套件双向闸的一条），而它决定的正是「重启后要不要把上次的连接重连起来」，与
+    // `connection.local_shell` / `startup_directory` 同域（先例：会话日志两键归连接页）。
+    // 生效档取 `NextLaunch`：恢复料只在**进程启动那一刻**读一次，运行期改它既不会把已开着的标签
+    // 收进快照，也不会凭空重放上一份布局——本进程没有重放入口（该稿 F18／D3）。
+    catalog.push_back(toggle("connection.restore_sessions", SettingsPage::Connection, ConsumerStatus::Wired,
+                             EffectLevel::NextLaunch));
 
     // ---- 快捷键页（首版只读，S9）----
     // 生效档位记的是「展示」：这张表本身即消费方，而重绑与恢复默认无接缝故挂延后角标。
