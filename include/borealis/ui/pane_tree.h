@@ -107,6 +107,28 @@ struct PaneLayout {
     std::vector<PaneDivider> dividers;
 };
 
+/// @brief 一棵树折出来的**形状**：拓扑 + 每层沿轴的相对长度（`SPEC.FEAT.WS.11` 的「`PaneTree`
+/// 快照」本体，形态口径见 `codespec/WS11_SESSION_RESTORE.draft.md` §3 的 D5①）。
+///
+/// 叶子记的是**阅读序序位**而不是 `PaneId`：身份由调用方分配、只增且跨进程不复用（构造本件那条
+/// 口径），拿它当快照里的身份必漂；序位与 `panes()` 同序，故恢复时逐格的连接料按同一个下标对得上，
+/// 而身份由 `PaneTree::restore` 的 @p first_pane_id 现场发。
+///
+/// 每层的相对长度**原样**带出，既不归一也不吸附：归一只发生在 `layout` 的折算里，此处归一会让
+/// 「折出来 → 重建 → 再折出来」的两次读数不相等，而那正是本件的判据。
+struct PaneShape {
+    /// @brief 叶子还是容器层。判据即这一枚，其余字段各只在一侧有意义。
+    bool leaf = true;
+    /// @brief 叶子的阅读序序位（0 起）；容器层不读这一项。
+    std::size_t order = 0;
+    PaneAxis axis = PaneAxis::Horizontal;   ///< 容器层的排布轴；叶子不读。
+    std::vector<double> lengths;            ///< 容器层：与子同长的相对长度；叶子必须为空。
+    std::vector<PaneShape> children;        ///< 容器层：至少两个子；叶子必须为空。
+
+    /// @brief 逐字段全等比较（形状往返判据用；双精度按位比，故本件绝不做归一或吸附）。
+    [[nodiscard]] auto operator==(const PaneShape &other) const noexcept -> bool = default;
+};
+
 /// @brief 分屏布局的树：多子容器 + 叶子 pane，每层带沿轴的相对长度。
 ///
 /// 不变量：容器至少两个子（关闭导致只剩一个时该层当场塌缩），根可以是叶子，焦点恒指向一个现存
@@ -193,8 +215,39 @@ class PaneTree final {
     /// @return 该层是否存在；单子容器与根叶子不存在这一说，故不会收到这样的标识。
     auto equalize(ContainerId container) -> bool;
 
+    /// @brief 折出当前树的形状（`SPEC.FEAT.WS.11` 的采集腿，见 `PaneShape` 的字段口径）。
+    /// @return 根节点对应的形状；叶子序位按 `panes()` 的阅读序从 0 起编。
+    [[nodiscard]] auto describe() const -> PaneShape;
+
+    /// @brief 按形状重建整棵树（`SPEC.FEAT.WS.11` 的重放腿）。
+    ///
+    /// 形状先整体自检再一次性换掉根：坏形状返回 false 且旧树逐位不动（半棵树比没恢复更难解释，
+    /// 也更难测）。容器标识沿用「只增不复用」那条既有口径，由本件现场发，形状里不带它们。
+    /// 焦点落在序位 0 那一格（重建出来的一定是合法焦点），调用方随后用 `set_focus` 指到该恢复的那一格。
+    /// @param shape 待重建的形状；叶子的序位必须**不重不漏**地占满 `[0, 叶子数)`——它是恢复侧
+    ///        与逐格连接料对位的唯一依据，缺一个号或多一个号都在此拒掉。
+    /// @param first_pane_id 序位 0 那格的身份，其余按序位递增；递增溢出即坏形状。
+    /// @return 是否完成重建。
+    auto restore(const PaneShape &shape, PaneId first_pane_id) -> bool;
+
   private:
     struct Node;  // 树节点：叶子或容器；完整定义只在实现文件里（架构 §2.3 的模块边界）。
+
+    /// @brief 形状的**全部**判据都在写树之前跑完（`restore` 的 fail-closed 半边），并把叶子序位收进
+    ///        @p orders 供调用方查排列。
+    /// @return 是否合法；非法时 @p orders 的内容不作任何承诺。
+    [[nodiscard]] static auto validate_shape(const PaneShape &shape, std::vector<std::size_t> &orders)
+        -> bool;
+
+    /// @brief 折出 @p node 子树的形状，叶子序位由 @p next_order 递增发放（与 `collect` 同一条深度优先序）。
+    [[nodiscard]] static auto describe_in(const Node &node, std::size_t &next_order) -> PaneShape;
+
+    /// @brief 按**已验过**的形状建出一棵子树；容器标识经 @p this 的发放器取（只增不复用那条口径）。
+    ///
+    /// 只有 `restore` 在自检通过之后才调它，故本件不设失败出口——留着一条走不通的分支，等于让
+    /// 「坏形状整份拒绝」的判据有两个可能的落点。
+    [[nodiscard]] auto build_shape(const PaneShape &shape, PaneId first_pane_id)
+        -> std::unique_ptr<Node>;
 
     /// @brief 一个容器层沿折算轴的量度结果，`layout` 与 `move_divider` 共用同一条算式。
     ///

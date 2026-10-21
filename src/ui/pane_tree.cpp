@@ -204,6 +204,94 @@ auto PaneTree::equalize(ContainerId container) -> bool {
     return true;
 }
 
+auto PaneTree::describe() const -> PaneShape {
+    std::size_t next_order = 0;
+    return describe_in(*root_, next_order);
+}
+
+auto PaneTree::describe_in(const Node &node, std::size_t &next_order) -> PaneShape {
+    if (!node.container) {
+        return PaneShape{.leaf = true, .order = next_order++};
+    }
+    auto shape = PaneShape{};
+    shape.leaf = false;
+    shape.axis = node.axis;
+    // 长度逐位搬出，不归一：`layout` 每次折算本来就按该层实际长度归一，此处再归一就让形状与树
+    // 成了两条不同的真值，而「折出来 → 重建 → 再折出来」的判据要的是同一条。
+    shape.lengths = node.lengths;
+    shape.children.reserve(node.children.size());
+    for (const auto &child : node.children) {
+        shape.children.push_back(describe_in(*child, next_order));
+    }
+    return shape;
+}
+
+auto PaneTree::validate_shape(const PaneShape &shape, std::vector<std::size_t> &orders) -> bool {
+    if (shape.leaf) {
+        // 判别位说它是叶子却带着子的形状：形状有歧义，本件不猜哪一半是真。
+        if (!shape.children.empty() || !shape.lengths.empty()) {
+            return false;
+        }
+        orders.push_back(shape.order);
+        return true;
+    }
+    // 「容器至少两个子」与本件的不变量同源：单子层在 close 里当场塌缩，留着它等于留一条走不通的路径。
+    if (shape.children.size() < 2 || shape.lengths.size() != shape.children.size()) {
+        return false;
+    }
+    for (const double length : shape.lengths) {
+        if (!std::isfinite(length) || length <= 0.0) {
+            return false;  // 相对长度只在本层比，0 与 NaN 都会让 `distribute` 折出不可显示的格子。
+        }
+    }
+    for (const auto &child : shape.children) {
+        if (!validate_shape(child, orders)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+auto PaneTree::restore(const PaneShape &shape, PaneId first_pane_id) -> bool {
+    std::vector<std::size_t> orders;
+    if (!validate_shape(shape, orders)) {
+        return false;
+    }
+    // 序位不重不漏地占满 `[0, 叶子数)` 才是「与逐格连接料对得上」的全部含义：少一个号有一格没料，
+    // 多一个号有两格抢同一份料，两者都不如整份拒绝来得可解释。
+    std::sort(orders.begin(), orders.end());
+    for (std::size_t i = 0; i < orders.size(); ++i) {
+        if (orders[i] != i) {
+            return false;
+        }
+    }
+    // 这里减 1 不会绕回：合法形状必有至少一枚叶子（判别位是叶子就当场计数，是层就每层至少两子）。
+    if (orders.size() - 1 > std::numeric_limits<PaneId>::max() - first_pane_id) {
+        return false;  // 递增发放身份会绕回小值，那与装配层已发过的号撞车，比拒掉这份形状坏得多。
+    }
+
+    root_ = build_shape(shape, first_pane_id);
+    focused_ = first_pane_id;  // 序位 0 那一格：重建出来的焦点一定合法，调用方随后 `set_focus` 指过去。
+    return true;
+}
+
+auto PaneTree::build_shape(const PaneShape &shape, PaneId first_pane_id) -> std::unique_ptr<Node> {
+    auto node = std::make_unique<Node>();
+    if (shape.leaf) {
+        node->pane = first_pane_id + static_cast<PaneId>(shape.order);
+        return node;
+    }
+    node->container = true;
+    node->axis = shape.axis;
+    node->id = next_container_++;
+    node->lengths = shape.lengths;
+    node->children.reserve(shape.children.size());
+    for (const auto &child : shape.children) {
+        node->children.push_back(build_shape(child, first_pane_id));
+    }
+    return node;
+}
+
 auto PaneTree::contains(const Node &node, PaneId pane) -> bool {
     if (!node.container) {
         return node.pane == pane;

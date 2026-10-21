@@ -4,11 +4,15 @@
 ///           target 那一份一分为二、同轴切分并入父层而不另立一层、换轴切分成嵌套层、关闭后兄弟就地
 ///           合并且「只剩一子」的层当场塌缩、最后一个 pane 不可关、焦点按阅读序交接、分隔条拖拽钳在
 ///           最小 pane 尺寸上、等分、陈旧句柄被拒、子矩形边界吸附物理像素且整层无缝无叠、极端空间
-///           不足时退成均分，以及方向键的几何路由（跨层、严格居侧、同分取布局首序）。
+///           不足时退成均分，方向键的几何路由（跨层、严格居侧、同分取布局首序），以及 `SPEC.FEAT.WS.11`
+///           的形状折出／重建（叶子按阅读序序位对位、相对长度逐位保住、同轴并入不变量在重建路径同样
+///           成立、坏形状整份拒绝且旧树不动）。
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
+#include <utility>
 #include <vector>
 
 #include "borealis/ui/cell_layout.h"
@@ -27,6 +31,7 @@ using borealis::ui::PaneDirection;
 using borealis::ui::PaneDivider;
 using borealis::ui::PaneId;
 using borealis::ui::PaneLayout;
+using borealis::ui::PaneShape;
 using borealis::ui::PaneTree;
 using borealis::ui::Rect;
 using borealis::ui::route_focus;
@@ -74,6 +79,35 @@ auto assert_tiles_the_along_axis(const PaneLayout &layout, bool horizontal, doub
         cursor = (horizontal ? box.x + box.width : box.y + box.height) + divider_dp;
     }
     AURORA_TEST_CHECK_NEAR(cursor - divider_dp, total, kEps);
+}
+
+/// @brief 两帧布局逐位相同：矩形按深度优先序逐个比，条目数与把手数也在内。
+///
+/// 形状不带 pane 身份（见 `PaneShape` 的序位口径），故重建后的树与源树比的是**同序位的同一格**，
+/// 而不是同一个 `PaneId`。
+auto assert_same_boxes(const PaneLayout &before, const PaneLayout &after) -> void {
+    AURORA_TEST_REQUIRE_EQ(before.boxes.size(), after.boxes.size());
+    for (std::size_t i = 0; i < before.boxes.size(); ++i) {
+        AURORA_TEST_CHECK_NEAR(before.boxes[i].box.x, after.boxes[i].box.x, kEps);
+        AURORA_TEST_CHECK_NEAR(before.boxes[i].box.y, after.boxes[i].box.y, kEps);
+        AURORA_TEST_CHECK_NEAR(before.boxes[i].box.width, after.boxes[i].box.width, kEps);
+        AURORA_TEST_CHECK_NEAR(before.boxes[i].box.height, after.boxes[i].box.height, kEps);
+    }
+    AURORA_TEST_CHECK_EQ(before.dividers.size(), after.dividers.size());
+}
+
+/// @brief 手写形状的两枚构造：叶子只记序位，层记轴与逐子的相对长度。
+auto leaf(std::size_t order) -> PaneShape {
+    return PaneShape{.leaf = true, .order = order};
+}
+
+auto layer(PaneAxis axis, std::vector<double> lengths, std::vector<PaneShape> children) -> PaneShape {
+    auto shape = PaneShape{};
+    shape.leaf = false;
+    shape.axis = axis;
+    shape.lengths = std::move(lengths);
+    shape.children = std::move(children);
+    return shape;
 }
 
 }  // namespace
@@ -402,6 +436,132 @@ AURORA_TEST_CASE(depth_is_bounded_only_by_the_area_and_the_divider_width) {
         AURORA_TEST_CHECK_GE(entry.box.width, 0.0);
         AURORA_TEST_CHECK_GE(entry.box.height, 0.0);
     }
+}
+
+AURORA_TEST_CASE(a_shape_round_trips_through_a_nested_tree) {
+    PaneTree source(1);
+    AURORA_TEST_REQUIRE_TRUE(source.split(1, PaneAxis::Horizontal, 2));
+    AURORA_TEST_REQUIRE_TRUE(source.split(2, PaneAxis::Vertical, 3));     // 换轴 ⇒ 套出一层嵌套
+    AURORA_TEST_REQUIRE_TRUE(source.split(1, PaneAxis::Horizontal, 4));   // 同轴 ⇒ 并进根层而不另立
+
+    const PaneShape shape = source.describe();
+    // 形状把「同轴并入」这条不变量摊在桌面上可断言：根层三个子，只有第三个是嵌套层。
+    AURORA_TEST_CHECK_FALSE(shape.leaf);
+    AURORA_TEST_CHECK_EQ(shape.children.size(), std::size_t{3});
+    AURORA_TEST_CHECK_TRUE(shape.children[0].leaf);
+    AURORA_TEST_CHECK_TRUE(shape.children[1].leaf);
+    AURORA_TEST_CHECK_FALSE(shape.children[2].leaf);
+    AURORA_TEST_CHECK_TRUE(shape.children[2].axis == PaneAxis::Vertical);
+    AURORA_TEST_CHECK_EQ(shape.children[2].children.size(), std::size_t{2});
+
+    PaneTree rebuilt(7);
+    AURORA_TEST_REQUIRE_TRUE(rebuilt.restore(shape, 10));
+    AURORA_TEST_CHECK_TRUE(rebuilt.describe() == shape);  // 折出来 → 重建 → 再折出来，逐位相同
+    // 序位就是 `panes()` 的下标：源树阅读序 1,4,2,3 ⇒ 重建后 10,11,12,13（身份由调用方现发）。
+    AURORA_TEST_CHECK_EQ(rebuilt.panes(), std::vector<PaneId>{10, 11, 12, 13});
+    assert_same_boxes(source.layout(kArea, kSpec), rebuilt.layout(kArea, kSpec));
+}
+
+AURORA_TEST_CASE(a_dragged_proportion_survives_the_round_trip) {
+    PaneTree source(1);
+    AURORA_TEST_REQUIRE_TRUE(source.split(1, PaneAxis::Horizontal, 2));
+    AURORA_TEST_REQUIRE_TRUE(source.split(2, PaneAxis::Horizontal, 3));
+    const PaneLayout before = source.layout(kArea, kSpec);
+    // 把 1 与 2 之间的把手往右推到底：1 顶到 540、2 钳在最小值 48（3 那份分毫不动）。
+    AURORA_TEST_REQUIRE_TRUE(source.move_divider(before.dividers[0], 200.0, kSpec));
+    const PaneShape shape = source.describe();
+
+    PaneTree rebuilt(1);
+    AURORA_TEST_REQUIRE_TRUE(rebuilt.restore(shape, 1));
+    const PaneLayout layout = rebuilt.layout(kArea, kSpec);
+    // 这条红了就是「恢复成中点」那一档退化：三栏是 540 / 48 / 196 而不是 784÷3。
+    AURORA_TEST_CHECK_NEAR(box_of(layout, 1).width, 540.0, kEps);
+    AURORA_TEST_CHECK_NEAR(box_of(layout, 2).width, 48.0, kEps);
+    AURORA_TEST_CHECK_NEAR(box_of(layout, 3).width, 196.0, kEps);
+    assert_same_boxes(source.layout(kArea, kSpec), layout);
+}
+
+AURORA_TEST_CASE(the_leaf_order_pairs_with_reading_order_not_with_identities) {
+    // 关闭过的树上「身份」与「序位」早已脱钩：恢复侧靠序位对位，靠身份就会错格。
+    PaneTree source(1);
+    AURORA_TEST_REQUIRE_TRUE(source.split(1, PaneAxis::Horizontal, 2));
+    AURORA_TEST_REQUIRE_TRUE(source.split(2, PaneAxis::Horizontal, 3));
+    AURORA_TEST_REQUIRE_TRUE(source.split(3, PaneAxis::Horizontal, 4));
+    AURORA_TEST_REQUIRE_TRUE(source.close(2));  // 阅读序剩 1,3,4，而身份不连续
+    const PaneShape shape = source.describe();
+
+    PaneTree rebuilt(1);
+    AURORA_TEST_REQUIRE_TRUE(rebuilt.restore(shape, 20));
+    AURORA_TEST_CHECK_EQ(rebuilt.panes(), std::vector<PaneId>{20, 21, 22});
+    // 源树的阅读序是 1,3,4（身份不连续、份额也不等），重建后按序位对到 20,21,22：两帧布局逐位相同
+    // 就是「第 k 份逐格料落在第 k 格」的几何侧写。
+    assert_same_boxes(source.layout(kArea, kSpec), rebuilt.layout(kArea, kSpec));
+    const auto orders = std::vector<std::size_t>{shape.children[0].order, shape.children[1].order,
+                                                 shape.children[2].order};
+    AURORA_TEST_CHECK_EQ(orders, std::vector<std::size_t>{0, 1, 2});
+}
+
+AURORA_TEST_CASE(an_unsplit_shape_restores_a_single_leaf_tree) {
+    PaneTree source(7);
+    const PaneShape shape = source.describe();
+    AURORA_TEST_CHECK_TRUE(shape.leaf);
+    AURORA_TEST_CHECK_EQ(shape.order, std::size_t{0});
+
+    PaneTree rebuilt(1);
+    AURORA_TEST_REQUIRE_TRUE(rebuilt.restore(shape, 42));
+    AURORA_TEST_CHECK_EQ(rebuilt.panes(), std::vector<PaneId>{42});
+    AURORA_TEST_CHECK_EQ(rebuilt.focused(), PaneId{42});              // 焦点先落序位 0，调用方再指过去
+    AURORA_TEST_CHECK_FALSE(rebuilt.container_of(42).has_value());    // 未分屏就没有「所在层」
+    AURORA_TEST_CHECK_TRUE(rebuilt.layout(kArea, kSpec).dividers.empty());
+}
+
+AURORA_TEST_CASE(malformed_shapes_are_rejected_and_leave_the_tree_alone) {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double inf = std::numeric_limits<double>::infinity();
+    auto ambiguous = leaf(0);  // 判别位说它是叶子却带着子：形状有歧义
+    ambiguous.children.push_back(leaf(1));
+
+    const std::vector<PaneShape> bad{
+        layer(PaneAxis::Horizontal, {1.0}, {leaf(0)}),                    // 单子层（本件的不变量不许）
+        layer(PaneAxis::Horizontal, {1.0, 2.0, 3.0}, {leaf(0), leaf(1)}),  // 长度与子数不符
+        layer(PaneAxis::Horizontal, {1.0, 0.0}, {leaf(0), leaf(1)}),       // 零长度
+        layer(PaneAxis::Horizontal, {1.0, -1.0}, {leaf(0), leaf(1)}),      // 负长度
+        layer(PaneAxis::Horizontal, {1.0, nan}, {leaf(0), leaf(1)}),       // 非有限值
+        layer(PaneAxis::Horizontal, {inf, 1.0}, {leaf(0), leaf(1)}),       // 同上
+        layer(PaneAxis::Horizontal, {1.0, 1.0}, {leaf(0), leaf(0)}),       // 序位重了
+        layer(PaneAxis::Horizontal, {1.0, 1.0}, {leaf(0), leaf(2)}),       // 序位缺号
+        layer(PaneAxis::Horizontal, {1.0, 1.0}, {leaf(1), leaf(2)}),       // 序位不从 0 起
+        PaneShape{.leaf = true, .order = 1},                               // 单叶却从 1 起编
+        ambiguous,
+    };
+
+    PaneTree tree(1);
+    AURORA_TEST_REQUIRE_TRUE(tree.split(1, PaneAxis::Horizontal, 2));
+    const auto before = tree.panes();
+    for (const PaneShape &shape : bad) {
+        AURORA_TEST_CHECK_FALSE(tree.restore(shape, 2));
+        AURORA_TEST_CHECK_EQ(tree.panes(), before);   // 拒掉就一处都不许动
+        AURORA_TEST_CHECK_EQ(tree.focused(), PaneId{1});
+    }
+
+    // 反空转两条：同一批构造法写得出的合法形状真恢复得出来；而身份递增越界那一例仍在门外被拒。
+    const PaneShape good = layer(PaneAxis::Horizontal, {1.0, 1.0}, {leaf(0), leaf(1)});
+    AURORA_TEST_REQUIRE_TRUE(tree.restore(good, 7));
+    AURORA_TEST_CHECK_EQ(tree.panes(), (std::vector<PaneId>{7, 8}));
+    AURORA_TEST_CHECK_FALSE(tree.restore(good, std::numeric_limits<PaneId>::max()));
+    AURORA_TEST_CHECK_EQ(tree.panes(), (std::vector<PaneId>{7, 8}));
+}
+
+AURORA_TEST_CASE(rebuilding_twice_does_not_recycle_the_container_handles) {
+    PaneTree tree(1);
+    const PaneShape two = layer(PaneAxis::Horizontal, {1.0, 1.0}, {leaf(0), leaf(1)});
+    AURORA_TEST_REQUIRE_TRUE(tree.restore(two, 1));
+    const ContainerId first_attempt = *tree.container_of(1);
+
+    AURORA_TEST_REQUIRE_TRUE(tree.restore(two, 1));
+    // 只增不复用这条既有口径在重建路径同样成立：旧层标识要么失效，要么指向别层，不能「正好」还能拖。
+    AURORA_TEST_CHECK_FALSE(tree.equalize(first_attempt));
+    AURORA_TEST_CHECK_TRUE(tree.equalize(*tree.container_of(1)));
 }
 
 }  // namespace borealis::test_cases::utest_pane_tree
