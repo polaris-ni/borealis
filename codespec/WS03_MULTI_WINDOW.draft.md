@@ -77,10 +77,12 @@
 
 ## 3 框架侧缺口（按 AGENTS §5.1 分流，但本棒不等不绕）
 
-**G42（候选，待登记）**：应用级共享 `ShortcutRegistry` 的 `ShortcutBinding::action` 是无参闭包，`Application` 也没有「当前活动窗口」查询（F4／F5），而 `window_state()` 只聚合主窗、`request_wake_all()` 是 private（F7）。多窗应用因此**无法从公共面得知一条全局快捷键该落在哪一扇窗**。两条可接受形态：A) `ShortcutBinding::action` 改带 `WindowId`（或 `ShortcutContext{WindowId}`）；B) `Application::active_window()`（按最近一次宿主侧键盘/指针派发判定，无活动窗时回 `main_window()`）。
+**2026-10-22 出件补记**：本节原写「候选，待登记」的两条已按 §5.1 各自出件，加上批 4 撞到的第三条（关闭否决，本节原未列，读数在 F17／F18、口径在稿 D4），**三张任务书在册**＝`codespec/FRAMEWORK_TASK_WS03_G42.md`／`codespec/FRAMEWORK_TASK_WS03_G43.md`／`codespec/FRAMEWORK_TASK_WS03_G44.md`（裁决 **7.127**，附录 A.2 三行有指针）。本节的「不等不绕」照旧成立：三张任务书不改本棒任何判据，也不引入应用侧的私改路径。
+
+**G42（原「候选，待登记」，已登记为附录 A.2 的 G42，并于 2026-10-22 出任务书 `codespec/FRAMEWORK_TASK_WS03_G42.md`）**：应用级共享 `ShortcutRegistry` 的 `ShortcutBinding::action` 是无参闭包，`Application` 也没有「当前活动窗口」查询（F4／F5），而 `window_state()` 只聚合主窗、`request_wake_all()` 是 private（F7）。多窗应用因此**无法从公共面得知一条全局快捷键该落在哪一扇窗**。两条可接受形态：A) `ShortcutBinding::action` 改带 `WindowId`（或 `ShortcutContext{WindowId}`）；B) `Application::active_window()`（按最近一次宿主侧键盘/指针派发判定，无活动窗时回 `main_window()`）。
 **本棒不阻塞**：§4 的 D7 用本仓自持的「最近派发窗」记录器兑现同一事实，属可组合的应用侧能力（我们的视口控件本来就吃到那一笔按键）；待任一条回货，替换点只在那一枚解析器。按 §5.1 的「先在 Aurora 补公共 API」在这里让位给「本仓可组合」的判定，理由与代价见 D7③。
 
-**候选缺口二（未编号，待 `SPECIFICATIONS.md` 侧登记）＝`WindowGeometry::mode` 有存无取**：框架把 `mode` 序列化进几何（`window_geometry_to_json` 六键之一，反序列化还校验它落在 `[0,3]`），恢复侧 `apply_host_geometry` 却只 `set_size`＋`set_position`，`mode` 全程无人消费 ⇒ 「最大化／全屏那一种重启」回不到那个态，而文件里那一格写得清清楚楚，读者会以为功能存在。补法有两条（A) 恢复腿按 `mode` 追一次 `set_maximized`/`set_fullscreen`，并处理「目标显示器已不在」的降级；B) 明确 `mode` 不参与恢复、从结构里去掉，免得存一份永远不读的字段。**本棒不阻塞也不补偿**：在装配层私调最大化要猜框架的时序（宿主登记完、首帧之前那一截没有公共入口可挂），属 AGENTS §5.2「不在应用侧私改框架路径」与 §4.1 第 3 条「不做半截实现」两头都不占的那一档。现状读数与真机判据见 §0 的 F26③、§9 第 4 条①、§10 批 5 补记第 4 条。
+**G43（原「候选缺口二，未编号待登记」，已登记为附录 A.2 的 G43，并于 2026-10-22 出任务书 `codespec/FRAMEWORK_TASK_WS03_G43.md`）＝`WindowGeometry::mode` 有存无取**：框架把 `mode` 序列化进几何（`window_geometry_to_json` 六键之一，反序列化还校验它落在 `[0,3]`），恢复侧 `apply_host_geometry` 却只 `set_size`＋`set_position`，`mode` 全程无人消费 ⇒ 「最大化／全屏那一种重启」回不到那个态，而文件里那一格写得清清楚楚，读者会以为功能存在。补法有两条（A) 恢复腿按 `mode` 追一次 `set_maximized`/`set_fullscreen`，并处理「目标显示器已不在」的降级；B) 明确 `mode` 不参与恢复、从结构里去掉，免得存一份永远不读的字段。**本棒不阻塞也不补偿**：在装配层私调最大化要猜框架的时序（宿主登记完、首帧之前那一截没有公共入口可挂），属 AGENTS §5.2「不在应用侧私改框架路径」与 §4.1 第 3 条「不做半截实现」两头都不占的那一档。现状读数与真机判据见 §0 的 F26③、§9 第 4 条①、§10 批 5 补记第 4 条。
 
 ## 4 待人裁决（每条已给推荐①）
 
@@ -551,4 +553,4 @@
 
 ⑷ **结项读数**：本棒只改文档（六份 `codespec/*.md`），代码与用例零改动 ⇒ 门读数须与批 6 之后完全相同；实测 `ctest --preset linux -E etest_` **99/99**、runner 全跑 **1252/1252**，与 §22 的读数逐位相同即「文档回写没有夹带行为改动」那一侧的证据。变异自证在本棒不适用（无生产代码改动，AGENTS §4.4 第 22 条那条自证针对门禁脚本与新增判据）。
 
-⑸ **本条需求的结项状态**：批 1–批 7 **全部落地**，`SPEC.FEAT.WS.03` 的现状句与裁决就位。仍欠的两类都不是「没做完」而是「做不了／不做」：**真机走查七条**（§9，未走完不得称「可用」，第 33 条）与 **Windows 主通道**（多窗与几何恢复未编译未实测，推断／未验证）；在册欠项见 §10 与 §22 的观察项清单，其中 `workspace.close_window`、G42 与关闭否决两条框架缺口、`WindowGeometry::mode` 消费点缺失四条**需要另立棒或任务书**，不归本条。
+⑸ **本条需求的结项状态**：批 1–批 7 **全部落地**，`SPEC.FEAT.WS.03` 的现状句与裁决就位。仍欠的两类都不是「没做完」而是「做不了／不做」：**真机走查七条**（§9，未走完不得称「可用」，第 33 条）与 **Windows 主通道**（多窗与几何恢复未编译未实测，推断／未验证）；在册欠项见 §10 与 §22 的观察项清单，其中 `workspace.close_window`、G42 与关闭否决两条框架缺口、`WindowGeometry::mode` 消费点缺失四条**需要另立棒或任务书**，不归本条。**2026-10-22 的进度**：后三条已各自出件（`codespec/FRAMEWORK_TASK_WS03_G42.md`／`_G43.md`／`_G44.md`，见 §3 的出件补记与裁决 **7.127**）——出件不等于回货，本条的「不称可用」账与 §9 的走查清单照旧不改；`workspace.close_window` 仍待另立棒。
