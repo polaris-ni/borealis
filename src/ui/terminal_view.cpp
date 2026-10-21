@@ -1886,10 +1886,10 @@ auto TerminalView::ask_multiline_warning(const term::PastePlan &plan, std::funct
     }
     // 行数取待发块数而不是原文换行数：警告要说的是「会有几行被当成命令执行」。
     const std::string message =
-        std::string{"剪贴板里的内容有 "} + std::to_string(plan.chunks.size()) +
-        " 行，粘贴会把每一行都当成一条命令依次执行。确定粘贴吗？";  // CJK-LITERAL: 上屏文案 - 同 `menu_label`
+        settings_label("terminal.paste_multiline.body",
+                       {aurora::LocalizedString{std::to_string(plan.chunks.size())}});
     multiline_warning_->set_content(aurora::confirm(
-        "多行粘贴",  // CJK-LITERAL: 上屏文案 - 同 `menu_label`
+        settings_label("terminal.paste_multiline.title"),
         message,
         [this, answer = std::move(answer)](bool accepted) -> void {
             multiline_warning_->close();

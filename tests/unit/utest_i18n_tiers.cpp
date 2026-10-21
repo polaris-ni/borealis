@@ -14,8 +14,9 @@
 ///           ⑥ 判据 ② 的单向半边（英文档的每一 key 都在中文档有非空孪生条目），随批 3 四段一路有效；
 ///           ⑦ 判据 ② 的等式半边（两档 key 集逐字相等，且每一 key 在两档都有非空模板），随批 3 段 4
 ///           英文本体落齐立项，是 7.25⑬「新增界面串必须先加两档」那条纪律唯一的结构式证人；
-///           ⑧ 判据 ③ 的复数形态（5 枚计数词条在英文档 1／2 两值必须两串、在中文档剥掉计数后必须同串），
-///           随批 4 落地，外加两组抄在测试里的英文金样串。
+///           ⑧ 判据 ③ 的复数形态（成块的计数词条在英文档 1／2 两值必须两串、在中文档剥掉计数后必须同串；
+///           批 4 立 5 枚，批 6 从表外搬进 `terminal.paste_multiline.body` 后为 6 枚），随批 4 落地，
+///           外加两组抄在测试里的英文金样串。
 ///
 ///           **本案刻意不立的一句**（`codespec/PREF05_I18N.draft.md` §4.1 第 3 条）：「选英文档时每一 key 都
 ///           解析不出」那种形态在段 1 成立、批 3 补上本体后必然翻转，因此不写成断言——②⑥⑦ 三案吃的是
@@ -141,7 +142,7 @@ auto check_serves_only_the_installed_tier(const au::StringTable &table, const In
                               + (want.empty() ? std::string{"<none>"} : want));
 }
 
-/// @brief 两档源表 key 的并集（今天＝中文档那 466 条；两档齐后仍是对称的一份）。
+/// @brief 两档源表 key 的并集（今天＝中文档那 470 条；两档齐后仍是对称的一份）。
 [[nodiscard]] auto all_source_keys() -> std::vector<std::string> {
     std::vector<std::string> out = borealis::ui::settings_string_keys(InterfaceLanguage::Zh);
     const auto &english = borealis::ui::settings_string_keys(InterfaceLanguage::En);
@@ -153,7 +154,7 @@ auto check_serves_only_the_installed_tier(const au::StringTable &table, const In
 
 /// @brief 两档有序 key 表的首个差异，只用于等式案转红时的定位。
 ///
-/// 466 枚 key 报一句「不相等」没法定位：拼错的 key 和漏掉的 key 都缩在同一枚布尔里，两档各 466 条时
+/// 四百余枚 key 报一句「不相等」没法定位：拼错的 key 和漏掉的 key 都缩在同一枚布尔里，两档各 470 条时
 /// 差一枚的表要把整表打印出来才找得着。这里按字典序走到第一处分叉就停，把两侧那枚原样吐出来。
 [[nodiscard]] auto first_difference(const std::vector<std::string> &left, const std::vector<std::string> &right)
     -> std::string {
@@ -393,14 +394,16 @@ AURORA_TEST_CASE(the_count_phrases_decline_in_english_but_not_in_chinese) {
     //   ③ 两组金样串抄在测试里（`keys.header.count` 与 `connections.notice.imported`），抓的是分支
     //      **文本**而不是形状：把 `one={0} key` 写成 `one={0} keys` 在 ① 上看不出来。
     // 覆盖范围：全表带计数的词条实测 13 枚（F17），其中英文侧数词直接修饰可数名词、因此两档都写进块的
-    // 是那 5 枚（另 8 枚为序数、单位、纯索引或数词后无名词，逐枚理由见该稿 §8 的批 4 读数）。本案只吃
-    // 这 5 枚——它们在两档都必须是块形态，而 `other`-only 的中文块在 ② 上与旧串同形。
-    const std::array<CountPhrase, 5> kCountPhrases{
+    // 是那 5 枚（另 8 枚为序数、单位、纯索引或数词后无名词，逐枚理由见该稿 §8 的批 4 读数）。本案吃
+    // 这 5 枚——它们在两档都必须是块形态，而 `other`-only 的中文块在 ② 上与旧串同形。批 6 从表外搬进来的
+    // `terminal.paste_multiline.body`（「…有 {0} 行…」）是第 14 枚计数词条、第 6 枚成块条目，随批 6 入列。
+    const std::array<CountPhrase, 6> kCountPhrases{
         CountPhrase{"connections.notice.imported", 0U, 1U},
         CountPhrase{"keys.header.count", 0U, 1U},
         CountPhrase{"workspace.broadcast.title", 1U, 2U},
         CountPhrase{"session.reconnect.exhausted", 0U, 1U},
         CountPhrase{"terminal.notice.unrepresentable.line", 1U, 2U},
+        CountPhrase{"terminal.paste_multiline.body", 0U, 1U},
     };
 
     au::StringTable english_table;

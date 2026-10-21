@@ -13,7 +13,9 @@
 ///           选区，也不把上一次的动作补发一遍；
 ///           ⑥ 生产的确认对话框（`aurora::confirm` 装进 `au::Dialog`）**内容进命中链**，故 Yes / No
 ///           是可被真实指针派发点到的两枚按钮，而遮罩那一档既不误触发关闭也不穿透——这三条是
-///           Aurora 侧 G26 回货的接货证人（回货前链是空的，见裁决 7.55 登记的那条判据空洞）。
+///           Aurora 侧 G26 回货的接货证人（回货前链是空的，见裁决 7.55 登记的那条判据空洞）；
+///           ⑦ 那枚对话框的标题与正文**取自词条表**（`SPEC.FEAT.PREF.05` 批 6 判据 ④ 的消费点半边），
+///           故本件第一次要认对话框上屏的那两串字，而不只认它的两枚按钮。
 ///           节流的那一腿需要运行中的 `Scheduler`，此处按「无调度器即按次序一次发完」的退化
 ///           分支断言块序与内容（裁决 7.41⑥）。
 ///
@@ -287,6 +289,23 @@ class Harness {
             return ButtonSpot{};
         }
         return find_button_in(dialog->paint_bounds(), ordinal);
+    }
+
+    /// @brief 生产对话框内容盒里第 `ordinal` 枚文本（0＝标题、1＝正文），取解析后的显示串。
+    ///
+    /// `Dialog` 把 `confirm()` 那根 Column 收为唯一子节点，故两枚 `Text` 就是它的第一层孩子。
+    /// 本案系要**认字**而不只认按钮：错 key 的上屏形态是空白（`codespec/PREF05_I18N.draft.md` 的
+    /// F13），而空白盒里的 Yes／No 照样能被命中链点到。
+    [[nodiscard]] auto dialog_text(std::size_t ordinal) -> std::string {
+        const aurora::Dialog *dialog = view_->multiline_warning();
+        if (dialog == nullptr || dialog->child_nodes().empty()) {
+            return {};
+        }
+        const std::vector<au::Node> &lines = dialog->child_nodes()[0].widget().child_nodes();
+        if (ordinal >= lines.size()) {
+            return {};
+        }
+        return lines[ordinal].widget().accessibility_label();
     }
 
     /// @brief 上下文菜单第 `ordinal` 枚条目（阅读序，0 基）：与对话框同一套命中链问法。
@@ -750,6 +769,12 @@ AURORA_TEST_CASE(the_dialog_yes_button_is_clicked_through_the_hit_chain) {
     h.render();
     AURORA_TEST_REQUIRE(h.dialog_open());
 
+    // 标题与正文自 `SPEC.FEAT.PREF.05` 批 6 起取自词条表。这里的期望走 `settings_label(key)`
+    // 而不是抄串，吃的是「同一枚接缝、不同调用点」这一层差：本件被证的是**调用点查的哪一枚 key**，
+    // 与 `menu_label` 那几案（同文件 545 行形似）同档，不是表自身读数的自反式重复。
+    AURORA_TEST_CHECK_EQ(h.dialog_text(0), borealis::ui::settings_label("terminal.paste_multiline.title"));
+    AURORA_TEST_CHECK_EQ(h.dialog_text(1), borealis::ui::settings_label("terminal.paste_multiline.body",
+                                                                        {aurora::LocalizedString{"2"}}));
     const Harness::ButtonSpot yes = h.find_dialog_button(0);
     AURORA_TEST_REQUIRE(yes.widget != nullptr);  // 内容不入链时这里就是空
     auto *button = dynamic_cast<au::Button *>(yes.widget);

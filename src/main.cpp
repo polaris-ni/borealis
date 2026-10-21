@@ -1341,8 +1341,9 @@ auto main(int argc, char **argv) -> int {
         // 工厂要的标签号就是本支即将取到的那个号：`create_new_tab_with` 里 `next_tab_id++` 取号，
         // 这里先读现值，两处之间没有别的取号点（工厂只在切分那一刻被调，那时号已经发出去了）。
         const borealis::ui::TabId id = next_tab_id;
-        create_new_tab_with(window, make_local_session(spec), U"本地终端", borealis::conn::ConnectionType::Local,
-                            make_local_pane_factory(id));
+        create_new_tab_with(window, make_local_session(spec),
+                            decode_utf8(borealis::ui::settings_label("connections.type.local")),
+                            borealis::conn::ConnectionType::Local, make_local_pane_factory(id));
     };
 
     // 首标签与冷启动请求的关系（稿 §5.1 / §5.4）：只有「开标签那一档动作且带 `--profile`」要把这一格
@@ -1504,8 +1505,8 @@ auto main(int argc, char **argv) -> int {
         }
         window.close_confirm->set_content(
             au::confirm(
-                "关闭标签",  // CJK-LITERAL: 上屏文案 - 面向用户的对话框标题
-                "该标签里还有正在运行的进程，关闭会终止它们。确定关闭吗？",  // CJK-LITERAL: 上屏文案 - 面向用户的对话框正文
+                borealis::ui::settings_label("tab.close_confirm.title"),
+                borealis::ui::settings_label("tab.close_confirm.body"),
                 [&window, raw_id, &perform_close,
                  dialog = window.close_confirm](bool accepted) -> void {
                     dialog->close();

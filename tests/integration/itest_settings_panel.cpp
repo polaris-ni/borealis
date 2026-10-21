@@ -125,6 +125,7 @@
 #include "borealis/ui/workspace_keys.h"
 #include "framework/aurora_test.h"
 // 私有头（裁决 D1①），故按相对路径取用而不给整个测试目标开 `src/` 含目录。
+#include "../../src/config/schema_names.h"
 #include "../../src/ui/settings_i18n.h"
 #include "../../src/ui/settings_panel.h"
 #include "../../src/ui/settings_preview.h"
@@ -547,9 +548,11 @@ public:
 AURORA_TEST_CASE(every_catalog_key_resolves_to_a_display_label) {
     borealis::ui::install_settings_strings();
 
+    std::vector<std::string> covered;
     for (const SettingsControl &control : borealis::ui::settings_catalog()) {
         AURORA_TEST_REQUIRE_MSG(borealis::ui::has_settings_string(control.key), control.key + " has no locale entry");
         AURORA_TEST_CHECK_MSG(!borealis::ui::settings_label(control.key).empty(), control.key + " label is empty");
+        covered.push_back(control.key);
     }
 
     for (std::string_view key : {"settings.title", "settings.subtitle", "settings.close", "settings.action.open",
@@ -557,6 +560,29 @@ AURORA_TEST_CASE(every_catalog_key_resolves_to_a_display_label) {
                                  "settings.page.connection", "settings.page.shortcuts", "settings.badge.deferred",
                                  "settings.badge.next_session"}) {
         AURORA_TEST_REQUIRE_MSG(borealis::ui::has_settings_string(key), std::string{key} + " missing");
+        covered.emplace_back(key);
+    }
+
+    // 批 6（D11）从表外搬进来的那四枚：面板不画它们，消费点在装配层与终端视图，故它们进不了上面那条
+    // catalog 枚举，只能在这一侧点名——否则「界面消费的串都有词条」这条覆盖闸会漏掉自己刚扩的四枚。
+    for (std::string_view key : {"tab.close_confirm.title", "tab.close_confirm.body",
+                                 "terminal.paste_multiline.title", "terminal.paste_multiline.body",
+                                 "connections.type.local"}) {
+        AURORA_TEST_REQUIRE_MSG(borealis::ui::has_settings_string(key), std::string{key} + " missing");
+        covered.emplace_back(key);
+    }
+
+    // 判据 ② 扩到「覆盖闸两档都查」（`SPEC.FEAT.PREF.05` 批 6）：上面那三圈吃的是**装填后的进程表**，
+    // 而那张表按 D4 的落地期改形只装选定那一档（`codespec/PREF05_I18N.draft.md` §4.1 第 2 条），于是
+    // 「只给中文档配了词条」在这条闸上完全看不出来——切到英文档才露出 F13 的空白。这一圈读**源表**
+    // （`settings_string_text`）逐档查，与 `utest_i18n_tiers` 的全表等式案互补：那一案管「两档 key 集
+    // 相等」，本案管「界面真消费的这一批 key 在两档都非空」。
+    for (const std::string &key : covered) {
+        for (const config::InterfaceLanguage language :
+             {config::InterfaceLanguage::Zh, config::InterfaceLanguage::En}) {
+            AURORA_TEST_CHECK_MSG(!borealis::ui::settings_string_text(language, key).empty(),
+                                  std::string{config::language_tag(language)} + " tier has no template for " + key);
+        }
     }
 
     // 提交未通过的十二个原因全都要有词条：面板把失败写进状态列时只有这一条查表路径，缺一个就是空标签。

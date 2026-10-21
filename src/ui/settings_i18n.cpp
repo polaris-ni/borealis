@@ -52,7 +52,8 @@ const Tier kStringsZh{
     // `session.reconnect.exhausted`／`terminal.notice.unrepresentable.line`）**两档都写成 `{n, plural, …}` 块**。
     // 中文侧写块是行为不变的形态统一：框架 `plural.h` 给 `zh` 的规则恒 `other`，故中文渲染逐字同旧串，
     // 而英文侧的 `one=` 分支才是判据 ③ 的读数。另 8 枚不写块（序数、单位、纯索引或数词后无名词），逐枚
-    // 理由见该稿 §8 的批 4 读数。
+    // 理由见该稿 §8 的批 4 读数。批 6 从表外搬进来的 `terminal.paste_multiline.body`（「…有 {0} 行…」）是
+    // 第 14 枚计数词条、第 6 枚成块条目，同一形态。
     {"connections.notice.imported", "已导入 {0, plural, other={0} 条}"},
     {"connections.type.local", "本地终端"},
     {"connections.type.ssh", "SSH"},
@@ -382,6 +383,11 @@ const Tier kStringsZh{
     // ---- 撤销关闭标签（`SPEC.FEAT.WS.10` 的命令标题，待 WS.01 多标签落地后启用）----
     {"tab.action.undo_close", "重开最近关闭的标签"},
 
+    // ---- 关标签确认框（`SPEC.FEAT.PREF.05` D11：这两串原本是 `src/main.cpp` 里的表外中文）----
+    // 正文要说的是「还有进程在跑」这一事实，不是「有 N 个进程」——装配层拿不到进程数，写成计数会谎报。
+    {"tab.close_confirm.title", "关闭标签"},
+    {"tab.close_confirm.body", "该标签里还有正在运行的进程，关闭会终止它们。确定关闭吗？"},
+
     // ---- dead-session 一键重启（`SPEC.FEAT.WS.05`：`session.restart` 命令标题 + 视口浮层两处文案）----
     {"session.restart.title", "重启会话"},
     {"session.restart.hint", "会话已退出"},
@@ -406,6 +412,13 @@ const Tier kStringsZh{
     // 路径三段各与真标签同源（`settings.page.terminal` ＋ `terminal.unrepresentable`）。
     {"terminal.notice.unrepresentable.line", "{0} 发不出这一段里的 {1, plural, other={1} 个字符}"},
     {"terminal.notice.unrepresentable.action", "已按当前处置档发送 · 改档见 设置 › 终端 › 不可表示字符处置"},
+
+    // ---- 多行粘贴确认框（`SPEC.FEAT.PREF.05` D11：原本是 `terminal_view.cpp` 里的表外中文）----
+    // 计数取**待发块数**而不是原文换行数（该文件那条注的口径）：警告要说的是「会有几行被当成命令执行」。
+    // {0} 紧邻可数名词，故按批 4 的形态写成复数块（中文侧 other-only、渲染逐字同旧串）。
+    {"terminal.paste_multiline.title", "多行粘贴"},
+    {"terminal.paste_multiline.body",
+     "剪贴板里的内容有 {0, plural, other={0} 行}，粘贴会把每一行都当成一条命令依次执行。确定粘贴吗？"},
 
     // ---- 右键菜单与「会话日志」一族（`SPEC.FEAT.INTERACT.03` 的三条目 + `SPEC.FEAT.CONN.11`）----
     // 前两条是既有菜单文案**换来源**而不是换措辞：`menu_label` 自此一族三个条目同走词条表，
@@ -658,14 +671,15 @@ const Tier kStringsZh{
 
 /// @brief 英文档（`en`）的 key → 模板：批 3 按域四段推完，**段 1 落 `connections.*` 与 `keys.*` 146 条、
 /// 段 2 落 `settings.*` 77 条、段 3 落终端与会话侧 93 条、段 4 落连接域与其余 150 条（`connection.*`／
-/// `serial.*`／`sftp.*`／`tunnel.*`／`shortcuts.*`／`appearance.*`），合计 466 条，与中文表逐 key 相等**。
+/// `serial.*`／`sftp.*`／`tunnel.*`／`shortcuts.*`／`appearance.*`），批 6 的表外四处再补 4 枚，
+/// **合计 470 条，与中文表逐 key 相等**。
 ///
 /// CJK-LITERAL: locale-output - 本表与中文表同为上屏文案的真值源，换成转写即失去并排对照的价值。表内
 /// 非 ASCII 的字面量只有两类共九枚：三枚字形（`settings.chain.*`，与中文表同字）与六枚 `" · "` 分隔符
 /// （沿 `serial_format.cpp` 与 `settings_panel.cpp` 那两处同类别已标的既定视觉形态）。
 ///
-/// 位置刻意紧跟中文表（该稿 D4），并排校对是这一档存在的唯一理由——466 条 key（批 1 收敛后的 464 条加
-/// 批 2 两枚）分在两个文件里，「两档同 key 集」那条判据就要跨文件聚合。段内条目序与中文表逐条一致，
+/// 位置刻意紧跟中文表（该稿 D4），并排校对是这一档存在的唯一理由——470 条 key（批 1 收敛后的 464 条加
+/// 批 2 两枚、批 6 四枚）分在两个文件里，「两档同 key 集」那条判据就要跨文件聚合。段内条目序与中文表逐条一致，
 /// 中文表里解释「为什么是这个措辞」的那几条注也随条目一起搬过来：改一条时两档同屏可见。
 ///
 /// 两档文本逐字相同的 13 枚不是漏译：`CR`／`CRLF`／`LF`／`SSH`／`Telnet`／`Ed25519`／`RSA`／`SOCKS5 -D`
@@ -1001,6 +1015,11 @@ const Tier kStringsEn{
     // ---- 撤销关闭标签（WS.10 的命令标题）----
     {"tab.action.undo_close", "Reopen the last closed tab"},
 
+    // ---- 关标签确认框（PREF.05 D11：这两串原本是 `src/main.cpp` 里的表外中文）----
+    {"tab.close_confirm.title", "Close the tab"},
+    {"tab.close_confirm.body",
+     "This tab still has processes running, and closing it terminates them. Close it anyway?"},
+
     // ---- dead-session 一键重启与自动重连浮层（WS.05）----
     // 终态三档只以快照里的**档位**分档，关闭原因本身不外传（D3），故「不自动重试」那一档必须同时
     // 罩得住认证失败与主机密钥拒绝两种原因——英文也保持这一句不带原因。
@@ -1025,6 +1044,13 @@ const Tier kStringsEn{
      "{0} cannot send {1, plural, one={1} character other={1} characters} in this block"},
     {"terminal.notice.unrepresentable.action",
      "Sent under the current policy · change it in Settings > Terminal > Unrepresentable character policy"},
+
+    // ---- 多行粘贴确认框（PREF.05 D11：原本是 `terminal_view.cpp` 里的表外中文）----
+    // 计数取待发块数（与中文表同一口径），{0} 紧邻可数名词故写复数块。
+    {"terminal.paste_multiline.title", "Paste multiple lines"},
+    {"terminal.paste_multiline.body",
+     "The clipboard holds {0, plural, one={0} line other={0} lines}. Pasting runs every line as its own "
+     "command. Paste anyway?"},
 
     // ---- 右键菜单与「会话日志」一族（INTERACT.03 三条目 + CONN.11）----
     // 这四条是既有菜单文案**换来源**而不是换措辞；日志一族六句同理，命令标题与菜单条目各一条。
