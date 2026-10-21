@@ -80,6 +80,9 @@
 | `link_osc8` | 下拉三档 | 落盘名 `never` / `ask_once` / `ask_always`（缺省 `ask_once`），候选**照落盘名原文显示**（与 `clipboard_read` 同一条词条纪律） | `ui::plan_link_open` 的 OSC 8 那一支（裁决 **7.119** D8①） | 即时 |
 | `link_heuristic` | 下拉三档 | 同一张取值表（与上一行**分开配置**是需求那句「信任级别可分别配置」的落点） | `ui::plan_link_open` 的启发式那一支 | 即时 |
 | `link_schemes` | 文本输入（逗号分隔） | `ValueDomain::FreeText`：装载侧只判类型不判域，非法/空白 scheme 由 `ui::find_link_at` 在判定时拒绝、面板**不拒收**（缺省 `http,https`） | `ui::LinkScanOptions::schemes`（装配层 `parse_link_schemes` 拆一次） | 即时 |
+| `command_block_separator` | 开关 | bool（缺省关闭） | 视口悬停层（`ui::command_block` 的块区间；裁决 **7.123** D6①/D9①） | 即时 |
+
+> `command_block_separator` 是 2026-10-21 新增的一行，SVG 终端页尚未画它（以本表为准，下一轮出图并入）。它与 `link_*` 同走「当前标签」广播边界：别的标签要等它成为当前标签并再改一次档才刷新（裁决 7.123 D9①）。
 
 **连接域 `connection.*`**（本稿只画默认值；建档表单属屏 2）
 

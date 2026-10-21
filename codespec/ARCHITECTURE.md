@@ -203,7 +203,7 @@ UI 事件 → 键映射（`SPEC.FEAT.INTERACT.01`）→ **文本按会话编码�
 
 `OSC 0/2` 标题、`OSC 7` 工作目录、`OSC 8` 超链接、`OSC 52` 剪贴板、`OSC 133` 命令块（`SPEC.FEAT.TERM.07`、`SPEC.FEAT.INTEG.01/02`）。标题消费链路：OSC 标题覆盖标签名，用户手动重命名优先级更高（可配）。
 
-**落地形态**（裁决 7.21）：派发在 `Terminal::do_osc`，产物是**状态快照 + 一个取走型动作**——`term::OscState` 给最近一次的标题 / 目录原文 / 133 边界与退出码 / 计数，超链接以「标识 → URI」有界表配合 §4.1 的行侧表，`OSC 52` 写方向的文本走 `Terminal::take_clipboard_write()` 的取走语义。不选事件队列的理由是 §3.4 的锁纪律：状态机跑在读线程的网格锁内，锁内只能留存不能投递。`OSC 52` 的真正落地是主线程的 IO，故由 `session::ClipboardOutbox::drain()` 转调 Aurora `Clipboard::set_text`（框架依赖只出现在 `src/`，公共头不含框架头，§2.3）；`52;c;?` 的读方向默认禁止但**回写空响应**，不让远端程序干等。未识别的命令号计入 `unhandled_count` 走 §5.5 的降级口径，不整体吞掉。`OSC 7` 的消费腿（`SPEC.FEAT.INTEG.02`，裁决 7.122）分两段：`term` 只原样留存原文，`ui::osc7` 把本机 host 的 `file://` 折成本机绝对目录，装配层只在新建默认本地标签时取用；远端 host、SSH／串口／Telnet 与显式本地档案都不继承。
+**落地形态**（裁决 7.21）：派发在 `Terminal::do_osc`，产物是**状态快照 + 一个取走型动作**——`term::OscState` 给最近一次的标题 / 目录原文 / 133 边界与退出码 / 计数，超链接以「标识 → URI」有界表配合 §4.1 的行侧表，`OSC 52` 写方向的文本走 `Terminal::take_clipboard_write()` 的取走语义。不选事件队列的理由是 §3.4 的锁纪律：状态机跑在读线程的网格锁内，锁内只能留存不能投递。`OSC 52` 的真正落地是主线程的 IO，故由 `session::ClipboardOutbox::drain()` 转调 Aurora `Clipboard::set_text`（框架依赖只出现在 `src/`，公共头不含框架头，§2.3）；`52;c;?` 的读方向默认禁止但**回写空响应**，不让远端程序干等。未识别的命令号计入 `unhandled_count` 走 §5.5 的降级口径，不整体吞掉。`OSC 7` 的消费腿（`SPEC.FEAT.INTEG.02`，裁决 7.122）分两段：`term` 只原样留存原文，`ui::osc7` 把本机 host 的 `file://` 折成本机绝对目录，装配层只在新建默认本地标签时取用；远端 host、SSH／串口／Telnet 与显式本地档案都不继承。`OSC 133` 的消费腿（`SPEC.FEAT.INTEG.01`，裁决 7.123）另起一份有界块历史 `term::CommandBlockTracker`，`OscState` 维持「最近一次」的快照原义；块区间与三层界面消费见 §10.7。
 
 ### 5.5 未识别序列与降级
 
@@ -454,6 +454,15 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 ### 10.6 无障碍（延后项的落点约束）
 
 `SPEC.NF.A11Y.01` 为延后观察项，但架构约束先记录：终端视区是自绘网格 widget，框架语义树不会自动派生 cell 内容，届时须经 Aurora 无障碍平台桥（Aurora 主仓 `codespec/ARCHITECTURE.md` §8.5）挂接应用侧语义钩子（行文本聚合、光标位置、选区状态）。该工作面在无障碍开工前不可回避，提前记录以免届时被迫重构视口。
+
+### 10.7 命令块（OSC 133）
+
+`SPEC.FEAT.INTEG.01` 的消费链按层分三段，解析仍只有既有的一套 OSC 133 腿（裁决 7.123）：
+
+- **记录在 `term`、坐标是绝对行**：`term::CommandBlockTracker`（`include/borealis/term/command_block.h` + `src/term/command_block.cpp`）按 `A/B/C/D` 推进一份容量 256 的块历史；块存 `storage_index + dropped_lines` 的绝对行，故回看、resize 与 scrollback 溢出都不漂移。`Terminal::record_prompt_marker` 是唯一喂入点，只在主屏接收标记；`P` 是右提示符分段（`PromptPart`），不参与块，`C` 才是输出起点。`ED 3` 与 RIS 清空块表。记录件不依赖 Aurora／`grid`／`config`，可脱界面单测。
+- **会话只交副本**：`Session::command_blocks()` 与 `osc_state()` 同形——短临界区返回副本，不扩 `Session::read` 的签名；视口每帧取一次，块表变化单独标脏。`OscState` 仍是标题 / 目录 / 剪贴板的单份快照，块历史是并列的一份记录，不是它的扩展。
+- **界面三层只读副本**：`ui::command_block` 把绝对行折成存储行 / 屏幕行（`command_output_spans` / `failed_output_spans` / `copy_command_output`），不含 Aurora；视口在 `layout_row` 之前预填失败输出行的低强度红底、在正文之上画悬停块首行的 1 px 分隔线（纯装饰、不写命中盒）；右键菜单「复制上一命令的全部输出」是条件条目，右键时存整块快照，点击只置 `CopyRequest::CommandOutput`，读网格与写剪贴板在下一帧边界完成（AGENTS §4.5 第 25 条），事件回调不读会话锁。
+- **fail-closed 与边界**：只发 `A/B/P` 的集成不产块，不做「按提示符猜块」的启发式；备屏标记忽略；结尾换行与行尾空格不能由「行区间 + LF」精确还原；无 shell 集成安装器。可选开关 `terminal.command_block_separator` 只影响悬停分隔线，失败底色恒定开。
 
 ---
 

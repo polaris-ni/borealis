@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1242" viewBox="0 0 1560 1242" font-family="'Microsoft YaHei UI','Noto Sans SC',sans-serif">
+<desc>2026-10-21（裁决 7.123 / SPEC.FEAT.INTEG.01）：屏 4 右键菜单在「复制」之后新增条件条目「复制上一命令的全部输出」；本终态图未重绘，条目集合以 UI_INTEG_OSC133.draft.md §8 第 6 条为准。</desc>
 <rect x="0" y="0" width="1560" height="1242" fill="#eef0f5"/>
 <text x="30" y="34" font-size="20" font-weight="700" fill="#1b1f28">屏 4 · 浮层与菜单：命令面板 + 右键菜单 + 两类确认 + 通知</text>
 <text x="30" y="56" font-size="12.5" fill="#5a6070">UI_COMMANDS.draft.svg · 高保真草图 · 窗口 1500×900 dp @100% DPI · 数字标号对应下方判据</text>
