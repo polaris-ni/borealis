@@ -199,6 +199,11 @@ auto Session::osc_state() const -> term::OscState {
     return terminal_.osc_state();
 }
 
+auto Session::command_blocks() const -> std::vector<term::CommandBlock> {
+    const std::lock_guard lock{mutex_};
+    return terminal_.command_blocks();
+}
+
 auto Session::hyperlink_target(grid::HyperlinkId link_id) const -> std::optional<std::u32string> {
     const std::lock_guard lock{mutex_};
     return terminal_.hyperlink_target(link_id);
@@ -241,8 +246,8 @@ auto Session::on_closed() -> void {
     // 连接终止是一次**状态变更**而不只是一轮批量输入：`SPEC.FEAT.WS.05` 的 dead-session 浮层
     // 判据正是这个边沿，若只沿「有提交才唤醒」那条路径排帧，进程干净退出（无残留半截序列且最后一次
     // flush 已排在上一帧的边界之后）就成了无提交的一轮，浮层要等到下一次别的唤醒才显形——那已经
-    // 是「过了一晚上终于看到进程早挂了」的形态。头注那句「一轮没有产出任何提交就不唤醒」讲的是
-    // 批量输入这一路径，本条是其例外：连接生死本身就是要让主线程看一眼的变化。
+    // 是「过了一晚上终于看到进程早挂了」的形态。`set_frame_wake` 那句「没有提交、也没有块表变化
+    // 就不唤醒」讲的是批量输入这一路径，本条是其例外：连接生死本身就是要让主线程看一眼的变化。
     wake_frame();
 }
 
@@ -250,6 +255,7 @@ auto Session::ingest(std::span<const std::byte> bytes, bool end_of_stream) -> vo
     std::vector<Damage> damage;
     std::u32string responses;
     std::shared_ptr<SessionLog> log_target;
+    bool blocks_changed = false;
     {
         const std::lock_guard lock{mutex_};
         decode_buffer_.clear();
@@ -271,6 +277,9 @@ auto Session::ingest(std::span<const std::byte> bytes, bool end_of_stream) -> vo
             log_pending_.assign(decode_buffer_.begin(), decode_buffer_.end());
         }
         damage = collect_damage();
+        // `D` 到达通常不带网格脏区：块表自己的变化也要排一帧，否则菜单可用性与高亮要等下一次
+        // 别的唤醒才更新（裁决 7.123 D7①）。
+        blocks_changed = terminal_.take_command_blocks_changed();
         responses.swap(pending_responses_);
     }
     if (!responses.empty()) {
@@ -283,8 +292,10 @@ auto Session::ingest(std::span<const std::byte> bytes, bool end_of_stream) -> vo
             damage_queue_.push_rows(entry.first_row, entry.last_row);
         }
     }
-    if (!damage.empty()) {
-        wake_frame();  // 一轮批量输入只唤醒一次，且必须在队列已成型之后（否则唤醒的那帧取不到提交）
+    if (!damage.empty() || blocks_changed) {
+        // 一轮批量输入只唤醒一次，且必须在队列已成型之后（否则唤醒的那帧取不到提交）。
+        // 块表变化可能不带任何提交：唤醒的那帧取不到脏行，但仍会重取 `Session::command_blocks()`。
+        wake_frame();
     }
     if (log_target) {
         log_target->append(log_pending_);  // 排在唤醒之后：一次写盘的耗时不该压在帧调度的前面

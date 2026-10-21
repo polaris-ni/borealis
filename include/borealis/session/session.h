@@ -12,8 +12,9 @@
 // 由主线程取走后落地。写队列同样在锁外：主线程的取用顺序
 // 是「先取队列、再读网格」，反过来就会与读线程构成 ABBA 死锁。
 //
-// 主线程不会自己想起要排帧：提交入队后由装配层注入的帧唤醒句柄叫它一次（架构 §3.2），
-// 该句柄同样在锁外调用——它是跨线程 post，属 IO。
+// 主线程不会自己想起要排帧：提交入队、或 `OSC 133` 块表变化后，由装配层注入的帧唤醒句柄叫它
+// 一次（架构 §3.2），该句柄同样在锁外调用——它是跨线程 post，属 IO。块表单列一条的理由：
+// `D` 标记只改块表、不动网格，若只按脏行唤醒，刚执行完的命令块要等到下一次输出才显形。
 // ============================================================
 
 #include <cstddef>
@@ -95,7 +96,8 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     ///
     /// 读线程由连接回调驱动，而排帧在主线程，故「唤醒主线程」这个跨线程动作必须由装配层交进来
     /// ——它调的是什么（`Surface::request_wake` 一类）本层不知道，也不该知道。一轮批量输入只唤醒
-    /// 一次，不按提交条数唤醒；一轮没有产出任何提交就不唤醒。
+    /// 一次，不按提交条数唤醒；一轮既没有提交、也没有 `OSC 133` 块表变化就不唤醒（后者是
+    /// 「`D` 标记不动网格」那条的唯一出口，见文件头注）。
     /// @param wake 唤醒动作，须线程安全且不得阻塞（它在读线程上被调用）。
     auto set_frame_wake(std::function<void()> wake) -> void;
 
@@ -198,6 +200,13 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     ///
     /// 标签名与窗口标题的优先级（OSC 标题覆盖标签名、手动重命名优先）归工作区层判定，会话只给来源。
     [[nodiscard]] auto osc_state() const -> term::OscState;
+
+    /// @brief `OSC 133` 命令块历史（`SPEC.FEAT.INTEG.01`）：与 `osc_state()` 同形的锁内副本。
+    ///
+    /// 视口每帧取一次；块表有界 `term::kMaxCommandBlocks`，拷贝代价可忽略。**不改** `read` 的
+    /// 签名：那条接缝被搜索、视口、日志多个调用点共用，为一条新消费摊到所有调用方不划算
+    /// （裁决 7.123 D7①）。
+    [[nodiscard]] auto command_blocks() const -> std::vector<term::CommandBlock>;
 
     /// @brief 解析网格格子上挂的超链接标识（`SPEC.FEAT.TERM.07` 的 OSC 8 腿）。
     /// @param link_id 标识，取自 `grid::Row::hyperlink`。

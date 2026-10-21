@@ -36,6 +36,7 @@ add_library(borealis_core STATIC
         term/codec.cpp
         term/charset.cpp
         term/clipboard_read.cpp
+        term/command_block.cpp
         term/keymap.cpp
         term/mouse.cpp
         term/osc.cpp

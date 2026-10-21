@@ -24,9 +24,9 @@ enum class PromptMarker : std::uint8_t {
     None,             ///< 尚未收到任何标记。
     PromptStart,      ///< `A`：提示符起始。
     PromptEnd,        ///< `B`：提示符结束、输入区起点。
-    CommandStart,     ///< `C`：命令行起始。
+    CommandStart,     ///< `C`：命令开始执行、输出起点（行 + 列）。
     CommandExecuted,  ///< `D`：命令执行完毕，参数携退出码。
-    OutputStart,      ///< `P`：命令输出起始，参数携 `Cwd=` 等键值。
+    PromptPart,       ///< `P`：右提示符分段（`k=r`），不是输出起点，不参与命令块。
 };
 
 /// @brief 超链接表的容量上限。

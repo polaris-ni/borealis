@@ -273,26 +273,108 @@ AURORA_TEST_CASE(osc_133_records_prompt_boundaries_and_exit_code) {
     auto term = make_terminal(narrow_only);
     term.feed(osc_bel(U"133;A"));
     AURORA_TEST_CHECK(term.osc_state().prompt_marker == PromptMarker::PromptStart);
+    term.feed(U"user$ ");
     term.feed(osc_bel(U"133;B"));
     AURORA_TEST_CHECK(term.osc_state().prompt_marker == PromptMarker::PromptEnd);
+    term.feed(U"ls\r\n");
     term.feed(osc_bel(U"133;C"));
     AURORA_TEST_CHECK(term.osc_state().prompt_marker == PromptMarker::CommandStart);
+    term.feed(U"file\r\n");
     term.feed(osc_bel(U"133;D;1"));
     AURORA_TEST_CHECK(term.osc_state().prompt_marker == PromptMarker::CommandExecuted);
     AURORA_TEST_CHECK_EQ(term.osc_state().command_exit_code, std::int32_t{1});
+
+    // `P` 是右提示符分段：只更新快照，不参与块，更不改 `C` 立下的输出起点（裁决 7.123 D2①）。
     term.feed(osc_bel(U"133;P;Cwd=/srv"));
-    AURORA_TEST_CHECK(term.osc_state().prompt_marker == PromptMarker::OutputStart);
+    AURORA_TEST_CHECK(term.osc_state().prompt_marker == PromptMarker::PromptPart);
+    AURORA_TEST_CHECK_EQ(term.command_blocks().size(), std::size_t{1});
+    const auto &block = term.command_blocks().front();
+    AURORA_TEST_CHECK_EQ(block.prompt_row, std::int64_t{0});
+    AURORA_TEST_CHECK_EQ(block.prompt_end_row, std::int64_t{0});
+    AURORA_TEST_CHECK_EQ(block.output_start_row, std::int64_t{1});
+    AURORA_TEST_CHECK_EQ(block.output_start_column, std::size_t{0});
+    AURORA_TEST_CHECK_EQ(block.output_end_row, std::int64_t{2});
+    AURORA_TEST_CHECK_EQ(block.output_end_column, std::size_t{0});
+    AURORA_TEST_CHECK_TRUE(block.has_exit_code);
+    AURORA_TEST_CHECK_TRUE(block.failed());
+    AURORA_TEST_CHECK_TRUE(block.has_copyable_output());
+    AURORA_TEST_CHECK_TRUE(term.take_command_blocks_changed());
+    AURORA_TEST_CHECK_FALSE(term.take_command_blocks_changed());
 
     // 未知边界字母计入留痕，且不改写最近一次有效标记。
     term.feed(osc_bel(U"133;Q"));
-    AURORA_TEST_CHECK(term.osc_state().prompt_marker == PromptMarker::OutputStart);
+    AURORA_TEST_CHECK(term.osc_state().prompt_marker == PromptMarker::PromptPart);
     AURORA_TEST_CHECK_EQ(term.osc_state().unhandled_count, std::size_t{1});
 }
 
 AURORA_TEST_CASE(osc_133_missing_exit_code_reads_as_zero) {
     auto term = make_terminal(narrow_only);
-    term.feed(osc_bel(U"133;D;7") + osc_bel(U"133;D"));
+    term.feed(osc_bel(U"133;A") + U"p" + osc_bel(U"133;C") + U"x\r\n" + osc_bel(U"133;D"));
     AURORA_TEST_CHECK_EQ(term.osc_state().command_exit_code, std::int32_t{0});
+    AURORA_TEST_CHECK_EQ(term.command_blocks().size(), std::size_t{1});
+    AURORA_TEST_CHECK_FALSE(term.command_blocks().front().has_exit_code);
+    AURORA_TEST_CHECK_FALSE(term.command_blocks().front().failed());
+
+    // 带符号的负数不能被读成 0：那正是「失败命令不高亮」的漏判。
+    term.feed(osc_bel(U"133;A") + U"p" + osc_bel(U"133;C") + U"y\r\n" + osc_bel(U"133;D;-1"));
+    AURORA_TEST_CHECK_EQ(term.osc_state().command_exit_code, std::int32_t{-1});
+    AURORA_TEST_CHECK_TRUE(term.command_blocks().back().has_exit_code);
+    AURORA_TEST_CHECK_TRUE(term.command_blocks().back().failed());
+}
+
+AURORA_TEST_CASE(ed3_and_ris_clear_command_blocks) {
+    auto term = make_terminal(narrow_only);
+    term.feed(osc_bel(U"133;A") + U"p" + osc_bel(U"133;B") + U"cmd\r\n" + osc_bel(U"133;C") +
+              U"out\r\n" + osc_bel(U"133;D;0"));
+    AURORA_TEST_CHECK_EQ(term.command_blocks().size(), std::size_t{1});
+
+    term.feed(U"\x1B[3J");
+    AURORA_TEST_CHECK_EQ(term.command_blocks().size(), std::size_t{0});
+    AURORA_TEST_CHECK_TRUE(term.take_command_blocks_changed());
+
+    term.feed(osc_bel(U"133;A") + U"p" + osc_bel(U"133;C") + U"x\r\n" + osc_bel(U"133;D;0"));
+    AURORA_TEST_CHECK_EQ(term.command_blocks().size(), std::size_t{1});
+    term.feed(U"\x1B" U"c");  // RIS
+    AURORA_TEST_CHECK_EQ(term.command_blocks().size(), std::size_t{0});
+}
+
+AURORA_TEST_CASE(alternate_screen_markers_are_ignored_and_main_blocks_survive) {
+    auto term = make_terminal(narrow_only);
+    term.feed(osc_bel(U"133;A") + U"p" + osc_bel(U"133;B") + U"cmd\r\n" + osc_bel(U"133;C") +
+              U"out\r\n" + osc_bel(U"133;D;0"));
+    AURORA_TEST_CHECK_EQ(term.command_blocks().size(), std::size_t{1});
+    const auto serial = term.command_blocks().front().serial;
+
+    term.feed(U"\x1B[?1049h");
+    term.feed(osc_bel(U"133;A") + U"vim" + osc_bel(U"133;B") + osc_bel(U"133;C") + U"alt\r\n" +
+              osc_bel(U"133;D;0"));
+    AURORA_TEST_CHECK_EQ(term.command_blocks().size(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(term.command_blocks().front().serial, serial);
+
+    term.feed(U"\x1B[?1049l");
+    AURORA_TEST_CHECK_EQ(term.command_blocks().size(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(term.command_blocks().front().serial, serial);
+    AURORA_TEST_CHECK_TRUE(term.command_blocks().front().completed);
+}
+
+AURORA_TEST_CASE(command_block_rows_stay_absolute_across_scrollback_overflow) {
+    auto term = make_terminal(narrow_only);  // 3 行视口 + 5 行 scrollback
+    term.feed(U"\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n");  // 填满 scrollback 并开始溢出
+    AURORA_TEST_CHECK_EQ(term.main_grid().dropped_lines(), std::int64_t{1});
+
+    term.feed(osc_bel(U"133;A") + U"p" + osc_bel(U"133;B") + U"cmd\r\n" + osc_bel(U"133;C") +
+              U"out\r\n" + osc_bel(U"133;D;0"));
+    const auto &block = term.command_blocks().front();
+    AURORA_TEST_CHECK_EQ(block.prompt_row, std::int64_t{8});
+    AURORA_TEST_CHECK_EQ(block.output_start_row, std::int64_t{9});
+    AURORA_TEST_CHECK_EQ(block.output_end_row, std::int64_t{10});
+
+    term.feed(U"\r\n\r\n");
+    AURORA_TEST_CHECK_EQ(term.main_grid().dropped_lines(), std::int64_t{5});
+    AURORA_TEST_CHECK_EQ(term.command_blocks().front().prompt_row, std::int64_t{8});
+    const auto storage_index =
+        term.command_blocks().front().prompt_row - term.main_grid().dropped_lines();
+    AURORA_TEST_CHECK_EQ(storage_index, std::int64_t{3});
 }
 
 AURORA_TEST_CASE(unconsumed_osc_commands_are_counted_not_fatal) {

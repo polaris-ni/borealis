@@ -9,7 +9,6 @@
 #include "borealis/term/terminal.h"
 
 #include <algorithm>
-#include <limits>
 #include <span>
 #include <string>
 #include <utility>
@@ -875,32 +874,48 @@ auto Terminal::apply_clipboard(std::u32string_view args) -> void {
 
 auto Terminal::apply_prompt_marker(std::u32string_view args) -> void {
     // `133;<A|B|C|D|P>[;<该种自己的参数>]`
-    // TODO(SPEC.FEAT.INTEG.01): 命令块要附着到网格行上（「复制上一命令的全部输出」、失败命令
-    // 高亮），当前只留最近一次边界；`P` 段的 `Cwd=` 与 OSC 7 同源，也在那一棒统一解析。
     const auto fields = osc::split_first(args, U';');
     const auto marker = fields.head.empty() ? U'\0' : fields.head.front();
     switch (marker) {
         case U'A':
             osc_state_.prompt_marker = PromptMarker::PromptStart;
+            record_prompt_marker(PromptMarker::PromptStart);
             break;
         case U'B':
             osc_state_.prompt_marker = PromptMarker::PromptEnd;
+            record_prompt_marker(PromptMarker::PromptEnd);
             break;
         case U'C':
             osc_state_.prompt_marker = PromptMarker::CommandStart;
+            record_prompt_marker(PromptMarker::CommandStart);
             break;
-        case U'D':
+        case U'D': {
             osc_state_.prompt_marker = PromptMarker::CommandExecuted;
-            osc_state_.command_exit_code =
-                osc::decimal(fields.tail, std::numeric_limits<std::int32_t>::max());
+            const auto exit_code = parse_command_exit_code(fields.tail);
+            osc_state_.command_exit_code = exit_code.value_or(0);
+            record_prompt_marker(PromptMarker::CommandExecuted, exit_code);
             break;
+        }
         case U'P':
-            osc_state_.prompt_marker = PromptMarker::OutputStart;
+            // `P` 是 Prompt Part（右提示符分段），不是 Output Start：它不参与命令块，也不改
+            // `C` 已经立下的输出起点（裁决 7.123 D2①）。
+            osc_state_.prompt_marker = PromptMarker::PromptPart;
             break;
         default:
             ++osc_state_.unhandled_count;
             break;
     }
+}
+
+auto Terminal::record_prompt_marker(PromptMarker marker, std::optional<std::int32_t> exit_code)
+    -> void {
+    if (modes_.alternate_screen) {
+        return;  // 备屏程序不是用户的命令块；切回主屏后旧块照旧可用
+    }
+    const auto view_top = main_.total_lines() - main_.visible_rows();
+    const auto row = static_cast<std::int64_t>(view_top + cursor_.row) + main_.dropped_lines();
+    command_blocks_.on_marker(marker, row, cursor_.column, exit_code);
+    command_blocks_changed_ = true;
 }
 
 auto Terminal::hyperlink_target(grid::HyperlinkId link_id) const -> std::optional<std::u32string> {
@@ -1001,6 +1016,8 @@ auto Terminal::erase_display(std::int32_t mode) -> void {
             }
             if (mode == 3 && !modes_.alternate_screen) {
                 main_.clear();  // xterm 口径：ED 3 连 scrollback 一起清（备屏无历史可清）
+                command_blocks_.clear();  // 块区间指向已消失的内容，留着只会高亮空白
+                command_blocks_changed_ = true;
                 full_screen_dirty_ = true;
             }
             break;
@@ -1113,6 +1130,8 @@ auto Terminal::reset_to_default() -> void {
     region_bottom_ = main_.visible_rows() - 1;
     ambiguous_ = defaults_.ambiguous_width;
     osc_state_ = {};
+    command_blocks_.clear();
+    command_blocks_changed_ = true;
     hyperlinks_.clear();
     next_hyperlink_id_ = 1;  // 网格已清空，标识可以从头分配
     current_hyperlink_ = grid::kNoHyperlink;

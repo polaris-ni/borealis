@@ -32,6 +32,7 @@
 #include "borealis/grid/storage.h"
 #include "borealis/term/charset.h"
 #include "borealis/term/clipboard_read.h"
+#include "borealis/term/command_block.h"
 #include "borealis/term/osc.h"
 #include "borealis/term/width.h"
 #include "borealis/vt/parser.h"
@@ -188,6 +189,22 @@ class Terminal final : public vt::SequenceSink {
     /// @brief OSC 消费留下的状态快照（标题、工作目录、命令块边界）。
     [[nodiscard]] auto osc_state() const noexcept -> const OscState & { return osc_state_; }
 
+    /// @brief `OSC 133` 的命令块历史（绝对行坐标，容量 `kMaxCommandBlocks`）。
+    [[nodiscard]] auto command_blocks() const noexcept -> const std::vector<CommandBlock> & {
+        return command_blocks_.blocks();
+    }
+
+    /// @brief 消费「块表变过」这一事实（帧边界调用）。
+    ///
+    /// `D` 到达通常不带网格脏区，只靠行级提交排不出那一帧；会话层据此在无 damage 时也唤醒一次，
+    /// 让菜单可用性、红底与分隔线跟上块表（裁决 7.123 D7①）。
+    /// @return 自上次调用以来是否变过；调用即清零。
+    auto take_command_blocks_changed() noexcept -> bool {
+        const bool changed = command_blocks_changed_;
+        command_blocks_changed_ = false;
+        return changed;
+    }
+
     /// @brief 解析网格里某个超链接标识的目标。
     ///
     /// 链接表有界（`kMaxHyperlinks`），标识**永不复用**：解析不出即表示该链接已被淘汰规则回收，
@@ -260,6 +277,10 @@ class Terminal final : public vt::SequenceSink {
     auto apply_clipboard(std::u32string_view args) -> void;
     auto apply_prompt_marker(std::u32string_view args) -> void;
 
+    /// @brief 把当前游标折成绝对行并喂给命令块记录件；备屏期间忽略。
+    auto record_prompt_marker(PromptMarker marker, std::optional<std::int32_t> exit_code = std::nullopt)
+        -> void;
+
     /// @brief 在光标处写入一个 cell（含双宽延续格与「覆盖后半格」的清理）。
     auto write_cell(char32_t code_point, std::uint8_t width) -> void;
 
@@ -318,6 +339,8 @@ class Terminal final : public vt::SequenceSink {
     AmbiguousWidth ambiguous_ = AmbiguousWidth::Narrow;
     ResponseSink *response_sink_ = nullptr;
     OscState osc_state_{};                                    ///< OSC 消费留下的状态快照（架构 §5.4）。
+    CommandBlockTracker command_blocks_{};  ///< `OSC 133` 的块历史（绝对行；备屏不记录）。
+    bool command_blocks_changed_ = false;   ///< 块表变过：会话层在无 damage 时也要排一帧。
     std::map<grid::HyperlinkId, std::u32string> hyperlinks_;  ///< 标识 → URI；满则淘汰最旧一条。
     /// 链接标识递增分配且**永不复用**：复用会让 scrollback 里的旧链接指向另一条 URL。
     grid::HyperlinkId next_hyperlink_id_ = 1;

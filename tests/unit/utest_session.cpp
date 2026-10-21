@@ -2,10 +2,11 @@
 /// 目标单元: include/borealis/session/session.h
 /// 测试说明: 会话层的读侧接线（字节 → 解码 → 状态机 → 网格 → 脏行提交）与写侧通道
 ///           （文本编码下发、**行尾折算**、尺寸下发、DSR/DA1 应答回写、OSC 52 读方向应答）、OSC 消费产物
-///           的会话侧取值（标题 / 工作目录 / 超链接 / 剪贴板待写合并）、帧唤醒句柄的注入与
-///           唤醒时机（含「连接生死那一次唤醒独立于批量输入有没有产出提交」这一条 `SPEC.FEAT.WS.05`
-///           的例外），以及对端退出时的解码收尾与非法字节替换
+///           的会话侧取值（标题 / 工作目录 / 超链接 / 剪贴板待写合并 / 命令块快照）、帧唤醒句柄的
+///           注入与唤醒时机（含「连接生死那一次唤醒独立于批量输入有没有产出提交」这一条
+///           `SPEC.FEAT.WS.05` 的例外，与「块表变化也唤醒」），以及对端退出时的解码收尾与非法字节替换
 ///           （SPEC.FEAT.TERM.01 查询响应、SPEC.FEAT.TERM.07 OSC 消费、
+///           SPEC.FEAT.INTEG.01 命令块来源、
 ///           SPEC.FEAT.TERM.09 双向编码、SPEC.FEAT.CONN.05 发送行尾折算、SPEC.FEAT.XFER.01 尺寸同步、
 ///           SPEC.FEAT.WS.01 存活判定、架构 §3.2/§3.3/§7.2）。
 
@@ -411,6 +412,39 @@ AURORA_TEST_CASE(osc_hyperlink_travels_the_whole_chain_to_the_grid) {
     AURORA_TEST_CHECK(*target == U"https://example.test/a");
 }
 
+AURORA_TEST_CASE(command_blocks_travel_through_the_session_snapshot) {
+    // `SPEC.FEAT.INTEG.01` 的取数入口：与 `osc_state()` 同形的锁内副本，供视口每帧取一次。
+    auto fixture = make_session();
+    fixture.connection->deliver("\x1B]133;A\x07" "p" "\x1B]133;B\x07" "cmd\r\n" "\x1B]133;C\x07");
+    fixture.connection->deliver("out\r\n" "\x1B]133;D;7\x07");
+
+    const auto blocks = fixture.session->command_blocks();
+    AURORA_TEST_REQUIRE_EQ(blocks.size(), 1U);
+    AURORA_TEST_CHECK_EQ(blocks.front().prompt_row, std::int64_t{0});
+    AURORA_TEST_CHECK_EQ(blocks.front().output_start_row, std::int64_t{1});
+    AURORA_TEST_CHECK_EQ(blocks.front().output_end_row, std::int64_t{2});
+    AURORA_TEST_CHECK(blocks.front().completed);
+    AURORA_TEST_CHECK(blocks.front().failed());
+    AURORA_TEST_CHECK_EQ(blocks.front().exit_code, std::int32_t{7});
+}
+
+AURORA_TEST_CASE(command_block_change_wakes_the_frame_without_grid_damage) {
+    // `D` 标记通常不改任何格子；块表自身的变化也要排一帧，否则菜单可用性与失败高亮要等下一次
+    // 输出才更新（裁决 7.123 D7①）。
+    auto fixture = make_session();
+    int wakes = 0;
+    fixture.session->set_frame_wake([&wakes]() { ++wakes; });
+    static_cast<void>(drain_all(*fixture.session));
+    fixture.connection->deliver("\x1B]133;A\x07\x1B]133;C\x07\x1B]133;D;0\x07");
+
+    AURORA_TEST_CHECK_FALSE(fixture.session->has_damage());
+    AURORA_TEST_CHECK_EQ(wakes, 1);
+    const auto blocks = fixture.session->command_blocks();
+    AURORA_TEST_REQUIRE_EQ(blocks.size(), 1U);
+    AURORA_TEST_CHECK(blocks.front().completed);
+    AURORA_TEST_CHECK_FALSE(blocks.front().failed());
+}
+
 AURORA_TEST_CASE(osc_52_writes_in_one_batch_merge_before_the_main_thread_drains) {
     auto fixture = make_session();
     fixture.connection->deliver("\x1B]52;c;aGVsbG8=\x07\x1B]52;c;d29ybGQ=\x07");
@@ -558,7 +592,8 @@ AURORA_TEST_CASE(bell_flag_survives_the_drain_and_is_taken_once) {
 
 AURORA_TEST_CASE(clean_close_wakes_the_frame_even_with_no_pending_damage) {
     // `SPEC.FEAT.WS.05` 的 dead-session 浮层判据挂在「连接生死」这一边沿上，而不是「最后一次批量
-    // 输入有没有产出提交」。头注那句「无提交即不唤醒」讲的是 `on_bytes` 那一路；`on_closed` 是其
+    // 输入有没有产出提交」。`set_frame_wake` 那句「无提交、无块表变化即不唤醒」讲的是 `on_bytes`
+    // 那一路；`on_closed` 是其
     // 例外——若把它塞进 `ingest({}, true)` 的返回值判定里，进程干净退出（残留半截序列在上一次 flush
     // 之后已被吞掉）就成了「无 damage ⇒ 无 wake」的静默档，浮层要等下一次别的唤醒才显形。
     auto fixture = make_session();
