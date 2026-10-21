@@ -36,6 +36,7 @@
 | **F23** | **落地阶段（批 1）读数：形状**不**带容器标识**——`ui::PaneShape` 只有「叶子：序位」与「层：轴 + 逐子相对长度 + 子表」四种字段，`ContainerId` 由 `restore` 经既有的 `next_container_` 现场发放（同文件那条只增不复用的口径） | 形状与「本次进程里的层号」解耦，跨进程存它不会漂；副作用是重建后旧层标识**失效**而非指向别层（`rebuilding_twice_does_not_recycle_the_container_handles` 钉这一条）。批 5 的接线因此不能把形状与把手句柄混存：恢复之后要重新取一次 `container_of` |
 | **F24** | **落地阶段读数：`describe()` 绝不归一**。相对长度只在 `layout` 的 `distribute` 里折算，形状原样搬出才能做到「折出来 → 重建 → 再折出来」两次读数按位相等；实测把拖到底的那一层（540／48／196 dp）搬进新树再折一次，逐位相同（`a_dragged_proportion_survives_the_round_trip`） | 这条是判据 ① 的落法：比的不是「比例看起来一样」，而是**双精度按位相等**（`PaneShape::operator==` 取 default 正是为此）。任何一处顺手加归一／吸附，两次读数就差在 1e-16 上，判据当场失去意义 |
 | **F25** | **落地阶段读数：`restore` 的自检清单是六道判据**——单子层、长度与子数不符、长度非有限或 ≤0、叶子却带子（判别位有歧义）、叶子序位不是 `[0, N)` 的排列、身份递增越界；全部在写树**之前**跑完，任一条不过即整份拒绝且旧树逐位不动（`malformed_shapes_are_rejected_and_leave_the_tree_alone`，11 例坏形状 + 2 例反空转） | 批 2 的 JSON 读侧要在六道**之外**再加「顶层类型／数组元素类型／计数超上界」那一层：树件管形状合法性，快照件管文档合法性，两道闸叠加才是判据 ② 的完整形态。批 2 不要把六道判据重写一遍——`from_json` 折出形状后交给 `restore`，坏文档自然被这六道接住 |
+| **F26** | **落地阶段（批 3）读数：框架的 `remove(key)` 删不掉「值是整棵对象」的那种键**。实测同一份 `Preferences`：①`set("layout", <一棵对象>)` + `flush()` 写盘；②换实例 `remove("layout")` + `flush()`；③再换新实例——`contains("layout")` 仍为 **true**，整棵布局原样在盘上。原因是墓碑按 `flatten` 之后的**叶子复合键**记账，中间对象层只作前缀、自己不落成独立条目，故顶层那个容器键找不到对应墓碑；`clear()` 则靠「清空纪元」对叶子生效，是**唯一**能清掉整棵布局的那一跳（探针 `/tmp/wsprobe/rmprobe.cpp`，不入库） | 判据 ③ 那句「开关关掉之前已有的快照不被删除」因此**连框架那跳都挡得住**——不是本件刻意留了后门，而是这条路本来走不通。反向的约束落在批 5／批 7：装配层**不许**指望用 `remove` 清快照，界面上也确实没有清理入口（D9① 的在册代价照旧成立）；真要清只能整份 `clear()`，而那是把别人的键也一起清掉的爆炸半径，本棒不用 |
 
 ---
 
@@ -141,7 +142,7 @@
 | **0** | 本稿与地基实测（本节即产出） | `codespec/` | 无（稿） |
 | **1** | `PaneTree` 的描述／重建件 + 嵌套形状类型 | `include/borealis/ui/pane_tree.h`、`src/ui/pane_tree.cpp` | `utest_pane_tree` 扩案（判据 ①） |
 | **2** | 快照数据模型 + JSON 编解码（fail-closed 读侧） | `include/borealis/ui/workspace_snapshot.h`、`src/ui/workspace_snapshot.cpp`、`src/CMakeLists.txt`（`borealis_core` 是显式清单，实测必须登记；测试侧 `cmake/BorealisTests.cmake` 的 GLOB 零改）、`include/borealis/conn/local_terminal.h`（补 `operator==`） | `utest_workspace_snapshot` 新套件（判据 ②⑥⑦） |
-| **3** | 第三枚 `Preferences` 的落盘件 | `src/config/workspace_store.{h,cpp}` | 判据 ② 的落盘往返腿（同套件扩案） |
+| **3** | 第三枚 `Preferences` 的落盘件 | `src/config/workspace_store.{h,cpp}`、`src/CMakeLists.txt`（同批登记一行，`borealis_core` 显式清单） | 判据 ② 的落盘往返腿 + 判据 ③ 的档位半边（同套件扩案） |
 | **4** | 新键六处同步 + 面板那一行 + 两档词条 + 两处计数闸改口 | `settings.h`、`store.cpp`、`form_transfer.cpp`、`settings_catalog.cpp`、`settings_i18n.cpp`、`utest_settings_catalog.cpp` | catalog 那一行案（判据 ③） |
 | **5** | 装配腿：本地 per-pane 账、采集、启动重放、D7 的 CLI 次序 | `src/main.cpp` | **无自动化证人**（F21），§5 走查第 ①–⑤ 条兜底 |
 | **6** | 无头集成用例：写快照 → 新宿主读回 → 断标签数/类型/格数/焦点/尺寸下发 | `tests/integration/itest_workspace_restore.cpp`（新）、`itest_workspace_layout.cpp`（扩） | 判据 ①④ 的接线半边 + 变异自证 |
@@ -178,3 +179,21 @@ GLOB（本表 §8 那一栏原先只写了 `cmake/BorealisTests.cmake` 的 GLOB�
 F12 那处在册代价第一次实际支付：`src/ui/` 依架构 §2.1 不得反向依赖 `config`（含其私有头
 `schema_names.h`），故快照件自列一份枚举名表；判据 ⑦ 那条等式案就是这处第二真值源的证人，
 它红了就等于「档案有了第二套落盘形态」。批 5 的装配腿与凭据重取那一段本批未碰，判据 ⑤ 仍无证人。
+
+**批 3 已落地（2026-10-22）**：`config::WorkspaceStore`（第三枚 `Preferences`，绑 `<配置目录>/workspace.json`）
+落在 `src/config/workspace_store.{h,cpp}`，形态逐字照 F3 那枚先例 `config::WindowGeometryStore`：两处构造 +
+`preferences()` / `path()` / `flush()`，**没有任何删除入口**；`src/CMakeLists.txt` 的 `borealis_core` 显式清单
+登记一行（同批 2 那条附带件）。证人扩在既有套件 `utest_workspace_snapshot`：**13 案 → 16 案**，新增三案全是
+文件腿——落盘往返（判据 ② 的落盘半边）、只提交不写仍拿得到上一份（判据 ③ 的档位半边）、提交失败回 ASCII 原因。
+读数：`ctest --preset linux -E etest_` **105/105 全绿**（套件数不变，本批零新测试目标，涨的是既有套件的案数）、
+`./build/borealis_test_runner` **1328 案全绿**（起点 1325，增量 +3）。
+变异逐条转红：默认文件名改写 → 案 1 红；构造时忽略传入路径只用默认 → 案 1+2 红；`preferences()` 回空指针
+→ 案 1+2+3 红；`flush()` 之前先 `clear()` → 案 1+2 红；`flush()` 吞掉框架的错误原因回空 → 案 3 红；给落盘件
+补上 `remove` / `clear` 两跳 → **编译期红**（`static_assert(!HasDeleteEntry<WorkspaceStore>)` 失败）。
+**六支无一空转**，判据 ② 的落盘腿与判据 ③ 的档位半边各有证人；判据 ③ 的另一半（catalog 那一行案）与
+`connection.restore_sessions` 的六处同步归批 4。
+两条口径在册：① 判据 ③ 的**主证是编译期那枚 `concept`**——本件面上根本没有删除那两跳，故运行案只需要承担
+「只 `flush()` 不写」这一半；反空转对照特意**没有**用框架的 `remove`（F26 实测它对整值对象键无效，用它当对照
+会得到一条恒不成立的断言），改用一枚从未写过布局的存储来证明那三条「还在」不是恒真的空话。② 夹具文件名一律
+取中立名（`store_round_trip.json` / `keep_previous.json`），生产那枚 `workspace.json` 只在默认绑定那一跳断——
+否则夹具跟着文件名一起被变异带走，落盘案对「文件名写错」这支变异就没有鉴别力。
