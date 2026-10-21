@@ -145,6 +145,7 @@ auto paint_zoom_badge(aurora::Painter &p, const aurora::Rect &bounds, const Rect
         case WorkspaceCommand::FocusDown:
         case WorkspaceCommand::ToggleZoom:
         case WorkspaceCommand::ToggleBroadcast:
+        case WorkspaceCommand::NewWindow:  // 不动本工作区的拓扑：它改的是「有几扇窗」，交给装配层
             return false;
     }
     return false;
@@ -657,6 +658,13 @@ auto WorkspaceView::run_command(WorkspaceCommand command, PaneId pane) -> void {
             refresh_broadcast_badges();
             return;
         }
+        case WorkspaceCommand::NewWindow:
+            // 本层只转交：窗与它的首标签都由装配层造（`SPEC.FEAT.WS.03` 稿 D2）。缺钩即这一键只被
+            // 认领、什么都不做——与广播键缺钩同一档：宁可按了没反应，也不把已认领的键丢回会话。
+            if (hooks_.open_new_window) {
+                hooks_.open_new_window();
+            }
+            return;
     }
 }
 

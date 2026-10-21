@@ -72,6 +72,9 @@ class WorkspaceView final : public aurora::Container {
         std::function<void(PaneId pane, const term::KeyPress &press)> mirror_key;
         /// @brief 源格已提交文本的转交（同上）。
         std::function<void(PaneId pane, std::u32string_view text)> mirror_text;
+        /// @brief 开一扇新工作区窗（`Ctrl+Shift+N`，`SPEC.FEAT.WS.03` 稿 D2）；缺省即该键只被认领、
+        ///        什么都不做。窗与标签都归装配层造：本层不认识框架的窗，也不持有窗口清单。
+        std::function<void()> open_new_window;
     };
 
     /// @brief 以单叶工作区起步：@p first_view 挂在 pane 标识 1 上。

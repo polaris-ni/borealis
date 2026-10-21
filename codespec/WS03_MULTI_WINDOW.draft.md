@@ -86,7 +86,7 @@
    - **2-B（已落，2026-10-21）**：`set_on_frame` 的角标/标签名/OSC/退出态四条写给 `owner.tab_strip`，窗口标题改为遍历 `workspace_windows` 逐窗差分写回（每窗一份 `last_title`）。四处 `app.focus()` 只收敛了视口那一条，`DebugPanel`／`StartupNotice`／`SettingsPanel` 三条与布局重建的按窗过滤留在批 4（面板「搬窗」＝D6，落点窗＝§7 撤销重开那条），口径与台账见 §13。
 3. **批 3（新窗入口与命令落点）**：
    - **3-A（已落，2026-10-21）**：`ui::ActiveWindowTracker` 纯逻辑件 + `utest_active_window_tracker`（五例、四则变异见 §14）。生产侧一行未动，件是「已测而未用」，同批 1-A 那一档次序。
-   - **3-B（待落）**：把主窗的「标签栏 hooks + 关闭确认 + 布局重建」收成按窗可复用的一段，`open_workspace_window()` 走到全形；命令 `workspace.new_window` + `Ctrl+Shift+N`（第十五条保留键，`utest_workspace_keys` 的认领集 14→15）+ 面板一条。
+   - **3-B（已落，2026-10-21）**：把主窗的「标签栏 hooks + 关闭确认 + 布局重建」收成按窗可复用的一段，`open_workspace_window()` 走到全形；命令 `workspace.new_window` + `Ctrl+Shift+N`（第十五条保留键，`utest_workspace_keys` 的认领集 14→15）+ 面板一条。形态、承重次序与四则变异见 §15。
    - **3-C（待落）**：三处上报点接线（视口按键／标签条 Press／横幅 Press）＋ `search.open`／`session.restart`／`serial.set_baud`／`workspace.toggle_fullscreen`／`tab.undo_close` 五类闭包按 tracker 解析目标窗。
 4. **批 4（拆窗账目）**：关窗撤该窗名下全部标签（同 `perform_close` 一条链）、每窗横幅与每窗 `ClosedTabStack`、`ExitPolicy` 缺省确认与退出序遍历全部窗、面板「搬窗」而非「各一份」（D6）。
 5. **批 5（几何分别记忆）**：`persist_id` 分配 + `preferences::Preferences` 落配置目录 + 两处 `flush()` + 「恢复后首帧只下发一次」用例。
@@ -97,7 +97,7 @@
 
 - `utest_active_window_tracker`（新）：多窗上报次序、失配回主窗、窗关闭后该号不再被返回、并发上报只留最后一次。**已落（批 3-A，五例，台账与四则变异见 §14）**；其中「窗关闭后该号不再被返回」实现为撤掉当前落点即**回主窗**而不是回上一个上报过的窗（本件不做栈），该档形态选择与理由见 §14②。
 - `itest_workspace_window`（新）：两扇窗的标签互不串（`current_tab_id` 各一份）、横幅只列本窗成员、撤销重开回到关它的那扇窗、逐窗标题差分写回、关一扇不退出而关最后一扇走同一条退出序、窗拆后 `tab_workspaces`/四张连接表/广播成员三处账目为空。**批 1-A 已落该套件的前五案**（harness 地基＋§5 四条不变量的窗侧形态，台账见 §11）；上面列的其余判据都要求生产侧先有第二扇窗，随批 2–批 4 扩案，本批不冒充。
-- `utest_workspace_keys`：认领集 14→15 条。
+- `utest_workspace_keys`：认领集 14→15 条。**已落（批 3-B）**，同时新增 `itest_workspace_layout.ctrl_shift_n_is_claimed_and_only_handed_to_the_assembly_layer`——认领与「只转交、不自己开窗」这一接缝是唯一有自动化证人的部分，`main.cpp` 里真正开窗那一段仍无证人（§15）。
 - `utest_cli_startup`／`utest_cli_handoff`：`--new-window` 的旗标解析与 `NewWindow` 的编解码往返、未知 action 仍整帧拒。
 - 变异候选（每条一个判据，注入后按 §4.4 第 22 条点名转红）：新窗继承发起窗目录（应为配置目录）、`frame_wake` 全部捕主窗 surface、`current_tab_id` 回全局一份、横幅恒列全组成员、`ClosedTabStack` 回全局、关窗不撤标签账、`persist_id` 恒空、`--new-window` 仍走拒绝支、tracker 无记录时不回主窗。
 
@@ -184,3 +184,36 @@
 无「注入后全绿」的空转档，也无编译失败的不算读数项（四则均一次编过）。首轮用例本身有一处把「回主窗」写成了「回上一个上报过的窗」，跑测现形后按实现的形态口径改正用例并在上面②登记——不是把实现改去迁就用例。
 
 **边界**：本件与生产派发事实之间还没有接线，故「键入落活动窗」那一档在本批既没有证人也没有读数（属批 3 后续笔与 §9 第 2 条走查）；真机走查全部照欠，不称「可用」。
+
+## 15 批 3-B 台账（按窗装配复用与第十五保留键，2026-10-21）
+
+**落到的形状**（`src/main.cpp` 263 增／155 删，另九件小改）：
+
+⑴ **主窗那三段收成按窗可复用的五支闭包**：`create_new_tab(window, cwd)`（原第一参是隐含主窗，现按窗取当前号）、`ask_close_confirm(window, raw_id)`、`make_tab_bar(window)`（六条 hooks 逐条吃 `window.tab_strip` / `window.current_tab_id` / `rebuild_root_children(window, …)` / `perform_close(window, …)`，变更钩子装在本窗 `TabStrip` 上）、`assemble_window_content(window)`（标签栏 → 横幅 → 根 Column 入浮层宿主 → 布局重建，次序与主窗原先那段逐字相同）、`make_window_scene(window)`。顺带删掉 `std::shared_ptr<au::Column> &root_column` 那枚主窗别名（留着它就是第二处真值源），`app.focus()` 别名 `host` 仍保留给面板与 `StartupNotice`（§13 登记的批 4 欠项）。键盘焦点恢复抽成 `restore_window_keyboard_focus(window)`，横幅工厂的显式捕获表随之加这一支。
+
+⑵ **关闭确认按窗一份**：`WorkspaceWindow` 加 `close_confirm` 与 `close_confirm_mounted` 两枚成员，工厂惰性建 Dialog、**只挂一次** `window.overlay_host->add_overlay(...)`、每次打开只换 `set_content`。浮层宿主是每窗一份，挂两遍就是把同一枚 Dialog 压进同一棵浮层栈两次——答一次话只剩一层还在（本仓「按窗取宿主」的既有形态，§13⑵）。
+
+⑶ **第十五条保留键 `Ctrl+Shift+N`**：命令 `WorkspaceCommand::NewWindow` 走的仍是焦点 pane 的前置过滤通道，因此同步处一次列全——枚举与 `workspace_keys.h` 文件头说明、`kBindings` 一行、`WorkspaceView::Hooks::open_new_window`、`run_command` 分支、`reshapes_layout` 把它归**不还原缩放**那一组（它不动本工作区拓扑，缩放态下按它也应立刻开窗）、`WorkspaceKeyBinding` 文档「十四→十五」、`utest_workspace_keys` 的 `kClaimed`/`forwarded_keys`（含 `Ctrl+N` 与 `Shift+Alt+N` 两条反例）/命中断言/非步进列表与用例名 `…_fifteen_keys`、`itest_workspace_layout` 新案、`shortcuts_table.h` 与 `itest_settings_panel.cpp` 的「十四条保留位」措辞、`settings_i18n.cpp` 词条 `workspace.action.new_window`、命令登记。**面板与快捷键表不需要额外接线**：`workspace_key_bindings()` 是那张保留位表的唯一真值源，第十五条进表即进表。
+
+⑷ **命令 `workspace.new_window` 只登记命令、不登记 `default_binding`**（承重决策，别写成疏漏）：`Ctrl+Shift+N` 已被分屏前置过滤消费，快捷键层再绑一次就是一次按键开两扇窗；而框架 `ShortcutBinding::action` 是无参闭包、不带派发来源，连「哪一扇窗按的」都判不出来（稿 §0 的 F2 同源事实）。面板那一条给的是入口，键位只在保留位表里有一份。
+
+⑸ **开窗腿三段次序全部承重**（`open_new_window_request`）：`open_workspace_window()` → `assemble_window_content()` → `app.open_window(window.take_window(), make_window_scene(window), window.options)` → `push_back` → `create_new_tab(window, std::nullopt)` → `rebuild_root_children(window, …)`。① 先入根再折场景（`Scene` 收所有权，根 Column 必须已在树里）；② 号要等 `open_window()` 返回才有效，而首标签那只视口经 `window_focus(window)` 按号取焦点管理器，建标签排在登记之前就会把键入打进主窗那一份（F3）；③ `push_back` 搬走的是 `unique_ptr` 而不是对象，堆上地址不动，故上面那串按引用捕 `window` 是合法的。建窗失败即 `return`，不入容器不登记宿主，§5 那条「没建成窗就不留半个账目」在第二扇窗这条路上同样成立。新窗首标签**不继承发起窗的 OSC 7**：此刻本窗没有当前号，`create_new_tab` 的继承腿自动落配置的启动目录那一档（D1），「新窗跟旧窗的目录走」尚未裁决、不在此猜。
+
+⑹ **视口两条构造点收敛为 `wire_workspace_hooks(id, hooks)`**（= `make_pane_hooks` + `wire_broadcast_hooks` + 新开窗钩子）：新开标签与撤销重开原先各写一遍，第十五键这条「每格都要有、又不属于任何一格」的接缝若继续两处各装，漏一处就是同形两格异味；沿用 `SPEC.FEAT.WS.02` 稿 §3 的「靠一处装钩而不是靠人记得」纪律。
+
+**读数**：`cmake --build --preset linux` 通过且无 error/warning；`ctest --preset linux -E etest_` **97/97**（9.51 s）、runner 全跑 **1218/1218**（21.09 s）。门迁移形态：**97 项／1217 案 → 97 项／1218 案（+`itest_workspace_layout` 新案 1，−历史排除 0）**，套件数不变（本批未新增 TU），既有 1217 案零改动照绿。三处文档（`PLAN.md`／`SPECIFICATIONS.md`／`ARCHITECTURE.md`）的同口径计数照例归 §6 批 7 一次性改，登记为在册欠项。产品侧仍只跑不触达真打开腿的那一档：`Borealis --help` 退出码 0、470 字节纯 ASCII。
+
+**变异自证**（§4.4 第 22 条；每条只注一处、跑完即还原，还原后复跑两道门取上面的读数）：
+
+| 注入 | 指名红案 |
+|---|---|
+| M1 `kBindings` 删掉 `N` 那一行 | 5 红：utest `pane_commands_match_their_documented_bindings`／`the_claimed_set_is_exactly_those_fifteen_keys`／`num_lock_state_changes_no_verdict`／`listed_bindings_are_exactly_the_claimed_keys` + itest `ctrl_shift_n_is_claimed_and_only_handed_to_the_assembly_layer` |
+| M2 该行的 Shift 位改假（即绑成 `Ctrl+N`） | 与 M1 **逐字相同的 5 红**——差别在失败断言所在的一半：M1 栽在认领集循环缺一条，M2 栽在 `forwarded_keys` 里的 `Ctrl+N` 被误吞。两注名单相同故**不可靠案名区分注入形态**，如实记在此 |
+| M3 `run_command` 里钩子不调（`if` 体清空） | 1 红：`ctrl_shift_n_is_claimed_and_only_handed_to_the_assembly_layer`；同套件其余 27 案全绿 |
+| M4 钩子调两次 | 同 M3：**1 红、27 绿**（新案的「恰转交一次」断言是这一档的唯一证人） |
+
+无空转档（四则各有 ≥1 红）、无编译失败的不算读数项（M2 的注入形态把「少一位修饰」变成误吞会话键，正是 `one_extra_modifier_is_not_a_hit` 那条口径的反面证人）。
+
+**担保档位（如实记）**：`main.cpp` 不进 runner ⇒ ⑴⑵⑸⑹ 四段**没有自动化证人**（裁决 7.83、§10 第一条），只有源码审查；本批唯一的证人是「键被认领 + 恰转交一次 + 不动本工作区拓扑」这一接缝（M3/M4 只打得中它，正说明装配层那半区在自动化之外）。§7 变异表里与装配层同名的那几则（`frame_wake` 全捕主窗 surface、`current_tab_id` 回全局、`ClosedTabStack` 回全局）此刻注入**仍不转红**，要等批 4 的 `itest_workspace_window` 扩案成为判据；本批不冒充读数。
+
+**边界**：生产侧第一次能开出第二扇窗，但两扇窗并存的四类行为分别落在后续笔且全部未验——键入落活动窗与五类命令闭包按窗解析（批 3-C）、关窗撤账与逐窗横幅／撤销栈（批 4，`main.cpp` 三处 `TODO(SPEC.FEAT.WS.03)` 在册：唤醒腿随窗撤账、面板搬窗 D6、撤销回到关它的窗）、几何各自记忆（批 5）、CLI `--new-window`（批 6）。§9 七条真机走查照欠，本批不称「可用」。

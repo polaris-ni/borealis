@@ -27,6 +27,8 @@ constexpr Binding kBindings[] = {
     {kDigit0, true, true, false, false, WorkspaceCommand::EqualizeLayer},
     {term::KeySym::Z, true, true, false, false, WorkspaceCommand::ToggleZoom},
     {term::KeySym::B, true, true, false, false, WorkspaceCommand::ToggleBroadcast},
+    // 新开一扇窗（`SPEC.FEAT.WS.03` 稿 D2）：本表第十五条，也是唯一不动本工作区的一条。
+    {term::KeySym::N, true, true, false, false, WorkspaceCommand::NewWindow},
 
     {term::KeySym::ArrowLeft, false, false, true, false, WorkspaceCommand::FocusLeft},
     {term::KeySym::ArrowRight, false, false, true, false, WorkspaceCommand::FocusRight},

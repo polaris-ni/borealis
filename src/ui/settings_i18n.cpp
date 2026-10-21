@@ -344,8 +344,9 @@ const std::map<std::string, std::string, std::less<>> kStrings{
     {"search.next", "下一个"},
     {"search.close", "关闭"},
 
-    // ---- 工作区操作（`SPEC.FEAT.WS.06` 全屏切换的命令标题）----
+    // ---- 工作区操作（`SPEC.FEAT.WS.06` 全屏切换、`SPEC.FEAT.WS.03` 新开一扇窗的命令标题）----
     {"workspace.action.toggle_fullscreen", "切换全屏"},
+    {"workspace.action.new_window", "新建窗口"},
 
     // ---- 广播输入（`SPEC.FEAT.WS.09`，稿 `codespec/UI_WORKSPACE_BROADCAST.draft.md` §2.2）----
     // 六句是横幅、pill 与成员命名的**全部**上屏文案。标题的 {0} 是成员名（同标签多 pane 已由装配层

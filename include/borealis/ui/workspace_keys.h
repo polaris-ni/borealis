@@ -41,6 +41,11 @@ namespace borealis::ui {
 ///
 /// 只有「命令」而没有参数：把手的目标与位移由 `divider_step` 折算，切分轴由命令本身携带，
 /// 于是绘制侧拿到命令就是拿到全部决策，不必再判方向与修饰。
+///
+/// `NewWindow` 是这一列里唯一**不动本工作区**的一条（`SPEC.FEAT.WS.03` 稿 D2）：它改的是「有几扇窗」
+/// 而不是「这一扇窗里怎么分格」，本层只把它转交出去。它仍登记在**本表**，理由是认领通道相同——
+/// 不经框架 `ShortcutRegistry`、由焦点 pane 的按键入口前置过滤，而一条被认领的键位若不进这张表，
+/// 快捷键只读表就看不见它，「同一组合键被两层抢」那格冲突因此漏判（见下面 `WorkspaceKeyBinding`）。
 enum class WorkspaceCommand : std::uint8_t {
     SplitRight,   ///< `Ctrl+Shift+D`：向右切分（同轴并入父层，换轴则嵌套一层）。
     SplitDown,    ///< `Ctrl+Shift+E`：向下切分。
@@ -56,6 +61,7 @@ enum class WorkspaceCommand : std::uint8_t {
     EqualizeLayer,  ///< `Ctrl+Shift+0`：等分焦点 pane 所在层（把手双击是同一动作的鼠标档）。
     ToggleZoom,     ///< `Ctrl+Shift+Z`：当前 pane 临时铺满/还原（`SPEC.FEAT.WS.08`，裁决 7.120）。
     ToggleBroadcast,  ///< `Ctrl+Shift+B`：把焦点 pane 加入/移出广播组（`SPEC.FEAT.WS.09`，裁决 7.121）。
+    NewWindow,      ///< `Ctrl+Shift+N`：开一扇新工作区窗（`SPEC.FEAT.WS.03` 稿 D2，第十五条保留键）。
 };
 
 /// @brief 一次按键是否触发某条分屏命令。
@@ -69,7 +75,7 @@ enum class WorkspaceCommand : std::uint8_t {
 /// @brief 键位总表的一条：命令 + 触发它的那一次按键（修饰只填四个可按位）。
 ///
 /// 与 `workspace_command` 吃的是同一张表，故本件的**唯一**存在理由是把「有哪些键位」这件事
-/// 变成可枚举的：快捷键只读表要拿这十四条当**保留位**参与冲突比对（判据文 D2-a / 人已拍板）。
+/// 变成可枚举的：快捷键只读表要拿这十五条当**保留位**参与冲突比对（判据文 D2-a / 人已拍板）。
 /// 那些键位不经框架 `ShortcutRegistry`（文件头），而同一个组合键在派发上是快捷键层先消费
 /// （裁决 7.51③ 理由 (a)），于是一条注册进命令表的组合键若与这里某条同形，实际生效的是快捷键层
 /// 而分屏命令按不到——界面上必须把这一格标成冲突，而不是让用户以为两个动作都能触发。

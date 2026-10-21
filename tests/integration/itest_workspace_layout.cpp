@@ -196,6 +196,9 @@ class Harness {
                 sessions_.erase(it);
             }
         };
+        // 第十五键的落点（`SPEC.FEAT.WS.03` 稿 D2）：本层不造窗，故这里只计数——「转交一次、树不动、
+        // 一字节不发」三条判据要靠这一枚读数与既有观测面对照。
+        hooks.open_new_window = [this]() -> void { ++new_window_calls; };
 
         workspace_ = std::make_shared<WorkspaceView>(make_view(1U), std::move(hooks));
         root_ = au::Node{std::static_pointer_cast<au::Widget>(workspace_)};
@@ -498,6 +501,7 @@ class Harness {
         dispatched_.clear();
         torn_down_.clear();
         factory_calls = 0U;
+        new_window_calls = 0U;
         for (auto &[pane, connection] : connections_) {
             (void)pane;
             connection->reset();
@@ -534,6 +538,8 @@ class Harness {
     std::vector<std::pair<PaneId, GridSize>> dispatched_;
     std::vector<PaneId> torn_down_;
     std::size_t factory_calls = 0U;
+    /// @brief `Ctrl+Shift+N` 的转交次数（第十五键只转交不造窗，`SPEC.FEAT.WS.03` 稿 D2）。
+    std::size_t new_window_calls = 0U;
     /// @brief 工厂最后一次收到的 `origin`（判据「被切那一格交给工厂，而不是工厂自己猜焦点」）。
     PaneId last_origin = 0U;
 
@@ -871,6 +877,35 @@ AURORA_TEST_CASE(bare_arrow_reaches_the_session_while_step_is_claimed) {
     AURORA_TEST_CHECK(h.written(1U).empty());
     AURORA_TEST_CHECK_GT(h.pane_box(1U).width, before + 20.0);  // 步长 max(5% × 900, 24) = 45 dp
     AURORA_TEST_CHECK_LT(h.pane_box(2U).width, h.pane_box(1U).width);
+}
+
+AURORA_TEST_CASE(ctrl_shift_n_is_claimed_and_only_handed_to_the_assembly_layer) {
+    // 第十五键（`SPEC.FEAT.WS.03` 稿 D2）：本层不认窗，认领 + 转交就是它的全部职责。三面证人缺一即
+    // 形态不对：① 转交恰好一次（没装钩＝该键被认领后静默吞掉，装两遍＝一次按键开两扇窗）；
+    // ② 树与把手都不动——它改的是「有几扇窗」而不是这一扇怎么分格；③ 一个字节也不写进会话，与步进
+    // 键同一条保留位口径（上面 `bare_arrow_..._is_claimed` 那一判据的反面）。
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.press(au::KeyCode::D, Harness::ctrl_shift());
+    h.render();
+    h.settle();
+    h.reset_counters();
+    const std::size_t panes = h.workspace().pane_count();
+
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::N, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.new_window_calls, 1U);
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), panes);
+    AURORA_TEST_CHECK_EQ(h.divider_count(), 1U);
+    AURORA_TEST_CHECK(h.written(1U).empty());
+    AURORA_TEST_CHECK(h.written(2U).empty());
+
+    // 少一位修饰就不是它：`Ctrl+N` 照旧归会话（`readline` 的历史向下），认领集因此仍只圈十五条。
+    h.reset_counters();
+    static_cast<void>(h.press(au::KeyCode::N, au::ModifierKey::Control));
+    AURORA_TEST_CHECK_EQ(h.new_window_calls, 0U);
+    // 两格里至少有一格收到字节：全空就是这一键被静默吞掉了，而它不在认领集里。
+    AURORA_TEST_CHECK_FALSE(h.written(1U).empty() && h.written(2U).empty());
 }
 
 AURORA_TEST_CASE(continuous_resize_settles_once_with_the_latest_grid) {
