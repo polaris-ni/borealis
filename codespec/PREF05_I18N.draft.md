@@ -67,7 +67,7 @@
 | **D1** | 英文覆盖面 | **全量 464 个 key 两档齐全** | ②分区（先外观／终端／连接三域）＝英文界面夹中文，且夹的那一处是**空白**（F13）而不是中文；③只做面板＝命令面板、侧栏、对话框、SFTP／密钥／隧道六面全英文缺席 | 按 ①。分四批按域推（§4），每批都带判据 ② 的证人，所以「推一半就停」在结构上不可能静默发生 |
 | **D2** | 切换时机 | **启动定档、重启生效** | ②运行期全量切换＝重建命令表 + 逐窗重装配（F6 那 249 处），且仍漏 F5 那几处框架侧 `Locale{}`；③运行期切换且只切「还没解析的」＝中英混排 | 按 ①。代价逐字登记：面板改语言后**本进程界面不变**，故必须有「重启后生效」那一枚角标（D5） |
 | **D3** | 缺省档 | **缺省 `zh`，键值 `zh`／`en` 白名单** | ②缺省 `en`（既有用例断中文上屏者全改口，且需求首版双语的中文侧是既成事实）；③跟随系统（F14：无任何 OS 读点，落不了） | 按 ①。不写盘即等于今日行为，与 `SPEC.FEAT.PREF.06` 零配置可用同口径 |
-| **D4** | 表形态 | **两张表同文件相邻**（`kStringsZh` 之后紧跟 `kStringsEn`），`install_settings_strings()` 收一枚语言参数、两档都装、缺省档随参数 | ②按域拆多个文件＝464 条 key 的「两档相等」证人要跨文件聚合；③en 独立 TU＝同 ②，且 `settings_i18n.cpp` 现在是唯一装填点，拆它就是把 F2 那句「全仓 `Locale` 引用只在这一处」主动打破 | 按 ①。文件从约 700 行涨到约 1150 行，换来的是「同一条目两档相邻可并排校对」；行数不是本仓的门禁项 |
+| **D4** | 表形态 | **两张表同文件相邻**（`kStringsZh` 之后紧跟 `kStringsEn`），`install_settings_strings()` 收一枚语言参数、两档都装、缺省档随参数 | ②按域拆多个文件＝464 条 key 的「两档相等」证人要跨文件聚合；③en 独立 TU＝同 ②，且 `settings_i18n.cpp` 现在是唯一装填点，拆它就是把 F2 那句「全仓 `Locale` 引用只在这一处」主动打破 | 按 ①。文件从约 700 行涨到约 1150 行，换来的是「同一条目两档相邻可并排校对」；行数不是本仓的门禁项。**落地期改形（批 2）**：原写「两档都装」改为**只装选定那一档**（`§4.1` 第 2 条）——两档齐装会让 F5 那几处写死 `Locale{}` 的解析口在中文档下命中英文层，正是 F19 探针实测到的那一件事；只装选定档并把缺省档随参数，`Locale{}` 的第一级 miss 才回落得到用户真正选的那一档。判据 ② 的「两档 key 集相等」因此读**源表**（新接缝 `settings_string_keys(Language)`），不读装填后的 `StringTable`。 |
 | **D5** | 面板那一行的生效档 | **`EffectLevel` 扩一枚 `NextLaunch`**（+一处分支 +一枚角标词条） | ②挂 `NextSession`＝角标说「下次会话生效」而事实是重启，把一条错口径写进界面；③不给角标＝用户改完看不到任何后果说明 | 按 ①。代价如实登记：动了 `settings_catalog.h` 这个纯逻辑公共头的枚举（追加式、成员与可见性不动，与 7.110 D1①／7.112 D1① 同形态） |
 | **D6** | `settings_label` 那 249 处 | **一处不改**（继续急切解析） | ②全量改 `settings_text`＝控件侧要能收 `LocalizedString` 才有意义，而 249 处里多数入口（`Command::title`、角标拼接、`placeholder`）本就不收（G28 那棒已把这条口径写进文件头）；③改一半＝第二处真值源 | 按 ①。启动定档下急切解析是**正确的**：解析时点已在装填之后，档位一经定下整进程不变 |
 | **D7** | 英文复数 | **13 条计数短语写 `plural` 块**，其余 `{0}` 直译 | ②全不写＝"Imported 1 items"；③全部写＝47 条里 34 条的位置参数根本不是计数（版本号、路径、色值），写复数块是把语法判断塞进不需要它的模板 | 按 ①。中文档同条也一并写成 plural 块（`other_only` 恒走 `other`，行为不变、形态统一，判据 ③ 的中文侧断言由此可证） |
@@ -85,22 +85,31 @@
 |:---|:---|:---|
 | **批 0** | 本稿与 §0 地基实测 | `codespec/PREF05_I18N.draft.md`（新） |
 | **批 1** | 表本体收敛：删五处死条目（D10，「动作名」生效、五行住在『快捷键只读表』段）、`settings_i18n.h` 那条「十三」改口（F9）、`kStrings` 更名 `kStringsZh`；判据 ⑥ 的中文半边随本批落（证人放 `itest_settings_panel.cpp`——它是唯一已 include 该私有头的套件，新建 `utest_*` 去引 `src/ui/` 私有头本仓无先例）。本批**行为零变化**，除列头「动作名」一处 | `src/ui/settings_i18n.{h,cpp}` + `tests/integration/itest_settings_panel.cpp` |
-| **批 2** | 语言接缝：`install_settings_strings(Language)`（或 `std::string_view tag`）参数化、`settings_locale()` 随启动档位、新增 `settings_string_keys(tag)`、装填两档、缺省档随参数（判据 ①② 的宿主）；`appearance.language` 的结构体字段与 schema 名与 store 读写（六处同步的前三处）；**并装 `au::LocaleProvider`**（F19 的必需项：生产那一层场景根 ＋ 用例侧驱动台各装一枚，否则补上英文档就等于把中文档的绘制侧文案换成英文） | `src/ui/settings_i18n.{h,cpp}` + `src/main.cpp` + `include/borealis/config/settings.h` + `src/config/{schema_names.h,store.cpp}` + `tests/unit/utest_i18n_tiers.cpp`（新）+ `tests/unit/utest_config.cpp` + `tests/integration/itest_settings_panel.cpp`（G28 那一案的驱动台） |
-| **批 3** | 英文文案本体，按域四段推：连接侧（`connections.*`／`keys.*`）→ 面板侧（`settings.*`）→ 终端与会话侧（`terminal.*`／`session.*`／`workspace.*`／`links.*`／`search.*`／`diagnostics.*`／`menu.*`／`tab.*`／`command_palette.*`）→ 连接域与其余（`connection.*`／`serial.*`／`sftp.*`／`tunnel.*`／`shortcuts.*`／`appearance.*`）。每段完即跑判据 ②（未齐即红） | `src/ui/settings_i18n.cpp`（`kStringsEn`） |
+| **批 2** | **接缝与那一行**（原表把这一行拆到批 2／批 5 两处，现合并，理由见 §4.1 第 1 条）：① 语言接缝——`install_settings_strings(Language)` 参数化 + 一枚收 `StringTable &` 的同名重载（装进指定表，判据 ①② 的无副作用宿主）、`settings_locale()` 随启动档位、新增 `settings_string_keys(Language)`；**只装选定那一档**（D4 落地期改形，见该行）② `appearance.language` 的六处同步全套：结构体字段 + `kInterfaceLanguageNames` 与 `language_tag()` + store 读写 + `form_transfer` 的 Binding（次序随 catalog）+ catalog 那一行 + 中文词条两行 ③ `EffectLevel::NextLaunch` 与面板角标分支 ④ **装 `au::LocaleProvider`**（F19 的必需项：生产那一层场景根 ＋ 用例侧驱动台各装一枚）⑤ 装配腿＝启动读键 → 装填参数（原表写在批 6，随 ① 同批才有产出方）⑥ 判据 ①⑤ 的证人与两处计数闸 69→70 | `include/borealis/{config/settings.h,ui/settings_catalog.h}` + `src/config/{schema_names.h,store.cpp,form_transfer.cpp}` + `src/ui/{settings_i18n.{h,cpp},settings_catalog.cpp,settings_panel.cpp}` + `src/main.cpp` + `tests/unit/utest_i18n_tiers.cpp`（新）+ `tests/unit/{utest_config.cpp,utest_settings_catalog.cpp}` + `tests/integration/itest_settings_panel.cpp` |
+| **批 3** | 英文文案本体，按域四段推：连接侧（`connections.*`／`keys.*`）→ 面板侧（`settings.*`）→ 终端与会话侧（`terminal.*`／`session.*`／`workspace.*`／`links.*`／`search.*`／`diagnostics.*`／`menu.*`／`tab.*`／`command_palette.*`）→ 连接域与其余（`connection.*`／`serial.*`／`sftp.*`／`tunnel.*`／`shortcuts.*`／`appearance.*`）。**判据 ②③ 与 m7 的常驻证人随本批最后一段落**（§4.1 第 3 条）；四段中途的「还差多少 key」用一次性探针读数 | `src/ui/settings_i18n.cpp`（`kStringsEn`）+ `tests/unit/utest_i18n_tiers.cpp` |
 | **批 4** | 复数：13 条计数短语两档改写 `plural` 块 + 判据 ③ 的案 | `src/ui/settings_i18n.cpp` + `tests/unit/utest_i18n_tiers.cpp` |
-| **批 5** | 面板那一行与 `NextLaunch`：catalog 那一行、`EffectLevel` 追加值、面板角标分支与词条、`form_transfer` 的 Binding 插入位（次序纪律）、`utest_settings_catalog` 的 69→70 与 `Absent` 19 复核 | `include/borealis/ui/settings_catalog.h` + `src/ui/{settings_catalog.cpp,settings_panel.cpp,settings_i18n.cpp}` + `src/config/form_transfer.cpp` + `tests/unit/utest_settings_catalog.cpp` + `tests/unit/utest_form_transfer.cpp` + `tests/integration/itest_settings_panel.cpp` |
-| **批 6** | 表外那四处进表（D11）+ 装配腿（启动读键 → 装填参数）+ 判据 ② 扩到「覆盖闸两档都查」 | `src/main.cpp` + `src/ui/terminal_view.cpp` + `src/ui/settings_i18n.cpp` + `tests/integration/itest_settings_panel.cpp` + `tests/integration/itest_startup_notice.cpp`（若列头那处有证人） |
+| **批 5** | **（取消）** 内容即上面批 2 的 ②③⑥ 与批 3 的判据 ② —— 六处同步跨批会让 `utest_settings_catalog` 的双向比对先红，而面板角标分支不能与它自己的生效档分家（§4.1 第 1 条）。编号按「只追加、不重排」留位不复用 | — |
+| **批 6** | 表外那四处进表（D11）+ 判据 ② 扩到「覆盖闸两档都查」 | `src/main.cpp` + `src/ui/terminal_view.cpp` + `src/ui/settings_i18n.cpp` + `tests/integration/itest_settings_panel.cpp` + `tests/integration/itest_startup_notice.cpp`（若列头那处有证人） |
 | **批 7** | 文档回写与变异自证：`SPECIFICATIONS.md` 的 PREF.05 现状句 + 新裁决 + `CHANGELOG.md` + `PLAN.md` 的 M4 行 + `ARCHITECTURE.md` 的词条表归属 + `UI_SETTINGS.draft.md` 那一行 | `codespec/` |
 
 批 3 之所以按域切四段而不是一笔：464 条英文文案是一笔里最难复核的体量，而判据 ② 在每一段完就能独立给出「还差多少个 key」的读数——这是本棒能在中途被纠偏的唯一机制。
+
+### 4.1 批次边界的落地期更正（批 2 开工时定，AGENTS.md §4.2 第 11／12 条）
+
+四条读数让上面那张表不能照原样执行。**改的只有批次切分与装填形态**，§2 的七条判据与 §3 的十二条裁决一律不动。
+
+1. **一枚新键的六处同步不能跨批**（原表把 `appearance.language` 的结构体/schema/store 放批 2，把 catalog 行、`form_transfer` 的 Binding 与两处计数闸放批 5）。`utest_settings_catalog.table_covers_exactly_the_written_schema_keys` 拿**落盘叶子集**与 **catalog 键集**做排序后的双向逐字比对，只落前三处的中间态就是「落盘里有而表里没有」⇒ 该案当场转红，批 2 便无法以「全绿 + 本地提交」结项（AGENTS.md §4.4 第 33 条）。面板角标分支同理：catalog 那一行的生效档一旦先挂 `NextSession`，就是把 D5 已裁掉的错口径画上界面再改一次。故六处同步 + `NextLaunch` + 角标分支 + 计数闸**整体并入批 2**，原批 5 取消。
+2. **「两档都装」改为「只装选定那一档」**（D4 的落地期改形，逐字记在该行）。理由与 F5／F19 同源：`lookup` 的第一级用调用方给的 tag，而框架内那几处不经 ctx 的解析口写死 `Locale{}`（＝`en`）——两档齐装会让它们**在中文档下命中英文层**，即把「未装 provider」的那一处重新变成 F19 的事故。只装选定档 + 缺省档随参数，才让「回落」落回用户选的那一档。
+3. **判据 ②③ 与 m7 的常驻证人排在英文档本体之后**：英文档为空表时，「两档 key 集相等」「同一 key 两档文本不同」「摘掉 provider 会红」三类断言**全部空转**（AGENTS.md §4.4 第 22 条要求证人非空转）。故批 2 的 `utest_i18n_tiers` 只落判据 ① 的那一半（同一批 key 在两种装填下分别命中中／英两档——本批只有中文档有内容，故这一半的形式是「装填腿与 `settings_string_keys` 一致」＋缺省档随参数），三类常驻案随批 3 落。批 3 内部四段的「还差多少 key」以**一次性探针**读数（跑完即删、不入册，与 F19 同一条口径）。
+4. **附带更正批 1 那句注的口径**：`tests/unit/` 引 `src/ui/` 的私有头**有先例**——`utest_connection_glyph.cpp` 引 `ui/connection_glyph.h`，runner 的 include 路径含 `src/`（`cmake/BorealisTests.cmake` 那条 `target_include_directories(... PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")`）。批 1 那句「`itest_settings_panel` 是唯一已 include 该私有头的套件」当时对 `settings_i18n.h` 本体为真，但不构成新建 `utest_i18n_tiers` 的障碍，故该套件按原表落地。
 
 ---
 
 ## 5 数据流与不变量
 
 1. **一个进程一种语言**：装填发生在建窗之前（`src/main.cpp` 注释原话「词条必须在任何控件绘制之前装填：查表失败回退空文本」），启动档位一经读定，整进程内 `settings_locale()` 恒等。判据 ① 与 D2 合起来把这条锁成不变量。
-2. **两档同 key 集**：`kStringsZh` 与 `kStringsEn` 的 key 集合相等是**判据**而非约定——由 `utest_i18n_tiers` 每次全跑钉住。任何新界面串必须先加两档才能上屏（7.25⑬ 那条纪律自此有证人）。
-3. **缺省档＝用户选的那一档**：`set_default_locale` 从「中文上屏的技巧」变成语言选择本身；F3 那个反转由批 2 的参数化消除。
+2. **两档同 key 集**：`kStringsZh` 与 `kStringsEn` 的 key 集合相等是**判据**而非约定——由 `utest_i18n_tiers` 每次全跑钉住，读的是**源表**（`settings_string_keys(Language)`）而不是装填后的 `StringTable`，因为装填腿只装一档（D4 落地期改形）。任何新界面串必须先加两档才能上屏（7.25⑬ 那条纪律自此有证人）。常驻案随英文档本体一起落（§4.1 第 3 条）。
+3. **缺省档＝用户选的那一档**：`set_default_locale` 从「中文上屏的技巧」变成语言选择本身；F3 那个反转的消除形态是**「另一档根本没装进表」**而不是「参数化后再覆盖」——表里只有选定那一档时，`Locale{}` 的第一级 miss 必然回落到用户选的档，于是连 F5 那几处不经 ctx 的解析口都跟着正确。
 4. **命令 id 恒英文**：`CommandRegistry` 的 id 与快捷键覆盖表不随语言变（7.25⑬），本棒不碰 id；面板与命令面板显示的是词条，落盘的是 id。
 5. **域校验只在装载侧**：`appearance.language` 的白名单 `{zh, en}` 由 `store.cpp` 把守（裁决 7.46② 分工），面板与装填侧都不夹紧、不自造回落。域外值＝rejected 留痕 + 回落缺省 `zh`。
 6. **词条表是上屏文案的唯一真值源**（对界面而言）：F10 那四处进表后，`src/` 与 `include/` 内不再有引号内 CJK 的上屏串（除词条表本体与用例侧的断言字面量）。这条可以做成一条**门禁式**核对，本棒先以判据 ④ 与 §6 走查覆盖，是否升为常驻脚本留批 7 定（AGENTS.md §4.4 第 22 条要求任何常驻脚本自带变异自证）。
