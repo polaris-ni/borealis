@@ -2,11 +2,11 @@
 
 需求：`SPEC.FEAT.WS.03` 独立多窗口（依赖 Aurora `Application::open_window`）；窗口布局分别记忆。与单实例参数转交的交互见裁决 **7.7**（`--new-window` 显式开新窗口）。
 分期：`PLAN.md` 记 P2 / M4，现状只有一句「M4」（`SPECIFICATIONS.md` §7 无该条裁决，`ARCHITECTURE.md` §8.4 只写了「消费 `Application::open_window`」）。
-本稿状态：**§4 的 D1–D14 每条都给了推荐档，未经人逐条裁决**（常存授权「遇到问题按推荐去做」下的自决收口，与 `INTERACT.05`（裁决 7.119）、`WS.08`（7.120）同形态）。§0 的 F1–F16 是本会话读源与读装配层的实测事实，标「未实测」者除外；F17–F24 是批 4 开工前补读 Aurora 活动分支的实测事实，F25 是批 4-B 用无头帧循环驱动出来的读数（含两处只取框架自述、不列作实测的半区，见该条）。
+本稿状态：**§4 的 D1–D14 每条都给了推荐档，未经人逐条裁决**（常存授权「遇到问题按推荐去做」下的自决收口，与 `INTERACT.05`（裁决 7.119）、`WS.08`（7.120）同形态）。§0 的 F1–F16 是本会话读源与读装配层的实测事实，标「未实测」者除外；F17–F24 是批 4 开工前补读 Aurora 活动分支的实测事实，F25 是批 4-B 用无头帧循环驱动出来的读数（含两处只取框架自述、不列作实测的半区，见该条）；F26 是批 5 开工前读几何持久化那条链的实测事实。
 
 ---
 
-## 0 地基实测（F1–F25）
+## 0 地基实测（F1–F26）
 
 **框架面（Aurora 活动分支，读源）**
 
@@ -48,6 +48,15 @@
   - 主窗被收走时 `main_host_` 在帧末交给 `hosts_.front()`（登记序里还活着的第一扇），应用级 `scene()`／`focus()`／`window()` 整组跟着易主 ⇒ 本层兜底落点必须由装配层换（`set_fallback`），否则 `forget` 之后恒取不到落点。
   - **帧预算的读法只有一处**：`WindowOptions::max_frames` 被 `run()` 读的是**应用级那一份**（构造 `Application` 时传入的 options），逐窗各自的那份不参与预算。`power_saving=false` 是必须项——无头后端没有 OS 等待通道，省电档下 `wait_once` 会取到「无限等待」把 `run()` 挂死（Aurora 侧 `utest_multi_window` 同档处置）。
   - **空闲帧不出帧**：`HeadlessSurface::frame_count()` 只在真 `present()` 时自增，脏区决策会把没有脏的宿主整段跳过 ⇒ 「另一扇仍在渲染集合里」这句不主动标脏就是恒真空转（M4 变异证到的正是这一档）。
+
+- **F26 批 5 开工实测（几何分别记忆的框架面，2026-10-21，读 Aurora 活动分支源码）**：
+  - **两处入口、一处保存、一枚只写一次的闸**：恢复走 `Application::register_host`（每扇新窗）与 `set_window_geometry_store`（对**已登记**宿主补做一次，主窗那条构造路径靠的就是这一跳）；保存走 `reap_closed` 的**收集步骤**，且对「保留最后一个宿主」那一档同样执行（`closing` 集合里的每一枚都存，只是不销毁），`WindowHost::geometry_saved()` 保证同一扇只写一次。⇒ 本仓不需要自己抓「关窗前」的几何，两处 `flush()` 取的是**已写进内存**的那份。
+  - **自动链的键作用域是 `Preferences` 顶层，不是 `windows` 分组**：`restore_geometry_for` 调的是 `load_window_geometry(*geometry_store_, persist_id)` 那一枚 **`Preferences&` 重载**（键即 `persist_id` 本身）。框架文档里另有一句「窗口组用 `prefs.group("windows")` 分组建键」，那说的是调用方**自己**直接调 save/load 的形态；`set_window_geometry_store` 这条自动链不查分组。⇒ 本棒若把几何写进 `group("windows")`，落盘看得见、恢复取不到——这条错位没有别的证人，必须钉在用例里（§7 批 5 的第一案）。
+  - **恢复只落 `size` 与 `position`**：`apply_host_geometry` 实测把物理像素按 `scale_factor()` 折回逻辑 dp 后 `set_size` / `set_position`，**不**调任何几何态入口。`WindowGeometry::mode` 因此是「存而不取」——`capture_host_geometry` 写它、`window_geometry_from_json` 读它，恢复侧无消费点。⇒ 需求那句「窗口布局分别记忆」里**最大化态重启回来**这一档，框架目前给不了；本仓不补偿（AGENTS.md §5.1「不长期持有框架分叉」＋§4.1 第 3 条「不加需求外行为」），落进 §9 第 4 条的真机读数与 §10 的 Aurora 侧待议。
+  - **可用性判据在 POSIX 腿上是张合成屏**：`load_window_geometry` 用 `is_window_geometry_usable(g)`，它取 `app::list_displays()`；非 Windows 分支（`display_win32.cpp` 的 `#else` 腿）恒返回一张 `1920×1080 @ (0,0)` 的单显。⇒ 「显示器拔掉／完全屏外 ⇒ 回退默认并 WARN」这一档在无头与本机 POSIX 面上**只能靠手写越界几何造**，真实拔屏只在 Windows 主通道可取（§9 第 4 条）。
+  - **Linux 三后端的缩放不自动跟**：Aurora 侧 `06-app-platform.md` §2.4 明写 X11／Wayland／GLFW 未实现缩放变化上报，`scale_factor()` 在改系统缩放或跨屏后仍是旧值 ⇒ 恢复按旧 scale 折算。本仓的 DPI 老账（`G17`／`G21`）在 POSIX 腿上的现状读数。
+  - **落盘是显式提交且无脏标记**：`Preferences::flush()` 回 `Result<void>`，内部已做「`<file>.lock` advisory 锁＋临时文件＋原子 rename」，本仓不重造（裁决 7.26②）；`Preferences` **不**提供「自上次 flush 后是否变过」的查询 ⇒ 两处 flush 是无条件的，`windows.json` 在第一次退出时即被创建（正常路径下那时至少已存过一枚几何）。
+  - **接缝的归属**：`src/config/store.cpp` 现在仍是「全仓唯一触达 Aurora `Preferences` 的翻译单元」（裁决 7.26③、架构 §2.2），而 `set_window_geometry_store` 要的是 `Preferences *`。批 5 因此另起一枚 `src/config/window_geometry_store.{h,cpp}`（**私有头**，理由同裁决 D1①：声明里含框架类型），把第二份 `Preferences` 关在这一个 TU 内，公共头 `include/borealis/config/` 一行不动 ⇒ 「本仓与框架的读写接缝仍在 config 侧」这条边界不扩散到 `main.cpp`。
 
 ---
 
