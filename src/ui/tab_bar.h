@@ -29,6 +29,8 @@
 #include "aurora/render/painter.h"
 #include "aurora/widget/widget.h"
 
+#include "borealis/conn/profile.h"  // ConnectionType（类型图标的唯一枚举，`SPEC.FEAT.WS.04`）
+
 namespace au = aurora;
 
 namespace borealis::ui {
@@ -46,6 +48,12 @@ struct TabVisual {
     /// 与上面两枚**事件**角标的分工：那是「刚发生过什么」，这是「现在是什么状态」，故选中格也要画
     /// （用户在一个已退出的格子上打字时，正该看见它已退出）。
     bool exited = false;
+    /// @brief 连接类型（`SPEC.FEAT.WS.04` 的逐标签图标）；空＝不画也不占位。
+    ///
+    /// 与上面三枚不同：这是一枚**恒定事实**而不是每帧现推的投影，故住在绘制侧输入壳里而不是
+    /// `ui::Tab`（那份头注释把类型点名挡在 `TabStrip` 门外，裁决 7.129① 同口径）。空值只可能来自
+    /// 装配层漏登记——按裁决 7.38⑥「缺席的入口整枚不画」处理：不给占位符，也不留那一截槽宽。
+    std::optional<conn::ConnectionType> kind{};
 };
 
 /// @brief 标签栏的装配层接缝。

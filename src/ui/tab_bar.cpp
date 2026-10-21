@@ -16,9 +16,17 @@
 #include "aurora/render/painter.h"
 #include "borealis/term/utf8.h"
 
+#include "connection_glyph.h"  // 类型图标的唯一字形表（与侧栏同一处，`SPEC.FEAT.WS.04`）
+
 namespace borealis::ui {
 
 namespace {
+
+// 类型图标槽（`SPEC.FEAT.WS.04` 的 D4）：字形盒 12 dp + 与名称的间距 6 dp。占用它的三处（栏位宽、
+// 名称原点、可截断宽）都从这两个常量取，故「左槽挪一格就要同改四处」这件事在本 TU 里不存在。
+constexpr float kTypeSlotWidth = 12.0F;
+constexpr float kTypeSlotGap = 6.0F;
+constexpr float kTypeSlotTotal = kTypeSlotWidth + kTypeSlotGap;
 
 /// @brief u32string → UTF-8 string.
 [[nodiscard]] auto to_utf8(const std::u32string &s) -> std::string {
@@ -70,6 +78,9 @@ auto TabBarWidget::tab_width(const TabVisual &tab) const -> float {
     const auto utf8_name = to_utf8(tab.display_name);
     const float text_width = au::render::FontEngine::measure_width(utf8_name, font);
     float w = text_width + 24.0F;  // 左右内边距各 12 dp
+    if (tab.kind.has_value()) {
+        w += kTypeSlotTotal;  // 名称左侧的类型槽：无类型即不占位（判据 ②）
+    }
     if (tab.has_close_button) {
         w += close_zone_;
     }
@@ -188,13 +199,25 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         }
 
         // 文本（截断到可用宽度）
-        const float text_max_width = w - 24.0F - (tab.has_close_button ? close_zone_ : 0.0F);
+        const float slot_width = tab.kind.has_value() ? kTypeSlotTotal : 0.0F;
+        const float text_max_width =
+            w - 24.0F - slot_width - (tab.has_close_button ? close_zone_ : 0.0F);
         const auto display = truncate_name(tab.display_name, text_max_width, font);
         const au::Color text_color = tab.is_selected ? text_selected : text_unselected;
         const au::Rect text_box{
-            .origin = au::Point{.x = tab_box.origin.x + 12.0F, .y = tab_box.origin.y + 14.0F},
+            .origin = au::Point{.x = tab_box.origin.x + 12.0F + slot_width, .y = tab_box.origin.y + 14.0F},
             .size = au::Size{.width = text_max_width, .height = bar_height_ - 28.0F}};
         const auto display_utf8 = to_utf8(display);
+
+        // 类型图标（`SPEC.FEAT.WS.04`）：名称左侧一枚字形，色随名称（D7 的口径——状态三枚角标已占
+        // 绿／红／琥珀三个色通道，类型只靠字形区分）。槽宽与名称原点同取 `slot_width`，故图标缺席时
+        // 名称回到今日那个 `x+12`（判据 ② 的「逐位相同」就是这一句的屏幕形态）。
+        if (tab.kind.has_value()) {
+            const au::Rect glyph_box{
+                .origin = au::Point{.x = tab_box.origin.x + 12.0F, .y = tab_box.origin.y + 14.0F},
+                .size = au::Size{.width = kTypeSlotWidth, .height = bar_height_ - 28.0F}};
+            p.draw_text(glyph_box, std::string{connection_type_glyph(*tab.kind)}, font, text_color);
+        }
         p.draw_text(text_box, display_utf8, font, text_color);
 
         // 关闭钮（只在 hover 或选中时显形）
