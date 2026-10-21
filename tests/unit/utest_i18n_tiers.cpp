@@ -1,17 +1,21 @@
 /// 测试类型: unit
-/// 目标单元: src/ui/settings_i18n.{h,cpp} 的语言档接缝 + src/config/schema_names.h 的 `language_tag`
-/// 测试说明: 守住 `SPEC.FEAT.PREF.05` 判据 ① 在**英文档还没有本体**这一天就得绿的那半边，共四条：
+/// 目标单元: src/ui/settings_i18n.{h,cpp} 的语言档接缝（`settings_locale`／两枚装填函数／
+///           `settings_string_keys`／`settings_string_text`）+ src/config/schema_names.h 的 `language_tag`
+/// 测试说明: 守住 `SPEC.FEAT.PREF.05` 判据 ① 与 ② 的纯逻辑半边，共六条：
 ///           ① 落盘名与 i18n 区域标签同源（`language_tag` 是那条同源关系的唯一读点，装填侧不得自列
-///           第二份名字）；② 装填只装选定那一档——选英文时表里查不到任何中文词条，于是「把缺省档写死
-///           回 `zh`、忽略参数」这类退化（该稿 §8 的 m1）在这里转红；③ 缺省档随参数走，于是框架在没有
+///           第二份名字）；② 装填只装选定那一档——按另一档的 tag 去查也只能拿回选定那一档的模板（或两级
+///           全 miss），于是「把缺省档写死回 `zh`、忽略参数」这类退化（该稿 §8 的 m1）在这里转红，而这一
+///           形态在英文档补上本体之后依然成立；③ 缺省档随参数走，于是框架在没有
 ///           `Provider<Locale>` 的那几处按 `Locale{}`（＝`en`）查表时也落回用户选的那一档（F3／F5）；
-///           ④ 进程级 `settings_locale()` 随装填参数移动。查表失败的可见形态（F13：回退 `text` 恒空 ⇒
-///           空白而不是漏出 key）另立一案，因为它是面板上「覆盖率证人」成立的前提。
+///           ④ 进程级 `settings_locale()` 随装填参数移动；⑤ 查表失败的可见形态（F13：回退 `text` 恒空 ⇒
+///           空白而不是漏出 key）另立一案，因为它是面板上「覆盖率证人」成立的前提；⑥ 判据 ② 的单向半边
+///           （英文档的每一 key 都在中文档有非空孪生条目），随批 3 四段一路有效，四段落齐后补反向等式。
 ///
-///           **本案刻意不立的两句**（`codespec/PREF05_I18N.draft.md` §4.1 第 3 条）：判据 ②「两档同 key
-///           集」与判据 ③ 的复数形态在英文档为空时要么即红要么空转，故随批 3 英文档本体落地时再补
-///           `the_two_tiers_share_the_same_key_space`；同理，「选英文档时每一 key 都解析不出」今天成立、
-///           批 3 之后必然翻转，因此不作为断言写入本案（只在注释里登记那是 F13 的已知代价）。
+///           **本案刻意不立的两句**（`codespec/PREF05_I18N.draft.md` §4.1 第 3 条）：判据 ② 的**等式**
+///           「两档 key 集逐字相等」与判据 ③ 的复数形态在英文档还没落齐的四段中途要么即红要么空转，
+///           故随段 4 一起补；同理，「选英文档时每一 key 都解析不出」那种形态今天成立、批 3 补上本体后
+///           必然翻转，因此一律不写成断言——②⑥ 两案吃的是「等式与子集」，它们不依赖英文档的厚度。
+///           英文档还没译到的 key 上屏为空白，是 F13 登记过的已知代价，不是本案的读数。
 
 #include "ui/settings_i18n.h"
 
@@ -58,6 +62,39 @@ constexpr std::array<InterfaceLanguage, 2> kBothTiers{InterfaceLanguage::Zh, Int
         }
     }
     return hits;
+}
+
+/// @brief 把「这张表只可能由 `installed` 那一档供数」按单键走一遍。
+///
+/// 等式右边读**源表**（`settings_string_text`），左边读**装填后的表**，于是这条断言与「键（key）跨
+/// 命名空间冲突」无关，只说一件事：不管调用方递进来的是 `probe` 档的 tag，表里的东西要么就是
+/// `installed` 档自己的模板，要么根本没有（两级全 miss）。这一形态在英文档从空表长成有内容的四段
+/// 词条（`SPEC.FEAT.PREF.05` 批 3）的过程中**不翻转**，故可以作为常驻证人（该稿 §4.1 第 3 条要求的
+/// 正是「不要为翻转而写断言」）。
+/// @param table 装填后的表。
+/// @param installed 装进表里的那一档。
+/// @param probe 查询时用的那一档（与 `installed` 相反的那一档才测得出回落方向）。
+/// @param key 词条 key。
+auto check_serves_only_the_installed_tier(const au::StringTable &table, const InterfaceLanguage installed,
+                                          const InterfaceLanguage probe, const std::string &key) -> void {
+    const std::string want = borealis::ui::settings_string_text(installed, key);
+    const auto hit = table.lookup(key, locale_of(probe));
+    AURORA_TEST_CHECK_MSG(hit.has_value() == !want.empty() && hit.value_or(std::string{}) == want,
+                          std::string{"the "} + std::string{borealis::config::language_tag(installed)}
+                              + " table answered a " + std::string{borealis::config::language_tag(probe)}
+                              + " lookup of " + key + " with "
+                              + (hit.has_value() ? *hit : std::string{"<none>"}) + ", source tier holds "
+                              + (want.empty() ? std::string{"<none>"} : want));
+}
+
+/// @brief 两档源表 key 的并集（今天＝中文档那 466 条；两档齐后仍是对称的一份）。
+[[nodiscard]] auto all_source_keys() -> std::vector<std::string> {
+    std::vector<std::string> out = borealis::ui::settings_string_keys(InterfaceLanguage::Zh);
+    const auto &english = borealis::ui::settings_string_keys(InterfaceLanguage::En);
+    out.insert(out.end(), english.begin(), english.end());
+    std::ranges::sort(out);
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
 }
 
 /// @brief 把进程级那张表与 `settings_locale()` 恢复回中文档的守卫。
@@ -108,27 +145,30 @@ AURORA_TEST_CASE(the_on_disk_name_is_the_locale_tag) {
 }
 
 AURORA_TEST_CASE(installing_registers_only_the_selected_tier) {
-    // ②「只装选定那一档」（该稿 §4.1 第 2 条，与 D4 的「两档都装」相反）：另一档根本没进表，于是查它必空。
-    //    这一句就是 m1（「装填时把缺省档写死回 `zh`、忽略参数」）的落点——那种实现下中文档会被装进英文档
-    //    那张表，下面每一 key 都查得到，本案整体转红。
+    // ②「只装选定那一档」（该稿 §4.1 第 2 条，与 D4 的「两档都装」相反）：另一档根本没进表。断言写成
+    //    「表答出来的东西只能是选定那一档自己的模板」（见 `check_serves_only_the_installed_tier`），
+    //    而不是「查另一档查不到」——后者今天成立、批 3 补上英文本体后必然翻转，属该稿 §4.1 第 3 条明令
+    //    不写的那一类断言。
     //
-    //    登记一条已知代价（该稿 F13／§5.3）：今天的英文档是空表，所以「选英文 ⇒ 整窗上屏文案全空」是
-    //    本批的真实形态，不是测试假象；批 3 补上英文本体后翻转为「另一档查不到」。同理，今天**不**对
-    //    `lookup(key, Locale{})` 在英文表上断空——那一断言批 3 之后必然红，属为翻转而写的断言。
+    //    这一句就是 m1（「装填时把缺省档写死回 `zh`、忽略参数」）的落点：那种实现把中文模板装进了本该
+    //    是英文档的那张表，第一条腿逐条拿到中文串而源表读数是英文串（今天是 `<none>`），本案整体转红。
+    //    第二条腿反向同判据，且它今天就有 466 条读数——中文档装着、按英文 tag 去查也只能拿回中文模板，
+    //    这正是「回落方向跟着参数」在纯逻辑侧的形态（③ 那条腿是它在 `Locale{}` 上的同一件事）。
+    //
+    //    登记一条已知代价（该稿 F13／§5 第 3 条）：英文档还是空表的今天，「选英文 ⇒ 上屏文案全空」是真实
+    //    形态而不是测试假象；批 3 逐段收敛之后剩下的仍是**没译到的那些 key** 的空白，直到四段落齐。
+    const std::vector<std::string> all_keys = all_source_keys();
+
     au::StringTable english_table;
     borealis::ui::install_settings_strings(english_table, InterfaceLanguage::En);
-    for (const std::string &key : borealis::ui::settings_string_keys(InterfaceLanguage::Zh)) {
-        AURORA_TEST_CHECK_MSG(!english_table.lookup(key, locale_of(InterfaceLanguage::Zh)).has_value(),
-                              "zh entry leaked into the en table: " + key);
+    for (const std::string &key : all_keys) {
+        check_serves_only_the_installed_tier(english_table, InterfaceLanguage::En, InterfaceLanguage::Zh, key);
     }
 
-    // 反方向同判据：选中文时表里也不该有英文档的东西（今天英文档为空，这一句在批 3 之后才有牙）。
     au::StringTable chinese_table;
     borealis::ui::install_settings_strings(chinese_table, InterfaceLanguage::Zh);
-    const std::vector<std::string> &english_keys = borealis::ui::settings_string_keys(InterfaceLanguage::En);
-    for (const std::string &key : english_keys) {
-        AURORA_TEST_CHECK_MSG(!chinese_table.lookup(key, locale_of(InterfaceLanguage::En)).has_value(),
-                              "en entry leaked into the zh table: " + key);
+    for (const std::string &key : all_keys) {
+        check_serves_only_the_installed_tier(chinese_table, InterfaceLanguage::Zh, InterfaceLanguage::En, key);
     }
 
     // ③ 的进程无关半边：装了中文档的表，按框架的**缺省读数**（`Locale{}`，其 language 字段就是 `"en"`）
@@ -179,6 +219,23 @@ AURORA_TEST_CASE(both_tiers_are_addressed_by_sorted_unique_keys) {
         AURORA_TEST_CHECK_MSG(std::ranges::adjacent_find(keys) == keys.end(), "tier keys hold a duplicate");
     }
     AURORA_TEST_CHECK_GT(borealis::ui::settings_string_keys(InterfaceLanguage::Zh).size(), 300U);
+}
+
+AURORA_TEST_CASE(every_english_entry_has_a_non_empty_chinese_twin) {
+    // 判据 ② 的**单向半边**，形态是子集而不是等式（该稿 §4.1 第 3 条：等式那半边要等四段英文本体落齐，
+    // 中途立它必红）。这一段今天有 146 条读数（`connections.*` 与 `keys.*`），故本案不是空转，且它管的
+    // 正是英文档在生长过程中最容易犯的两种错：
+    //   ① 写了一枚中文档没有的 key（拼错的 key 在界面上是**空白**而不是错字，F13，所以只能这样抓）；
+    //   ② 用空串占位「回头再译」——空串让判据 ② 的等式在四段之后仍然成立，却把 F13 的空白留在了界面上。
+    // 反向等式（中文档的每一 key 也在英文档里）随段 4 落齐时补，届时的形态见该稿 §8 的结项读数。
+    const std::vector<std::string> &english_keys = borealis::ui::settings_string_keys(InterfaceLanguage::En);
+    AURORA_TEST_CHECK_GT(english_keys.size(), 0U);
+    for (const std::string &key : english_keys) {
+        AURORA_TEST_CHECK_MSG(!borealis::ui::settings_string_text(InterfaceLanguage::En, key).empty(),
+                              "the en tier registers an empty template: " + key);
+        AURORA_TEST_CHECK_MSG(!borealis::ui::settings_string_text(InterfaceLanguage::Zh, key).empty(),
+                              "the en tier has a key the zh tier never heard of: " + key);
+    }
 }
 
 }  // namespace borealis::test_cases::utest_i18n_tiers

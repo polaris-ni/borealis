@@ -649,17 +649,179 @@ const Tier kStringsZh{
     {"sftp.transfer.queued", "排队 {0}"},
 };
 
-/// @brief 英文档（`en`）的 key → 模板：**本批仍是空表**，英文文案本体属 `SPEC.FEAT.PREF.05` 批 3（计划／待建）。
+/// @brief 英文档（`en`）的 key → 模板：批 3 按域四段推，**本段（段 1）已落 `connections.*` 与 `keys.*`
+/// 共 146 条**，其余 320 条随该稿 §4 批 3 的后三段补（计划／待建）。
 ///
 /// 位置刻意紧跟中文表（该稿 D4），并排校对是这一档存在的唯一理由——466 条 key（批 1 收敛后的 464 条加
-/// 本批两枚）分在两个文件里，
-/// 「两档同 key 集」那条判据就要跨文件聚合。
+/// 批 2 两枚）分在两个文件里，「两档同 key 集」那条判据就要跨文件聚合。段内条目序与中文表逐条一致，
+/// 中文表里解释「为什么是这个措辞」的那几条注也随条目一起搬过来：改一条时两档同屏可见。
 ///
-/// 空表在这里不是留空壳：装填腿**只装选中的那一档**（该稿 D4 的落地期改形，理由见 `§4.1` 第 2 条），
-/// 于是「选英文档」今天＝表里一条都没有 ⇒ `lookup` 两级全 miss ⇒ 回退 `LocalizedString::text`
-/// （`tr()` 造的实例恒空）⇒ 界面空白（该稿 F13 登记的形态）。批 2 到批 3 之间是这个中间态，
-/// 而判据 ②③ 的常驻证人也在那一批才不空转（该稿 `§4.1` 第 3 条）。
-const Tier kStringsEn{};
+/// 没译到的那些 key 在这一档里**根本没有条目**：装填腿只装选定那一档（该稿 D4 的落地期改形，理由见
+/// `§4.1` 第 2 条），于是选英文档时它们两级全 miss ⇒ 回退 `LocalizedString::text`（`tr()` 造的实例恒空）
+/// ⇒ 界面空白（该稿 F13 的形态）。这是批 3 中途的已知代价，也是判据 ② 的常驻案要等四段落齐才立项的理由
+/// （该稿 `§4.1` 第 3 条）；而「装进去的只有选定那一档」这条性质本身由 `utest_i18n_tiers` 的档位身份案
+/// 逐 key 守着——它比的是「表答回的模板＝源表里选定那一档的模板」，本档从空表变成本体的过程不会让它翻转。
+const Tier kStringsEn{
+    // ---- 连接管理器侧栏（UI_CONNECTIONS.draft.md；词条与 settings.* 同格角色）----
+    {"connections.title", "Connections"},
+    {"connections.action.close", "Close"},
+    {"connections.action.connect", "Connect"},
+    {"connections.action.confirm", "OK"},
+    {"connections.action.cancel", "Cancel"},
+    {"connections.action.save", "Save"},
+    {"connections.action.edit", "Edit"},
+    {"connections.action.new", "New"},
+    {"connections.action.import", "Import ~/.ssh/config"},
+    {"connections.quick.placeholder", "Type host[:port] to connect"},
+    {"connections.search.placeholder", "Search profiles"},
+    {"connections.view.all", "All"},
+    {"connections.view.favorites", "Favorites"},
+    {"connections.view.groups", "Groups"},
+    {"connections.recent.title", "Recent connections"},
+    {"connections.notice.imported", "Imported {0} profiles"},
+    {"connections.type.local", "Local terminal"},
+    {"connections.type.ssh", "SSH"},
+    // 向导第四型的类型卡（`SPEC.FEAT.CONN.06`，裁决 7.112 D2①）：本棒的新词条**只有这一枚**
+    // ——字段名复用 host/port 两行、掉线留痕复用既有措辞，故 Telnet 没有自己的词条族。
+    // 「串口终端」那枚在下面的串口块里，随该块的参数档一族同处登记。
+    {"connections.type.telnet", "Telnet"},
+    {"connections.field.name", "Name"},
+    {"connections.field.host", "Host"},
+    {"connections.field.port", "Port"},
+    {"connections.field.user", "User"},
+    {"connections.field.auth", "Auth method"},
+    {"connections.field.identity", "Private key path"},
+    {"connections.field.command", "Command"},
+    {"connections.field.workdir", "Working directory"},
+    {"connections.auth.agent", "Agent key"},
+    {"connections.auth.password", "Password"},
+    {"connections.auth.privatekey", "Private key"},
+    {"connections.auth.keyboard-interactive", "Interactive"},
+    {"connections.policy.accept_new", "Accept on first use"},
+    {"connections.policy.yes", "Strict check"},
+    {"connections.policy.no", "No check"},
+    {"connections.policy.ask", "Ask"},
+    {"connections.credential.password_title", "Enter the password for {0}"},
+    {"connections.credential.passphrase_title", "Enter the private key passphrase for {0}"},
+    {"connections.credential.interactive_title", "Answer the authentication prompts for {0}"},
+    {"connections.wizard.title_new", "New connection"},
+    {"connections.wizard.title_edit", "Edit connection"},
+    {"connections.wizard.issue_empty_name", "Name cannot be empty"},
+    // 措辞不带型名：SSH 与 Telnet 共用这一档问题码（裁决 7.112 D2① 的「零新增问题码」），
+    // 写成「SSH host cannot be empty」会在 Telnet 字段集上把用户指向另一个型。
+    {"connections.wizard.issue_empty_host", "Host cannot be empty"},
+    {"connections.wizard.issue_port", "Port must be 1..65535"},
+    {"connections.wizard.issue_auth", "The auth method is invalid"},
+    // ---- 串口向导与热改波特率（UI_SERIAL.draft.md，裁决 7.110；`connections.serial.*` 的
+    //      参数档与可达性归因由 `serial_format` 唯一产出，装配与向导不 switch 第二套措辞）----
+    {"connections.type.serial", "Serial terminal"},
+    {"connections.field.device", "Device"},
+    {"connections.field.baud", "Baud rate"},
+    {"connections.field.data_bits", "Data bits"},
+    {"connections.field.stop_bits", "Stop bits"},
+    {"connections.field.parity", "Parity"},
+    {"connections.field.flow", "Flow control"},
+    {"connections.field.line_ending", "Sent line ending"},
+    {"connections.field.encoding", "Encoding"},
+    {"connections.action.refresh_devices", "Refresh"},
+    {"connections.action.custom_path", "Custom..."},
+    {"connections.action.pick_from_list", "Pick from list"},
+    {"connections.device.placeholder", "Select a device"},
+    {"connections.serial.parity.none", "None"},
+    {"connections.serial.parity.even", "Even"},
+    {"connections.serial.parity.odd", "Odd"},
+    {"connections.serial.flow.none", "None"},
+    {"connections.serial.flow.hardware", "Hardware RTS/CTS"},
+    {"connections.serial.flow.software", "Software XON/XOFF"},
+    {"connections.serial.line_ending.lf", "LF"},
+    {"connections.serial.line_ending.cr", "CR"},
+    {"connections.serial.line_ending.crlf", "CRLF"},
+    {"connections.serial.access.denied", "No permission"},
+    {"connections.serial.access.busy", "In use"},
+    {"connections.serial.access.unavailable", "Cannot open right now"},
+    {"connections.wizard.issue_device", "Device cannot be empty"},
+    {"connections.wizard.issue_baud", "Baud rate must be one of the listed values"},
+    {"connections.wizard.issue_data_bits", "Data bits must be 5..8"},
+    {"connections.wizard.issue_stop_bits", "Stop bits must be 1..2"},
+    // `serial.set_baud.*` 那五枚与下面的 SSH 隧道面板一族按该稿 §4 归批 3 段 4（`serial.*`／`tunnel.*`），
+    // 本段不占位：占位空串会让判据 ② 的「逐 key 两档都非空」提前以另一种形态失败，读不出还差多少。
+    // ---- SSH 密钥管理面板（UI_KEYS.draft.md，裁决 7.106/7.107/7.108；全部 key 由
+    //      keys_format 唯一产出，面板不 switch 出第二套措辞）----
+    {"keys.title", "SSH keys"},
+    {"keys.empty", "No keys yet: choose Generate key to create one, or add a directory to scan"},
+    {"keys.header.count", "{0} keys"},
+    {"keys.action.add_dir", "Add directory"},
+    {"keys.action.generate", "Generate key"},
+    {"keys.action.close", "Close"},
+    {"keys.action.copy", "Copy"},
+    {"keys.action.push", "Push"},
+    {"keys.action.export", "Export public key"},
+    {"keys.action.delete", "Delete"},
+    {"keys.op.scan", "Scanning"},
+    {"keys.op.generate", "Generating"},
+    {"keys.op.export", "Exporting"},
+    {"keys.op.delete", "Deleting"},
+    {"keys.op.push", "Pushing"},
+    {"keys.row.has_passphrase", "Passphrase set"},
+    {"keys.row.no_passphrase", "No passphrase"},
+    {"keys.row.public_missing", "Public key missing"},
+    {"keys.issue.name.empty", "File name cannot be empty"},
+    {"keys.issue.name.too_long", "File name is too long"},
+    {"keys.issue.name.hidden", "A name starting with a dot becomes a hidden file"},
+    {"keys.issue.name.has_separator", "File name cannot contain a path separator"},
+    {"keys.issue.name.control_char", "File name contains invisible characters"},
+    {"keys.issue.name.reserved", "This file name is reserved by the system"},
+    {"keys.issue.comment.too_long", "Comment is too long"},
+    {"keys.issue.comment.control_char", "Comment contains invisible characters"},
+    {"keys.dir.unreachable", "Directory unreachable: {0}"},
+    {"keys.generate.title", "Generate key"},
+    {"keys.generate.field.bits", "Bits"},
+    {"keys.generate.field.name", "File name"},
+    {"keys.generate.field.comment", "Comment"},
+    {"keys.generate.field.directory", "Target directory"},
+    {"keys.generate.field.passphrase", "Passphrase (optional)"},
+    {"keys.generate.field.passphrase_again", "Repeat the passphrase"},
+    {"keys.generate.browse", "Browse"},
+    {"keys.generate.action.save", "Generate"},
+    {"keys.generate.action.cancel", "Cancel"},
+    {"keys.generate.invalid_request", "The request does not hold: check the directory and file name"},
+    {"keys.generate.name_taken", "A file with that name already exists"},
+    {"keys.generate.directory_unusable", "The target directory is unusable"},
+    {"keys.generate.failed", "Key generation failed"},
+    {"keys.generate.issue_mismatch", "The two passphrases do not match"},
+    {"keys.kind.ed25519", "Ed25519"},
+    {"keys.kind.rsa", "RSA"},
+    {"keys.export.already_exists", "The public key file already exists; nothing was overwritten"},
+    {"keys.export.needs_passphrase", "This private key is passphrase protected; unlocking is required to export"},
+    {"keys.export.failed", "Public key export failed"},
+    {"keys.delete.title", "Delete key"},
+    {"keys.delete.warn", "The private key and its paired public key will be deleted. This cannot be undone."},
+    {"keys.delete.action", "Delete"},
+    {"keys.delete.action.cancel", "Cancel"},
+    {"keys.delete.refused_symlink", "Symbolic links are never deleted: the link and its target stay untouched"},
+    {"keys.delete.not_found", "The file is no longer in its original place"},
+    {"keys.delete.failed", "Delete failed"},
+    {"keys.push.title", "Push public key"},
+    {"keys.push.field.profile", "Target profile"},
+    {"keys.push.no_profile", "(no SSH profile)"},
+    {"keys.push.action", "Push"},
+    {"keys.push.action.close", "Close"},
+    {"keys.push.already_authorized", "This public key is already in the authorized keys file"},
+    {"keys.push.appended", "The public key was appended to the server's authorized keys file"},
+    {"keys.push.stage.dial", "Connect"},
+    {"keys.push.stage.auth", "Authenticate"},
+    {"keys.push.stage.exec", "Execute"},
+    {"keys.push.stage.done", "Done"},
+    {"keys.push.fail.session_unallocated", "No session could be established"},
+    {"keys.push.fail.network", "Network error: the server is unreachable"},
+    {"keys.push.fail.host_key", "Host key verification failed"},
+    {"keys.push.fail.auth", "Authentication was rejected"},
+    {"keys.push.fail.exec_refused", "The server refused to run the authorized keys command"},
+    {"keys.push.fail.write_rejected", "Writing the authorized keys file did not succeed"},
+    {"keys.push.fail.invalid_line", "This public key does not form a valid line; the push was not started"},
+    {"keys.notice.copied", "Copied to the clipboard"},
+};
+
 
 /// @brief `CommitIssue` → 词条 key：本件是唯一把该枚举翻成文案的地方（表单件只回枚举，不产文案）。
 [[nodiscard]] auto issue_key(CommitIssue issue) -> std::string_view {
@@ -748,6 +910,12 @@ auto install_settings_strings(config::InterfaceLanguage language) -> void {
 
 auto settings_string_keys(config::InterfaceLanguage language) -> const std::vector<std::string> & {
     return keys_for(language);
+}
+
+auto settings_string_text(config::InterfaceLanguage language, std::string_view key) -> std::string {
+    const Tier &tier = source_tier(language);
+    const auto found = tier.find(key);
+    return found == tier.end() ? std::string{} : std::string{found->second};
 }
 
 auto settings_text(std::string_view key, std::vector<aurora::LocalizedString> args) -> aurora::LocalizedString {

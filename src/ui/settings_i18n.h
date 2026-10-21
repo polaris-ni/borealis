@@ -75,6 +75,19 @@ auto install_settings_strings(config::InterfaceLanguage language = config::Inter
 /// @param language 语言档。
 [[nodiscard]] auto settings_string_keys(config::InterfaceLanguage language) -> const std::vector<std::string> &;
 
+/// @brief 某一档某 key 的**源表模板**（不经装填；该档没有这一 key 时回空串）。
+///
+/// 给判据 ① 的「档位身份」证人用：装填腿只装选定那一档（文件头③），所以「某 key 究竟住在哪一档、
+/// 那一档的模板长什么样」只能从源表读——装填后的表里根本没有另一档。用例据此把「按另一档的 tag 去查
+/// 也只能拿回选定那一档」写成一条**不随英文档补全而翻转**的等式（`SPEC.FEAT.PREF.05` §4.1 第 3 条：
+/// 英文档为空时，凡形如「查不到」的断言都会在批 3 那一天自动失效）。
+///
+/// 空串在这里读作「该档没有这一 key」，而不是「模板本身是空」：后者会让界面上出现 F13 那种空白，
+/// 判据 ② 的「逐 key 两档都非空」案负责把它和前者分开（随批 3 的英文本体一起落）。
+/// @param language 语言档。
+/// @param key 词条 key。
+[[nodiscard]] auto settings_string_text(config::InterfaceLanguage language, std::string_view key) -> std::string;
+
 /// @brief 按 key 取待本地化串，可直接交 `Text::content` 与 `FormField` 的标签。
 /// @param key 词条 key（设置项一律传落盘点号路径）。
 /// @param args 模板参数，默认为空。
