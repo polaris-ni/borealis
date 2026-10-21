@@ -115,6 +115,14 @@ class WorkspaceView final : public aurora::Container {
     /// 横幅不可获焦，点它会让派发器把焦点清空；不补这一句，用户退出广播后第一下键入无处可去。
     auto restore_keyboard_focus() -> void;
 
+    /// @brief 按模型焦点切分（装配层入口，`SPEC.FEAT.INTEG.04` 的 `split-pane`）。
+    ///
+    /// 与 `Ctrl+Shift+D` 同一条路径：先退出缩放（结构命令要读未缩放几何），再对焦点叶子切分。
+    /// 目标取 `tree_.focused()` 而非 `focused_pane()`：生产工厂今天让多个 pane 指向同一视图
+    /// （`SPEC.FEAT.WS.02` 尚欠），按视图反查会落到遍历次序里的第一格，不是模型焦点。
+    /// @param axis `Horizontal` 为左右分（与 `Ctrl+Shift+D` 同轴），`Vertical` 为上下分。
+    auto split_focused(PaneAxis axis) -> void;
+
   protected:
     /// @brief 折算树、按矩形以紧约束排每个视图，并把矩形写回节点 bounds。
     [[nodiscard]] auto on_layout(const aurora::Constraints &c, const aurora::BuildContext &ctx)

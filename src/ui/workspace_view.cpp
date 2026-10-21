@@ -250,6 +250,11 @@ auto WorkspaceView::restore_keyboard_focus() -> void {
     apply_focus(last_focused_, aurora::FocusArrival::Keyboard);
 }
 
+auto WorkspaceView::split_focused(PaneAxis axis) -> void {
+    unzoom();  // 与 `run_command` 的 `reshapes_layout` 同口径：结构命令先回到树的真相
+    split_pane(tree_.focused(), axis);
+}
+
 auto WorkspaceView::on_layout(const aurora::Constraints &c, const aurora::BuildContext &ctx) -> aurora::Size {
     // 无限 max 与视口同因：Flex 主轴给非加权子项的「按需上限」不是可信的可视宽度，沿用上一次的盒。
     const aurora::Size box =

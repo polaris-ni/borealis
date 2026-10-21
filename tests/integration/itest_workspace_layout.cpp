@@ -659,6 +659,33 @@ AURORA_TEST_CASE(split_down_stacks_the_panes) {
     AURORA_TEST_CHECK_LE(rows, alone_rows);
 }
 
+AURORA_TEST_CASE(startup_split_entry_follows_the_model_focus) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+
+    h.press(au::KeyCode::D, Harness::ctrl_shift());
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 2U);
+    AURORA_TEST_CHECK_EQ(h.factory_calls, 1U);
+    AURORA_TEST_REQUIRE_EQ(h.workspace().current_layout().dividers.size(), 1U);
+    AURORA_TEST_CHECK(h.workspace().current_layout().dividers[0].axis == PaneAxis::Horizontal);
+
+    // 第一次切分把模型焦点交给了新格（与键位入口同一条 `apply_focus`）；第二刀因此落在右格。
+    // 断言只认「新格插在谁的领地」：三格时整层要重走最小 pane 下限，左格那条宽度并不守恒（差额按
+    // 各格高于下限的量分摊），拿它当证人是断量化运气，而新格的起点骗不了人。
+    const double right_before = h.pane_box(2U).x;
+    const double left_before = h.pane_box(1U).width;
+    h.workspace().split_focused(PaneAxis::Horizontal);
+    h.render();
+
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 3U);
+    AURORA_TEST_REQUIRE_EQ(h.workspace().current_layout().boxes.size(), 3U);
+    // 切错目标时新格会落在左格领地（起点 < 右格起点），这一条直接判「按模型焦点走」。
+    AURORA_TEST_CHECK_GT(h.pane_box(3U).x, right_before);
+    // 左格仍占整层的一半：切左格时它与新格各得一份，等宽即证人。
+    AURORA_TEST_CHECK_GT(left_before, h.pane_box(3U).width);
+}
+
 AURORA_TEST_CASE(dragging_one_cell_width_moves_a_column_across) {
     Harness h;
     AURORA_TEST_REQUIRE(h.preflight());
@@ -1223,6 +1250,11 @@ AURORA_TEST_CASE(split_without_a_factory_leaves_the_tree_alone) {
     AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 1U);
     AURORA_TEST_CHECK(h.workspace().current_layout().dividers.empty());
     AURORA_TEST_CHECK_EQ(h.workspace().current_layout().boxes.size(), 1U);
+
+    // 装配层入口同一档：工厂缺失时同样只认领动作、不动树。
+    h.workspace().split_focused(PaneAxis::Horizontal);
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 1U);
+    AURORA_TEST_CHECK(h.workspace().current_layout().dividers.empty());
 }
 
 #else

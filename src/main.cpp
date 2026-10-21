@@ -1,3 +1,4 @@
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -23,6 +24,8 @@
 #include "aurora/render/font_discovery.h"
 #include "aurora/window/native_surfaces.h"
 #include "borealis/conn/local_terminal.h"
+#include "borealis/cli/handoff.h"
+#include "borealis/cli/startup.h"
 #include "borealis/config/form_transfer.h"
 #include "borealis/config/settings.h"
 #include "borealis/config/store.h"
@@ -51,7 +54,9 @@
 #include "conn/ssh_connection.h"
 #include "conn/telnet_connection.h"
 #include "conn/tunnel_client.h"
+#include "platform/instance_channel.h"
 #include "platform/open_url.h"
+#include "platform/process_args.h"
 #include "platform/serial.h"
 #include "platform/user_dir.h"
 #include "ui/broadcast_banner.h"
@@ -393,7 +398,44 @@ class KeysWorker final {
 
 }  // namespace
 
-auto main() -> int {
+auto main(int argc, char **argv) -> int {
+    // ---- CLI 启动请求（`SPEC.FEAT.INTEG.04`，稿 §2 / §7 / §8）--------------------------------
+    // 参数腿把 `argv` 折成 UTF-8 表（Windows 走 `CommandLineToArgvW`，窄 `argv` 在 CJK 路径上丢字）。
+    // `--help` 与用法错误在建窗、读盘、认领通道**之前**就地消化：稿 §2 明写 `--help` 不占用单实例
+    // 通道，而错误退出若先建窗就会闪一扇没内容的窗口。
+    const std::vector<std::string> arguments = borealis::platform::process_arguments(argc, argv);
+    const std::span<const std::string> all_arguments{arguments};
+    const std::span<const std::string> operands =
+        all_arguments.empty() ? all_arguments : all_arguments.subspan(1);
+    const borealis::cli::StartupParse parsed = borealis::cli::parse_startup_args(operands);
+    if (parsed.help) {
+        AURORA_LOG_RAW("cli", borealis::cli::startup_usage(), "\n");
+        return 0;
+    }
+    if (!parsed.error.empty()) {
+        AURORA_LOG_RAW("cli", parsed.error, "\n", borealis::cli::startup_usage(), "\n");
+        return 2;
+    }
+    std::optional<borealis::cli::StartupRequest> startup_request = parsed.request;
+    // 相对 `--cwd` 在**发起进程**里折算成绝对路径（稿 §5.1）：转发之后首实例的进程目录与用户那个
+    // 不是同一个，把折算留给接收侧就等于让目录随首实例怎么起的而变。存在性不在这里判——那是
+    // 首实例执行动作时的事（本进程可能就是首实例，也可能是已被转交的转发器）。
+    if (startup_request.has_value() && !startup_request->cwd.empty()) {
+        std::error_code ec;
+        const std::filesystem::path raw{std::u8string{startup_request->cwd.begin(),
+                                                       startup_request->cwd.end()}};
+        const std::u8string normalized = std::filesystem::absolute(raw, ec).lexically_normal().u8string();
+        if (ec) {
+            AURORA_LOG_RAW("cli", "cannot resolve --cwd to an absolute path\n");
+            return 2;
+        }
+        // 按**指针+长度**落进 `std::string`，不交 `u8string` 的迭代器区间：迭代器版在本机 libstdc++
+        // 上把长度算错（实测一条 21 字节的目录折出 1.8e19 的 capacity，`std::length_error` 直接
+        // terminate，机制未查）。`platform` 那几处字节搬运同样走 `reinterpret_cast<const char *>`。
+        startup_request->cwd.assign(reinterpret_cast<const char *>(normalized.data()),
+                                    normalized.size());
+    }
+
     // 局部对象的声明次序即析构次序的倒序：`store` 最先声明故最后析构，`app` 最先析构——窗口与
     // 控件树都随它消散，会话与宽度判定策略仍活着，控件不会摸到已销毁的会话。
     borealis::config::Store store;  // 面板要 `replace()`，故本对象不再 `const`
@@ -441,6 +483,117 @@ auto main() -> int {
     };
     // 词条必须在任何控件绘制之前装填：查表失败回退空文本，晚装就会让首帧闪一下空标签。
     borealis::ui::install_settings_strings();
+
+    // 建窗之前的两道校验（稿 §5.4）：档案可解析、动作与档案类型相容。任一不符即退出 2，不建窗、
+    // 不启动 shell——用户敲错一个字母时不该看见一扇空窗口。档案表读的是**内存值**，与首实例执行
+    // 那一格同源，故这里只判「能不能解析」，不判运行期连不连得上。
+    if (startup_request.has_value()) {
+        std::optional<borealis::conn::ConnectionType> profile_type{};
+        if (!startup_request->profile.empty()) {
+            const borealis::cli::ProfileResolution hit =
+                borealis::cli::resolve_profile(settings.profiles, startup_request->profile);
+            if (hit.profile == nullptr) {
+                AURORA_LOG_RAW("cli", hit.error, "\n");
+                return 2;
+            }
+            profile_type = hit.profile->type;
+        }
+        if (const std::string problem =
+                borealis::cli::startup_policy_error(*startup_request, profile_type);
+            !problem.empty()) {
+            AURORA_LOG_RAW("cli", problem, "\n");
+            return 2;
+        }
+    }
+
+    // ---- 单实例通道（稿 §3.3）--------------------------------------------------------------
+    // transport 线程只做「入本仓有界队列 + `request_wake()`」，档案解析与开标签都在主线程帧边界
+    // 执行。`surface` 此刻还没建，故唤醒目标是一枚可空原子指针：`app.run()` 之前补上、返回之后
+    // 立刻撤下，于是线程要么醒得着主循环，要么谁也吵不到正在消散的 surface。这三样的声明必须
+    // 早于 `instance_listener`——析构次序倒过来就成了「线程 join 时队列已经没了」。
+    constexpr std::size_t kMaxPendingStartupRequests = 8;
+    std::mutex startup_mutex;
+    std::deque<std::shared_ptr<borealis::platform::InstanceRequest>> startup_queue;
+    std::atomic<au::Surface *> startup_wake{nullptr};
+    // 帧 ↔ 字节的换算只有这两处用：载荷语义归 `cli`，平台通道只见不透明字节（稿 §6）。
+    auto frame_bytes = [](const std::string &text) -> std::span<const std::uint8_t> {
+        return std::span(reinterpret_cast<const std::uint8_t *>(text.data()), text.size());
+    };
+    auto wire_of = [](const std::optional<std::vector<std::uint8_t>> &bytes) -> std::string {
+        // 同样按指针+长度搬，不走迭代器区间（上面 `--cwd` 那处注释记的就是迭代器版实测炸过的形状）。
+        return bytes.has_value() ? std::string(reinterpret_cast<const char *>(bytes->data()),
+                                               bytes->size())
+                                 : std::string{};
+    };
+    auto reply_wire = [&wire_of](bool ok, std::string_view message) -> std::string {
+        return wire_of(borealis::cli::encode_startup_reply(
+            borealis::cli::StartupReply{.ok = ok, .message = std::string{message}}));
+    };
+    const std::string instance_key = borealis::platform::instance_default_key();
+    borealis::platform::InstanceListenResult claimed = borealis::platform::instance_listen(
+        instance_key,
+        [&startup_mutex, &startup_queue, &startup_wake, &reply_wire](
+            std::shared_ptr<borealis::platform::InstanceRequest> pending) -> void {
+            au::Surface *wake{nullptr};
+            bool queued{false};
+            {
+                const std::lock_guard lock{startup_mutex};
+                queued = startup_queue.size() < kMaxPendingStartupRequests;
+                if (queued) {
+                    startup_queue.push_back(std::move(pending));
+                }
+                wake = startup_wake.load();
+            }
+            if (!queued) {
+                // 满了当场回 busy：排队会把「点了没反应」推到用户已经放弃之后，而转发端那 2 s 预算
+                // 本来就是给「首实例卡住」准备的（稿 §10 第 6 条）。
+                pending->complete(reply_wire(false, "the running instance is busy"));
+                return;
+            }
+            if (wake != nullptr) {
+                wake->request_wake();
+            }
+        });
+
+    std::unique_ptr<borealis::platform::InstanceListener> instance_listener;
+    if (claimed.role == borealis::platform::InstanceRole::Existing) {
+        // 已有实例：本进程只是转发器，退出码就是那一格的语义（稿 §7）。
+        const std::string request_wire =
+            wire_of(startup_request.has_value()
+                        ? borealis::cli::encode_startup_request(*startup_request)
+                        : std::nullopt);
+        if (request_wire.empty()) {
+            AURORA_LOG_RAW("cli", "startup request does not fit the handoff frame\n");
+            return 2;
+        }
+        const borealis::platform::InstanceForwardResult forwarded = borealis::platform::instance_forward(
+            instance_key, std::string_view{request_wire}, borealis::platform::kInstanceReplyTimeoutMs);
+        if (!forwarded.delivered) {
+            AURORA_LOG_RAW("cli",
+                           forwarded.error.empty() ? std::string_view{"the running instance is unreachable"}
+                                                   : std::string_view{forwarded.error},
+                           "\n");
+            return 3;
+        }
+        const std::optional<borealis::cli::StartupReply> reply =
+            borealis::cli::decode_startup_reply(frame_bytes(forwarded.reply));
+        if (!reply.has_value()) {
+            AURORA_LOG_RAW("cli", "the running instance sent an unreadable reply\n");
+            return 3;
+        }
+        if (!reply->ok) {
+            AURORA_LOG_RAW("cli", reply->message, "\n");
+            return 2;
+        }
+        return 0;
+    }
+    if (claimed.role == borealis::platform::InstanceRole::Failed) {
+        // 通道不可用不等于不能启动：这一轮只是没有单实例语义。留一条 warn 而不是静默起第二实例，
+        // 否则同一份配置目录会被两个进程同时写。
+        AURORA_LOG_WARN("main", "single-instance channel unavailable: ", claimed.error);
+    } else {
+        instance_listener = std::move(claimed.listener);
+    }
 
     au::WindowOptions opts;
     opts.size = au::Size{.width = 960.0F, .height = 640.0F};
@@ -749,7 +902,7 @@ auto main() -> int {
         tab_strip.add(id, tab_name);
         current_tab_id = id;
     };
-    auto create_new_tab = [&]() -> void {
+    auto create_new_tab = [&](std::optional<std::string> cwd = std::nullopt) -> void {
         // 缺省腿＝本地终端：命令从配置读，目录优先继承当前标签的 OSC 7（`SPEC.FEAT.INTEG.02`）。
         // 继承只发生在「当前标签是本地终端且会话仍活着」这一档：SSH / 串口 / Telnet 的目录是远端或
         // 无意义的；显式本地档案走 `open_local_profile_tab`，档案目录优先级更高。存活判据与关闭确认
@@ -774,7 +927,10 @@ auto main() -> int {
 
         borealis::conn::LocalTerminalSpec spec;
         spec.command_line = settings.connection.local_shell;
-        spec.working_directory = start.path;
+        // `--cwd` 是命令行给的一次性意图，优先级高于 OSC 7 继承与配置值（稿 §5.1）；它不写回任何
+        // 一处，因此下一格照旧走继承链。显式本地档案那份覆盖在 `apply_startup_request` 里折进档案
+        // 副本，两条腿共用「CLI > 档案 > 继承 > 配置」这一条次序而不是各写一遍。
+        spec.working_directory = cwd.has_value() ? *cwd : start.path;
         auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
         auto session = std::make_shared<borealis::session::Session>(
             borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
@@ -783,7 +939,23 @@ auto main() -> int {
         create_new_tab_with(std::move(session), U"本地终端", TabKind::Local);
     };
 
-    create_new_tab();
+    // 首标签与冷启动请求的关系（稿 §5.1 / §5.4）：只有「`new-tab` 且带 `--profile`」要把这一格**换掉**，
+    // 否则会多出一条没人要的缺省标签；缺省 `new-tab`（无档案）在这一格就把 `--cwd` 折进去，
+    // `split-pane` 则照旧建这一格、等接线齐备后再对它切一刀。
+    const bool cold_startup_profile_tab = startup_request.has_value() &&
+                                          startup_request->action == borealis::cli::StartupAction::NewTab &&
+                                          !startup_request->profile.empty();
+    // 缺省 `new-tab` 已由上面那一格交付（含 `--cwd`），`app.run()` 前不再重复开标签。
+    const bool cold_startup_plain_tab_done = startup_request.has_value() &&
+                                             startup_request->action == borealis::cli::StartupAction::NewTab &&
+                                             startup_request->profile.empty();
+    const std::optional<std::string> startup_cwd_override =
+        (startup_request.has_value() && !startup_request->cwd.empty())
+            ? std::optional<std::string>{startup_request->cwd}
+            : std::nullopt;
+    if (!cold_startup_profile_tab) {
+        create_new_tab(startup_cwd_override);
+    }
 
     // 辅助函数：重建根 Column 的子节点列表（标签栏 + 广播横幅 + 当前工作区）
     auto rebuild_root_children = [](std::shared_ptr<au::Column> &column,
@@ -2497,6 +2669,84 @@ auto main() -> int {
     //   回货判据与接货形态见 `codespec/FRAMEWORK_TASK_PREF04.md`；代价登记于裁决 7.84。）
     app.commands().bind_shortcuts(app.shortcuts());
 
+    // ---- 启动请求落地（`SPEC.FEAT.INTEG.04`，稿 §5）------------------------------------------
+    //
+    // 冷启动与转交共用这一条腿，差别只在失败的回告方式：冷启动记一条 warn 继续跑（稿 §5.4 末条，
+    // 首标签已经在了，不该为一次切分失败关掉整个应用），转交把诊断原样回给发起进程。档案在这里
+    // **再解析一次**——转发那一侧的校验发生在另一个进程，中间档案表可能已改，而本函数读的才是
+    // 马上要被连接的那一份。返回值空串＝成功。
+    auto startup_cwd_problem = [](const borealis::cli::StartupRequest &pending) -> std::string {
+        if (pending.cwd.empty()) {
+            return {};
+        }
+        std::error_code ec;
+        const std::filesystem::path directory{
+            std::u8string(reinterpret_cast<const char8_t *>(pending.cwd.data()), pending.cwd.size())};
+        if (!std::filesystem::is_directory(directory, ec) || ec) {
+            return "the --cwd directory is not a directory: " + pending.cwd;
+        }
+        return {};
+    };
+    auto apply_startup_request = [&](const borealis::cli::StartupRequest &pending, bool forwarded)
+        -> std::string {
+        if (forwarded && pending.new_window) {
+            // 稿 §5.3：单实例进程模型下不能靠再起一个进程冒充新窗口，多窗口本体（WS.03）还没落地；
+            // 冷启动那一侧这个标志本就无额外语义，故只拒绝「转交过来的新窗口」。
+            return "--new-window needs SPEC.FEAT.WS.03, which is not implemented yet";
+        }
+        const borealis::conn::Profile *profile = nullptr;
+        std::optional<borealis::conn::ConnectionType> profile_type{};
+        if (!pending.profile.empty()) {
+            const borealis::cli::ProfileResolution hit =
+                borealis::cli::resolve_profile(settings.profiles, pending.profile);
+            if (hit.profile == nullptr) {
+                return hit.error;
+            }
+            profile = hit.profile;
+            profile_type = profile->type;
+        }
+        if (const std::string problem = borealis::cli::startup_policy_error(pending, profile_type);
+            !problem.empty()) {
+            return problem;
+        }
+        if (const std::string problem = startup_cwd_problem(pending); !problem.empty()) {
+            return problem;
+        }
+        const std::optional<std::string> cwd =
+            pending.cwd.empty() ? std::nullopt : std::optional<std::string>{pending.cwd};
+        if (pending.action == borealis::cli::StartupAction::SplitPane) {
+            borealis::ui::WorkspaceView *workspace = nullptr;
+            if (current_tab_id.has_value()) {
+                const auto found = tab_workspaces.find(current_tab_id.value());
+                if (found != tab_workspaces.end()) {
+                    workspace = found->second.workspace.get();
+                }
+            }
+            if (workspace == nullptr) {
+                return "there is no tab to split";
+            }
+            // 与 `Ctrl+Shift+D` 同一条路径、同一根轴（稿 §5.2）：目标取模型焦点那一格。
+            const std::size_t before = workspace->pane_count();
+            workspace->split_focused(borealis::ui::PaneAxis::Horizontal);
+            if (workspace->pane_count() == before) {
+                // 工厂缺席或几何不容：树没动，回诊断而不是假装成功（判据「切分失败回 ASCII 诊断」）。
+                return "the focused pane cannot be split";
+            }
+            return {};
+        }
+        if (profile != nullptr) {
+            borealis::conn::Profile target = *profile;
+            if (target.type == borealis::conn::ConnectionType::Local && cwd.has_value()) {
+                target.local.working_directory = *cwd;  // 覆盖只进本次副本，档案本体不动（稿 §5.1）。
+            }
+            connect_profile(target);  // 四类分腿照旧，SSH 要材料时仍走既有凭据询问链。
+        } else {
+            create_new_tab(cwd);
+        }
+        rebuild_root_children(root_column, tab_workspaces, current_tab_id);
+        return {};
+    };
+
     // 启动降级提示（`SPEC.FEAT.PREF.07`，裁决 7.76⑤）：`LoadOutcome` 四态里只有两条降级态会弹，弹一次即止。
     // `message` 是 ASCII 英文诊断，只进日志不上中文界面（判据文 S13①），故以「本次真的弹了」为条件——
     // 「哪两态弹」的判定只在 `StartupNotice` 里存一份，装配层不另做一遍 `outcome` 分支。
@@ -2508,7 +2758,32 @@ auto main() -> int {
     app.set_on_frame([&tab_workspaces, &current_tab_id, &outbox, &panel, &tab_strip, &app, &settings,
                       &last_window_title, &has_live_session, &sftp_panel, &tunnel_panel, &keys_panel,
                       &logging_state_probe, &add_logging_command, &logging_command_shows,
-                      &show_log_notice]() -> void {
+                      &show_log_notice, &startup_mutex, &startup_queue, &apply_startup_request,
+                      &frame_bytes, &reply_wire]() -> void {
+        // 转交请求在帧边界排空（稿 §3.3）：transport 线程只负责入队与唤醒，档案解析、开标签、切分
+        // 全部发生在主线程这一侧。逐条回执要在执行**之后**才写，于是转发端拿到的「成功」意味着
+        // 那一格已经建好（或已确定建不出来）。
+        for (;;) {
+            std::shared_ptr<borealis::platform::InstanceRequest> pending;
+            {
+                const std::lock_guard lock{startup_mutex};
+                if (startup_queue.empty()) {
+                    break;
+                }
+                pending = std::move(startup_queue.front());
+                startup_queue.pop_front();
+            }
+            const std::optional<borealis::cli::StartupRequest> parsed =
+                borealis::cli::decode_startup_request(frame_bytes(pending->frame()));
+            if (!parsed.has_value()) {
+                // 帧结构不符即整帧拒绝，不猜半个请求（稿 §6 的 fail-closed）。
+                pending->complete(reply_wire(false, "malformed startup request"));
+                continue;
+            }
+            const std::string problem = apply_startup_request(*parsed, true);
+            pending->complete(reply_wire(problem.empty(), problem));
+        }
+
         // 排帧范围是**全部标签**每帧都排（含隐藏标签，裁决 7.47⑩）：可见性只影响绘制不影响数据。
         // 只排当前标签的后果是三处静默失灵——别的标签的 `OSC 52` 永远留在队列里（取走语义按会话
         // 记账，裁决 7.21③）、BEL 与活动角标要等用户切过去才补亮、OSC 标题不落进标签名。
@@ -2589,7 +2864,25 @@ auto main() -> int {
         tunnel_panel.tick();   // 隧道行表随快照刷新（D6①；面板关着即空操作）
         keys_panel.tick();     // 密钥行表随快照刷新（D6① 同族；面板关着即空操作）
     });
+
+    // 冷启动请求在接线齐备之后、进循环之前执行一次（稿 §5.4）：首帧直接画出目标标签或那一刀切分，
+    // 不出现「先空一帧再补一格」。唤醒指针同样在这一刻交出去——此前入队的转交请求随首帧排空。
+    startup_wake.store(&surface);
+    if (startup_request.has_value() && !cold_startup_plain_tab_done) {
+        const std::string problem = apply_startup_request(*startup_request, false);
+        if (!problem.empty()) {
+            // 冷启动的运行期失败不关掉应用：首标签已经在屏上，为一次切分失败退进程比留着它更糟
+            //（稿 §5.4 末条）。转交那一侧同一条诊断是回给发起进程的退出码 2。
+            AURORA_LOG_WARN("main", "startup request not applied: ", problem);
+        }
+    }
     app.run();
+
+    // 单实例通道在 surface 消散之前停：先撤唤醒指针（此后入队的请求不再碰这枚引用，只等下一次帧
+    // 边界或超时收尾），再关监听并 join transport 线程——反过来就成了「线程正在唤醒一只已析构的
+    // surface」，而这条竞态只在关掉最后一格的那几毫秒里存在，真机极难复现。
+    startup_wake.store(nullptr);
+    instance_listener.reset();
 
     // 关停在读线程仍可能唤醒 surface 之前：需要关闭所有标签的所有会话
     for (auto &[tab_id, workspace] : tab_workspaces) {
