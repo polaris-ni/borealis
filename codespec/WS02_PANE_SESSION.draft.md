@@ -43,9 +43,9 @@
 **装配层**（全部留在 `src/main.cpp`，不外溢成新头——本件没有可独立单测的新算法，纯逻辑件为零）：
 
 - `TabWorkspace` 换成 `{ std::map<PaneId, std::shared_ptr<Session>> sessions_by_pane; std::shared_ptr<WorkspaceView> workspace; PaneSessionFactory make_session; }`。`sessions_by_pane` 必须仍声明在 `workspace` **之前**（F1 的析构次序结论不因换容器类型而失效，成员次序而非容器类型才是承重的）。
-- `PaneBundle { std::shared_ptr<Session> session; term::LineEnding line_ending; }`，`PaneSessionFactory = std::function<std::optional<PaneBundle>()>`——**返回空即这一类标签不能切分**，工厂缺席时 `make_pane` 回空、树不动（`split_pane` 已有这条 fail-closed 支路，F15 的 CLI 成败判定靠的就是它）。
-- 六条开标签腿各交一份工厂：缺省本地腿的工厂按 `origin` 格的 OSC 7 走 `ui::choose_start_directory`（`SPEC.FEAT.INTEG.02` 的优先级链同源，不在分屏侧另写一遍），档案本地腿按档案目录，SSH 腿按 `ssh_profile_by_tab` + 留档 secret 重拨，Telnet 腿按 `telnet_by_tab` 重拨，串口腿交 `nullptr`（F12）。
-- 工厂**自己**把新会话登记进 `sessions_by_pane` 后再返回视图（先会话后视图，F8）；登记发生在 `split_pane` 里 `tree_.split` 之前，所以 `tree_.split` 失败那条回收路必然走 `teardown_pane`，账一并撤掉。
+- `PaneBundle { std::shared_ptr<Session> session; term::LineEnding line_ending; }`，`PaneSessionFactory = std::function<std::optional<PaneBundle>(PaneId origin)>`——形参 `origin` 只有本地缺省腿吃（读那一格的 OSC 7），其余五支忽略它。**返回空即这一类标签不能切分**，工厂缺席时 `make_pane` 回空、树不动（`split_pane` 已有这条 fail-closed 支路，F15 的 CLI 成败判定靠的就是它）。
+- 六条开标签腿各交一份工厂：缺省本地腿的工厂按 `origin` 格的 OSC 7 走 `ui::choose_start_directory`（`SPEC.FEAT.INTEG.02` 的优先级链同源，不在分屏侧另写一遍），档案本地腿按档案目录，SSH 腿按 `ssh_profile_by_tab` + 留档 secret 重拨，Telnet 腿按 `telnet_by_tab` 重拨，串口腿交一支**恒回空值**的工厂（F12；不用「缺席」那一路，为的是拒绝语能写明「串口设备独占」而不是泛泛的「没有工厂」）。
+- 工厂**只交料不登记**（返回 `PaneBundle`），登记由 `make_pane` 那一处统一做：先在 `sessions_by_pane[pane]` 落会话，再 `build_pane_view` 起会话造视口（先会话后视图，F8）。登记发生在 `split_pane` 里 `tree_.split` 之前，所以 `tree_.split` 失败那条回收路必然走 `teardown_pane`，账一并撤掉。六条腿的差别只剩「交什么料」与「交不交得出」。
 
 **UI 腿**（`src/ui/workspace_view.{h,cpp}`，两处签名／入口变更）：
 
@@ -71,6 +71,8 @@
 - **退出**：`app.run()` 之后的双层循环改成遍历 `sessions_by_pane` 全部值，逐格 `close()`。
 - **登记时序**：工厂在 `split_pane` 栈内写 `tab_workspaces[id].sessions_by_pane`。这依赖 `std::map` 的节点稳定性（插入不搬动其他节点，故正在执行的 hook 不悬垂）。这一条写成注释留在代码里，因为把 `tab_workspaces` 换成 `unordered_map` 或换成按值搬运的容器就会当场破——与 F1 那条注释同级别的承重结论。
 - **重启腿的调用上下文**（批 1 实测）：`replace_view` 里「先清焦点再销毁旧视口」与「焦点归还本格」两条，只有在**派发栈内**才写到派发用的那份 `FocusManager`。栈外 `current_focus_manager()` 为空，`resolve_focus_manager` 退到按根缓存的兜底实例，派发用的那份因此仍指着刚销毁的旧视口——框架的 `live_focused()` 有弱指针守卫，读成空而不致悬垂（实测不崩），但用户此后第一下键入无处可去，得由装配层补一次设焦。生产的 `session.restart` 由菜单／按钮的指针事件带动，天然在栈内；两份 itest 驱动台都以 `set_current_focus_manager` 包住这一跳，判据测的才是真链路而非兜底件。
+- **切分失败那一支的销毁次序**（批 2）：`split_pane` 在 `tree_.split` 拒绝时先 `created.reset()` 再呼 `teardown_pane`——装配层的 teardown 摘的正是那份会话的最后持有者，反过来就是让 `~TerminalView` 写进已消散的会话。这一支从公开接缝走不到（`split_focused` 的目标恒是现存叶子，键盘路径的 `pane` 恒来自 `views_`），故**没有自动化证人**，属防御性次序而非可测行为；与之相对，`close_pane` 的那一条由 `itest_workspace_layout` 的回收案担保（驱动台 `view_expired` 的弱指针证人）。
+- **装配层最后一跳无自动化证人**（F14）：`main.cpp` 不进 runner，六条工厂给的料型别、串口切不开、重启只换一格三件事只有源码审查与 §8 的走查清单。
 
 ## 6 逐 pane 语义收口（现状 → 目标）
 

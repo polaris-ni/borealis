@@ -670,6 +670,10 @@ auto WorkspaceView::split_pane(PaneId target, PaneAxis axis) -> void {
         return;
     }
     if (!tree_.split(target, axis, pane)) {
+        // 视口先散再回收：装配层的 `teardown_pane` 摘的正是这一格会话的最后持有者，而 `~TerminalView`
+        // 要往它背后的会话写撤账空响应。次序反过来就是取用已消散的对象（`SPEC.FEAT.WS.02` 稿 §5 与
+        // `close_pane` 的「先摘子后回收」是同一条纪律）。
+        created.reset();
         if (hooks_.teardown_pane) {
             hooks_.teardown_pane(pane);
         }

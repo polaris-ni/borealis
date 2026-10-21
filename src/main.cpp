@@ -628,13 +628,25 @@ auto main(int argc, char **argv) -> int {
 
     // 每个标签对应一个 WorkspaceView（支持该标签内的分屏）
     //
-    // 成员次序是**承重的**（`SPEC.FEAT.CONN.12` 批 2 实测）：`sessions` 必须声明在 `workspace` 之前，
-    // 于是它后析构——视口在 `~TerminalView` 里要给挂起的读请求回写撤账空响应，那一笔写要摸到会话。
-    // 旧次序（`workspace` 先）里会话反而先亡，眼下不崩全靠下面两枚闭包**按值**捕获了
-    // `shared_ptr<Session>` 替视口撑住；把那份捕获换成裸指针「更像非拥有接缝」就是 use-after-free，
-    // 而集成用例换不到证人（驱动台的成员次序是它自己的）。次序修正之后那层撑住关系退居第二道保险。
+    /// @brief 一格会话的料：会话本体，与该格视口粘贴档要用的行尾（裁决 7.110 D11① 的同源口径）。
+    struct PaneBundle {
+        std::shared_ptr<borealis::session::Session> session{};
+        borealis::term::LineEnding line_ending{borealis::term::LineEnding::Lf};
+    };
+    /// @brief 切分新格的会话工厂：@p origin 是被切那一格；返回空即**这一类标签不能切分**（串口独占）。
+    using PaneSessionFactory =
+        std::function<std::optional<PaneBundle>(borealis::ui::PaneId origin)>;
+    //
+    // 成员次序是**承重的**（`SPEC.FEAT.CONN.12` 批 2 实测 + `SPEC.FEAT.WS.02` 稿 §5）：
+    // `sessions_by_pane` 必须声明在 `workspace` 之前，于是它后析构——视口在 `~TerminalView` 里要给挂起
+    // 的读请求回写撤账空响应，那一笔写要摸到会话。每格一会话之后，会话的唯一拥有者就是这张表，
+    // 原先两枚闭包**按值**捕获 `shared_ptr<Session>` 那层「替视口撑住会话」的保险随之撤除（它补的
+    // 正是「一个标签只有一份会话」那个洞）。表还是 `std::map`：插入只新增节点、不搬动其他节点，
+    // 所以正在执行的接缝闭包不会因为同一标签又开了一格而悬垂。
     struct TabWorkspace {
-        std::vector<std::shared_ptr<borealis::session::Session>> sessions;  // 该标签的所有会话（目前单 pane 只有一个）
+        std::map<borealis::ui::PaneId, std::shared_ptr<borealis::session::Session>>
+            sessions_by_pane;  ///< 每格一份会话，键即 `PaneId`
+        PaneSessionFactory make_session;  ///< 本标签的切分工厂；缺席即这一格切不开（fail-closed）
         std::shared_ptr<borealis::ui::WorkspaceView> workspace;
     };
     std::map<borealis::ui::TabId, TabWorkspace> tab_workspaces;
@@ -843,28 +855,54 @@ auto main(int argc, char **argv) -> int {
     /// 用户不换标签、对端不改 OSC 标题时根本不动。
     std::string last_window_title;
 
-    // 开标签的两段式：会话构造在外（本地腿 / SSH 腿 / 串口腿 / Telnet 腿各一份，SSH 腿即
-    // CONN.02 的 SshConnection），壳（视口 / 工作区 / 标签条）共用，各处开标签点不再各自复制一遍
-    // 连接装配。标签名由调用方给——档案连接取档案名，原先那句「首版先给固定措辞」的
-    // TODO(SPEC.FEAT.CONN.02) 就此闭合。
-    // `line_ending` 只有串口腿与 Telnet 腿会给非缺省值（裁决 7.110 D11①、7.112 D8①）：它同时进
-    // `Session` 的写出折算与视口的粘贴档，两处同源才不会出现「敲回车与粘多行两个样」，故由开标签
-    // 那一侧一并传进来。
-    auto create_new_tab_with = [&](std::shared_ptr<borealis::session::Session> session,
-                                   const std::u32string &tab_name, TabKind kind,
-                                   borealis::term::LineEnding line_ending =
-                                       borealis::term::LineEnding::Lf) -> void {
-        const borealis::ui::TabId id = next_tab_id++;
-        tab_kind[id] = kind;
+    // ---- 每格一会话的三条公共件（`SPEC.FEAT.WS.02`，稿 §3／§5）------------------------------
+    //
+    // 地基实测 F3／F4 的成因是「三处构造点各写一遍接缝」：重启腿与撤销重开那两处的 `teardown_pane`
+    // 是空闭包（关一格不撤广播成员），`dispatch_grid` 吃的是捕获进来的首会话（切分格的行列打给了首格）。
+    // 下面这一组把「按格取会话」「起会话建视口」「装三条接缝」各自收敛到一处定义。
 
+    /// @brief 按 `(标签, 格)` 取会话；两处任一不存在即回空指针。
+    auto pane_session = [&tab_workspaces](borealis::ui::TabId tab, borealis::ui::PaneId pane)
+        -> std::shared_ptr<borealis::session::Session> {
+        const auto found = tab_workspaces.find(tab);
+        if (found == tab_workspaces.end()) {
+            return nullptr;
+        }
+        const auto session = found->second.sessions_by_pane.find(pane);
+        return session == found->second.sessions_by_pane.end() ? nullptr : session->second;
+    };
+
+    /// @brief 当前标签的活动格会话（`SPEC.FEAT.INTEG.02` 的「多会话落地后改取焦点 pane」那条 TODO）。
+    auto focused_pane_session = [&tab_workspaces, &pane_session](borealis::ui::TabId tab)
+        -> std::shared_ptr<borealis::session::Session> {
+        const auto found = tab_workspaces.find(tab);
+        if (found == tab_workspaces.end() || found->second.workspace == nullptr) {
+            return nullptr;
+        }
+        return pane_session(tab, found->second.workspace->focused_pane());
+    };
+
+    /// @brief 本地腿的会话构造（六条开标签腿里本地那一支唯一的重复段：命令／目录／环境三件搬进规格）。
+    auto make_local_session =
+        [&](const borealis::conn::LocalTerminalSpec &spec) -> std::shared_ptr<borealis::session::Session> {
+        // 宽度表按会话各造一份：这张表被写侧与折算侧共享，跨会话共用就是让两条连接互相污染列宽缓存。
+        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
+        return std::make_shared<borealis::session::Session>(
+            borealis::conn::make_local_terminal_connection(spec, kNominalViewport), kNominalViewport,
+            settings.terminal.scrollback_limit, width_policy, make_terminal_defaults(settings),
+            make_session_encoding(settings));
+    };
+
+    /// @brief 起用一格会话并建出它的视口（新开标签 / 切分新格 / 重启换会话三处共用的那五步）。
+    auto build_pane_view = [&](const std::shared_ptr<borealis::session::Session> &session,
+                               borealis::term::LineEnding line_ending)
+        -> std::shared_ptr<borealis::ui::TerminalView> {
         session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
         // 两接同一枚闸门（裁决 D13②）：会话那一接决定查询**收不收**（状态机现读，Deny 档当场回空响应），
         // 视口那一接决定收了之后**问不问**。漏前者即「查询当场被吞、界面永远不问」，漏后者即
         // 「请求登记了却没人答」——两边都接在同一枚 app 级对象上，改档才能对所有在途标签即刻一致。
         session->set_clipboard_gate(&clipboard_gate);
         session->start();
-
-        // 建视口
         auto view = std::make_shared<borealis::ui::TerminalView>(
             *session, make_appearance(settings, catalog), make_interaction(settings, line_ending));
         view->set_clipboard_gate(&clipboard_gate);
@@ -872,60 +910,170 @@ auto main(int argc, char **argv) -> int {
         if (wire_view) {
             wire_view(*view);
         }
+        return view;
+    };
 
-        // 建工作区分屏容器（单 pane 起步）
-        borealis::ui::WorkspaceView::Hooks ws_hooks;
-        // 两枚闭包**按值**捕获 `shared_ptr<Session>` 是承重的，不是随手：`WorkspaceView::hooks_`
-        // 声明在该类最前（故最后析构），这份值捕获替视口把会话撑到 `~TerminalView` 之后——
-        // 视口析构那一步要往会话写撤账空响应。见上面 `TabWorkspace` 的成员次序注释。
-        ws_hooks.make_pane = [session, view](borealis::ui::PaneId /*pane*/,
-                                            borealis::ui::PaneId /*origin*/)
+    /// @brief 装三条与「格」有关的接缝：造格、下发行列、回收。三处构造点只调这一支，不再各写一遍。
+    auto make_pane_hooks = [&](borealis::ui::TabId id, borealis::ui::WorkspaceView::Hooks &hooks) -> void {
+        hooks.make_pane = [&tab_workspaces, &build_pane_view, id](
+                              borealis::ui::PaneId pane, borealis::ui::PaneId origin)
             -> std::shared_ptr<borealis::ui::TerminalView> {
-            // TODO(SPEC.FEAT.WS.02): 多会话工厂落地前，新 pane 只能复用首会话；分屏的目录继承今天
-            // 因「同一会话」而天然成立。届时新 pane 的 LocalTerminalSpec 须按 `origin` 那格的 OSC 7
-            // 走 `ui::choose_start_directory`，而不是复制首 pane 的启动目录（形态见 `codespec/WS02_PANE_SESSION.draft.md` §3）。
-            return view;
+            const auto found = tab_workspaces.find(id);
+            if (found == tab_workspaces.end() || !found->second.make_session) {
+                AURORA_LOG_INFO("main", "split refused: tab ", id, " carries no pane session factory");
+                return nullptr;
+            }
+            const std::optional<PaneBundle> bundle = found->second.make_session(origin);
+            if (bundle == std::nullopt || bundle->session == nullptr) {
+                return nullptr;  // 这一类标签切不开（稿 §4 的串口一条）：本层回空即 `split_pane` 不动树
+            }
+            // 先登记会话再造视口：`tree_.split` 失败那一支的回收走 `teardown_pane`，要摘的就是这一笔。
+            const std::shared_ptr<borealis::session::Session> session = bundle->session;
+            found->second.sessions_by_pane[pane] = session;
+            return build_pane_view(session, bundle->line_ending);
         };
-        ws_hooks.dispatch_grid = [session](borealis::ui::PaneId /*pane*/, borealis::ui::GridSize size) -> void {
-            session->resize({size.columns, size.rows});
+        hooks.dispatch_grid = [&tab_workspaces, id](borealis::ui::PaneId pane,
+                                                    borealis::ui::GridSize size) -> void {
+            // 按格取会话（F4）：切分格的行列打给首格会让新格永远停在标称 80×24，而屏上看着是好的。
+            const auto found = tab_workspaces.find(id);
+            if (found == tab_workspaces.end()) {
+                return;
+            }
+            const auto session = found->second.sessions_by_pane.find(pane);
+            if (session == found->second.sessions_by_pane.end() || session->second == nullptr) {
+                AURORA_LOG_WARN("main", "dispatch_grid: tab ", id, " pane ", pane, " has no session");
+                return;
+            }
+            session->second->resize({size.columns, size.rows});
         };
-        ws_hooks.teardown_pane = [&broadcast_router, id](borealis::ui::PaneId pane) -> void {
-            // 关 pane 即撤该成员的账（`SPEC.FEAT.WS.09` §1 第 7 条）。非成员 remove 是空操作，
-            // 切分失败回收的那个 pane 号也走这里，不需要第二判断。
+        hooks.teardown_pane = [&tab_workspaces, &broadcast_router, id](borealis::ui::PaneId pane) -> void {
+            // 两笔账一处撤（F3）：成员资格与那一份会话。非成员 remove 是空操作，切分失败回收的那个
+            // 号也走这里，不需要第二判断。摘会话必须发生在视口已销毁之后——`~TerminalView` 要往它
+            // 背后的会话写撤账空响应（`WorkspaceView::close_pane` 先摘子后回收，切分失败那一支由本层
+            // 先 `reset()` 视口，稿 §5 同一条次序）。
             broadcast_router.remove(id, pane);
+            const auto found = tab_workspaces.find(id);
+            if (found != tab_workspaces.end()) {
+                found->second.sessions_by_pane.erase(pane);
+            }
         };
+    };
+
+    // 开标签的两段式：会话构造在外（本地腿 / SSH 腿 / 串口腿 / Telnet 腿各一份，SSH 腿即
+    // CONN.02 的 SshConnection），壳（视口 / 工作区 / 标签条）共用，各处开标签点不再各自复制一遍
+    // 连接装配。标签名由调用方给——档案连接取档案名，原先那句「首版先给固定措辞」的
+    // TODO(SPEC.FEAT.CONN.02) 就此闭合。
+    // `line_ending` 只有串口腿与 Telnet 腿会给非缺省值（裁决 7.110 D11①、7.112 D8①）：它同时进
+    // `Session` 的写出折算与视口的粘贴档，两处同源才不会出现「敲回车与粘多行两个样」，故由开标签
+    // 那一侧一并传进来。
+    // `factory` 是这一张标签**往后切分新格**的料源（六条腿各一份，稿 §3）：串口腿交一支恒回空值的
+    // 工厂，那一刀的拒绝因此只发生在「工厂返回空」这一处，本层不认识标签类型。
+    auto create_new_tab_with = [&](std::shared_ptr<borealis::session::Session> session,
+                                   const std::u32string &tab_name, TabKind kind,
+                                   PaneSessionFactory factory,
+                                   borealis::term::LineEnding line_ending =
+                                       borealis::term::LineEnding::Lf) -> void {
+        const borealis::ui::TabId id = next_tab_id++;
+        tab_kind[id] = kind;
+
+        const std::shared_ptr<borealis::ui::TerminalView> view = build_pane_view(session, line_ending);
+
+        borealis::ui::WorkspaceView::Hooks ws_hooks;
+        make_pane_hooks(id, ws_hooks);
         wire_broadcast_hooks(id, ws_hooks);
 
-        auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
-        tab_workspaces[id] = TabWorkspace{.sessions = {session}, .workspace = std::move(workspace)};
+        TabWorkspace tab;
+        // 首格挂 1 是界面腿的公开约定（`WorkspaceView` 构造：单叶工作区把 `first_view` 挂在标识 1 上，
+        // 新号从 2 起且只增不复用），故这里按常数登记，不去反查一棵还没折算过布局的树。
+        tab.sessions_by_pane[1U] = std::move(session);
+        tab.make_session = std::move(factory);
+        tab.workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
+        tab_workspaces[id] = std::move(tab);
         attach_broadcast_sink(id);
 
         // 加入标签条
         tab_strip.add(id, tab_name);
         current_tab_id = id;
     };
-    auto create_new_tab = [&](std::optional<std::string> cwd = std::nullopt) -> void {
-        // 缺省腿＝本地终端：命令从配置读，目录优先继承当前标签的 OSC 7（`SPEC.FEAT.INTEG.02`）。
-        // 继承只发生在「当前标签是本地终端且会话仍活着」这一档：SSH / 串口 / Telnet 的目录是远端或
-        // 无意义的；显式本地档案走 `open_local_profile_tab`，档案目录优先级更高。存活判据与关闭确认
-        // 同源（`Session::alive()`），死会话留下的最后一条目录不再追认。
-        bool local_session = false;
+    /// @brief 本地腿的起始目录折算：读 @p tab 的 @p pane 那一格 OSC 7，走「继承 > 配置」那一档。
+    ///
+    /// 「CLI > 档案 > 继承 > 配置」这条次序只在 `ui::choose_start_directory` 一处算（`SPEC.FEAT.INTEG.02`），
+    /// 本函数只负责把**该问的那一格**交出去：新开标签问的是当前标签的活动格，切分新格问的是被切那
+    /// 一格（`origin`）。两条腿因此不可能一条继承、一条复制首格目录。
+    auto local_start_directory = [&settings, &tab_kind,
+                                  &pane_session](borealis::ui::TabId tab,
+                                                 borealis::ui::PaneId pane) -> borealis::ui::StartDirectory {
+        // 继承只发生在「这一格是本地终端且会话仍活着」那一档：SSH / 串口 / Telnet 的目录是远端或
+        // 无意义的；存活判据与关闭确认同源（`Session::alive()`），死会话留下的最后一条目录不再追认。
         std::u32string osc7;
-        if (current_tab_id.has_value()) {
-            const auto kind = tab_kind.find(current_tab_id.value());
-            const auto tab = tab_workspaces.find(current_tab_id.value());
-            if (kind != tab_kind.end() && kind->second == TabKind::Local &&
-                tab != tab_workspaces.end() && !tab->second.sessions.empty() &&
-                tab->second.sessions.front()->alive()) {
-                // 多会话落地后改取焦点 pane 的会话（`SPEC.FEAT.WS.02`）；今天一个标签一条会话。
-                osc7 = tab->second.sessions.front()->osc_state().working_directory;
-                local_session = true;
-            }
+        bool local_session = false;
+        const auto kind = tab_kind.find(tab);
+        const std::shared_ptr<borealis::session::Session> source = pane_session(tab, pane);
+        if (kind != tab_kind.end() && kind->second == TabKind::Local && source != nullptr &&
+            source->alive()) {
+            osc7 = source->osc_state().working_directory;
+            local_session = true;
         }
-        const auto start =
-            borealis::ui::choose_start_directory(local_session, osc7,
-                                                 settings.connection.startup_directory,
-                                                 borealis::ui::osc7_path_style());
+        return borealis::ui::choose_start_directory(local_session, osc7,
+                                                   settings.connection.startup_directory,
+                                                   borealis::ui::osc7_path_style());
+    };
+
+    /// @brief 本地缺省腿的切分工厂：新格起同一枚 shell，目录按被切那一格现读的 OSC 7 继承。
+    auto make_local_pane_factory = [&](borealis::ui::TabId id) -> PaneSessionFactory {
+        return [&settings, &local_start_directory, &make_local_session,
+                id](borealis::ui::PaneId origin) -> std::optional<PaneBundle> {
+            borealis::conn::LocalTerminalSpec spec;
+            spec.command_line = settings.connection.local_shell;
+            spec.working_directory = local_start_directory(id, origin).path;
+            return PaneBundle{.session = make_local_session(spec)};
+        };
+    };
+
+    /// @brief 显式本地档案腿的切分工厂：新格照同一份档案起，**不**走 OSC 7 继承（档案目录优先级更高）。
+    auto make_local_profile_pane_factory =
+        [&](const borealis::conn::LocalProfile &profile) -> PaneSessionFactory {
+        // 档案按**值**进闭包：这一支工厂要活到整张标签散掉，而交进来的那份 `LocalProfile` 是调用方
+        // 档案表里的临时副本（`open_local_profile_tab` 的形参），留引用就是留一把悬垂指针。
+        return [profile, &make_local_session](borealis::ui::PaneId /*origin*/) -> std::optional<PaneBundle> {
+            borealis::conn::LocalTerminalSpec spec;
+            spec.command_line = profile.command_line;
+            spec.working_directory = profile.working_directory;
+            spec.environment = profile.environment;
+            return PaneBundle{.session = make_local_session(spec)};
+        };
+    };
+
+    /// @brief 恒拒的切分工厂（串口腿，稿 §4 的 F12 一条）。
+    ///
+    /// 拒绝只发生在「工厂返回空」这一处：`make_pane` 回空即 `split_pane` 不动树，本层因此不需要认识
+    /// 标签类型。口径照稿 §4 末段——只记一条日志，**不弹框**：多一个提示件就多一个视觉件，与本件的
+    /// 最小意图冲突，而真机走查时「切不开」本身就是判据。
+    auto make_refusing_pane_factory = [](const char *reason) -> PaneSessionFactory {
+        return [reason](borealis::ui::PaneId /*origin*/) -> std::optional<PaneBundle> {
+            AURORA_LOG_INFO("main", "split refused: ", reason);
+            return std::nullopt;
+        };
+    };
+
+    /// @brief 某张标签当前活动格的身份；标签或工作区不存在时回 0（本地腿据此判「无源格」）。
+    auto focused_pane_of = [&tab_workspaces](borealis::ui::TabId tab) -> borealis::ui::PaneId {
+        const auto found = tab_workspaces.find(tab);
+        if (found == tab_workspaces.end() || found->second.workspace == nullptr) {
+            return 0U;
+        }
+        return found->second.workspace->focused_pane();
+    };
+
+    auto create_new_tab = [&](std::optional<std::string> cwd = std::nullopt) -> void {
+        // 缺省腿＝本地终端：命令从配置读，目录优先继承当前标签活动格的 OSC 7（`SPEC.FEAT.INTEG.02`
+        // 的「多会话落地后改取焦点 pane」那条 TODO 在此闭合：一格一份会话之后，「当前那一格」是
+        // 唯一说得通的继承源，`sessions.front()` 已经是错读）。
+        borealis::ui::StartDirectory start{.path = settings.connection.startup_directory};
+        if (const borealis::ui::TabId previous = current_tab_id.value_or(0U);
+            previous != 0U && focused_pane_of(previous) != 0U) {
+            start = local_start_directory(previous, focused_pane_of(previous));
+        }
 
         borealis::conn::LocalTerminalSpec spec;
         spec.command_line = settings.connection.local_shell;
@@ -933,12 +1081,11 @@ auto main(int argc, char **argv) -> int {
         // 一处，因此下一格照旧走继承链。显式本地档案那份覆盖在 `apply_startup_request` 里折进档案
         // 副本，两条腿共用「CLI > 档案 > 继承 > 配置」这一条次序而不是各写一遍。
         spec.working_directory = cwd.has_value() ? *cwd : start.path;
-        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
-        auto session = std::make_shared<borealis::session::Session>(
-            borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
-            kNominalViewport, settings.terminal.scrollback_limit, width_policy,
-            make_terminal_defaults(settings), make_session_encoding(settings));
-        create_new_tab_with(std::move(session), U"本地终端", TabKind::Local);
+        // 工厂要的标签号就是本支即将取到的那个号：`create_new_tab_with` 里 `next_tab_id++` 取号，
+        // 这里先读现值，两处之间没有别的取号点（工厂只在切分那一刻被调，那时号已经发出去了）。
+        const borealis::ui::TabId id = next_tab_id;
+        create_new_tab_with(make_local_session(spec), U"本地终端", TabKind::Local,
+                            make_local_pane_factory(id));
     };
 
     // 首标签与冷启动请求的关系（稿 §5.1 / §5.4）：只有「`new-tab` 且带 `--profile`」要把这一格**换掉**，
@@ -1001,7 +1148,8 @@ auto main(int argc, char **argv) -> int {
         if (found == tab_workspaces.end()) {
             return false;
         }
-        for (const auto &session : found->second.sessions) {
+        for (const auto &[pane, session] : found->second.sessions_by_pane) {
+            static_cast<void>(pane);
             if (session->alive()) {
                 return true;
             }
@@ -1022,6 +1170,20 @@ auto main(int argc, char **argv) -> int {
         // 变更钩子负责刷新横幅与其余工作区的 pill，此处无须另调。
         broadcast_router.remove_tab(id);
         // 关闭前记录到闭包栈（`SPEC.FEAT.WS.10`）
+        // 先把根上那份工作区摘掉，再撤会话表（稿 §5 的「会话活过视口」）：关的是当前标签时根 Column
+        // 还持着同一个 `shared_ptr`，先 erase 就等于让会话先散、视口后散，而 `~TerminalView` 要往它
+        // 背后的会话写撤账空响应。关后台标签时根本来不持它，这一句在那条路上是 no-op。
+        if (current_tab_id.has_value() && current_tab_id.value() == id) {
+            // 选下一个或上一个
+            const auto next = tab_strip.selected();
+            if (next.has_value()) {
+                current_tab_id = next.value();
+            } else {
+                current_tab_id.reset();
+            }
+            // 更新显示的工作区
+            rebuild_root_children(root_column, tab_workspaces, current_tab_id);
+        }
         auto it = tab_workspaces.find(id);
         if (it != tab_workspaces.end()) {
             borealis::ui::ClosedTabSpec spec;
@@ -1036,7 +1198,8 @@ auto main(int argc, char **argv) -> int {
             spec.local_shell = settings.connection.local_shell;
             spec.startup_directory = settings.connection.startup_directory;
             closed_tab_stack.push(std::move(spec));
-            // 销毁对应的 WorkspaceView 和会话
+            // 销毁对应的 WorkspaceView 和会话：`TabWorkspace` 的成员次序保证 `sessions_by_pane` 后析构，
+            // 此刻根上已不再持有任何一格的视口，视口在这一跳里散尽。
             tab_workspaces.erase(it);
             // SFTP 面板接线数据随标签同撤（面板的 ssh_tab_alive 即以此判活，D8①）。
             ssh_profile_by_tab.erase(id);
@@ -1045,17 +1208,6 @@ auto main(int argc, char **argv) -> int {
             serial_by_tab.erase(id);
             telnet_by_tab.erase(id);  // Telnet 同撤（CONN.06 批 3）。
             tab_kind.erase(id);       // 类型随标签同撤：重开那一支会重新登记（INTEG.02）。
-        }
-        if (current_tab_id.has_value() && current_tab_id.value() == id) {
-            // 选下一个或上一个
-            const auto next = tab_strip.selected();
-            if (next.has_value()) {
-                current_tab_id = next.value();
-            } else {
-                current_tab_id.reset();
-            }
-            // 更新显示的工作区
-            rebuild_root_children(root_column, tab_workspaces, current_tab_id);
         }
     };
 
@@ -1353,8 +1505,12 @@ auto main(int argc, char **argv) -> int {
 
     // 就地换掉某一格的会话（`SPEC.FEAT.WS.05` 的重启腿共有的一段）：关旧会话 → 建视口 → 建工作区 →
     // **同 TabId 覆盖**。本地档与按档案档（裁决 7.99 D6）都走它，差别只在交进来的是哪一条传输腿。
+    // TODO(SPEC.FEAT.WS.05): 本批仍是**整标签**重建——多格标签按一次重启会收成一格。稿 §6 的重启腿
+    // 落到 `WorkspaceView::replace_view`（批 1 已到位）之后改成「只换焦点格」，届时 `factory` 与
+    // 广播成员资格都不用再重登记，`tab_strip` 那一格更不会被换掉身份。
     auto replace_tab_session = [&](borealis::ui::TabId id,
                                    std::shared_ptr<borealis::session::Session> session,
+                                   PaneSessionFactory factory,
                                    borealis::term::LineEnding line_ending =
                                        borealis::term::LineEnding::Lf) -> void {
         auto it = tab_workspaces.find(id);
@@ -1363,41 +1519,31 @@ auto main(int argc, char **argv) -> int {
             return;
         }
         // 关掉旧会话（返回后不再回调 `ConnectionEvents`，架构 §7.3 的旧内容保留到这一步为止）。
-        for (auto &old : it->second.sessions) {
+        // 摘下来的那几份先留在 `retired` 里到本函数末尾：`rebuild_root_children` 那一刻根上才不再持有
+        // 旧工作区，各格 `~TerminalView` 要往它背后的会话写撤账空响应——先散会话就是取用已消散的对象
+        // （稿 §5 那条次序；两份集成用例驱动台的 `retired_` 是同一形态）。
+        std::vector<std::shared_ptr<borealis::session::Session>> retired;
+        for (const auto &[pane, old] : it->second.sessions_by_pane) {
+            static_cast<void>(pane);
             old->close();
+            retired.push_back(old);
         }
-        it->second.sessions.clear();
+        it->second.sessions_by_pane.clear();
 
-        session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
-        // 重启腿与新开格同一套两接（见 `create_new_tab_with` 处那句 WHY）：换掉的会话若漏接，
-        // 这一格就从「改档即刻生效」的范围内静默掉出去，而屏上看不出任何区别。
-        session->set_clipboard_gate(&clipboard_gate);
-        session->start();
-
-        auto view = std::make_shared<borealis::ui::TerminalView>(
-            *session, make_appearance(settings, catalog), make_interaction(settings, line_ending));
-        view->set_clipboard_gate(&clipboard_gate);
-        if (wire_view) {
-            wire_view(*view);
-        }
+        const std::shared_ptr<borealis::ui::TerminalView> view = build_pane_view(session, line_ending);
 
         borealis::ui::WorkspaceView::Hooks ws_hooks;
-        // 值捕获 `shared_ptr<Session>` 的承重理由同 `create_new_tab_with` 处那一条注释。
-        ws_hooks.make_pane = [session, view](borealis::ui::PaneId,
-                                            borealis::ui::PaneId) -> std::shared_ptr<borealis::ui::TerminalView> {
-            return view;
-        };
-        ws_hooks.dispatch_grid = [session](borealis::ui::PaneId, borealis::ui::GridSize size) -> void {
-            session->resize({size.columns, size.rows});
-        };
-        ws_hooks.teardown_pane = [](borealis::ui::PaneId) -> void {};
-        // 换会话不换身份：成员资格原样保留（`Ctrl+Shift+B` 的语义是「这一格」，不是「这一条会话」）。
-        // 四条接缝必须跟着新工作区重装，否则重启之后这一格的按键不再扇出、角标也查不到自己。
+        // 三条接缝装的是与新开标签同一份定义（F3 的空 `teardown_pane` 与 F4 的「恒打首会话」就此消失）：
+        // 换会话不换身份，成员资格原样保留（`Ctrl+Shift+B` 的语义是「这一格」，不是「这一条会话」）。
+        make_pane_hooks(id, ws_hooks);
         wire_broadcast_hooks(id, ws_hooks);
 
-        auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
+        TabWorkspace rebuilt;
+        rebuilt.sessions_by_pane[1U] = std::move(session);
+        rebuilt.make_session = std::move(factory);
+        rebuilt.workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
         // **同 TabId 覆盖**：`tab_strip` 一格不动，`current_tab_id` 一格不动，仅 `tab_workspaces[id]` 换一份。
-        it->second = TabWorkspace{.sessions = {std::move(session)}, .workspace = std::move(workspace)};
+        it->second = std::move(rebuilt);
         // 端点回调虽每次现查 `tab_workspaces`，仍覆盖登记一次：与「三处构造点同源」同形，读起来不必
         // 分神去确认哪一条登记是全量的。旧会话已被关掉，去重身份随之改变，故刷新一次横幅计数与列名。
         attach_broadcast_sink(id);
@@ -1405,39 +1551,65 @@ auto main(int argc, char **argv) -> int {
         rebuild_root_children(root_column, tab_workspaces, current_tab_id);
     };
 
+    /// @brief SSH 腿的会话构造（新开标签 / 重启换会话 / 切分新格三处共用的那一段）。
+    ///
+    /// 每次一份宽度表：这张表被写侧与折算侧共享，跨会话共用就是让两条连接互相污染列宽缓存（同本地腿
+    /// 那一条理由）。`secret` 照旧移交给 `SshConnection`，调用方要留档就自己先复制一份。
+    auto make_ssh_session = [&](const borealis::conn::SshProfile &ssh, std::optional<std::string> secret)
+        -> std::shared_ptr<borealis::session::Session> {
+        auto connection = std::make_unique<borealis::conn::SshConnection>(
+            ssh, std::move(secret), kNominalViewport, reconnect_policy());
+        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
+        return std::make_shared<borealis::session::Session>(
+            std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
+            width_policy, make_terminal_defaults(settings), make_session_encoding(settings));
+    };
+
+    /// @brief SSH 腿的切分工厂：同一份档案 + 留档秘密再拨一条连接（新 TCP 会话，稿 §4 的 F13）。
+    ///
+    /// 档案与秘密都从两张表里**现读**，不在闭包里留副本：`on_secret` 那一腿会把询问到的材料改写进
+    /// `ssh_secret_by_tab`，工厂拿副本就会重拨成过期的那份材料。表里没有档案身份即回空值——正常路径
+    /// 不会走到（登记与建标签同批发生），留这一条是 fail-closed 而非第二重判据。
+    auto make_ssh_pane_factory = [&](borealis::ui::TabId id) -> PaneSessionFactory {
+        return [&ssh_profile_by_tab, &ssh_secret_by_tab, &make_ssh_session, id](
+                   borealis::ui::PaneId /*origin*/) -> std::optional<PaneBundle> {
+            const auto profile = ssh_profile_by_tab.find(id);
+            if (profile == ssh_profile_by_tab.end()) {
+                AURORA_LOG_WARN("main", "split refused: tab ", id, " carries no SSH profile on file");
+                return std::nullopt;
+            }
+            std::optional<std::string> secret;
+            if (const auto held = ssh_secret_by_tab.find(id); held != ssh_secret_by_tab.end()) {
+                secret = held->second;
+            }
+            return PaneBundle{.session = make_ssh_session(profile->second, std::move(secret))};
+        };
+    };
+
     // 按档案重开一格 SSH 会话（裁决 7.99 D6）：新开一格是另一个意图，故这里只覆盖既有那一格。
     // 标签身份**不清账**——这一格仍是那张档案的会话，SFTP 面板与「重启」的分流判据都按它取料。
     auto restart_ssh_tab = [&](borealis::ui::TabId id, const borealis::conn::SshProfile &ssh,
                                std::optional<std::string> secret) -> void {
         std::optional<std::string> sftp_secret = secret;  // 留档副本先取，形参那份随后移交。
-        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
-        auto connection = std::make_unique<borealis::conn::SshConnection>(
-            ssh, std::move(secret), kNominalViewport, reconnect_policy());
-        auto session = std::make_shared<borealis::session::Session>(
-            std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
-            width_policy, make_terminal_defaults(settings), make_session_encoding(settings));
+        auto session = make_ssh_session(ssh, std::move(secret));
         ssh_secret_by_tab[id] = std::move(sftp_secret);
-        replace_tab_session(id, std::move(session));
+        replace_tab_session(id, std::move(session), make_ssh_pane_factory(id));
         AURORA_LOG_INFO("main", "restart: tab ", id, " re-dialled by profile");
     };
 
     auto open_ssh_tab = [&](const borealis::conn::Profile &profile,
                             std::optional<std::string> secret) -> void {
-        // SFTP 面板接线：留档副本先取，secret 随后照旧移交给 SshConnection。
+        // SFTP 面板接线：留档副本先取，secret 照旧移交给 SshConnection。
         std::optional<std::string> sftp_secret = secret;
         const borealis::conn::SshProfile sftp_profile = profile.ssh;
-        auto connection =
-            std::make_unique<borealis::conn::SshConnection>(profile.ssh, std::move(secret),
-                                                            kNominalViewport, reconnect_policy());
-        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
-        auto session = std::make_shared<borealis::session::Session>(
-            std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
-            width_policy, make_terminal_defaults(settings), make_session_encoding(settings));
-        create_new_tab_with(std::move(session), decode_tab_name(profile.name), TabKind::Ssh);
-        if (current_tab_id.has_value()) {
-            ssh_profile_by_tab[current_tab_id.value()] = sftp_profile;
-            ssh_secret_by_tab[current_tab_id.value()] = std::move(sftp_secret);
-        }
+        auto session = make_ssh_session(profile.ssh, std::move(secret));
+        // 工厂要的标签号就是本支即将取到的那个号（同 `create_new_tab` 处那一条）：取号点只有
+        // `create_new_tab_with` 里那一处，两处之间没有别的发号。
+        const borealis::ui::TabId id = next_tab_id;
+        create_new_tab_with(std::move(session), decode_tab_name(profile.name), TabKind::Ssh,
+                            make_ssh_pane_factory(id));
+        ssh_profile_by_tab[id] = sftp_profile;
+        ssh_secret_by_tab[id] = std::move(sftp_secret);
         record_recent(profile.id);
     };
 
@@ -1447,12 +1619,8 @@ auto main(int argc, char **argv) -> int {
         spec.command_line = profile.local.command_line;
         spec.working_directory = profile.local.working_directory;
         spec.environment = profile.local.environment;
-        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
-        auto session = std::make_shared<borealis::session::Session>(
-            borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
-            kNominalViewport, settings.terminal.scrollback_limit, width_policy,
-            make_terminal_defaults(settings), make_session_encoding(settings));
-        create_new_tab_with(std::move(session), decode_tab_name(profile.name), TabKind::Local);
+        create_new_tab_with(make_local_session(spec), decode_tab_name(profile.name), TabKind::Local,
+                            make_local_profile_pane_factory(profile.local));
         record_recent(profile.id);
     };
 
@@ -1491,6 +1659,7 @@ auto main(int argc, char **argv) -> int {
     auto open_serial_tab = [&](const borealis::conn::Profile &profile) -> void {
         auto bundle = make_serial_session(profile.serial);
         create_new_tab_with(bundle.session, decode_tab_name(profile.name), TabKind::Serial,
+                            make_refusing_pane_factory("serial device is exclusive"),
                             bundle.line_ending);
         if (current_tab_id.has_value()) {
             serial_by_tab[current_tab_id.value()] =
@@ -1523,13 +1692,30 @@ auto main(int argc, char **argv) -> int {
         return TelnetSessionBundle{.session = std::move(session)};
     };
 
+    /// @brief Telnet 腿的切分工厂：按 `telnet_by_tab` 的那份档案重拨，行尾仍固定 `Crlf`（稿 §4）。
+    ///
+    /// 与 SSH 那条同样**现读**表里的档案：本表就是这一张标签的 Telnet 身份，重启前后都是同一份，
+    /// 但闭包留副本会让「表被撤了还在拨」这条 fail-closed 支路消失。
+    auto make_telnet_pane_factory = [&](borealis::ui::TabId id) -> PaneSessionFactory {
+        return [&telnet_by_tab, &make_telnet_session, id](
+                   borealis::ui::PaneId /*origin*/) -> std::optional<PaneBundle> {
+            const auto found = telnet_by_tab.find(id);
+            if (found == telnet_by_tab.end()) {
+                AURORA_LOG_WARN("main", "split refused: tab ", id, " carries no Telnet profile on file");
+                return std::nullopt;
+            }
+            auto bundle = make_telnet_session(found->second);
+            return PaneBundle{.session = std::move(bundle.session), .line_ending = bundle.line_ending};
+        };
+    };
+
     auto open_telnet_tab = [&](const borealis::conn::Profile &profile) -> void {
         auto bundle = make_telnet_session(profile.telnet);
+        // 工厂要的号同 SSH 腿那一条理由：`create_new_tab_with` 里 `next_tab_id++` 是本支唯一的取号点。
+        const borealis::ui::TabId id = next_tab_id;
         create_new_tab_with(bundle.session, decode_tab_name(profile.name), TabKind::Telnet,
-                            bundle.line_ending);
-        if (current_tab_id.has_value()) {
-            telnet_by_tab[current_tab_id.value()] = profile.telnet;
-        }
+                            make_telnet_pane_factory(id), bundle.line_ending);
+        telnet_by_tab[id] = profile.telnet;
         record_recent(profile.id);
     };
 
@@ -2198,49 +2384,33 @@ auto main(int argc, char **argv) -> int {
             return;
         }
         const borealis::ui::ClosedTabSpec &spec = spec_opt.value();
-        
+
         // 重建会话（目前只支持本地终端，SSH 腿到货后追加分支）
         borealis::conn::LocalTerminalSpec conn_spec;
         conn_spec.command_line = spec.local_shell.empty() ? settings.connection.local_shell : spec.local_shell;
         conn_spec.working_directory = spec.startup_directory.empty() ? settings.connection.startup_directory : spec.startup_directory;
-        auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
-        auto session = std::make_shared<borealis::session::Session>(
-            borealis::conn::make_local_terminal_connection(conn_spec, kNominalViewport),
-            kNominalViewport, settings.terminal.scrollback_limit, width_policy,
-            make_terminal_defaults(settings), make_session_encoding(settings));
-        session->set_frame_wake([&surface]() -> void { surface.request_wake(); });
-        // 撤销重开这一腿自己建会话与视口，不经上面两处，故闸门两接在这里再写一遍——
-        // 「八处构造点一处不漏」说的就是这一类旁路：漏了就是一格看着正常、实际永远 deny 的标签。
-        session->set_clipboard_gate(&clipboard_gate);
-        session->start();
-        
-        // 建视口
-        auto view = std::make_shared<borealis::ui::TerminalView>(
-            *session, make_appearance(settings, catalog), make_interaction(settings));
-        view->set_clipboard_gate(&clipboard_gate);
-        if (wire_view) {
-            wire_view(*view);
-        }
-        
+        const std::shared_ptr<borealis::session::Session> session = make_local_session(conn_spec);
+        // 会话起用、视口与两条闸门都在 `build_pane_view` 一处：撤销重开曾是「八处构造点」里最后一条
+        // 自己写一遍的旁路（漏接闸门就是一格看着正常、实际永远 deny 的标签），同源之后结构上不可能漏。
+        const auto view = build_pane_view(session, borealis::term::LineEnding::Lf);
+
         // 建工作区分屏容器（单 pane 起步）
         // 生成新标签 ID：走共享的那支只增计数器，不复用已发过的身份。声明提前到 hooks 之前，
-        // 广播接缝要拿它当复合身份的一半；原先它紧挨 `insert_at`，只是碰巧没有更早的读者。
+        // 广播接缝与切分工厂都要拿它当身份的一半；原先它紧挨 `insert_at`，只是碰巧没有更早的读者。
         const borealis::ui::TabId id = next_tab_id++;
 
         borealis::ui::WorkspaceView::Hooks ws_hooks;
-        // 值捕获 `shared_ptr<Session>` 的承重理由同 `create_new_tab_with` 处那一条注释。
-        ws_hooks.make_pane = [session, view](borealis::ui::PaneId /*pane*/,
-                                            borealis::ui::PaneId /*origin*/) -> std::shared_ptr<borealis::ui::TerminalView> {
-            return view;
-        };
-        ws_hooks.dispatch_grid = [session](borealis::ui::PaneId /*pane*/, borealis::ui::GridSize size) -> void {
-            session->resize({size.columns, size.rows});
-        };
-        ws_hooks.teardown_pane = [](borealis::ui::PaneId /*pane*/) -> void {};
+        // 三条接缝装的是与新开标签同一份定义（F3 的空 `teardown_pane` 与 F4 的「恒打首会话」就此消失）。
+        // 切分工厂走**缺省本地腿**那一支：新格按被切那一格现读的 OSC 7 继承目录，而不是照闭包栈里
+        // 那份旧规格复制——闭包栈存的是「这张标签当初怎么开的」，不是「这一格现在在哪」。
+        make_pane_hooks(id, ws_hooks);
         wire_broadcast_hooks(id, ws_hooks);
-        
-        auto workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
-        
+
+        TabWorkspace tab;
+        tab.sessions_by_pane[1U] = session;
+        tab.make_session = make_local_pane_factory(id);
+        tab.workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
+
         // 标签名按 UTF-8 解回码点：闭包栈存的是 `encode_utf8` 的产物，逐字节折成码点会把
         // CJK 名拆成 Latin-1 乱码，重开回来的标签就成了一串问号。
         borealis::term::Utf8Decoder decoder;
@@ -2251,10 +2421,10 @@ auto main(int argc, char **argv) -> int {
         const bool inserted = tab_strip.insert_at(spec.index_in_strip, id, collector.out);
         if (!inserted) {
             AURORA_LOG_WARN("main", "undo close tab: insert_at failed at index ", spec.index_in_strip);
-            return;
+            return;  // `tab` 随之消散：成员次序保证视口先散、会话后散（稿 §5）
         }
-        
-        tab_workspaces[id] = TabWorkspace{.sessions = {session}, .workspace = std::move(workspace)};
+
+        tab_workspaces[id] = std::move(tab);
         // 闭包栈只存本地终端的规格，重开回来仍是本地标签（`SPEC.FEAT.INTEG.02` 的类型表同源登记）。
         tab_kind[id] = TabKind::Local;
         // 新格的成员表从空开始（闭包栈只存标签规格，不存广播资格）；端点仍按「三处构造点同源」登记。
@@ -2287,7 +2457,9 @@ auto main(int argc, char **argv) -> int {
         // 静默换成本地 shell——判据与分流形态都照 SSH 那条（裁决 7.99 D6）。
         if (const auto serial = serial_by_tab.find(id); serial != serial_by_tab.end()) {
             auto bundle = make_serial_session(serial->second.profile);
-            replace_tab_session(id, bundle.session, bundle.line_ending);
+            replace_tab_session(id, bundle.session,
+                                make_refusing_pane_factory("serial device is exclusive"),
+                                bundle.line_ending);
             serial->second.connection = bundle.connection;  // 旧腿随旧 Session 析构，这里只改写指针
             AURORA_LOG_INFO("main", "restart: tab ", id, " serial session re-opened by profile");
             return;
@@ -2297,7 +2469,7 @@ auto main(int argc, char **argv) -> int {
         // 档案、没有连接指针，而档案在重启前后是同一份（串口那支改的是裸指针，此处没有可改的）。
         if (const auto telnet = telnet_by_tab.find(id); telnet != telnet_by_tab.end()) {
             auto bundle = make_telnet_session(telnet->second);
-            replace_tab_session(id, bundle.session, bundle.line_ending);
+            replace_tab_session(id, bundle.session, make_telnet_pane_factory(id), bundle.line_ending);
             AURORA_LOG_INFO("main", "restart: tab ", id, " telnet session re-opened by profile");
             return;
         }
@@ -2310,12 +2482,7 @@ auto main(int argc, char **argv) -> int {
             borealis::conn::LocalTerminalSpec spec;
             spec.command_line = settings.connection.local_shell;
             spec.working_directory = settings.connection.startup_directory;
-            auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
-            auto session = std::make_shared<borealis::session::Session>(
-                borealis::conn::make_local_terminal_connection(spec, kNominalViewport),
-                kNominalViewport, settings.terminal.scrollback_limit, width_policy,
-                make_terminal_defaults(settings), make_session_encoding(settings));
-            replace_tab_session(id, std::move(session));
+            replace_tab_session(id, make_local_session(spec), make_local_pane_factory(id));
             AURORA_LOG_INFO("main", "restart: tab ", id, " local session replaced");
             return;
         }
@@ -2490,17 +2657,15 @@ auto main(int argc, char **argv) -> int {
         show_log_frame(au::alert(borealis::ui::settings_label("session.log.confirm.title"), message,
                                  [dialog]() -> void { dialog->close(); }));
     };
-    // 当前标签的第一只会话：与 `session.restart` 同一取法（重启之后取到的就是新那只，故「重启回到
-    // 未记录态」这条 D11① 不需要额外接线）。多 pane 到货后这一处要按 pane 取会话，见下面的 TODO。
-    auto current_tab_session = [&tab_workspaces, &current_tab_id]() -> std::shared_ptr<borealis::session::Session> {
+    // 当前标签**活动格**的那一份会话（`SPEC.FEAT.WS.02` 稿 §6 第一行）：会话日志的两条钩子与
+    // `session.restart` 吃的是同一个量。一格一会话之前这里是 `sessions.front()`，两格指向同一份会话时
+    // 「front」恰好还是用户看着那一格；现在必须按焦点格取，否则在副格开日志会写到主格那条连接上。
+    auto current_tab_session = [&current_tab_id, &focused_pane_session]()
+        -> std::shared_ptr<borealis::session::Session> {
         if (!current_tab_id.has_value()) {
             return {};
         }
-        const auto found = tab_workspaces.find(current_tab_id.value());
-        if (found == tab_workspaces.end() || found->second.sessions.empty()) {
-            return {};
-        }
-        return found->second.sessions.front();
+        return focused_pane_session(current_tab_id.value());
     };
     // 目录不存在时补建并把权限钉 0700：口径照 `key_store.cpp` 那一条——**只有本次新建且为空**的那一个
     // 目录才钉，用户已有的目录（哪怕 0777）不在本动作的职权里。
@@ -2639,20 +2804,23 @@ auto main(int argc, char **argv) -> int {
     open_diagnostics.action = [&debug_panel, &tab_workspaces]() -> void {
         std::vector<borealis::ui::DebugSessionSnapshot> snapshots;
         for (const auto &[tab_id, workspace] : tab_workspaces) {
-            for (std::size_t pane = 0; pane < workspace.sessions.size(); ++pane) {
-                borealis::session::Session &session = *workspace.sessions[pane];
-                const auto parse = session.parse_stats();
-                const auto decode = session.decode_stats();
-                const auto queue = session.queue_stats();
+            // 标题里的格号就是真实 `PaneId`（稿 §6 的诊断行）：旧形态取的是 vector 下标 +1，
+            // 一格一会话之后两者只在「没关过格」的标签上恰好相等，而面板是排查现场的地方，
+            // 报错号与广播横幅上的「窗格 N」对不上就失去意义。
+            for (const auto &[pane, session] : workspace.sessions_by_pane) {
+                const auto parse = session->parse_stats();
+                const auto decode = session->decode_stats();
+                const auto queue = session->queue_stats();
                 snapshots.push_back(borealis::ui::DebugSessionSnapshot{
                     .title = borealis::ui::settings_label(
                         "diagnostics.session",
-                        {au::LocalizedString{std::to_string(tab_id)}, au::LocalizedString{std::to_string(pane + 1)}}),
+                        {au::LocalizedString{std::to_string(tab_id)},
+                         au::LocalizedString{std::to_string(pane)}}),
                     .parse_ignored = parse.ignored,
                     .parse_cancelled = parse.cancelled,
                     .decode_replaced = decode.replaced,
                     .decode_code_points = decode.code_points,
-                    .encode_unrepresentable = session.unrepresentable_count(),
+                    .encode_unrepresentable = session->unrepresentable_count(),
                     .queue_pending = queue.pending,
                     .queue_peak_pending = queue.peak_pending,
                     .queue_overloads = queue.overloads,
@@ -2798,7 +2966,8 @@ auto main(int argc, char **argv) -> int {
                     v->on_frame();
                 }
             }
-            for (auto &tag_session : workspace.sessions) {
+            for (const auto &[pane, tag_session] : workspace.sessions_by_pane) {
+                static_cast<void>(pane);  // 下面四件都是「任一格」语义，无须分辨是哪一格
                 static_cast<void>(outbox.drain(*tag_session));
 
                 // 会话日志的写失败提示（`SPEC.FEAT.CONN.11`）：会话侧只上弦一次，取走与弹窗都在帧边界，
@@ -2820,6 +2989,9 @@ auto main(int argc, char **argv) -> int {
                 }
 
                 // 消费 OSC 标题并更新到标签名（`SPEC.FEAT.TERM.07` UI 消费链路）
+                // TODO(SPEC.FEAT.WS.02): 本批仍是「逐格循环、末写者胜」——一格一会话之后那个末写者是
+                // `sessions_by_pane` 里号最大的格，不是用户看着的那一格。稿 §6 的收口是「焦点格独占这一
+                // 槽位」，批 3 落。
                 const borealis::term::OscState osc = tag_session->osc_state();
                 if (!osc.title.empty()) {
                     tab_strip.set_osc_title(tab_id, osc.title);
@@ -2888,9 +3060,12 @@ auto main(int argc, char **argv) -> int {
     startup_wake.store(nullptr);
     instance_listener.reset();
 
-    // 关停在读线程仍可能唤醒 surface 之前：需要关闭所有标签的所有会话
+    // 关停在读线程仍可能唤醒 surface 之前：需要关闭所有标签的所有会话（稿 §5 的「退出」一行：
+    // 一格一会话之后这里遍历的是每格，而不是每标签一份）。
     for (auto &[tab_id, workspace] : tab_workspaces) {
-        for (auto &session : workspace.sessions) {
+        static_cast<void>(tab_id);
+        for (auto &[pane, session] : workspace.sessions_by_pane) {
+            static_cast<void>(pane);
             session->close();
         }
     }
