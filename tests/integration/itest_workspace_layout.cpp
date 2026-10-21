@@ -286,11 +286,13 @@ class Harness {
         render();
     }
 
-    /// @brief 派发一次按键按下（走框架真实键盘派发：只交给焦点控件）。
-    auto press(au::KeyCode key, au::ModifierKey mods = au::ModifierKey::None) -> bool {
+    /// @brief 派发一次按键事件（走框架真实键盘派发：只交给焦点控件）。默认按下，抬起留给上报点的
+    ///        反面证人——`SPEC.FEAT.WS.03` 稿 D7 只把「按下」算作一次碰过本窗。
+    auto press(au::KeyCode key, au::ModifierKey mods = au::ModifierKey::None,
+               au::KeyAction action = au::KeyAction::Down) -> bool {
         au::KeyEvent event;
         event.key = static_cast<int>(key);
-        event.action = au::KeyAction::Down;
+        event.action = action;
         event.modifiers = mods;
         return au::EventDispatcher::dispatch(root_.widget(), event, focus_);
     }
@@ -502,6 +504,7 @@ class Harness {
         torn_down_.clear();
         factory_calls = 0U;
         new_window_calls = 0U;
+        dispatch_reports = 0U;
         for (auto &[pane, connection] : connections_) {
             (void)pane;
             connection->reset();
@@ -540,6 +543,9 @@ class Harness {
     std::size_t factory_calls = 0U;
     /// @brief `Ctrl+Shift+N` 的转交次数（第十五键只转交不造窗，`SPEC.FEAT.WS.03` 稿 D2）。
     std::size_t new_window_calls = 0U;
+    /// @brief 视口上报次数（`SPEC.FEAT.WS.03` 稿 D7 的第一处上报点）：生产里这一枚闭包交给装配层
+    ///        的 `ui::ActiveWindowTracker`，本驱动台只数次数——「报了几次、什么算一次」就是判据。
+    std::size_t dispatch_reports = 0U;
     /// @brief 工厂最后一次收到的 `origin`（判据「被切那一格交给工厂，而不是工厂自己猜焦点」）。
     PaneId last_origin = 0U;
 
@@ -576,6 +582,9 @@ class Harness {
         auto view = std::make_shared<TerminalView>(*session, palette_, test_font(), Typography{}, kPaddingDp,
                                                   std::chrono::milliseconds{kBlinkPeriodMs},
                                                   TerminalView::InteractionOptions{});
+        // 生产里这一枚闭包把窗号报给 tracker（本层没有窗，故只数次数）；每格一份视口就报同一计数，
+        // 与装配层「同窗内每一格都算碰过这一扇窗」的口径一致。
+        view->set_dispatch_observer([this]() -> void { ++dispatch_reports; });
         session->start();
         connections_.emplace(pane, raw);
         live_.emplace(pane, view.get());
@@ -906,6 +915,52 @@ AURORA_TEST_CASE(ctrl_shift_n_is_claimed_and_only_handed_to_the_assembly_layer) 
     AURORA_TEST_CHECK_EQ(h.new_window_calls, 0U);
     // 两格里至少有一格收到字节：全空就是这一键被静默吞掉了，而它不在认领集里。
     AURORA_TEST_CHECK_FALSE(h.written(1U).empty() && h.written(2U).empty());
+}
+
+AURORA_TEST_CASE(the_viewport_reports_each_key_and_mouse_press_exactly_once) {
+    // 三处上报点的第一处（`SPEC.FEAT.WS.03` 稿 D7，装配层喂给 `ui::ActiveWindowTracker` 的那一枚闭
+    // 包）。判据全在**计数口径**上：tracker 只认「最后一次被碰的窗」，于是报多报少都会让下一条全局
+    // 快捷键落错地方，而报与不报的差别在本层读数上看不出来——只能这样钉：
+    // ① 认领腿也报：上报位在键盘前置过滤**之前**，被工作区层收走的键同样是一次真实触碰。若把它挂在
+    //    转发分支之后，第十五键那一击（既不转发也不分格）就永远不响，tracker 停在陈旧窗上；
+    // ② 一次事件只报一次：一次就够，报两遍在 tracker 上读数相同，但闭包在生产里还连带做「把焦点还给
+    //    本窗」这类有副作用的事，故次数本身就是判据；
+    // ③ 抬起不报、指针只在按下报：一次拖把手会送来几十枚 Move，全记成「碰过」就等于没有事实；
+    // ④ 转发腿不因上报而改变：报完仍照旧把字节送进会话，与未装观察者时逐字一致。
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.reset_counters();
+
+    // ④＋① 的转发腿：裸方向键归会话，报一次且确有遗留档落地。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::ArrowRight));
+    AURORA_TEST_CHECK_EQ(h.dispatch_reports, 1U);
+    AURORA_TEST_CHECK_EQ(h.written(1U), "\x1B[C");
+
+    // ① 的认领腿：`Ctrl+Alt+→` 是十五条之一，单叶时落点不存在仍算认领（裁决 7.47②），一个字节不进会话。
+    h.reset_counters();
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::ArrowRight, au::ModifierKey::Control | au::ModifierKey::Alt));
+    AURORA_TEST_CHECK_EQ(h.dispatch_reports, 1U);
+    AURORA_TEST_CHECK(h.written(1U).empty());
+
+    // 第十五键同理：它既不分格也不转发，上报点若挂在转发分支上就永远不响。
+    h.reset_counters();
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::N, Harness::ctrl_shift()));
+    AURORA_TEST_CHECK_EQ(h.new_window_calls, 1U);
+    AURORA_TEST_CHECK_EQ(h.dispatch_reports, 1U);
+
+    // ③ 抬起不算一次触碰（`on_key_event` 的 Down 守卫在上报之前）。
+    h.reset_counters();
+    static_cast<void>(h.press(au::KeyCode::A, au::ModifierKey::None, au::KeyAction::Up));
+    AURORA_TEST_CHECK_EQ(h.dispatch_reports, 0U);
+
+    // ③ 指针：按下报一次，同一落点的移动与抬起都不再报。
+    h.reset_counters();
+    static_cast<void>(h.pointer(au::MouseAction::Press, h.pane_center(1U)));
+    AURORA_TEST_CHECK_EQ(h.dispatch_reports, 1U);
+    static_cast<void>(h.pointer(au::MouseAction::Move, h.pane_center(1U)));
+    static_cast<void>(h.pointer(au::MouseAction::Release, h.pane_center(1U)));
+    AURORA_TEST_CHECK_EQ(h.dispatch_reports, 1U);
+    h.render();
 }
 
 AURORA_TEST_CASE(continuous_resize_settles_once_with_the_latest_grid) {

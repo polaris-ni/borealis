@@ -62,6 +62,11 @@ struct TabBarHooks {
     std::function<void(std::uint64_t id, std::size_t to_index)> move;
     /// @brief 新建标签（"＋"按钮触发）。
     std::function<void()> add_new;
+    /// @brief 本栏收到一次指针 `Press`（先于命中测试，故命中空白栏也报）。
+    ///
+    /// `SPEC.FEAT.WS.03` 稿 D7 的「标签条」上报点：装配层用它把本窗号交给 `ActiveWindowTracker`，
+    /// 于是「在 B 窗的标签条上点过一下」之后，`Ctrl+F` 这类全局快捷键知道该落哪一扇。空即不报。
+    std::function<void()> note_press;
 };
 
 /// @brief 标签栏绘制侧控件。

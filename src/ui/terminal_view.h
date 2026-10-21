@@ -270,6 +270,16 @@ class TerminalView final : public aurora::LeafWidget {
     /// @param filter 判定者；入参与 `term::encode_key` 吃的是同一个 `term::KeyPress`。
     auto set_key_pre_filter(KeyPreFilter filter) -> void;
 
+    /// @brief 派发观察接缝（`SPEC.FEAT.WS.03` 稿 D7 的「视口」那一处上报点）。
+    ///
+    /// 本视口**收到**一次按键 `Down` 或一次指针 `Press` 即调一次，时机在按键前置过滤与选区分支
+    /// **之前**：认领与否、命中与否都不影响「这一笔派发打到了本视口」这个事实，而 `D7` 要记录的
+    /// 正是事实而不是推断（框架不给「当前活动窗」查询，稿 §0 的 F4／F5）。装配层用它把窗号上报给
+    /// `ui::ActiveWindowTracker`；未装即零行为变化，视口因此不认识窗、也不持有窗口清单。
+    using DispatchObserver = std::function<void()>;
+    /// @param observer 观察闭包；空即不上报。
+    auto set_dispatch_observer(DispatchObserver observer) -> void;
+
     /// @brief 输入镜像的两条接缝（`SPEC.FEAT.WS.09` 的广播腿，裁决 7.121）。
     ///
     /// 在本视口**完成自己的发送之后**各调一次（吞掉的小键盘文本那一路不镜像）。源格按自己的模式
@@ -1038,6 +1048,7 @@ class TerminalView final : public aurora::LeafWidget {
     Presentation presentation_{};         ///< 剪贴板、确认与打开动作的六条接缝（空字段即生产实现）。
     GridSizeSink grid_size_sink_;         ///< 空即直发 `Session::resize`（未挂工作区层的形态）。
     KeyPreFilter key_pre_filter_;         ///< 空即不认领任何键（单 pane 装配的形态）。
+    DispatchObserver dispatch_observer_;  ///< 空即不上报（`SPEC.FEAT.WS.03` 稿 D7 的视口上报点）。
     aurora::OverlayHost *host_ = nullptr; ///< 非拥有：装配层给的浮层宿主，本控件的父节点。
     std::shared_ptr<aurora::Popup> menu_;                    ///< 懒建的菜单浮层（建成后一直是宿主的浮层子节点）。
     std::shared_ptr<aurora::Dialog> multiline_warning_;      ///< 懒建的多行粘贴确认对话框。

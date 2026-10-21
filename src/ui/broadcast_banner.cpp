@@ -230,6 +230,11 @@ auto BroadcastBanner::on_paint(au::Painter &p, const au::Rect &bounds, const au:
 }
 
 auto BroadcastBanner::on_pointer_event(au::MouseEvent &e) -> void {
+    if (e.action == au::MouseAction::Press && e.button == au::MouseButton::Left && hooks_.note_press) {
+        // 上报先于「是否在广播态」：非广播态的横幅高 0、命中不到，这一句只是把「事实」与「动作」
+        // 分成两件事（稿 D7）。清组那条仍受状态限制，二者不互相担保。
+        hooks_.note_press();
+    }
     if (!state_.active || e.action != au::MouseAction::Press || e.button != au::MouseButton::Left) {
         return;
     }

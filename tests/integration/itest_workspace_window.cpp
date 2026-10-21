@@ -9,7 +9,7 @@
 ///           （裁决 7.83），「两扇窗真能各开各的」在生产路径上只有源码审查＋真机走查，所以先把
 ///           **机制**钉成可执行的证人，批 2 起逐窗接线的每条判据才有落脚处。
 ///
-///           四件事值得单独证（判据取自稿 §5 的不变量 1／2 与稿 §0 的 F9／F13）：
+///           五件事值得单独证（判据取自稿 §5 的不变量 1／2 与稿 §0 的 F9／F13）：
 ///           ① 逐窗 present 只动**自己**那扇的缓冲：A 窗加一格标签后把两扇都重排一遍，B 窗整帧
 ///              **逐位**不变——这条钉的是「跨窗连带」，也是拆分边界（稿 §2）的前置证人；
 ///           ② 两扇画的是**各自那份真值源**：内容相同时两幅画布逐位相同，各自加各自的格之后立刻分叉，
@@ -20,7 +20,10 @@
 ///           ④ 应用级 `scene()`/`focus()`/`window()` 的作用端**恒是主宿主**（F2／F4）：第二扇窗的
 ///              焦点管理器从应用级入口取不到，于是装配层那四处 `app.focus()`（F3）与捕唯一 surface
 ///              的唤醒腿（F11）在批 2 必须改按窗取——这条把「不改就错」钉进用例，而不是等真机上
-///              发现键入打不进第二扇窗。
+///              发现键入打不进第二扇窗；
+///           ⑤ 命令落点按**派发事实**记：经该窗宿主的一次栏带按下（落点在空白处也算），就把本窗号交给
+///              `ui::ActiveWindowTracker`（批 3-C，稿 D7／G42），无上报时回主窗兜底、交叉上报只留
+///              最后一次、撤账后不再返回。框架不给活动窗口查询，这条只能自己钉。
 ///
 ///           像素口径与 `itest_tab_bar` 一致：比 RGBA 四通道含 alpha，Headless 缩放为 1（dp 即像素）。
 ///           本套件不断言具体色值，只断**哪一扇的哪些像素动了、哪一扇逐位没动**——颜色是实现细节，
@@ -29,6 +32,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -39,6 +43,7 @@
 #include "borealis/ui/tab_strip.h"
 #include "framework/aurora_test.h"
 // 私有头（裁决 D1①），按相对路径取用而不给整个测试目标开 `src/` 含目录。
+#include "../../src/ui/active_window_tracker.h"
 #include "../../src/ui/tab_bar.h"
 
 namespace borealis::test_cases::itest_workspace_window {
@@ -107,6 +112,13 @@ class WindowFace {
             .close = [this](std::uint64_t raw_id) -> void {
                 static_cast<void>(strip_.close(static_cast<TabId>(raw_id)));
             },
+            // 稿 D7 的标签条上报点：本件此刻还不知道自己那扇窗的号（号由宿主登记时才发），故把上报
+            // 转给驱动台后装的那枚闭包——与 `main.cpp` 里「先声明闭包、登记之后再赋值」同一形态。
+            .note_press = [this]() -> void {
+                if (press_reporter_) {
+                    press_reporter_();
+                }
+            },
         });
         // 真值源有任何一次实际转移就把绘制侧标脏（裁决 7.91④）：缺这一钩，框架的布局缓存会跳过
         // `on_layout`，钩子里现取的标签列表永远不会更新——跨窗差分就成了一片恒不差的假绿。
@@ -129,6 +141,11 @@ class WindowFace {
     /// @brief 本窗加一格标签（号由外部那支进程级计数器给，稿 §0 的 F10：只增不复用）。
     auto add_tab(TabId id, const std::u32string &name) -> bool { return strip_.add(id, name); }
 
+    /// @brief 装上报闭包（宿主登记之后才有窗号，故这一跳只能后补；未装即一次都不报）。
+    auto set_press_reporter(std::function<void()> reporter) -> void {
+        press_reporter_ = std::move(reporter);
+    }
+
     /// @brief 往**本窗**的浮层栈挂一块遮罩对话框（判据 ③ 的那一笔）。
     auto mount_overlay() -> void {
         overlay_ = std::make_shared<au::Dialog>();
@@ -149,6 +166,7 @@ class WindowFace {
     std::shared_ptr<au::Column> column_ = std::make_shared<au::Column>();
     std::shared_ptr<TabBarWidget> bar_{};
     std::shared_ptr<au::Dialog> overlay_{};
+    std::function<void()> press_reporter_{};  ///< 空即不上报（宿主登记后由驱动台补装）。
 };
 
 /// @brief 驱动台：一支 `Application` + 两扇无头窗，逐窗一份 `WindowFace`。
@@ -164,6 +182,10 @@ class TwoWindowRig {
           app_(face_a_->scene(), face_a_->take_window(), face_a_->options()) {
         id_a_ = app_.main_window();
         id_b_ = app_.open_window(face_b_->take_window(), face_b_->scene(), face_b_->options());
+        // tracker 要主窗号，而号在宿主登记之后才有——与生产同一时序（先声明闭包、登记后再赋值）。
+        tracker_.emplace(id_a_);
+        face_a_->set_press_reporter([this]() -> void { report(id_a_); });
+        face_b_->set_press_reporter([this]() -> void { report(id_b_); });
         render(0U);  // 帧 0：布局与绘制都发生在这里，此后两幅缓冲才有东西可比。
         render(1U);
     }
@@ -236,6 +258,12 @@ class TwoWindowRig {
     [[nodiscard]] auto app() noexcept -> au::Application & { return app_; }
     [[nodiscard]] auto window_count() const -> std::size_t { return app_.window_count(); }
 
+    /// @brief 命令落点读数（稿 D7 那枚记录器的当前值）。
+    [[nodiscard]] auto active() const -> au::WindowId { return tracker_->active(); }
+
+    /// @brief 撤账（关窗那一棒的形态，本套件只测记录面，不真关窗）。
+    auto forget(au::WindowId id) -> void { tracker_->forget(id); }
+
     /// @brief 两帧逐位相同（判据「另一扇整帧不动」比数差分更严：一个通道都不许差）。
     [[nodiscard]] static auto identical(const Frame &left, const Frame &right) -> bool {
         return !left.empty() && left.size() == right.size() &&
@@ -259,8 +287,21 @@ class TwoWindowRig {
         return (static_cast<float>(index) + 0.5F) * kTabMinWidthDp;
     }
 
+    /// @brief 栏带空白处的落点（越过全部栏位的那个横坐标）：上报点的判据要的就是这一处——
+    ///        「碰过本窗」与「命中了哪一格」是两件事，点在空白处也该换落点。
+    [[nodiscard]] static auto empty_band_x() -> float {
+        return static_cast<float>(kWindowWidth) - 20.0F;
+    }
+
   private:
     static constexpr double kFrameDt = 0.016;
+
+    /// @brief 上报的唯一入口：`tracker_` 在宿主登记之后才 emplace，故派发若早于那一跳只能丢弃。
+    auto report(au::WindowId id) -> void {
+        if (tracker_) {
+            tracker_->report(id);
+        }
+    }
 
     [[nodiscard]] static auto buffer_pixels() -> std::size_t {
         return static_cast<std::size_t>(kWindowWidth) * static_cast<std::size_t>(kWindowHeight);
@@ -268,6 +309,10 @@ class TwoWindowRig {
 
     std::unique_ptr<WindowFace> face_a_;
     std::unique_ptr<WindowFace> face_b_;
+    /// @brief 命令落点记录器（稿 D7）：真正的构造发生在宿主登记之后（要主窗号），故此处先占空位。
+    ///        声明在 `app_` **之前**：宿主析构里若还有一次派发，上报闭包会来解引用这一枚 optional，
+    ///        于是它必须比宿主活得久一点（析构序＝声明序倒序）。
+    std::optional<borealis::ui::ActiveWindowTracker> tracker_{};
     au::Application app_;
     au::WindowId id_a_ = au::AURORA_INVALID_WINDOW_ID;
     au::WindowId id_b_ = au::AURORA_INVALID_WINDOW_ID;
@@ -408,6 +453,48 @@ AURORA_TEST_CASE(the_application_level_accessors_only_reach_the_main_host) {
 
     // 焦点逐窗不跨：给 B 的根装焦点，A 的焦点管理器仍空着（F3 的那条「焦点序仅作用于本宿主」）。
     AURORA_TEST_CHECK_NULL(rig.host(1U)->focus().focused());
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_tab_bar_press_moves_the_active_window_record) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 批 3-C 的接线证人（`SPEC.FEAT.WS.03` 稿 D7）：框架既不给活动窗口查询、也不把派发来源带进快捷键
+    // 闭包（F4／F5、稿 §3 的 G42），于是「命令该落哪一扇」只能由本仓按**派发事实**自记。上面四条判据
+    // 证的是两扇窗各画各的，这一条证的是**记的是哪一扇**——三条缺一即落点会错：
+    // ① 起点回主窗：没有任何上报时落点是构造期那枚号，兜底而非猜测（第二扇窗还没被碰过时，命令不能
+    //    凭空落进它）；
+    // ② 最近者胜：交叉上报以最后一次为准，本件不计数也不建栈；
+    // ③ 撤账之后不再返回：关掉的那扇窗不留悬空落点，回到兜底；兜底自己关了才返回无效号。
+    // 这里走的是**真派发**（`dispatch_pointer` 经该窗宿主），故 `TabBarHooks::note_press` 与控件的
+    // 命中序也被顺带证到：栏带内的按下确实进到了那一扇的标签条。
+    TwoWindowRig rig;
+    AURORA_TEST_REQUIRE(rig.preflight());
+    TabNumbering numbering;
+    const TabId a_only = numbering.next();
+    const TabId b_only = numbering.next();
+    AURORA_TEST_REQUIRE(rig.face_ref(0U).add_tab(a_only, U"only"));
+    AURORA_TEST_REQUIRE(rig.face_ref(1U).add_tab(b_only, U"only"));
+    rig.render_both_reversed();
+
+    AURORA_TEST_CHECK_EQ(rig.active(), rig.id_of(0U));  // ① 未碰过＝兜底落点，而不是「取不到就谁也不做」
+
+    // 落点取栏带**空白处**：这里要钉的是「碰过哪一扇」，不是「命中哪一格」。点空白处既选中不了任何
+    // 标签、也关不了栏位，但它仍是一次真实触碰——上报若挂在命中分支里，这一笔就永远不响。
+    rig.click(1U, TwoWindowRig::empty_band_x());
+    AURORA_TEST_CHECK_EQ(rig.active(), rig.id_of(1U));  // ② B 的栏带被碰过，落点即改
+    AURORA_TEST_CHECK_EQ(rig.face_ref(1U).strip().selected().value(), b_only);  // 动作腿没跟着动
+
+    rig.click(0U, TwoWindowRig::empty_band_x());
+    AURORA_TEST_CHECK_EQ(rig.active(), rig.id_of(0U));  // ② 交叉上报只留最后一次
+
+    rig.click(1U, TwoWindowRig::empty_band_x());
+    rig.forget(rig.id_of(1U));
+    AURORA_TEST_CHECK_EQ(rig.active(), rig.id_of(0U));  // ③ 撤账回到兜底，不返回已关的号
+
+    rig.forget(rig.id_of(0U));
+    AURORA_TEST_CHECK_EQ(rig.active(), au::AURORA_INVALID_WINDOW_ID);  // ③ 兜底自己没了才报无效号
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif

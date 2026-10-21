@@ -11,7 +11,8 @@
 ///           ③ 同一会话被两个 pane 指向时一次输入只写一份（D7），横幅按去重后的会话计数；
 ///           ④ 关 pane 撤成员、关整张标签清它的全部成员，横幅与 pill 同步；
 ///           ⑤ 横幅 0/26、固定 token 与按钮几何的像素落点；pill 只在分屏态画、且不压焦点描边；
-///           ⑥ 点击横幅清空整组并把焦点还给最后持焦的 pane，随后键入仍进终端。
+///           ⑥ 点击横幅清空整组并把焦点还给最后持焦的 pane，随后键入仍进终端；横幅的那一次按下同时
+///              交给装配层的上报点（`SPEC.FEAT.WS.03` 稿 D7），且先于清组判定、抬起不重复报。
 ///
 ///           装配层在 `src/main.cpp`，不可从测试直接调用；本驱动台按稿 §4 第 6 条复刻同一条接线
 ///           （三处构造点同源装四条 Hooks、Sink 三回调现查 `view_of`），因此测的是接缝形态而不是
@@ -163,13 +164,21 @@ class Rig {
         palette_.default_foreground = RgbaColor{0xF8, 0xF8, 0xF2, 255};
         palette_.default_background = RgbaColor{0x00, 0x00, 0x00, 255};
 
-        banner_ = std::make_shared<BroadcastBanner>(BroadcastBannerHooks{.exit_all = [this]() -> void {
-            // 点击横幅 = 清空整组（D8）；只有真的清了组才归还焦点——空组横幅高 0，本不该被命中。
-            if (router_.size() > 0U) {
-                router_.clear();
-                restore_focus();
-            }
-        }});
+        banner_ = std::make_shared<BroadcastBanner>(BroadcastBannerHooks{
+            .exit_all = [this]() -> void {
+                // 点击横幅 = 清空整组（D8）；只有真的清了组才归还焦点——空组横幅高 0，本不该被命中。
+                if (router_.size() > 0U) {
+                    router_.clear();
+                    restore_focus();
+                }
+            },
+            // 稿 D7 的第三处上报点：生产里这一枚闭包把本窗号交给 `ActiveWindowTracker`，本驱动台没有
+            // 窗，故只数次数并**顺手抄下当时的组大小**——上报若挂在清组之后，抄到的就是 0。
+            .note_press = [this]() -> void {
+                ++banner_press_reports;
+                banner_report_group_size = router_.size();
+            },
+        });
         // 变更钩子是「组成员集合真变」的唯一刷新入口（toggle / remove / remove_tab / clear 四路共用）。
         router_.set_change_hook([this]() -> void { refresh_ui(); });
 
@@ -376,6 +385,11 @@ class Rig {
 
     /// @brief 横幅退出按钮盒（横幅在根 Column 首位，局部系即窗口系）。
     [[nodiscard]] auto exit_button() const -> au::Rect { return banner_->exit_button_box(); }
+
+    /// @brief 横幅上报次数（`SPEC.FEAT.WS.03` 稿 D7 的第三处上报点，本驱动台只数次数）。
+    std::size_t banner_press_reports = 0U;
+    /// @brief 最后一次上报时**当时**的组成员数：上报先于清组这条次序的证人（挂在之后就成 0）。
+    std::size_t banner_report_group_size = 0U;
 
     /// @brief 某格 pill 内部的一个落点（窗口坐标）；该格没有 pill 时回空。
     [[nodiscard]] auto pill_point(TabId tab, PaneId pane, double dx, double dy) const -> std::optional<au::Point> {
@@ -823,6 +837,37 @@ AURORA_TEST_CASE(clicking_the_banner_clears_the_group_and_returns_focus) {
     rig.clear_written();
     AURORA_TEST_REQUIRE(rig.type("q"));
     AURORA_TEST_CHECK_EQ(rig.written(alpha, 1U), "q");
+}
+
+AURORA_TEST_CASE(the_banner_reports_the_press_that_cleared_the_group) {
+    // 稿 D7 的第三处上报点（`SPEC.FEAT.WS.03` 批 3-C）：装配层用它把本窗号交给
+    // `ui::ActiveWindowTracker`，于是「点过 B 窗的横幅」之后，下一条全局快捷键落 B 窗。三条判据：
+    // ① 报的是**按下**这一次，一次即够（抬起不再算一次新的触碰）；
+    // ② 上报先于清组那条判定：报的那一刻组还是满的。若把上报挪进 `exit_all` 之后，这一枚读数就成 0
+    //    ——而「事实」一旦要跟「动作是否成功」挂钩，落点就会在动作落空的那一路停在别的窗；
+    // ③ 动作腿不因上报而改变：清组与失活仍照旧。
+    Rig rig;
+    const TabId alpha = rig.add_tab(U"alpha");
+    const TabId beta = rig.add_tab(U"beta");
+    rig.show(alpha);
+    AURORA_TEST_REQUIRE(rig.press(au::KeyCode::B, Rig::ctrl_shift()));
+    rig.show(beta);
+    AURORA_TEST_REQUIRE(rig.press(au::KeyCode::B, Rig::ctrl_shift()));
+    rig.render();
+    AURORA_TEST_REQUIRE_EQ(rig.router().size(), 2U);
+    AURORA_TEST_CHECK_EQ(rig.banner_press_reports, 0U);  // 装钩不等于报钩：没点过就一次也不报
+
+    rig.show(alpha);
+    const au::Rect button = rig.exit_button();
+    const au::Point at{.x = button.origin.x + 50.0F, .y = button.origin.y + 11.0F};
+    rig.click(at);
+    AURORA_TEST_CHECK_EQ(rig.banner_press_reports, 1U);
+    AURORA_TEST_CHECK_EQ(rig.banner_report_group_size, 2U);
+    AURORA_TEST_CHECK_EQ(rig.router().size(), 0U);
+
+    // ③' 清组后横幅高度归 0、命中不到，同一落点的第二下既不清组也不上报（落点因此不会因空点而漂移）。
+    rig.click(at);
+    AURORA_TEST_CHECK_EQ(rig.banner_press_reports, 1U);
 }
 
 #else

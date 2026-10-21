@@ -44,6 +44,11 @@ struct BroadcastBannerState {
 struct BroadcastBannerHooks {
     /// @brief 点击横幅任意处：清空整组（装配层负责再刷横幅、pill 与焦点）。
     std::function<void()> exit_all;
+    /// @brief 本横幅收到一次左键 `Press`（先于「是否在广播态」的判定，故与清组成功与否无关）。
+    ///
+    /// `SPEC.FEAT.WS.03` 稿 D7 的第三处上报点：横幅常驻每窗根 Column 的 index 1，用户点它一下
+    /// 就是碰过这一扇窗，命令落点因此不该停在别的窗。空即不报。
+    std::function<void()> note_press;
 };
 
 /// @brief 广播横幅控件（不可获焦的叶子）。

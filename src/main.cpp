@@ -59,6 +59,7 @@
 #include "platform/process_args.h"
 #include "platform/serial.h"
 #include "platform/user_dir.h"
+#include "ui/active_window_tracker.h"
 #include "ui/broadcast_banner.h"
 #include "ui/connection_sidebar.h"
 #include "ui/connection_wizard.h"
@@ -693,10 +694,12 @@ auto main(int argc, char **argv) -> int {
         return out;
     }();
 
-    // WS.01 多标签真值源 + 闭包栈（WS.10 撤销用）：两份都**按窗一份**（稿 §2），本批装配层仍按别名
-    // 吃第一扇窗。`next_tab_id` 刻意**不在**这里——它是进程级一支（稿 §0 的 F10），两扇窗共用才不撞号。
+    // WS.01 多标签真值源 + 闭包栈（WS.10 撤销用）：两份都**按窗一份**（稿 §2）。闭包栈那枚别名在批 3-C
+    // 之后没有读者了——撤销重开改按 tracker 解析落点窗、直接读 `window.closed_tab_stack`，留着别名就是
+    // 留第二处真值源（同 `root_column` 那枚别名的处理），故删除。`tab_strip` 这枚仍有读者（横幅刷新那
+    // 一处按窗读的是主窗那一条，属批 4 的逐窗横幅账目）。`next_tab_id` 刻意**不在**这里——它是进程级
+    // 一支（稿 §0 的 F10），两扇窗共用才不撞号。
     borealis::ui::TabStrip &tab_strip = first_window.tab_strip;
-    borealis::ui::ClosedTabStack &closed_tab_stack = first_window.closed_tab_stack;
 
     // 标识只增不复用（与 PaneTree 的容器标识同一条理由，裁决 7.42⑩）：新建与撤销重开**共用**这一支
     // 计数器，否则「关一个再重开」造出的新身份会撞进仍存活的标签里，`add`/`insert_at` 的重复即静默失败。
@@ -751,6 +754,11 @@ auto main(int argc, char **argv) -> int {
     // 那一格，就是替用户切了窗。此刻还没有第二扇窗的调用点，但它的形态已经只能是「哪个窗的横幅
     // 自己那一格的焦点」，故形参从缺省改成窗。
     std::function<void(WorkspaceWindow &)> restore_window_keyboard_focus;
+    // 派发到哪一扇窗的**上报腿**（`SPEC.FEAT.WS.03` 稿 D7）：三处上报点（视口按键与指针 Press／
+    // 标签条 Press／横幅 Press）都只调这一支，真正的记录器 `ActiveWindowTracker` 要等宿主登记之后
+    // 才取得到主窗号，故与 `open_new_window_request` 同形态——先声明、按引用捕、赋值发生在建钩之前，
+    // 点击那一刻读到的永远是最新那一份。
+    std::function<void(WorkspaceWindow &)> report_dispatch;
 
     // 横幅的造法（按窗一份，稿 §2：它挂在每扇窗自己的根 Column 上），而组本体仍是应用级那一份
     //（裁决 7.121）⇒ `exit_all` 清的是全局组，这一点在批 4「每窗横幅内容只列本窗成员」里保持不变。
@@ -768,6 +776,12 @@ auto main(int argc, char **argv) -> int {
                     if (restore_window_keyboard_focus) {
                         restore_window_keyboard_focus(window);
                     }
+                }
+            },
+            // 稿 D7 的第三处上报点：点过 B 窗的横幅，下一条全局快捷键就该落 B 窗。
+            .note_press = [&window, &report_dispatch]() -> void {
+                if (report_dispatch) {
+                    report_dispatch(window);
                 }
             }});
     };
@@ -942,7 +956,9 @@ auto main(int argc, char **argv) -> int {
     // 于是按钮点击与 `Ctrl+Shift+R` 走的是同一次换会话。声明在前是必需的——`wire_view` 定义得比它早，
     // 若把 `restart_current_tab` 直接闭包进 `wire_view` 就取不到；捕获**引用**并在实际点击时读它，
     // 首标签那一只视口因此结构上不可能拿到一个空的钩子。
-    std::function<void()> restart_current_tab;
+    // 形参是**落点窗**（`SPEC.FEAT.WS.03` 稿 D7）：按钮那一路知道自己长在哪个视口里（`wire_view` 的形参），
+    // 命令那一路没有派发来源、只能问 tracker。两条入口差的只是这一枚来源，动作本体仍是同一份闭包。
+    std::function<void(WorkspaceWindow &)> restart_current_tab;
 
     // 会话日志的两条视口钩子（`SPEC.FEAT.CONN.11`，裁决 7.116 的批 2）：与上面那支同一条理由——
     // 真正的动作在装配层后面那一份闭包里，声明在前只为了让 `wire_view` 能按**引用**捕获，
@@ -1466,6 +1482,12 @@ auto main(int argc, char **argv) -> int {
                 // 新标签创建后重建根节点子节点以包含新工作区
                 rebuild_root_children(window, tab_workspaces);
             },
+            // 稿 D7 的第二处上报点：栏带上的任何一次 Press 都算碰过这一扇窗（含点在空白处与「＋」）。
+            .note_press = [&window, &report_dispatch]() -> void {
+                if (report_dispatch) {
+                    report_dispatch(window);
+                }
+            },
         });
         // 标签真值源有任何一次**实际转移**就把标签栏标脏（裁决 **7.91**④）。不装这一钩子，三枚角标与
         // 显示名都落不了屏：`TabBarWidget` 的输入全在 `on_layout` 里经 hooks 现取，而框架的布局缓存在
@@ -1528,10 +1550,38 @@ auto main(int argc, char **argv) -> int {
         return target != nullptr ? target->focus() : app.focus();
     };
 
+    // 「命令该落哪一扇窗」的记录器（`SPEC.FEAT.WS.03` 稿 D7）：框架既不给活动窗查询，也不把派发来源
+    // 带进快捷键闭包（稿 §0 的 F4／F5、稿 §3 的 G42），故本仓自持这一枚最近记录器，落点由**事实**决定。
+    borealis::ui::ActiveWindowTracker active_window_tracker{first_window.id};
+    report_dispatch = [&active_window_tracker](WorkspaceWindow &window) -> void {
+        active_window_tracker.report(window.id);
+    };
+    // 号 → 本仓那份窗：既查容器也查宿主。宿主取不到即这扇窗已经不在（号还在容器里而宿主已散是关窗
+    // 那一棒的账目，批 4），此时按**空落点**处理而不是猜「最后一扇活着的窗」——命令宁可不动，也不要把
+    // 用户没碰过的那一扇改得看得见。
+    auto window_of = [&app, &workspace_windows](au::WindowId id) -> WorkspaceWindow * {
+        if (id == au::AURORA_INVALID_WINDOW_ID || app.window_host(id) == nullptr) {
+            return nullptr;
+        }
+        for (const std::unique_ptr<WorkspaceWindow> &candidate : workspace_windows) {
+            if (candidate->id == id) {
+                return candidate.get();
+            }
+        }
+        return nullptr;
+    };
+    // 五类闭包（`search.open`／`session.restart`／`serial.set_baud`／`workspace.toggle_fullscreen`／
+    // `tab.undo_close`）的落点：tracker 无记录时回的是**主窗号**（构造期那枚兜底），故正常路径恒有一扇窗；
+    // 只有主窗自己也没了才回空值，调用方按「无事发生」处理。
+    auto target_window = [&active_window_tracker, &window_of]() -> WorkspaceWindow * {
+        return window_of(active_window_tracker.active());
+    };
+
     // 视口的两条浮层依赖此刻才取得到，先给已存在的全部视图（首标签那一只）补挂，再交给
     // `create_new_tab` 与撤销重开在创建那一刻调用——两条建视图路径共用同一处接线，结构上不可能分叉。
     wire_view = [&window_focus, &app, &restart_current_tab, &logging_state_probe, &logging_toggle_action,
-                 &link_hosts, &production_presentation](borealis::ui::TerminalView &view,
+                 &link_hosts, &production_presentation,
+                 &report_dispatch](borealis::ui::TerminalView &view,
                                                         WorkspaceWindow &window) -> void {
         view.set_overlay_host(*window.overlay_host);
         view.set_search_dependencies(app.shortcuts(), window_focus(window));
@@ -1540,11 +1590,21 @@ auto main(int argc, char **argv) -> int {
         // 以及稿 §0 的 F4 那条「靠一处装钩而不是靠人记得」的纪律）。
         view.set_trusted_link_hosts(link_hosts);
         view.set_presentation(production_presentation);
+        // 稿 D7 的第一处上报点（视口）：键入与点击都报，报的是「这一扇被碰过」这一事实。捕的是窗
+        // 而不是号——`window.id` 在开窗腿里是**先建标签后登记**吗？不是（先登记后建标签），但按引用
+        // 捕窗、点击那一刻现读 `window.id`，两扇窗的形态就完全一致，不依赖任何时序假设。
+        view.set_dispatch_observer([&report_dispatch, &window]() -> void {
+            if (report_dispatch) {
+                report_dispatch(window);
+            }
+        });
         // 视口只持一份可调用体；真正的重启在装配层实现（见下方 `restart_current_tab` 的赋值处）。
         // 按引用捕获那支 `std::function`：赋值发生在 `wire_view` 之后、点击之前，钩子里读到的永远是最新那一份。
-        view.set_restart_hook([&restart_current_tab]() -> void {
+        // 形参是**本视口所属的窗**（稿 D7）：dead-session 浮层那枚「重启」按钮在 B 窗被点，就该重开
+        // B 窗当前标签的会话，而不是主窗那一张——命令面板入口没有派发来源，那条走 tracker。
+        view.set_restart_hook([&restart_current_tab, &window]() -> void {
             if (restart_current_tab) {
-                restart_current_tab();
+                restart_current_tab(window);
             }
         });
         // 会话日志的第三条目走同一条纪律（`SPEC.FEAT.CONN.11`）：视口不问配置也不碰文件，
@@ -2550,9 +2610,16 @@ auto main(int argc, char **argv) -> int {
     open_search.id = "search.open";
     open_search.title = borealis::ui::settings_label("search.action.open");
     open_search.category = "terminal";
-    open_search.action = [&tab_workspaces, &current_tab_id]() -> void {
-        if (current_tab_id.has_value()) {
-            auto it = tab_workspaces.find(current_tab_id.value());
+    open_search.action = [&tab_workspaces, &target_window, &current_tab_id]() -> void {
+        // 落点按窗解析（`SPEC.FEAT.WS.03` 稿 D7）：这一条经框架快捷键层进来，闭包拿不到派发来源，
+        // 于是「哪一扇窗的当前标签」只能问 tracker——最近被碰过的那一扇。取不到窗只剩一种形态
+        //（主窗自己已散），此时退回装配层那枚主窗别名而不是什么都不做。窗内的格仍取 1 号视图：那是
+        // 既有形态，逐格搜索属 `SPEC.FEAT.INTERACT.04` 的账，本条不动它。
+        WorkspaceWindow *const resolved = target_window();
+        const std::optional<borealis::ui::TabId> target =
+            resolved == nullptr ? current_tab_id : resolved->current_tab_id;
+        if (target.has_value()) {
+            auto it = tab_workspaces.find(target.value());
             if (it != tab_workspaces.end()) {
                 // 取第一个 pane 的视图来打开搜索
                 auto *first_view = it->second.workspace->view_of(1);
@@ -2616,23 +2683,40 @@ auto main(int argc, char **argv) -> int {
     toggle_fullscreen.id = "workspace.toggle_fullscreen";
     toggle_fullscreen.title = borealis::ui::settings_label("workspace.action.toggle_fullscreen");
     toggle_fullscreen.category = "workspace";
-    toggle_fullscreen.action = [&app]() -> void {
-        auto *win = app.window();
-        if (!win) return;
-        auto mode = win->window_mode();
-        win->set_fullscreen(mode != au::WindowMode::FullScreen);
+    // 全屏落点按窗解析（稿 D7）：`app.window()` 恒是主宿主那一只（稿 §0 的 F4，`itest_workspace_window`
+    // 第四条已钉），在 B 窗按 `F11` 却把 A 窗拉全屏就是答非所问。取不到窗（主窗已散）仍回应用级那一只，
+    // 形态与上面 `search.open` 的兜底同一条。
+    toggle_fullscreen.action = [&app, &target_window, &first_window]() -> void {
+        WorkspaceWindow *const resolved = target_window();
+        au::WindowHost *const host_of_target =
+            resolved == nullptr ? app.window_host(first_window.id) : app.window_host(resolved->id);
+        au::Window *const target = host_of_target == nullptr ? app.window() : host_of_target->window();
+        if (target == nullptr) {
+            return;
+        }
+        const auto mode = target->window_mode();
+        target->set_fullscreen(mode != au::WindowMode::FullScreen);
     };
     toggle_fullscreen.default_binding = au::KeyCombo{au::KeyCode::F11};
     toggle_fullscreen.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(toggle_fullscreen));
 
     // 撤销关闭标签（`SPEC.FEAT.WS.10`）：从闭包栈弹出最近关闭的标签规格，重建会话并插入到原位置。
+    // 落点窗按稿 D7 解析（批 3-C）：闭包栈本就是**每窗一份**（`perform_close` 写的是关它那一窗的栈，
+    // 批 1-B 就定了归属），此前只有这一处读取还钉在主窗别名上——那会让 B 窗关掉的标签被 A 窗的
+    // `Ctrl+Shift+T` 捞走，而捞回去的那一张挂在 A 窗的标签栏里。取不到窗（主窗已散）仍按主窗处理，
+    // 与上面 `search.open` 同一条兜底。
     au::Command undo_close_tab;
     undo_close_tab.id = "tab.undo_close";
     undo_close_tab.title = borealis::ui::settings_label("tab.action.undo_close");
     undo_close_tab.category = "workspace";
-    undo_close_tab.action = [&]() -> void {
-        auto spec_opt = closed_tab_stack.pop();
+    undo_close_tab.action = [&target_window, &first_window, &settings, &make_local_session,
+                             &build_pane_view, &next_tab_id, &wire_workspace_hooks,
+                             &make_local_pane_factory, &tab_workspaces, &tab_kind,
+                             &attach_broadcast_sink, &rebuild_root_children]() -> void {
+        WorkspaceWindow *const resolved = target_window();
+        WorkspaceWindow &window = resolved == nullptr ? first_window : *resolved;
+        auto spec_opt = window.closed_tab_stack.pop();
         if (!spec_opt.has_value()) {
             AURORA_LOG_INFO("main", "undo close tab: stack is empty");
             return;
@@ -2646,9 +2730,9 @@ auto main(int argc, char **argv) -> int {
         const std::shared_ptr<borealis::session::Session> session = make_local_session(conn_spec);
         // 会话起用、视口与两条闸门都在 `build_pane_view` 一处：撤销重开曾是「八处构造点」里最后一条
         // 自己写一遍的旁路（漏接闸门就是一格看着正常、实际永远 deny 的标签），同源之后结构上不可能漏。
-        // TODO(SPEC.FEAT.WS.03): 撤销重开要回到**关它的那扇窗**（稿 §7）——闭包栈此刻仍是主窗那一份，
-        // 逐窗栈与落点窗随批 4 的拆窗账目一起改，本棒不猜「最后一扇活着的窗」那种缺省。
-        const auto view = build_pane_view(first_window, session, borealis::term::LineEnding::Lf);
+        // 视口的浮层宿主与唤醒腿按**落点窗**取（稿 §6 批 2 的 `wire_view` 形参），故 B 窗重开的那一格
+        // 弹浮层不会盖到 A 窗脸上。
+        const auto view = build_pane_view(window, session, borealis::term::LineEnding::Lf);
 
         // 建工作区分屏容器（单 pane 起步）
         // 生成新标签 ID：走共享的那支只增计数器，不复用已发过的身份。声明提前到 hooks 之前，
@@ -2662,7 +2746,7 @@ auto main(int argc, char **argv) -> int {
         wire_workspace_hooks(id, ws_hooks);
 
         TabWorkspace tab;
-        tab.owner = &first_window;  // 同上面那条 TODO：落点窗随批 4 的逐窗闭包栈改。
+        tab.owner = &window;
         tab.sessions_by_pane[1U] = session;
         tab.make_session = make_local_pane_factory(id);
         tab.workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
@@ -2674,7 +2758,7 @@ auto main(int argc, char **argv) -> int {
         const auto *bytes = reinterpret_cast<const std::byte *>(spec.name.data());
         decoder.feed(std::span<const std::byte>(bytes, spec.name.size()), collector);
         decoder.finish(collector);
-        const bool inserted = tab_strip.insert_at(spec.index_in_strip, id, collector.out);
+        const bool inserted = window.tab_strip.insert_at(spec.index_in_strip, id, collector.out);
         if (!inserted) {
             AURORA_LOG_WARN("main", "undo close tab: insert_at failed at index ", spec.index_in_strip);
             return;  // `tab` 随之消散：成员次序保证视口先散、会话后散（稿 §5）
@@ -2685,11 +2769,11 @@ auto main(int argc, char **argv) -> int {
         tab_kind[id] = TabKind::Local;
         // 新格的成员表从空开始（闭包栈只存标签规格，不存广播资格）；端点仍按「三处构造点同源」登记。
         attach_broadcast_sink(id);
-        current_tab_id = id;
-        
+        window.current_tab_id = id;
+
         // 选中恢复的标签并重建根节点子节点
-        tab_strip.select(id);
-        rebuild_root_children(first_window, tab_workspaces);
+        window.tab_strip.select(id);
+        rebuild_root_children(window, tab_workspaces);
         
         AURORA_LOG_INFO("main", "restored closed tab: '", spec.name, "' at index ", spec.index_in_strip);
     };
@@ -2702,12 +2786,16 @@ auto main(int argc, char **argv) -> int {
     // 的会话指针在构造那一刻定死），差别只在两处——闭包栈不入不取，`tab_strip` 不动顺序也不动名。
     // 于是「同一格标签、同一份回看内容被同一格重新起用」这条语义是结构性成立的，而不是靠用户
     // 自己去辨别两格同名标签。
-    restart_current_tab = [&]() -> void {
-        if (!current_tab_id.has_value()) {
+    // 落点窗由调用方给（`SPEC.FEAT.WS.03` 稿 D7）：浮层按钮那一路知道自己所在视口的窗（`wire_view`
+    // 捕的形参），命令面板与 `Ctrl+Shift+R` 那一路问 tracker。两路只差这一枚来源，动作本体同源。
+    restart_current_tab = [&](WorkspaceWindow &target) -> void {
+        // 「哪一扇窗的当前标签」按落点窗现取（批 3-C）：主窗那枚别名在此不再被读，B 窗里重启
+        // 只会换掉 B 窗当前标签的会话。
+        if (!target.current_tab_id.has_value()) {
             AURORA_LOG_INFO("main", "restart: no current tab");
             return;
         }
-        const borealis::ui::TabId id = *current_tab_id;
+        const borealis::ui::TabId id = *target.current_tab_id;
         // 串口分流（批 3）：这一格在 `serial_by_tab` 里有身份就是串口标签，「重启」＝按档案重开
         // 设备并重新置参（裁决 7.110 D7①：不改口称「续传」）。少了这一支，串口标签按重启会被
         // 静默换成本地 shell——判据与分流形态都照 SSH 那条（裁决 7.99 D6）。
@@ -2760,15 +2848,19 @@ auto main(int argc, char **argv) -> int {
     };
 
     // `session.restart` 命令（`SPEC.FEAT.WS.05`）：与浮层按钮同源，判据是「同一份闭包、两处入口」。
-    // 快捷键 `Ctrl+Shift+R`（先前拍板建议档）——不与本仓分屏保留位十二键中的任何一条同形（`workspace_key_bindings`）。
+    // 快捷键 `Ctrl+Shift+R`（先前拍板建议档）——不与本仓分屏保留位十五条中的任何一条同形（`workspace_key_bindings`）。
+    // 命令这一路没有派发来源，落点窗问 tracker（稿 D7）；取不到窗（主窗已散）按主窗处理，与上面
+    // `search.open` 同一条兜底。
     au::Command restart_session;
     restart_session.id = "session.restart";
     restart_session.title = borealis::ui::settings_label("session.restart.title");
     restart_session.category = "workspace";
-    restart_session.action = [&restart_current_tab]() -> void {
-        if (restart_current_tab) {
-            restart_current_tab();
+    restart_session.action = [&restart_current_tab, &target_window, &first_window]() -> void {
+        if (!restart_current_tab) {
+            return;
         }
+        WorkspaceWindow *const resolved = target_window();
+        restart_current_tab(resolved == nullptr ? first_window : *resolved);
     };
     restart_session.default_binding =
         au::KeyCombo{au::ModifierKey::Control | au::ModifierKey::Shift, au::KeyCode::R};
@@ -2865,14 +2957,20 @@ auto main(int argc, char **argv) -> int {
     set_serial_baud.id = "serial.set_baud";
     set_serial_baud.title = borealis::ui::settings_label("serial.set_baud.title");
     set_serial_baud.category = "terminal";
+    // 落点窗按 tracker 解析（稿 D7）：分流判据读的仍是「落点窗的当前标签」，只是那一扇由最近被碰过的
+    // 窗决定。注意**浮层落点**此刻仍挂主窗宿主（`show_serial_baud_frame` 捕的是 app 级 `host`），改它
+    // 属稿 D6「面板搬窗」＝批 4 那一棒，见 §16 的在册欠项。
     set_serial_baud.action =
-        [&serial_by_tab, &current_tab_id, &show_serial_baud_picker,
+        [&serial_by_tab, &target_window, &current_tab_id, &show_serial_baud_picker,
          &show_serial_baud_notice]() -> void {
-        if (!current_tab_id.has_value()) {
+        WorkspaceWindow *const resolved = target_window();
+        const std::optional<borealis::ui::TabId> target =
+            resolved == nullptr ? current_tab_id : resolved->current_tab_id;
+        if (!target.has_value()) {
             show_serial_baud_notice("serial.set_baud.not_serial", {});
             return;
         }
-        const auto bound = serial_by_tab.find(current_tab_id.value());
+        const auto bound = serial_by_tab.find(target.value());
         if (bound == serial_by_tab.end() || bound->second.connection == nullptr) {
             show_serial_baud_notice("serial.set_baud.not_serial", {});
             return;

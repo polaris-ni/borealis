@@ -264,6 +264,10 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
 
 auto TabBarWidget::on_pointer_event(au::MouseEvent &e) -> void {
     if (e.action == au::MouseAction::Press) {
+        // 事实上报先于命中测试（稿 D7）：命中栏位、"＋"还是空白处都算「本窗被碰过一下」。
+        if (hooks_.note_press) {
+            hooks_.note_press();
+        }
         const auto hit = hit_test_at(e.local_position.x);
         if (hit.tab_id.has_value()) {
             if (hit.on_close_button) {

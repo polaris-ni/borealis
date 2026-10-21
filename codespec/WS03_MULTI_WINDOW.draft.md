@@ -87,7 +87,7 @@
 3. **批 3（新窗入口与命令落点）**：
    - **3-A（已落，2026-10-21）**：`ui::ActiveWindowTracker` 纯逻辑件 + `utest_active_window_tracker`（五例、四则变异见 §14）。生产侧一行未动，件是「已测而未用」，同批 1-A 那一档次序。
    - **3-B（已落，2026-10-21）**：把主窗的「标签栏 hooks + 关闭确认 + 布局重建」收成按窗可复用的一段，`open_workspace_window()` 走到全形；命令 `workspace.new_window` + `Ctrl+Shift+N`（第十五条保留键，`utest_workspace_keys` 的认领集 14→15）+ 面板一条。形态、承重次序与四则变异见 §15。
-   - **3-C（待落）**：三处上报点接线（视口按键／标签条 Press／横幅 Press）＋ `search.open`／`session.restart`／`serial.set_baud`／`workspace.toggle_fullscreen`／`tab.undo_close` 五类闭包按 tracker 解析目标窗。
+   - **3-C（已落，2026-10-21）**：三处上报点接线（视口＝按键与指针按下两条腿／标签条 Press／横幅 Press）＋ `search.open`／`session.restart`／`serial.set_baud`／`workspace.toggle_fullscreen`／`tab.undo_close` 五类闭包按 tracker 解析目标窗。形态、闭包接线次序、统一兜底与四则变异见 §16。
 4. **批 4（拆窗账目）**：关窗撤该窗名下全部标签（同 `perform_close` 一条链）、每窗横幅与每窗 `ClosedTabStack`、`ExitPolicy` 缺省确认与退出序遍历全部窗、面板「搬窗」而非「各一份」（D6）。
 5. **批 5（几何分别记忆）**：`persist_id` 分配 + `preferences::Preferences` 落配置目录 + 两处 `flush()` + 「恢复后首帧只下发一次」用例。
 6. **批 6（CLI）**：`StartupAction::NewWindow` + 编码/解码 + `parse_startup_args` 旗标语义 + `--help` 文案 + 撤 2898-2901 那条拒绝 + `utest_cli_startup`／`utest_cli_handoff`／`itest_posix_instance_channel` 扩案。
@@ -98,6 +98,10 @@
 - `utest_active_window_tracker`（新）：多窗上报次序、失配回主窗、窗关闭后该号不再被返回、并发上报只留最后一次。**已落（批 3-A，五例，台账与四则变异见 §14）**；其中「窗关闭后该号不再被返回」实现为撤掉当前落点即**回主窗**而不是回上一个上报过的窗（本件不做栈），该档形态选择与理由见 §14②。
 - `itest_workspace_window`（新）：两扇窗的标签互不串（`current_tab_id` 各一份）、横幅只列本窗成员、撤销重开回到关它的那扇窗、逐窗标题差分写回、关一扇不退出而关最后一扇走同一条退出序、窗拆后 `tab_workspaces`/四张连接表/广播成员三处账目为空。**批 1-A 已落该套件的前五案**（harness 地基＋§5 四条不变量的窗侧形态，台账见 §11）；上面列的其余判据都要求生产侧先有第二扇窗，随批 2–批 4 扩案，本批不冒充。
 - `utest_workspace_keys`：认领集 14→15 条。**已落（批 3-B）**，同时新增 `itest_workspace_layout.ctrl_shift_n_is_claimed_and_only_handed_to_the_assembly_layer`——认领与「只转交、不自己开窗」这一接缝是唯一有自动化证人的部分，`main.cpp` 里真正开窗那一段仍无证人（§15）。
+- 三处上报点（稿 D7，**已落（批 3-C）**）各有证人，`main.cpp` 那一段接线本身无证人（裁决 7.83）：
+  - `itest_workspace_layout.the_viewport_reports_each_key_and_mouse_press_exactly_once`：视口的两条腿（键＝按下、鼠＝按下）各报一次，被工作区层认领的键同样报（上报先于前置过滤），抬起与移动不报，转发腿不因上报而改变。
+  - `itest_workspace_window.a_tab_bar_press_moves_the_active_window_record`：经**该窗宿主**派发一次栏带按下即把本窗号交进 `ui::ActiveWindowTracker`，且落点取的是**空白栏带**——上报不挂在命中分支里（§16③ 记这条的第一版落点是栏位、因此对 M3 等价）。
+  - `itest_workspace_broadcast.the_banner_reports_the_press_that_cleared_the_group`：横幅那一次按下先于清组判定上报（上报时组仍满），抬起与失活后的第二次点击不重复报。
 - `utest_cli_startup`／`utest_cli_handoff`：`--new-window` 的旗标解析与 `NewWindow` 的编解码往返、未知 action 仍整帧拒。
 - 变异候选（每条一个判据，注入后按 §4.4 第 22 条点名转红）：新窗继承发起窗目录（应为配置目录）、`frame_wake` 全部捕主窗 surface、`current_tab_id` 回全局一份、横幅恒列全组成员、`ClosedTabStack` 回全局、关窗不撤标签账、`persist_id` 恒空、`--new-window` 仍走拒绝支、tracker 无记录时不回主窗。
 
@@ -108,7 +112,7 @@
 ## 9 真机走查清单（未走完不得称「可用」）
 
 1. 两扇窗各自最大化／还原后网格是否铺满（DPI 那条老账按窗各验一次，`G17`/`G21` 的历史读数只覆盖单窗）。
-2. 键入落活动窗：A 窗聚焦后 `Ctrl+Shift+N`、`Ctrl+Shift+D`、`Ctrl+F`、`Ctrl+Shift+R` 是否各打各的（tracker 的 OS 活动态偏差档）。
+2. 键入落活动窗：A 窗聚焦后 `Ctrl+Shift+N`、`Ctrl+Shift+D`、`Ctrl+F`、`Ctrl+Shift+R` 是否各打各的（tracker 的 OS 活动态偏差档）。两档已知会答非所问、须取真机读数：① 新窗落成后**第一件事**就是全局快捷键／面板命令（开窗腿不上报，§16 末段）；② Alt+Tab 到 B 窗后**第一下**拖把手或点缩放角标（工作区层不上报，同段）。
 3. 关一扇窗后另一扇不受扰动、广播组与横幅跟上；关最后一扇退出时无残留进程（两腿）。
 4. 几何记忆：挪位、改大小、最大化三态各重启一次，显示器拔掉时的回退档。
 5. `--new-window` 的转交与 `--profile`/`--cwd` 组合在真机上的落点。
@@ -217,3 +221,83 @@
 **担保档位（如实记）**：`main.cpp` 不进 runner ⇒ ⑴⑵⑸⑹ 四段**没有自动化证人**（裁决 7.83、§10 第一条），只有源码审查；本批唯一的证人是「键被认领 + 恰转交一次 + 不动本工作区拓扑」这一接缝（M3/M4 只打得中它，正说明装配层那半区在自动化之外）。§7 变异表里与装配层同名的那几则（`frame_wake` 全捕主窗 surface、`current_tab_id` 回全局、`ClosedTabStack` 回全局）此刻注入**仍不转红**，要等批 4 的 `itest_workspace_window` 扩案成为判据；本批不冒充读数。
 
 **边界**：生产侧第一次能开出第二扇窗，但两扇窗并存的四类行为分别落在后续笔且全部未验——键入落活动窗与五类命令闭包按窗解析（批 3-C）、关窗撤账与逐窗横幅／撤销栈（批 4，`main.cpp` 三处 `TODO(SPEC.FEAT.WS.03)` 在册：唤醒腿随窗撤账、面板搬窗 D6、撤销回到关它的窗）、几何各自记忆（批 5）、CLI `--new-window`（批 6）。§9 七条真机走查照欠，本批不称「可用」。
+
+## 16 批 3-C 台账（三处上报点接线与命令落点按窗解析，2026-10-21）
+
+**落到的形状**（`src/main.cpp` 134 增／36 删；控件侧三枚新接缝各一对头／源，共六件文件小改；三套测试扩案）：
+
+⑴ **上报点的时机口径：一律先于本层的判定**。三处各一枚无参闭包，装配层把它们折成同一个「本窗号」：
+- `TerminalView::set_dispatch_observer`（新接缝）在 `on_key_event` 的 Down 守卫之后、`to_key_press` 与
+  键盘前置过滤**之前**调一次，在 `on_pointer_event` 的第一行按 `Press` 调一次。装在视口而不是
+  `WorkspaceView` 是因为后者收不到 pane 内的点击（命中链里根本没有本层，稿 §6 批 3 的那条实测事实），
+  而放在前置过滤之前才让「被十五条认领」与「转发进会话」两条腿都算碰过——第十五键那一击既不转发也
+  不分格，上报若挂在转发分支之后就永远不响。
+- `TabBarHooks::note_press` 在 `on_pointer_event` 的 `Press` 分支里先于 `hit_test_at`，故命中栏位、"＋"
+  还是空白栏带都算一次触碰。
+- `BroadcastBannerHooks::note_press` 先于「是否在广播态」的判定：事实与动作分成两件事，清组那条仍受状态
+  限制，二者不互相担保。
+
+⑵ **装配层的接线次序承重**：`std::function<void(WorkspaceWindow &)> report_dispatch;` 先声明（tracker
+要等宿主登记才有主窗号），`make_tab_bar`／`make_broadcast_banner`／`wire_view` 三处工厂**按引用**捕它，
+`active_window_tracker{first_window.id}` 与 `report_dispatch = …` 的赋值排在 `window_focus` 之后、
+`wire_view` 装钩之前——点击那一刻读到的永远是最新那一份（与 §15⑸ 的开窗腿同一形态）。`wire_view` 同时
+补 `set_dispatch_observer` 与 `set_restart_hook`（后者由「隐含主窗」改成捕本窗，dead-session 浮层那枚
+「重启」按钮从此知道自己长在哪个视口里）。
+
+⑶ **五类闭包按窗解析，兜底统一**：`search.open`／`session.restart`／`serial.set_baud`／
+`workspace.toggle_fullscreen`／`tab.undo_close` 都写成 `target_window()` 取窗，取不到（只剩「主窗自己
+已散」这一种形态）即回主窗那枚别名／主窗对象，而不是「什么都不做」。刻意**不**改成「回退到最后一扇活着
+的窗」：那等于替用户挑一扇他没碰过的窗。`window_of` 既查 `workspace_windows` 也查
+`app.window_host(id)`——号在容器里而宿主已散是关窗那一棒（批 4）的账目，此刻按空落点处理。
+
+⑷ **撤销重开回到关它的那扇窗**（§9 走查清单第 3 条的前半、原 `TODO(SPEC.FEAT.WS.03)` 之一闭合）：
+`tab.undo_close` 整体改读 `window.closed_tab_stack` / `window.tab_strip` / `window.current_tab_id`，
+新格属主写 `tab.owner = &window`，入根走 `rebuild_root_children(window, …)`。随之 `closed_tab_stack`
+那枚主窗别名没有读者，删（留着就是第二处真值源，同 `root_column` 的处理）。
+
+⑸ **三处证人**（`main.cpp` 不进 runner，证人只能落在控件与 harness 侧，裁决 7.83）：
+`itest_workspace_layout.the_viewport_reports_each_key_and_mouse_press_exactly_once`、
+`itest_workspace_window.a_tab_bar_press_moves_the_active_window_record`、
+`itest_workspace_broadcast.the_banner_reports_the_press_that_cleared_the_group`。其中第二条**第一版
+落点取的是栏位正中，对 M3 是等价变异**（点中栏位时两种形态都报）；改成空白栏带后才有证人——这条
+教训记在这里：上报点的判据要把落点选在「没有动作」的那一处，否则「挂在命中分支里」这种退化实现看不出来。
+横幅那条另有一枚顺序证人：上报闭包里顺手抄下当时的组成员数，挂在 `exit_all` 之后就成 0。
+
+**读数**：`cmake --build --preset linux` 通过且无 error/warning；`ctest --preset linux -E etest_` **97/97**
+（9.71 s）、runner 全跑 **1221/1221**（21.58 s）。门迁移形态：**97 项／1218 案 → 97 项／1221 案
+（+新案 3，−历史排除 0）**，套件数不变（本批未新增 TU），既有 1218 案零改动照绿——五类闭包的兜底链写
+成全窗同形，正是「单窗行为逐字不变」这条读数的来路。三处文档的同口径计数照例归 §6 批 7 一次性改。
+
+**变异自证**（§4.4 第 22 条；每条只注一处、跑完即还原，还原后复跑两道门取上面的读数）：
+
+| 注入 | 指名红案 |
+|---|---|
+| M1 视口把上报挪到键盘前置过滤**之后**（只在转发腿报） | 1 红：`itest_workspace_layout.the_viewport_reports_each_key_and_mouse_press_exactly_once`（栽在认领腿那一段：`Ctrl+Alt+→` 期望 1 报、实为 0） |
+| M2 视口 `on_pointer_event` 不再上报（只留按键那一路） | 与 M1 **同一案名**——差别只在失败断言落在指针段。两注红案名单相同故不可靠案名区分注入形态，如实记在此（同 §15 M1/M2 的那一档） |
+| M3 `TabBarWidget` 把上报挪进命中栏位那一支 | 1 红：`itest_workspace_window.a_tab_bar_press_moves_the_active_window_record`；同套件其余 5 案全绿 |
+| M4 横幅把上报挪到 `exit_all` 之后 | 1 红：`itest_workspace_broadcast.the_banner_reports_the_press_that_cleared_the_group`（顺序证人取到 0）；同套件其余 6 案全绿 |
+
+无空转档（四则各有 1 红）。**未做的两则**（`target_window()` 恒回主窗、`undo_close` 仍读主窗别名）与
+§7 变异表里那几条装配层同名项一样**注入仍不转红**——`main.cpp` 在自动化之外，本批不冒充读数。
+
+**在册欠项（如实记，批 4 起接）**：① 仍读主窗别名的六处：`refresh_broadcast_ui` 里的 `tab_strip`
+（逐窗横幅账目）、`hooks.broadcast`、串口建标签写 `serial_by_tab`、SFTP 三条 hooks、
+`current_tab_session`＋`logging_toggle_action`、CLI `SplitPane` 那条腿（属批 6）；② `Ctrl+F` 在窗内仍取
+1 号视图（逐格搜索属 `SPEC.FEAT.INTERACT.04`）；③ 串口波特率那只框的**浮层落点**仍挂主窗宿主（稿 D6
+「面板搬窗」）；④ `ActiveWindowTracker::forget` 暂无调用方（关窗撤账属批 4）；⑤ OS 激活态与派发事实
+可能不同（§9 第 2 条），无头面不可证。
+
+**落点仍会答非所问的两档（本批刻意不补，理由记在此）**：
+- **缩放角标与把手那一击不报**：`WorkspaceView::on_hit_test_chain` 把这两处认领在本层（pane 内的一击
+  才交给视口），而本层没有上报点——于是「Alt+Tab 到 B 窗、第一下拖它的把手、再按 `Ctrl+F`」仍落 A 窗。
+  稿 D7 只点名视口／标签条／横幅三处，补第四处（工作区层）要改 `WorkspaceView::Hooks` 与
+  `wire_workspace_hooks` 的形参表（此刻它不认窗），属形态变更而不是接线，留给批 4 一并改；
+- **开窗腿落成那一刻不报**：`Ctrl+Shift+N` 之后 tracker 仍停在发起窗（那一击是经发起窗的视口前置过滤
+  进来的，它本身就是最近一次派发事实）。普通键入会立刻自愈——第一下打进新窗的视口就报了——只剩「新窗
+  里第一件事就是走全局快捷键／面板命令」这一窄档。不在本批补的理由是**契约**：稿 D7 与本件头注都写着
+  「只有真的收到过一次按键或指针 Press 才上报」，让装配层自己写一次落点就是把这一枚记录器从「事实」
+  改成「事实＋推断」，要改得先改口径（须人裁决或与 OS 激活态那条一并处理）。两条都进了 §9 第 2 条的
+  走查场景，真机读数回来再定。
+
+**边界**：批 3 到此收口（新窗入口＋命令落点）；关窗撤账与逐窗横幅（批 4）、几何各自记忆（批 5）、CLI
+`--new-window`（批 6）、文档回写与三处同口径计数（批 7）均未落。§9 七条真机走查照欠，本批不称「可用」。

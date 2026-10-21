@@ -405,6 +405,10 @@ auto TerminalView::set_grid_size_sink(GridSizeSink sink) -> void { grid_size_sin
 
 auto TerminalView::set_key_pre_filter(KeyPreFilter filter) -> void { key_pre_filter_ = std::move(filter); }
 
+auto TerminalView::set_dispatch_observer(DispatchObserver observer) -> void {
+    dispatch_observer_ = std::move(observer);
+}
+
 auto TerminalView::set_input_mirrors(KeyMirror key, TextMirror text) -> void {
     key_mirror_ = std::move(key);
     text_mirror_ = std::move(text);
@@ -734,6 +738,11 @@ auto TerminalView::on_key_event(aurora::KeyEvent &e) -> void {
     if (e.action != aurora::KeyAction::Down) {
         return;  // 抬起无按键释放语义（kitty 协议属延后观察项），留着让宿主继续处理
     }
+    // 上报先于一切判定：这一笔确实打进了本视口，与它随后被工作区层认领还是发进会话无关
+    //（`SPEC.FEAT.WS.03` 稿 D7 的「事实而非推断」口径）。
+    if (dispatch_observer_) {
+        dispatch_observer_();
+    }
     const auto press = to_key_press(e);
     // 工作区层的键位先于本层判定（裁决 7.47②：不经框架快捷键层，而在焦点 pane 的按键入口前置
     // 过滤）。未认领即照原路编码发会话——裸方向键与 `Ctrl+方向键` 恒归会话（`SPEC.FEAT.INTERACT.01`）。
@@ -774,6 +783,10 @@ auto TerminalView::on_text_input(aurora::TextInputEvent &e) -> void {
 }
 
 auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
+    if (e.action == aurora::MouseAction::Press && dispatch_observer_) {
+        // 与按键同一档的事实上报（稿 D7）：不问按钮、不问落点，命中选区还是菜单都算「这扇窗被碰过」。
+        dispatch_observer_();
+    }
     // 菜单开着时，任何按下都先问宿主：落在菜单外即收下这一击并关菜单，不再让它去推进选区或
     // 触发第二个动作（`OverlayHost::handle_outside_click` 只由调用方在事件入口驱动，框架不代劳）。
     if (e.action == aurora::MouseAction::Press && host_ != nullptr && host_->handle_outside_click(e.position)) {
