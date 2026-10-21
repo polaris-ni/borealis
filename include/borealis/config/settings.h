@@ -52,6 +52,17 @@ enum class LongLinePolicy : std::uint8_t {
     Wrap,     ///< 折成多行计入容量。
 };
 
+/// @brief 界面语言档（`SPEC.FEAT.PREF.05`）。
+///
+/// 只有两档不是省事：需求那句「中文/英文首版双语」的射程就是这两档，而每一档都是整张词条表
+/// 的量（`codespec/PREF05_I18N.draft.md` §7 登记的第三档口径）。落盘名与 i18n 区域标签**同源**，
+/// 映射只由 `config::language_tag()` 提供——词条表与装载侧各列一遍名字就是裁决 7.46② 避的
+/// 第二真值源。
+enum class InterfaceLanguage : std::uint8_t {
+    Zh,  ///< 中文：既成形态，也是缺省档（该稿 D3）。
+    En,  ///< 英文。
+};
+
 /// @brief 粘贴文本里换行符的处理策略（`SPEC.FEAT.INTERACT.03`）。
 ///
 /// 取值与语义的唯一定义在 `term::PasteNewlinePolicy`（发送侧要用它折算计划），配置侧只作别名，
@@ -106,6 +117,12 @@ struct AppearanceSettings {
     AppearanceSettings();
 
     std::string theme{kDefaultThemeName};  ///< 预置主题名；取值见 `config/themes.h`。
+    /// @brief 界面语言（`SPEC.FEAT.PREF.05`）：启动时读定，整进程一种语言（该稿 D2）。
+    ///
+    /// 缺省 `Zh` 让「配置里没有这个键」与本键落地前的行为逐字相同（`SPEC.FEAT.PREF.06` 的
+    /// 零配置可用同一条口径）；取值域 `{zh, en}` 由装载侧 `src/config/store.cpp` 把守，
+    /// 面板与装填侧都不自造回落。
+    InterfaceLanguage language{InterfaceLanguage::Zh};
     ui::PaletteSpec palette{};                          ///< 生效调色板＝主题派生值 + 用户重映射；落盘的是这份最终值。
 
     std::string font_family{ui::kDefaultMonospaceFamily};  ///< 默认字体（裁决 7.3）；与回落族同名，故只有一处定义。

@@ -7,22 +7,30 @@
 
 #include "aurora/i18n/string_table.h"
 
+#include "borealis/config/settings.h"
+
+#include "config/schema_names.h"
+
 namespace borealis::ui {
 namespace {
 
-/// @brief 面板词条所在的区域标签（同时是字符串表的缺省档，见文件头③）。
-constexpr std::string_view kTag = "zh";
+/// @brief 一档词条的容器形态：key → 模板。`std::less<>` 让 `find(string_view)` 不必构造临时串。
+///
+/// 两档共用这一种形态，于是「同一 key 在两档各注册一次」这件事在结构上只有一处写法（`SPEC.FEAT.PREF.05`
+/// 稿 D4：两张表同文件相邻，可并排校对）。
+///
+/// 每一档内**同一条目只许出现一次**：`std::map` 的 initializer-list 走 insert 语义，重复 key 的后一份被
+/// 静默丢弃（该稿 F8 的实测形态），于是「条数」与「key 集合」两类断言对这种错法天然无感，只有逐字验串
+/// 才打得中（该稿 §8 的 m6 即按这条定形）。
+using Tier = std::map<std::string, std::string, std::less<>>;
 
 /// @brief 中文档（`zh`）的 key → 模板。key 一律是落盘点号路径或 `settings.` 前缀的界面文案键。
 ///
 /// CJK-LITERAL: locale-output - 本表整张就是面板的上屏文案，换成英文被测事实即消失（裁决 7.52 的 S11）。
-/// 同一条目**只许出现一次**：本容器是 `std::map`，initializer-list 走 insert 语义，重复 key 的后一份被
-/// 静默丢弃（`SPEC.FEAT.PREF.05` 稿 F8）。
 /// 设置项标签与 `codespec/UI_SETTINGS.draft.md` 的 SVG 行标签逐字对齐；SVG 未画出的行按该稿 §2 表的
 /// 控件列取名。SVG 上被该稿撤销的四格（第五类「高级」、跟随系统浅色、多行粘贴警告、OSC 52 三态）**不在此表**，
 /// 否则面板会画出一个 schema 里没有的标签。
-/// 更名为 `kStringsZh` 是为英文档腾出并列的位置（`SPEC.FEAT.PREF.05`；英文表本体属计划／待建）。
-const std::map<std::string, std::string, std::less<>> kStringsZh{
+const Tier kStringsZh{
     // ---- 连接管理器侧栏（UI_CONNECTIONS.draft.md；词条与 settings.* 同格角色）----
     {"connections.title", "连接"},
     {"connections.action.close", "关闭"},
@@ -256,6 +264,7 @@ const std::map<std::string, std::string, std::less<>> kStringsZh{
     {"settings.badge.customized", "自定义"},
     {"settings.badge.deferred", "延后"},
     {"settings.badge.next_session", "下次会话生效"},
+    {"settings.badge.next_launch", "重启后生效"},
 
     // ---- 组顶说明（S15 的延后档在组级的那一半；措辞须点名「哪个消费方还没开工」）----
     // 三条同一句式：行尾角标说的是这一行，组顶说明说的是这一组，两者不重复也不冲突（B3-a 的同一口径）。
@@ -480,6 +489,9 @@ const std::map<std::string, std::string, std::less<>> kStringsZh{
 
     // ---- 外观域 ----
     {"appearance.theme", "主题"},
+    // 语言档那一行的标签。英文档的同名条目随批 3 的英文本体一起落——本批 `kStringsEn` 还是空表，
+    // 而「新键须两档齐加」那条纪律的结构式证人（判据 ②）也在那一批进（`§4.1` 第 3 条）。
+    {"appearance.language", "界面语言"},
     {"appearance.palette.basic", "16 色重映射"},
     {"appearance.palette.foreground", "默认前景色"},
     {"appearance.palette.background", "默认背景色"},
@@ -637,6 +649,18 @@ const std::map<std::string, std::string, std::less<>> kStringsZh{
     {"sftp.transfer.queued", "排队 {0}"},
 };
 
+/// @brief 英文档（`en`）的 key → 模板：**本批仍是空表**，英文文案本体属 `SPEC.FEAT.PREF.05` 批 3（计划／待建）。
+///
+/// 位置刻意紧跟中文表（该稿 D4），并排校对是这一档存在的唯一理由——466 条 key（批 1 收敛后的 464 条加
+/// 本批两枚）分在两个文件里，
+/// 「两档同 key 集」那条判据就要跨文件聚合。
+///
+/// 空表在这里不是留空壳：装填腿**只装选中的那一档**（该稿 D4 的落地期改形，理由见 `§4.1` 第 2 条），
+/// 于是「选英文档」今天＝表里一条都没有 ⇒ `lookup` 两级全 miss ⇒ 回退 `LocalizedString::text`
+/// （`tr()` 造的实例恒空）⇒ 界面空白（该稿 F13 登记的形态）。批 2 到批 3 之间是这个中间态，
+/// 而判据 ②③ 的常驻证人也在那一批才不空转（该稿 `§4.1` 第 3 条）。
+const Tier kStringsEn{};
+
 /// @brief `CommitIssue` → 词条 key：本件是唯一把该枚举翻成文案的地方（表单件只回枚举，不产文案）。
 [[nodiscard]] auto issue_key(CommitIssue issue) -> std::string_view {
     switch (issue) {
@@ -670,20 +694,60 @@ const std::map<std::string, std::string, std::less<>> kStringsZh{
     return {};
 }
 
-}  // namespace
+/// @brief 某一档的**源表**（不经装填）。
+[[nodiscard]] auto source_tier(config::InterfaceLanguage language) -> const Tier & {
+    return language == config::InterfaceLanguage::En ? kStringsEn : kStringsZh;
+}
 
-auto settings_locale() -> const aurora::Locale & {
-    // 一处构造、逐次同值：`tag()` 每次调用现拼串，故面板侧只留这一份 `Locale`。
-    static const aurora::Locale locale{std::string{kTag}, {}};
+/// @brief 某一档的 `Locale`：区域标签逐字取落盘名，映射唯一在 `config::language_tag()`。
+[[nodiscard]] auto locale_for(config::InterfaceLanguage language) -> aurora::Locale {
+    return aurora::Locale{std::string{config::language_tag(language)}, {}};
+}
+
+[[nodiscard]] auto keys_of(const Tier &tier) -> std::vector<std::string> {
+    std::vector<std::string> out;
+    out.reserve(tier.size());
+    for (const auto &[key, text] : tier) {
+        out.push_back(key);
+    }
+    return out;
+}
+
+/// @brief 某一档的全部 key。`std::map` 的遍历序就是 key 的字典序，故交出去时已排序。
+[[nodiscard]] auto keys_for(config::InterfaceLanguage language) -> const std::vector<std::string> & {
+    static const std::vector<std::string> zh_keys = keys_of(kStringsZh);
+    static const std::vector<std::string> en_keys = keys_of(kStringsEn);
+    return language == config::InterfaceLanguage::En ? en_keys : zh_keys;
+}
+
+/// @brief 进程当前语言档的唯一副本：只有收 `InterfaceLanguage` 的那一枚装填函数写它。
+///
+/// 写点按文件头①的纪律排在**任何控件绘制之前**（`src/main.cpp` 里那一句），所以「一处构造、逐次
+/// 同值」在运行期依然成立；而 `Locale::tag()` 每次调用现拼串，面板侧因此只留这一份 `Locale`。
+auto current_locale() -> aurora::Locale & {
+    static aurora::Locale locale = locale_for(config::InterfaceLanguage::Zh);
     return locale;
 }
 
-auto install_settings_strings() -> void {
-    auto &table = aurora::default_string_table();
-    table.set_default_locale(settings_locale());
-    for (const auto &[key, text] : kStringsZh) {
-        table.add(settings_locale(), key, text);
+}  // namespace
+
+auto settings_locale() -> const aurora::Locale & { return current_locale(); }
+
+auto install_settings_strings(aurora::StringTable &table, config::InterfaceLanguage language) -> void {
+    const aurora::Locale locale = locale_for(language);
+    table.set_default_locale(locale);
+    for (const auto &[key, text] : source_tier(language)) {
+        table.add(locale, key, text);
     }
+}
+
+auto install_settings_strings(config::InterfaceLanguage language) -> void {
+    current_locale() = locale_for(language);
+    install_settings_strings(aurora::default_string_table(), language);
+}
+
+auto settings_string_keys(config::InterfaceLanguage language) -> const std::vector<std::string> & {
+    return keys_for(language);
 }
 
 auto settings_text(std::string_view key, std::vector<aurora::LocalizedString> args) -> aurora::LocalizedString {

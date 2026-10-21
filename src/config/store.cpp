@@ -461,6 +461,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
 [[nodiscard]] auto appearance_to_json(const AppearanceSettings &appearance) -> Value {
     auto node = Value::object();
     put(node, "theme", appearance.theme);
+    put_enum(node, "language", kInterfaceLanguageNames, static_cast<std::int64_t>(appearance.language));
     put(node, "font_family", appearance.font_family);
     put(node, "font_size_pt", appearance.font_size_pt);
     put(node, "font_line_height", appearance.font_line_height);
@@ -725,6 +726,10 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
 [[nodiscard]] auto read_appearance(ScopeReader &scope, const Settings &defaults) -> AppearanceSettings {
     AppearanceSettings appearance{};
     appearance.theme = scope.text("theme", defaults.appearance.theme);
+    // 语言档的取值域在这一跳就把守（裁决 7.46② 的分工）：域外值走 `enumerated` 的「留痕 + 保留基线」，
+    // 装填侧因此不需要也不会再有一次回落。
+    appearance.language = static_cast<InterfaceLanguage>(scope.enumerated(
+        "language", kInterfaceLanguageNames, static_cast<std::int64_t>(defaults.appearance.language)));
     appearance.font_family = scope.text("font_family", defaults.appearance.font_family);
     appearance.font_size_pt = scope.real("font_size_pt", defaults.appearance.font_size_pt, 6.0, 72.0);
     // 两档排版可调量的取值域在此把守，`ui::apply_typography` 因此不含夹取（裁决 7.46②）。

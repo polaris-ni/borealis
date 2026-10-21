@@ -555,7 +555,9 @@ auto main(int argc, char **argv) -> int {
         static_cast<void>(borealis::platform::open_url(target));
     };
     // 词条必须在任何控件绘制之前装填：查表失败回退空文本，晚装就会让首帧闪一下空标签。
-    borealis::ui::install_settings_strings();
+    // 档位在这一行读定、整进程不再改（`SPEC.FEAT.PREF.05` 稿 D2）：面板上那一行的角标「重启后生效」
+    // 就是这条不变量的用户可见半边，而装填只装选中的那一档（该稿 D4 的落地期改形）。
+    borealis::ui::install_settings_strings(settings.appearance.language);
 
     // 建窗之前的两道校验（稿 §5.4）：档案可解析、动作与档案类型相容。任一不符即退出 2，不建窗、
     // 不启动 shell——用户敲错一个字母时不该看见一扇空窗口。档案表读的是**内存值**，与首实例执行
@@ -1624,7 +1626,13 @@ auto main(int argc, char **argv) -> int {
         auto chrome = std::make_shared<au::ThemeScope>(
             borealis::ui::settings_chrome_theme(),
             aurora::Node{std::static_pointer_cast<au::Widget>(window.overlay_host)});
-        return au::Scene{au::Node{std::static_pointer_cast<au::Widget>(std::move(chrome))}};
+        // 语言档的注入腿（`SPEC.FEAT.PREF.05` 稿 F19）：绘制侧的 `Text`／`Button` 读的是**环境里的
+        // `Locale`**，没有注入就按 `Locale{}`（＝`en`）查表。本档装填只装选定那一档，中文档今天靠
+        // 缺省档兜得住；等英文档补齐（该稿批 3），不注入等于把整窗绘制侧文案换成英文。
+        auto locale_scope = std::make_shared<au::LocaleProvider>(
+            borealis::ui::settings_locale(),
+            aurora::Node{std::static_pointer_cast<au::Widget>(std::move(chrome))});
+        return au::Scene{au::Node{std::static_pointer_cast<au::Widget>(std::move(locale_scope))}};
     };
 
     // 主窗这几行只在 `app` 建成**之前**读容器首格：那一刻还谈不上任何拆窗，现取即安全。不把它写成
@@ -2926,7 +2934,9 @@ auto main(int argc, char **argv) -> int {
     });
     // 占位符与空态文案**不在这里交**：框架按 `AURORA_DEFAULT_PLACEHOLDER_KEY` /
     // `AURORA_DEFAULT_EMPTY_MESSAGE_KEY` 两条 key 现查 `default_string_table()`（G38 / G39 回货形态），
-    // 而本仓的中文词条已由 `install_settings_strings()` 装进那张表并把缺省档设成 `zh`。
+    // 而本仓的词条由 `install_settings_strings(语言档)` 装进那张表、缺省档随同一枚参数
+    //（`SPEC.FEAT.PREF.05` 稿 D4）。表里**只有选定那一档**，所以这两处即便按 `Locale{}` 现查，
+    // 第一级 miss 之后也回落得到用户真正选的那一档。
     // 刻意不调 `set_placeholder()` / `set_empty_message()`：那两枚是**文本覆盖**，置位即不再走 i18n，
     // 运行期切 locale 就再也翻不动这两句（裁决 **7.92**①）。
 

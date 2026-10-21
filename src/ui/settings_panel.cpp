@@ -1761,6 +1761,14 @@ auto SettingsPanel::badge_for(const SettingsControl &control) -> std::string {
         }
         out += settings_label("settings.badge.next_session");
     }
+    // 「重启后生效」是第三档（`SPEC.FEAT.PREF.05` 稿 D5）：语言在**建窗之前**装填，本进程没有把它
+    // 重放的入口，挂「下次会话」就是一句写在界面上的错话。
+    if (control.effect == EffectLevel::NextLaunch) {
+        if (!out.empty()) {
+            out += " · ";
+        }
+        out += settings_label("settings.badge.next_launch");
+    }
     return out;
 }
 

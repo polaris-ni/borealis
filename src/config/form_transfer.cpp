@@ -158,6 +158,11 @@ auto assign_shortcuts(Settings &settings, const FormValue &value) -> void {
         Binding{"appearance.theme",
                 [](const Settings &s) -> FormValue { return FormValue::text(s.appearance.theme); },
                 [](Settings &s, const FormValue &v) { assign(s.appearance.theme, v); }},
+        Binding{"appearance.language",
+                [](const Settings &s) -> FormValue {
+                    return enumerated(s.appearance.language, kInterfaceLanguageNames);
+                },
+                [](Settings &s, const FormValue &v) { assign_enum(s.appearance.language, v, kInterfaceLanguageNames); }},
         Binding{"appearance.palette.basic",
                 &palette_basic,
                 [](Settings &s, const FormValue &v) { assign(s.appearance.palette.basic, v); }},

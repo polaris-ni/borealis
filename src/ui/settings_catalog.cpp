@@ -77,7 +77,7 @@ namespace {
     std::vector<SettingsControl> catalog;
     catalog.reserve(58U);
 
-    // ---- 外观页（§2 表的次序：主题 → 调色板 → 字体与排版 → 视口 → 光标 → 侧栏与标签 → 状态栏）----
+    // ---- 外观页（§2 表的次序：主题 → 语言 → 调色板 → 字体与排版 → 视口 → 光标 → 侧栏与标签 → 状态栏）----
     // 主题名虽然只有八套预置，但候选的唯一来源是 `config/themes.h`；本行不留名字，否则色值表与
     // 面板各列一遍主题清单，换预置时必然漂移一处。
     catalog.push_back(row("appearance.theme",
@@ -88,6 +88,15 @@ namespace {
                           {},
                           ConsumerStatus::Wired,
                           EffectLevel::Immediate));
+    // 语言档的两个候选就是落盘名，也是 i18n 的区域标签（`SPEC.FEAT.PREF.05` 稿 D3／D4：名字的唯一
+    // 读点在 `src/config/schema_names.h`，本行照抄那两串）。生效档位取 `NextLaunch` 而不是
+    // `NextSession`：词条在**建任何控件之前**装填，运行期改它既不会重放既有会话，也不会重画已经
+    // 急切解析的那批命令与角标，只有重启才换（该稿 F6／D2）。
+    catalog.push_back(dropdown("appearance.language",
+                               SettingsPage::Appearance,
+                               {"zh", "en"},
+                               ConsumerStatus::Wired,
+                               EffectLevel::NextLaunch));
     catalog.push_back(row("appearance.palette.basic",
                           SettingsPage::Appearance,
                           ControlKind::SwatchGrid,

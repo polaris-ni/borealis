@@ -10,10 +10,15 @@
 //    （框架查表失败回退 `LocalizedString::text`，而 `tr()` 造出的实例 text 恒空）。
 // ② 装填走进程级 `default_string_table()`，读取走 `LocalizedString::tr(key)`，因此**控件侧不需要
 //    持有表**：框架 `Text` 在绘制时就地查那张表（`widget/text.h` 的 `resolve(&default_string_table(), ...)`）。
-// ③ 区域设置本件自带 `Locale{"zh"}` 并把它设为表内缺省档。这不是多余：框架的 `Text` 在没有
-//    `Provider<Locale>` 时按 `Locale{}`（即 `en`）查表，而 `StringTable::lookup` 的第一级失败会
-//    **回落到缺省档的 tag**，故只有把缺省档设成 `zh`，`tr()` 出来的标签才真显中文。表本身没有
-//    `default_locale()` 读点，所以这里的 `Locale` 常量是面板侧的唯一副本。
+// ③ 区域设置由**装填时给定的语言档**决定（`SPEC.FEAT.PREF.05`）：`install_settings_strings(language)`
+//    把该档的 tag 设为表内缺省档，并只注册**那一档**的词条——另一档根本不装，理由见下面第④条。
+//    缺省档为什么必须跟着走：框架的 `Text` 在没有 `Provider<Locale>` 时按 `Locale{}`（即 `en`）查表，
+//    而 `StringTable::lookup` 的第一级失败会**回落到缺省档的 tag**，于是「只装选定档 + 缺省档随参数」
+//    这一对才让所有回落路径都落回用户真正选的那一档（该稿 F3／F5／F19 三条读数的合取）。缺省语言
+//    是 `zh`（该稿 D3），表本身没有 `default_locale()` 读点，所以 `Locale` 的唯一副本在本件里。
+// ④ 绘制侧（框架 `Text`／`Button` 经 `ctx` 解析的那一路）读的是**环境里注入的 `Locale`**，不是表的
+//    缺省档。装配层与用例驱动台因此都要在场景根装一枚 `au::LocaleProvider(settings_locale(), …)`：
+//    不装，补上英文档的那一天整窗绘制侧文案会换成英文（该稿 F19 的探针实测就是这件事）。
 //
 // 一处框架实测（曾登记为缺口 **G28**，已回货闭合，裁决 7.59）：`Button::label` 与 `Text::content` 同为
 // `LocalizedString`，但登记时只有 `Text` 在绘制路径查表——`Button` 的 `paint_label` 直读
@@ -33,19 +38,42 @@
 
 #include "aurora/i18n/locale.h"
 #include "aurora/i18n/localized_string.h"
+#include "aurora/i18n/string_table.h"
 
+#include "borealis/config/settings.h"
 #include "borealis/ui/settings_form.h"
 
 namespace borealis::ui {
 
-/// @brief 面板词条所在的区域设置（`zh`，同时是字符串表的缺省档）。
+/// @brief 面板词条当前所在的区域设置（＝最近一次进程级装填选定那一档，未装填时为中文档）。
+///
+/// 运行期恒等：写它的只有下面那枚收 `InterfaceLanguage` 的装填函数，而那一跳按文件头①的纪律排在
+/// 任何控件绘制之前（`SPEC.FEAT.PREF.05` 稿 §5 第 1 条）。装配层与用例驱动台把它交进
+/// `au::LocaleProvider`，绘制侧才跟着档位走（文件头④）。
 [[nodiscard]] auto settings_locale() -> const aurora::Locale &;
 
-/// @brief 把面板用到的全部词条装进进程级默认字符串表。
+/// @brief 把某一档的全部词条装进 `table`，并把该档的 tag 设为它的缺省档。
+///
+/// 指哪张表由形参决定，**不碰进程级那张**：判据 ①② 的证人因此可以在同一进程里并排比较两档而
+/// 不影响别的用例（`codespec/PREF05_I18N.draft.md` §4.1 第 3 条）。只装选定那一档的理由见文件头③。
+/// @param table 目标字符串表。
+/// @param language 语言档。
+auto install_settings_strings(aurora::StringTable &table, config::InterfaceLanguage language) -> void;
+
+/// @brief 同上，宿主是进程级 `default_string_table()`，并把 `settings_locale()` 定到该档。
 ///
 /// 幂等：重复调用逐条覆盖同 key，故装配层与用例都可以放心各调一次。必须在任何面板控件**绘制之前**
-/// 调用；否则首帧的空标签会闪一下（查表失败回退空 text）。
-auto install_settings_strings() -> void;
+/// 调用；否则首帧的空标签会闪一下（查表失败回退空 text）。缺省参数就是中文档——那是本键落地前
+/// 唯一的形态，也是 `SPEC.FEAT.PREF.05` 稿 D3 选的缺省。
+/// @param language 语言档；装配层传配置里读到的那一档。
+auto install_settings_strings(config::InterfaceLanguage language = config::InterfaceLanguage::Zh) -> void;
+
+/// @brief 某一档的全部 key（**读源表**，与该档有没有装填无关；已按字典序）。
+///
+/// 给用例侧的「两档同 key 集」判据用（`SPEC.FEAT.PREF.05` 判据 ②）。这条接缝刻意存在而不是让用例
+/// 去数装填后的表：装填只装选定那一档（文件头③），表里看不到另一档的 key。
+/// @param language 语言档。
+[[nodiscard]] auto settings_string_keys(config::InterfaceLanguage language) -> const std::vector<std::string> &;
 
 /// @brief 按 key 取待本地化串，可直接交 `Text::content` 与 `FormField` 的标签。
 /// @param key 词条 key（设置项一律传落盘点号路径）。

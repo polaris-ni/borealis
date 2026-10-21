@@ -37,6 +37,7 @@ namespace au = aurora;
 
 using borealis::config::BellMode;
 using borealis::config::builtin_themes;
+using borealis::config::InterfaceLanguage;
 using borealis::config::kDefaultThemeName;
 using borealis::config::kSnapshotRetention;
 using borealis::config::LinkConfirmPolicy;
@@ -83,6 +84,8 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     Settings next{};
 
     next.appearance.theme = "nord";
+    // 两档枚举的「相反档」就是另一档：写侧漏键或读侧回落缺省时，这里读回来的是 `zh` 而不是 `en`。
+    next.appearance.language = InterfaceLanguage::En;
     // 色值刻意不等于任何预置主题：往返等值才排得出「写侧漏了某个字段、读侧又从主题表捡回来」。
     for (std::size_t index = 0; index < next.appearance.palette.basic.size(); ++index) {
         next.appearance.palette.basic[index] =
@@ -568,6 +571,9 @@ AURORA_TEST_CASE(defaults_are_the_first_launch_shape) {
     AURORA_TEST_CHECK_TRUE(defaults.appearance.font_fallback_chain.empty());
     AURORA_TEST_CHECK_NEAR(defaults.appearance.viewport_padding_dp, 4.0F, 0.001F);
     AURORA_TEST_CHECK_TRUE(defaults.appearance.cursor_shape == CursorShape::Block);
+    // 界面语言的缺省档就是既成形态（`SPEC.FEAT.PREF.05` 稿 D3）：首启时装填的还是那一批中文词条，
+    // 改这一行等于改用户第一次打开看到的界面。
+    AURORA_TEST_CHECK_TRUE(defaults.appearance.language == InterfaceLanguage::Zh);
     AURORA_TEST_CHECK_TRUE(defaults.appearance.cursor_blinking);
     AURORA_TEST_CHECK_TRUE(defaults.appearance.sidebar_collapsed);
     // 手动重命名压过 OSC 标题是缺省档（`SPEC.FEAT.TERM.07` 的「用户重命名优先级更高（可配）」）。
@@ -704,6 +710,7 @@ AURORA_TEST_CASE(bad_values_fall_back_to_defaults_and_are_reported) {
     "font_letter_spacing_dp": -1.0,
     "cursor_blink_period_ms": 0,
     "cursor_shape": "triangle",
+    "language": "fr",
     "tab_name_priority": "sometimes",
     "sidebar_collapsed": "yes",
     "legacy_widget": true
@@ -727,7 +734,7 @@ AURORA_TEST_CASE(bad_values_fall_back_to_defaults_and_are_reported) {
     const auto &rejected = store.report().rejected_keys;
     for (std::string_view key : {"appearance.font_size_pt", "appearance.font_line_height",
                                  "appearance.font_letter_spacing_dp", "appearance.cursor_blink_period_ms",
-                                 "appearance.cursor_shape", "appearance.tab_name_priority",
+                                 "appearance.cursor_shape", "appearance.language", "appearance.tab_name_priority",
                                  "appearance.sidebar_collapsed", "appearance.theme",
                                  "appearance.palette", "terminal.bell", "terminal.scrollback_limit",
                                  "terminal.encoding", "connection", "shortcuts.overrides[0]"}) {

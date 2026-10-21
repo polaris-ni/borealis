@@ -77,6 +77,13 @@ inline constexpr std::array<EnumName, 2> kTabNamePriorityNames{{
     {"osc_wins", static_cast<std::int64_t>(TabNamePriority::OscWins)},
 }};
 
+// 界面语言档（`SPEC.FEAT.PREF.05`）：这两枚落盘名**同时是 i18n 的区域标签**，故装填侧只经下面
+// `language_tag()` 取值，不自列第二份名字。
+inline constexpr std::array<EnumName, 2> kInterfaceLanguageNames{{
+    {"zh", static_cast<std::int64_t>(InterfaceLanguage::Zh)},
+    {"en", static_cast<std::int64_t>(InterfaceLanguage::En)},
+}};
+
 inline constexpr std::array<EnumName, 2> kAmbiguousWidthNames{{
     {"narrow", static_cast<std::int64_t>(term::AmbiguousWidth::Narrow)},
     {"wide", static_cast<std::int64_t>(term::AmbiguousWidth::Wide)},
@@ -119,6 +126,17 @@ inline constexpr std::array<EnumName, 3> kCursorShapeNames{{
         }
     }
     return {};
+}
+
+/// @brief 界面语言档 → i18n 区域标签（`SPEC.FEAT.PREF.05`）。
+///
+/// 落盘名与区域标签**刻意同源**，且本函数是那条同源关系的唯一读点：装填侧若自己再列一遍
+/// `{Zh → "zh"}`，「配置里写 `zh`」与「词条表住在 `zh` 档」就会分叉，而这个分叉在中文档下
+/// 看不见（查表与回落都照常命中），到英文档补齐那天才现形。
+/// @param language 语言档。
+/// @return 该档的区域标签，逐字等于它的落盘名；表里没有时为空串（两档都在表上，故取不到空）。
+[[nodiscard]] inline auto language_tag(InterfaceLanguage language) -> std::string_view {
+    return name_of(kInterfaceLanguageNames, static_cast<std::int64_t>(language));
 }
 
 }  // namespace borealis::config

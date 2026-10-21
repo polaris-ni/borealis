@@ -170,6 +170,9 @@ constexpr float kRowPaddingDp = 8.0F;
 /// 「面板用了别的词条 key」，而那正是本判据要抓的错。词条 key 与表列的对应另由 `i18n` 那条用例守。
 constexpr std::string_view kBadgeDeferred = "延后";
 constexpr std::string_view kBadgeNextSession = "下次会话生效";
+/// CJK-LITERAL: locale-output - PREF.05 的第三枚角标：判的正是「`NextLaunch` 那一档在界面上说的是
+/// 「重启后生效」而不是「下次会话生效」」，换成别的串这条判据就不存在。
+constexpr std::string_view kBadgeNextLaunch = "重启后生效";
 /// CJK-LITERAL: locale-output - 同上，A1-b 的「自定义」是第三枚角标，且它不来自表列而是来自「色板
 /// 与该主题默认不逐槽相等」这条状态，故只能按文案判。
 constexpr std::string_view kBadgeCustomized = "自定义";
@@ -531,6 +534,13 @@ public:
         }
         out += kBadgeNextSession;
     }
+    // 第三枚角标与 `NextSession` 互斥（一行的生效范围只有一档），但并列规则同形：非空时先加分隔。
+    if (control.effect == EffectLevel::NextLaunch) {
+        if (!out.empty()) {
+            out += " · ";
+        }
+        out += kBadgeNextLaunch;
+    }
     return out;
 }
 
@@ -718,6 +728,11 @@ AURORA_TEST_CASE(deferred_and_next_session_rows_carry_their_badges) {
     AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.cursor_shape")->editable);
     AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.cursor_shape")->badge, std::string{kBadgeNextSession});
     AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.font_size_pt")->badge, std::string{});
+    // PREF.05 稿 D5：语言行是「已接线 ∧ 重启后生效」——它只挂第三枚角标。全仓此前没有 `NextLaunch` 行，
+    // 故这一句就是「第三档挂对了而第二档没跟着挂」的唯一现场：把 catalog 那行的 effect 注回 `NextSession`
+    // 或改成 `Immediate`（§8 的 m5 形态）都在这里转红。
+    AURORA_TEST_REQUIRE(find_row(rows, "appearance.language") != nullptr);
+    AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.language")->badge, std::string{kBadgeNextLaunch});
 
     panel.select_page(SettingsPage::Terminal);
     const auto terminal_rows = panel.visible_rows();
@@ -1355,7 +1370,11 @@ public:
         base_ = std::make_shared<au::Text>(
             aurora::TextProps{.content = std::string{"base"}, .text_color = au::Color{0, 0, 0, 0xFF}});
         (void)host_->add_overlay(au::Node{base_});
-        root_ = au::Node{std::static_pointer_cast<au::Widget>(host_)};
+        // PREF.05 判据 ① 的用例侧半边（稿 F19：生产场景根与用例驱动台**各**装一枚）：根的 Locale 取自
+        // `settings_locale()`，故绘制侧文案读的是装填那一批。摘掉这一层时全窗文案按 `Locale{}`（en）查表，
+        // 而词条只装了选定那一档 ⇒ 这是 §8 的 m7 注入的打中面。
+        root_ = au::Node{std::make_shared<au::LocaleProvider>(
+            borealis::ui::settings_locale(), au::Node{std::static_pointer_cast<au::Widget>(host_)})};
         focus_.set_root(&root_.widget());
         render();
     }
@@ -1727,15 +1746,25 @@ enum class ChainButton {
 /// 外观页被主题卡与 16 格色板两个区段整体下推，`appearance.font_family` 在反向核对表里排第 9 行，
 /// 落在 offset 0 的可见带之外 ⇒ 与 `reveal_chain_button` 同一处境、同一滚法（每轮 12 格 × 最多 20 轮，
 /// 命中即止；滚到哪一档不是判据）。
+///
+/// 余量那一句是 PREF.05 批 2 之后加的、**只在要往下探候选的那一例里传**：外观页在字体行**之上**多了一行
+/// 「界面语言」（裁决 D1①），整页随之下移一档行高，于是浮层按触发按钮下沿铺开时只剩第 0 档还在视口内——
+/// 而第 0 档按 A4 的置顶规则**恒等于当前生效族**，`pick_font_candidate` 的「不点回同一个值」把它跳过，
+/// 读数就退化成「一档都点不到」。其余各例判的是锚点几何与关闭次序，不需要铺开候选，故照旧取缺省 0：
+/// 多滚一档会让留痕行那一格的绘制状态跟着变（本件实测过），而那不是它们要判的事。
+/// 「滚出来的行在视口内」这条反空转前提仍由 `clicking_the_font_trigger_anchors_...` 一案自己断
+/// （见 `find_first` 的 `room_below_dp` 注）。
 /// @param h 驱动台。
 /// @param panel 面板（按钮指针在每次重建浮层时换，故按当前值现取）。
+/// @param room_below_dp 触发按钮可达框下沿到视口下沿之间还要留出的余量（dp）：要往浮层里探候选的用例
+///        取一档行高的四倍（4 × 30 dp）。
 /// @return 该按钮的命中点与窗口坐标下的可达框；未找到时 `widget` 为空。
-[[nodiscard]] auto reveal_font_trigger(Harness &h, SettingsPanel &panel) -> HitSpot {
+[[nodiscard]] auto reveal_font_trigger(Harness &h, SettingsPanel &panel, float room_below_dp = 0.0F) -> HitSpot {
     HitSpot spot;
     for (int attempt = 0; attempt < 20 && spot.widget == nullptr; ++attempt) {
         au::Widget *const want = panel.font_button();
         if (want != nullptr) {
-            spot = h.find_first("Button", 0.0F, [want](au::Widget *widget) -> bool { return widget == want; });
+            spot = h.find_first("Button", room_below_dp, [want](au::Widget *widget) -> bool { return widget == want; });
         }
         if (spot.widget == nullptr) {
             for (int notch = 0; notch < 12; ++notch) {
@@ -3171,7 +3200,8 @@ AURORA_TEST_CASE(a_real_click_on_a_font_candidate_commits_that_family_and_only_c
     std::unique_ptr<SettingsPanel> panel = h.attach(probe);
     h.open(*panel);
 
-    const HitSpot trigger = reveal_font_trigger(h, *panel);
+    // 要往浮层里真点一档 ⇒ 把触发按钮多滚一档，让它下沿到视口下沿之间够铺开前四档（见 `reveal_font_trigger`）。
+    const HitSpot trigger = reveal_font_trigger(h, *panel, 120.0F);
     AURORA_TEST_REQUIRE_MSG(trigger.widget != nullptr, "the font trigger button is not dispatch-reachable");
     h.click(trigger.x, trigger.y);
     h.render();

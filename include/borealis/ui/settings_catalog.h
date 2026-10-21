@@ -88,6 +88,12 @@ enum class ConsumerStatus : std::uint8_t {
 enum class EffectLevel : std::uint8_t {
     Immediate,   ///< 即时：本棒开的运行期更新入口（S4）之后可见。
     NextSession, ///< 下次会话：构造期取用，运行期改动不重放既有会话（判据文 §0 的物理边界②）。
+    /// @brief 重启后生效：值只在**建窗之前**取用一次，本进程内没有任何重放入口。
+    ///
+    /// 追加这一档不是为了好看：`SPEC.FEAT.PREF.05` 的语言档就属这一类（词条在建任何控件之前装填，
+    /// 而运行期换档要重建命令表与每一扇窗），把它挂进 `NextSession` 等于在界面上写一句错话。
+    /// 唯一消费点是面板角标那一支（`SPEC.FEAT.PREF.05` 稿 F16）。
+    NextLaunch,
 };
 
 /// @brief 数值闭区间；两端照抄装载侧把守的数，不是面板自定的钳位。

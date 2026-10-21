@@ -293,8 +293,31 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // CONN.11 的追加敏感正则 `connection.session_log_pattern` 随裁决 7.116 D10 改判进表，
     // CONN.12 的读方向授权档 `terminal.clipboard_read` 随裁决 D1① 进表（键在终端域、标识属连接域），
     // INTERACT.05 的三行（`link_osc8` / `link_heuristic` / `link_schemes`）随裁决 D8① 进表，
-    // INTEG.01 的分隔线开关 `terminal.command_block_separator` 随裁决 7.123 D9① 进表，故停在 69。
-    AURORA_TEST_CHECK_EQ(keys.size(), 69U);
+    // INTEG.01 的分隔线开关 `terminal.command_block_separator` 随裁决 7.123 D9① 进表，
+    // PREF.05 的界面语言 `appearance.language` 随裁决 D1① 进表（键在外观域、消费方是启动路径的装填），
+    // 故停在 70。
+    AURORA_TEST_CHECK_EQ(keys.size(), 70U);
+}
+
+AURORA_TEST_CASE(language_row_is_a_wired_next_launch_choice) {
+    // PREF.05 稿 D1①／D5 的两列在此各有独立的打中面：`Wired` 判「启动路径真读这一键」（装配腿
+    // `main.cpp` 在建窗前取它装填词条），`NextLaunch` 判「本进程没有重放入口」——把它注回 `NextSession`
+    // 或 `Immediate` 都会让面板说出与运行事实相反的话（§8 的 m5 形态由本案与面板角标案各打一半）。
+    const SettingsControl *control = borealis::ui::find_settings_control("appearance.language");
+    AURORA_TEST_CHECK(control != nullptr);
+    if (control == nullptr) {
+        return;
+    }
+    AURORA_TEST_CHECK(control->page == SettingsPage::Appearance);
+    AURORA_TEST_CHECK(control->consumer == ConsumerStatus::Wired);
+    AURORA_TEST_CHECK(control->effect == EffectLevel::NextLaunch);
+    // 候选就是落盘名，而这两串同时是 i18n 的区域标签（`schema_names.h` 的 `language_tag` 与本案同源）。
+    // 写成命名副而不是字面量塞进宏：`#__VA_ARGS__` 那一支会把花括号里的逗号折成宏实参分隔。
+    const std::vector<std::string> kLanguageTags{"zh", "en"};
+    AURORA_TEST_CHECK_MSG(control->choices == kLanguageTags,
+                          "language choices drifted: [" + join(control->choices) + "]");
+    // 缺省档是中文：改缺省等于改用户第一次打开时看到的界面语言（该稿 D3）。
+    AURORA_TEST_CHECK(Settings{}.appearance.language == config::InterfaceLanguage::Zh);
 }
 
 AURORA_TEST_CASE(command_block_separator_is_a_wired_immediate_terminal_switch) {
