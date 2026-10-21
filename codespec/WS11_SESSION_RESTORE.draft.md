@@ -140,7 +140,7 @@
 |:---|:---|:---|:---|
 | **0** | 本稿与地基实测（本节即产出） | `codespec/` | 无（稿） |
 | **1** | `PaneTree` 的描述／重建件 + 嵌套形状类型 | `include/borealis/ui/pane_tree.h`、`src/ui/pane_tree.cpp` | `utest_pane_tree` 扩案（判据 ①） |
-| **2** | 快照数据模型 + JSON 编解码（fail-closed 读侧） | `include/borealis/ui/workspace_snapshot.h`、`src/ui/workspace_snapshot.cpp`、`cmake/BorealisTests.cmake`（GLOB 自动注册，通常零改） | `utest_workspace_snapshot` 新套件（判据 ②⑥⑦） |
+| **2** | 快照数据模型 + JSON 编解码（fail-closed 读侧） | `include/borealis/ui/workspace_snapshot.h`、`src/ui/workspace_snapshot.cpp`、`src/CMakeLists.txt`（`borealis_core` 是显式清单，实测必须登记；测试侧 `cmake/BorealisTests.cmake` 的 GLOB 零改）、`include/borealis/conn/local_terminal.h`（补 `operator==`） | `utest_workspace_snapshot` 新套件（判据 ②⑥⑦） |
 | **3** | 第三枚 `Preferences` 的落盘件 | `src/config/workspace_store.{h,cpp}` | 判据 ② 的落盘往返腿（同套件扩案） |
 | **4** | 新键六处同步 + 面板那一行 + 两档词条 + 两处计数闸改口 | `settings.h`、`store.cpp`、`form_transfer.cpp`、`settings_catalog.cpp`、`settings_i18n.cpp`、`utest_settings_catalog.cpp` | catalog 那一行案（判据 ③） |
 | **5** | 装配腿：本地 per-pane 账、采集、启动重放、D7 的 CLI 次序 | `src/main.cpp` | **无自动化证人**（F21），§5 走查第 ①–⑤ 条兜底 |
@@ -156,3 +156,25 @@
 （起点 1306，增量 +6）。变异逐条转红：`describe` 不带长度 → 3 案红；不查序位排列 → 1 案红；不查身份越界
 → 1 案红；重建时忽略序位发身份 → 4 案红；放过单子层 → 1 案红；重建不动焦点 → 1 案红；序位写成身份
 → 4 案红。**七支无一空转**，判据 ① 与 F23／F24／F25 三条读数各有证人。
+
+**批 2 已落地（2026-10-22）**：`ui::WorkspaceSnapshot`（`windows → tabs → 每格本地料 + 形状 + 焦点序位`）
+与它的 `to_json()` / `from_json()` 落在 `include/borealis/ui/workspace_snapshot.h` 与
+`src/ui/workspace_snapshot.cpp`，新套件 `utest_workspace_snapshot` **13 案**。
+读数：`ctest --preset linux -E etest_` **105/105 全绿**（104 → +1 个新套件）、`./build/borealis_test_runner`
+**1325 案全绿**（起点 1312，增量 +13）。这一批只碰模型与编解码，**不碰文件系统**，故判据 ③ 的档位半边
+与判据 ② 的落盘往返腿仍归批 3。
+变异逐条转红：写侧漏 `focused` 键 → 4 案红；SSH 块里 `agent_forwarding` 改名 → 5 案红；凭据块的
+`vault_id` 写成含禁列子串 `secret_ref` → 6 案红；读侧把窗数上界放宽 → 1 案红；读侧对「键缺失」改判
+宽容（回落缺省而非拒绝）→ 2 案红；取消「非本地标签的 `panes` 恒空」那道对位闸 → 1 案红。**六支无一空转**，
+判据 ②（往返全等 + 坏文档整份拒）、⑥（键名扫描 + 值侧替身口令）、⑦（两处档案 JSON 逐字相等）各有证人。
+两处与本批同批落地的**必要附带件**：① `src/CMakeLists.txt` 的 `borealis_core` 源清单是**显式列表**而非
+GLOB（本表 §8 那一栏原先只写了 `cmake/BorealisTests.cmake` 的 GLOB，测到链接期才暴露），故新实现文件
+必须登记一行；② `conn::LocalTerminalSpec` 补一枚 `operator== = default`——判据 ② 的「模型 → JSON → 模型
+全等」要逐格比本地料，而该结构此前没有相等比较（`conn` 的 `LocalProfile` / `SshProfile` 等早已带同形态
+一枚，这里只是补齐缺的那一块）。
+一条实现缺陷由往返案**当场抓住**并已在同批修掉：读侧折容器层时把 `axis` / `lengths` / `children` 都折对了，
+却没把 `leaf=false` 写回 `PaneShape`，于是恢复出来的树「看着一样」（叶子数对得上、对位闸全过）而形状本身
+退化成一格——判据 ① 那句「拖把手时全露馅」在本件的另一半，正是这一条。
+F12 那处在册代价第一次实际支付：`src/ui/` 依架构 §2.1 不得反向依赖 `config`（含其私有头
+`schema_names.h`），故快照件自列一份枚举名表；判据 ⑦ 那条等式案就是这处第二真值源的证人，
+它红了就等于「档案有了第二套落盘形态」。批 5 的装配腿与凭据重取那一段本批未碰，判据 ⑤ 仍无证人。
