@@ -693,6 +693,48 @@ auto main(int argc, char **argv) -> int {
     // 的 `remove` 连整棵对象都删不掉）。
     // **声明必须早于 `app`**：与上面那枚同一条继承（`Preferences` 内含互斥量、交出去的是裸指针）。
     borealis::config::WorkspaceStore workspace_store;
+    // 上次那套标签布局的**读侧**（`SPEC.FEAT.WS.11` 批 5-C，稿 D7①／D8①）：启动时只读一次，之后整轮
+    // 重放只用这一份副本。三道闸各管一件事：开关关掉不读（判据 ③）、显式 CLI 请求不读（D7①）、文档
+    // 坏了不读（D8①）——三档都只落日志，界面上不弹框（`StartupNotice` 只吃 `LoadReport`，稿 F17）。
+    // 读在**建首窗之前**：首标签那三行布尔要用 `restore_at_startup` 决定是否让位（稿 F16）。
+    std::optional<borealis::ui::WorkspaceSnapshot> restored_layout;
+    bool restore_at_startup = false;
+    if (settings.connection.restore_sessions) {
+        // D7① 的「显式」只认三件：`--profile`、`--new-window`（旗标与动作两档都认，旧版转交帧只有
+        // 旗标）与 `--split-pane`。`--cwd` 单飞不在此列——它只是给首标签换个目录（稿 §3 D7 的代价档）。
+        const bool explicit_startup_request =
+            startup_request.has_value() &&
+            (!startup_request->profile.empty() || startup_request->new_window ||
+             startup_request->action == borealis::cli::StartupAction::NewWindow ||
+             startup_request->action == borealis::cli::StartupAction::SplitPane);
+        if (explicit_startup_request) {
+            AURORA_LOG_INFO("main", "session restore skipped: an explicit startup request takes precedence");
+        } else {
+            const au::json::Value stored = workspace_store.preferences()->get<au::json::Value>(
+                std::string{borealis::config::kWorkspaceLayoutKey}, au::json::Value{});
+            if (stored.is_null()) {
+                AURORA_LOG_INFO("main", "session restore: no saved layout");
+            } else if (const au::Result<std::string> text = au::json::dump(stored); !text.ok()) {
+                // 内存里那棵树本身写不回去（框架只会在含非有限数时拒）——与「文件坏了」同一档处理：
+                // 不恢复、不弹框，下一次真变更再整份覆盖。
+                AURORA_LOG_WARN("main", "session restore: saved layout cannot be re-encoded: ",
+                                text.error().message);
+            } else {
+                borealis::ui::SnapshotDecodeResult decoded =
+                    borealis::ui::WorkspaceSnapshot::from_json(text.value());
+                if (!decoded.snapshot.has_value()) {
+                    AURORA_LOG_WARN("main", "session restore: saved layout rejected: ", decoded.reason);
+                } else if (decoded.snapshot->windows.empty()) {
+                    AURORA_LOG_INFO("main", "session restore: saved layout lists no window");
+                } else {
+                    AURORA_LOG_INFO("main", "session restore: replaying ", decoded.snapshot->windows.size(),
+                                    " window(s)");
+                    restored_layout = std::move(decoded.snapshot);
+                    restore_at_startup = true;
+                }
+            }
+        }
+    }
     // 几何键的**创建序计数器**（稿 D9 那句「键＝创建序」）：只增不复用，于是在用的那些窗之间不可能
     // 撞键。按「当前活着几扇」取号看着更省，但拆一扇再开一扇时会给新窗发一枚**还挂在活着那扇上**的
     // 键，两扇从此共写同一格；不复用的代价只是文件里多几格旧几何，本棒不清理（清哪一格是用户的账，
@@ -1520,7 +1562,8 @@ auto main(int argc, char **argv) -> int {
     };
 
     auto create_new_tab = [&](WorkspaceWindow &window,
-                              std::optional<std::string> cwd = std::nullopt) -> void {
+                              std::optional<std::string> cwd = std::nullopt,
+                              bool commit = true) -> void {
         // 缺省腿＝本地终端：命令从配置读，目录优先继承当前标签活动格的 OSC 7（`SPEC.FEAT.INTEG.02`
         // 的「多会话落地后改取焦点 pane」那条 TODO 在此闭合：一格一份会话之后，「当前那一格」是
         // 唯一说得通的继承源，`sessions.front()` 已经是错读）。
@@ -1546,7 +1589,11 @@ auto main(int argc, char **argv) -> int {
         // 布局变更的提交点（稿 D2①「开标签」那一类）。本地缺省腿在这里已经齐料，四条档案腿各自排在
         // 登记之后——`create_new_tab_with` 内部不提交，否则 SSH 腿会写出一张「类型是 Ssh 而档案表里
         // 还没有它」的标签，而那一格在采集侧是要被跳过的（等于白关一次现场）。
-        flush_workspace_snapshot();
+        // @p commit 为 false 只服务启动重放里「这一扇一格都没恢复出来」的兜底标签（批 5-C）：那一格
+        // 不是用户现场，重放中途写出去就把一份半成品当成「上次的布局」。
+        if (commit) {
+            flush_workspace_snapshot();
+        }
     };
 
     // 首标签与冷启动请求的关系（稿 §5.1 / §5.4）：只有「开标签那一档动作且带 `--profile`」要把这一格
@@ -1567,7 +1614,11 @@ auto main(int argc, char **argv) -> int {
         (startup_request.has_value() && !startup_request->cwd.empty())
             ? std::optional<std::string>{startup_request->cwd}
             : std::nullopt;
-    if (!cold_startup_profile_tab) {
+    // 恢复腿在场时这一格让位（`SPEC.FEAT.WS.11` 稿 D7①）：首标签由重放按快照造，这里再补一张缺省
+    // 本地标签就是「恢复出来的那扇窗里凭空多一格」。`--cwd` 单飞不算显式请求，它既没有跳过恢复，
+    // 也没有在这一格被消费——重放的泵收尾时会把同一份请求喂给 `apply_startup_request`（补在恢复
+    // 出来的主窗里；挂起等凭据时只在最后一格回来后补，免得用户点名要的那一格被之后的收尾选中压掉）。
+    if (!cold_startup_profile_tab && !restore_at_startup) {
         create_new_tab(*workspace_windows.front(), startup_cwd_override);
     }
 
@@ -2567,11 +2618,28 @@ auto main(int argc, char **argv) -> int {
     auto submit_keys_push = std::function<void(const std::string &,
                                                const borealis::conn::SshProfile &,
                                                std::optional<std::string>, std::string_view)>{};
+    // 启动重放的凭据挂起态（`SPEC.FEAT.WS.11` 批 5-C）：SSH 腿按 D4① 要重新问材料，而询问件的答案是
+    // 异步的，重放游标因此在这里挂起、由 `on_secret`／`on_cancel` 放行。三项都声明在 `prompt_hooks`
+    // 之前是承重的——回调按引用捕获它们，晚声明就是「钩子先引用了一块还不存在的状态」。
+    bool restore_waiting_for_secret = false;
+    // 挂起中的那一步的放行口：有答案即继续，空值即中止余下重放（取消语义）。运行期由重放块赋值。
+    std::function<void(std::optional<std::string>)> restore_secret_sink;
+    // 放行过来的明文只在泵里过一手、取用即清（材料不落盘、不进日志，同 `ssh_secret_by_tab` 的存活期）。
+    std::optional<std::string> restore_secret;
     borealis::ui::CredentialPrompt::Hooks prompt_hooks;
     prompt_hooks.on_secret =
         [&open_ssh_tab, &restart_ssh_tab, &pending_profile, &pending_restart,
          &pending_tunnel, &pending_export, &pending_push,
-         &launch_tunnel, &submit_keys_export, &submit_keys_push](const std::string &secret) -> void {
+         &launch_tunnel, &submit_keys_export, &submit_keys_push,
+         &restore_waiting_for_secret, &restore_secret_sink](const std::string &secret) -> void {
+        // 恢复腿先认领（批 5-C）：挂起期间的问句只可能是它发的，答话也只回到它那一侧。
+        if (restore_waiting_for_secret) {
+            restore_waiting_for_secret = false;
+            if (restore_secret_sink) {
+                restore_secret_sink(secret);
+            }
+            return;
+        }
         if (pending_restart.has_value()) {
             const auto [id, ssh] = std::move(*pending_restart);
             pending_restart.reset();
@@ -2603,7 +2671,17 @@ auto main(int argc, char **argv) -> int {
         }
     };
     prompt_hooks.on_cancel = [&pending_profile, &pending_restart, &pending_tunnel,
-                              &pending_export, &pending_push]() -> void {
+                              &pending_export, &pending_push, &restore_waiting_for_secret,
+                              &restore_secret_sink]() -> void {
+        // 恢复腿的取消＝中止余下重放（批 5-C）：已经恢复出来的格原样留下，当前窗没格则补一格缺省
+        // 本地标签（收尾在 `pump_restore` 那一侧）。这里先放行再清 pending——两套状态互不相干，
+        // 多清一遍无害，但**不能**先 return，否则一次恢复期的取消会漏掉其他 pending 的清理。
+        if (restore_waiting_for_secret) {
+            restore_waiting_for_secret = false;
+            if (restore_secret_sink) {
+                restore_secret_sink(std::nullopt);
+            }
+        }
         pending_profile.reset();
         pending_restart.reset();
         pending_tunnel.reset();
@@ -3907,7 +3985,19 @@ auto main(int argc, char **argv) -> int {
                       &has_live_session, &pane_session, &sftp_panel, &tunnel_panel,
                       &keys_panel, &logging_state_probe, &add_logging_command, &logging_command_shows,
                       &show_log_notice, &startup_mutex, &startup_queue, &apply_startup_request,
-                      &frame_bytes, &reply_wire]() -> void {
+                      &frame_bytes, &reply_wire, &credential_prompt, &restore_waiting_for_secret,
+                      &restore_secret_sink]() -> void {
+        // 恢复的凭据挂起兜底（`SPEC.FEAT.WS.11` 批 5-C）：问句被**静默关掉**（Esc、搬窗时
+        // `set_overlay_host` 的 close、宿主散了）不会回调 `on_cancel`，而那个缺口会让泵永远停在
+        // 「等一个不会来的答案」上。帧边界是唯一能看见「框已经不在了」的地方：认领并中止余下重放，
+        // 已恢复的格照旧收尾（与按钮取消同一条语义）。
+        if (restore_waiting_for_secret &&
+            (!credential_prompt || !credential_prompt->is_open())) {
+            restore_waiting_for_secret = false;
+            if (restore_secret_sink) {
+                restore_secret_sink(std::nullopt);
+            }
+        }
         // 转交请求在帧边界排空（稿 §3.3）：transport 线程只负责入队与唤醒，档案解析、开标签、切分
         // 全部发生在主线程这一侧。逐条回执要在执行**之后**才写，于是转发端拿到的「成功」意味着
         // 那一格已经建好（或已确定建不出来）。
@@ -4182,6 +4272,437 @@ auto main(int argc, char **argv) -> int {
     if (WorkspaceWindow *const wake_window = fallback_window(); wake_window != nullptr) {
         startup_wake.store(wake_window->surface);
     }
+
+    // ---- 启动重放（`SPEC.FEAT.WS.11` 批 5-C，稿 D2／D4／D5／D6／D7／D8）--------------------------
+    //
+    // 读侧已在建首窗之前完成（上面 `restored_layout` 那一块），这里只做「按快照把会话造出来」。形态是
+    // **游标 + 一次性泵**而不是双层 for：SSH 腿按 D4①／F9 要重新走凭据询问，而答案在 `on_secret` 那
+    // 一侧异步回来，故泵在缺口处挂起、由 `restore_secret_sink` 放行。泵推进的每一步只做一件可失败、
+    // 可跳过的事：单张标签失败不回滚已恢复的格（稿 F29④ 的 fail-closed 落点），取消则收尾当前窗、
+    // 余下的窗与标签不再恢复（已恢复的现场原样留下）。
+    //
+    // 为什么在 `app.run()` 之前：首帧直接画出目标布局（与冷启动 CLI 同一条「不先空一帧」的取向，
+    // 稿 F16）。不需要材料的那一路在这一处一口气建完；需要材料的那一路建到第一格 SSH 为止，剩下的
+    // 由事件循环里的 `on_secret` 接着建。所有状态与闭包都声明在**本函数作用域**而不是 `if` 块里：
+    // 挂起期间它们要活过 `app.run()`，缩进一层就是回调握着一批已析构的引用。
+    std::size_t restore_window_cursor = 0U;
+    std::size_t restore_tab_cursor = 0U;
+    std::vector<std::optional<borealis::ui::TabId>> restore_tab_ids;
+    std::optional<au::WindowId> restore_window_id;
+    bool restore_aborted = false;
+    bool restore_done = false;
+    std::function<void()> pump_restore;
+
+    // 档案 id 命中配置表且**同型**才以表里那一份为准（稿 D4①）：只比 id 不比类型，会让「档案被改成
+    // 另一种连接」之后的首次重启拿一份形状不对的档案去拨。未命中（含 quick connect 那些不落表的临时
+    // id）回空指针，调用方退回快照里那一份字段。
+    auto restored_profile = [&settings](const borealis::ui::SnapshotTab &item)
+        -> const borealis::conn::Profile * {
+        if (item.profile_id.empty()) {
+            return nullptr;
+        }
+        for (const borealis::conn::Profile &candidate : settings.profiles) {
+            if (candidate.id == item.profile_id && candidate.type == item.kind) {
+                return &candidate;
+            }
+        }
+        return nullptr;
+    };
+
+    // 标签缺省名只用**一处真值源**：档案命中取档案名（改过名就显示新名），否则落回连接类型词条
+    // （稿 D10①）。手动名存在 `item.title` 里；OSC 标题不存也不恢复——远端重发后自会回来。
+    auto restored_type_label = [&decode_utf8](borealis::conn::ConnectionType kind) -> std::u32string {
+        switch (kind) {
+            case borealis::conn::ConnectionType::Local:
+                return decode_utf8(borealis::ui::settings_label("connections.type.local"));
+            case borealis::conn::ConnectionType::Ssh:
+                return decode_utf8(borealis::ui::settings_label("connections.type.ssh"));
+            case borealis::conn::ConnectionType::Serial:
+                return decode_utf8(borealis::ui::settings_label("connections.type.serial"));
+            case borealis::conn::ConnectionType::Telnet:
+                return decode_utf8(borealis::ui::settings_label("connections.type.telnet"));
+        }
+        return {};
+    };
+
+    /// @brief 把一条快照标签造回 @p window：会话、视口、工作区、账目、标签条一次成。
+    ///
+    /// 任一环失败即回空值且**不留账**：会话先 close 再散，`tab_kind`／四张连接表／标签条一处不写。
+    /// @param secret 仅 SSH 腿使用；询问型档案由调用方先问到再交进来（空值即那一格缺材料）。
+    auto build_restored_tab = [&](WorkspaceWindow &window, const borealis::ui::SnapshotTab &item,
+                                  std::optional<std::string> secret)
+        -> std::optional<borealis::ui::TabId> {
+        // 先跑树的整套自检并取叶子数（`restore` 里还会再跑一遍，那一次是界面侧的前置）。
+        borealis::ui::PaneTree probe{1U};
+        if (!probe.restore(item.shape, 1U)) {
+            AURORA_LOG_WARN("main", "restore: tab skipped, its pane shape is not a valid tree");
+            return std::nullopt;
+        }
+        const std::size_t leaves = probe.pane_count();
+        const borealis::conn::Profile *const named = restored_profile(item);
+
+        // 逐腿的档案与料在造会话**之前**取齐：缺料在这一步就拒，不先起一半会话再散。本地腿命中档案时
+        // 整张标签按档案那份算（档案腿的切分工厂本就不继承 OSC 7，故各格同料是它的既有语义）；未命中
+        // 则用采集下来的逐格有效料——缺省本地标签的各格目录可以不同，那份料只有快照里有。
+        std::optional<borealis::conn::SshProfile> ssh;
+        std::optional<borealis::conn::SerialProfile> serial;
+        std::optional<borealis::conn::TelnetProfile> telnet;
+        std::vector<borealis::conn::LocalTerminalSpec> local_specs;
+        switch (item.kind) {
+            case borealis::conn::ConnectionType::Local:
+                if (named != nullptr) {
+                    borealis::conn::LocalTerminalSpec spec;
+                    spec.command_line = named->local.command_line;
+                    spec.working_directory = named->local.working_directory;
+                    spec.environment = named->local.environment;
+                    local_specs.assign(leaves, spec);
+                } else {
+                    local_specs = item.panes;
+                }
+                if (local_specs.size() != leaves) {
+                    AURORA_LOG_WARN("main", "restore: local tab skipped, ", local_specs.size(),
+                                    " pane specs for ", leaves, " panes");
+                    return std::nullopt;
+                }
+                break;
+            case borealis::conn::ConnectionType::Ssh:
+                if (named != nullptr) {
+                    ssh = named->ssh;
+                } else if (item.ssh.has_value()) {
+                    ssh = item.ssh;
+                }
+                if (!ssh.has_value()) {
+                    AURORA_LOG_WARN("main", "restore: SSH tab skipped, the snapshot carries no profile");
+                    return std::nullopt;
+                }
+                // 询问型档案必须由调用方先把材料问到；走到这里还缺就是调用方的账没对上，跳过而不是拿
+                // 空串去拨（空串会被当成用户提交了一个空口令，重拨必然失败且现场看不出原因）。
+                if (borealis::conn::secret_ask_for(borealis::conn::normalized_auth_method(*ssh)) !=
+                        borealis::conn::SecretAsk::None &&
+                    !secret.has_value()) {
+                    AURORA_LOG_WARN("main", "restore: SSH tab skipped, no credential material");
+                    return std::nullopt;
+                }
+                break;
+            case borealis::conn::ConnectionType::Serial:
+                // 串口腿在建标签那条路径上就切不开（恒拒工厂，稿 §4 的 F12）；一份声称多格的串口形状
+                // 只可能来自手改文档，按单张标签 fail-closed。
+                if (leaves != 1U) {
+                    AURORA_LOG_WARN("main", "restore: serial tab skipped, it cannot hold ", leaves, " panes");
+                    return std::nullopt;
+                }
+                if (named != nullptr) {
+                    serial = named->serial;
+                } else if (item.serial.has_value()) {
+                    serial = item.serial;
+                }
+                if (!serial.has_value()) {
+                    AURORA_LOG_WARN("main", "restore: serial tab skipped, the snapshot carries no profile");
+                    return std::nullopt;
+                }
+                break;
+            case borealis::conn::ConnectionType::Telnet:
+                if (named != nullptr) {
+                    telnet = named->telnet;
+                } else if (item.telnet.has_value()) {
+                    telnet = item.telnet;
+                }
+                if (!telnet.has_value()) {
+                    AURORA_LOG_WARN("main", "restore: telnet tab skipped, the snapshot carries no profile");
+                    return std::nullopt;
+                }
+                break;
+        }
+
+        // 号在这一刻发（`create_new_tab_with` 里 `next_tab_id++` 是唯一的另一处发号点）：失败也照旧
+        // 消耗一个号——标识只增不复用，跳号无害，回收一个号才会撞进可能还活着的标签。
+        const borealis::ui::TabId id = next_tab_id++;
+        std::vector<std::shared_ptr<borealis::session::Session>> sessions;
+        std::vector<std::shared_ptr<borealis::ui::TerminalView>> views;
+        sessions.reserve(leaves);
+        views.reserve(leaves);
+        std::optional<borealis::conn::SerialConnection *> serial_connection;
+        // 询问到的材料留一份给 SFTP 面板与往后切分的新格（同 `open_ssh_tab` 的 sftp_secret）：
+        // 内存副本、不落盘、不进日志（CONN.09 的降级语义）。
+        const std::optional<std::string> retained_secret = secret;
+        auto abandon = [&]() -> std::optional<borealis::ui::TabId> {
+            views.clear();  // 先散视口：`~TerminalView` 要往背后的会话回写撤账空响应。
+            for (const std::shared_ptr<borealis::session::Session> &session : sessions) {
+                if (session != nullptr) {
+                    session->close();
+                }
+            }
+            sessions.clear();
+            return std::nullopt;
+        };
+        for (std::size_t order = 0U; order < leaves; ++order) {
+            std::shared_ptr<borealis::session::Session> session;
+            borealis::term::LineEnding ending = borealis::term::LineEnding::Lf;
+            switch (item.kind) {
+                case borealis::conn::ConnectionType::Local:
+                    session = make_local_session(local_specs[order]);
+                    break;
+                case borealis::conn::ConnectionType::Ssh: {
+                    // 每格各拨一条连接，最后一份材料 move 走（同 `open_ssh_tab` 的「留档副本先取」）。
+                    std::optional<std::string> material =
+                        order + 1U < leaves ? retained_secret : std::move(secret);
+                    session = make_ssh_session(*ssh, std::move(material));
+                    break;
+                }
+                case borealis::conn::ConnectionType::Serial: {
+                    auto bundle = make_serial_session(*serial);
+                    session = std::move(bundle.session);
+                    serial_connection = bundle.connection;
+                    ending = bundle.line_ending;
+                    break;
+                }
+                case borealis::conn::ConnectionType::Telnet: {
+                    auto bundle = make_telnet_session(*telnet);
+                    session = std::move(bundle.session);
+                    ending = bundle.line_ending;
+                    break;
+                }
+            }
+            if (session == nullptr) {
+                return abandon();
+            }
+            sessions.push_back(session);
+            views.push_back(build_pane_view(window, session, ending));
+        }
+
+        borealis::ui::WorkspaceView::Hooks ws_hooks;
+        wire_workspace_hooks(id, ws_hooks);
+        const std::shared_ptr<borealis::ui::WorkspaceView> workspace =
+            borealis::ui::WorkspaceView::restore(std::move(views), item.shape, item.focused_order,
+                                                 std::move(ws_hooks));
+        if (workspace == nullptr) {
+            // `restore` 的前置全跑在造对象之前，回空即「没有半个工作区」：散掉这一批会话即可。
+            return abandon();
+        }
+
+        // 账目一次登记齐（与 `create_new_tab_with` 同一份形态，只是工作区是恢复出来的那一棵）：
+        // 会话表、本地有效料、切分工厂、属主与工作区，然后才是类型表与四张连接表。
+        TabWorkspace tab;
+        tab.owner = &window;
+        for (std::size_t order = 0U; order < leaves; ++order) {
+            const borealis::ui::PaneId pane = static_cast<borealis::ui::PaneId>(order) + 1U;
+            tab.sessions_by_pane[pane] = sessions[order];
+            if (item.kind == borealis::conn::ConnectionType::Local) {
+                tab.local_specs_by_pane[pane] = local_specs[order];
+            }
+        }
+        switch (item.kind) {
+            case borealis::conn::ConnectionType::Local:
+                tab.make_session = named != nullptr ? make_local_profile_pane_factory(named->local)
+                                                    : make_local_pane_factory(id);
+                break;
+            case borealis::conn::ConnectionType::Ssh:
+                tab.make_session = make_ssh_pane_factory(id);
+                break;
+            case borealis::conn::ConnectionType::Serial:
+                tab.make_session = make_refusing_pane_factory("serial device is exclusive");
+                break;
+            case borealis::conn::ConnectionType::Telnet:
+                tab.make_session = make_telnet_pane_factory(id);
+                break;
+        }
+        tab.workspace = workspace;
+        tab_kind[id] = item.kind;
+        tab_workspaces[id] = std::move(tab);
+        switch (item.kind) {
+            case borealis::conn::ConnectionType::Local:
+                break;
+            case borealis::conn::ConnectionType::Ssh:
+                ssh_profile_by_tab[id] = *ssh;
+                ssh_secret_by_tab[id] = retained_secret;
+                break;
+            case borealis::conn::ConnectionType::Serial:
+                serial_by_tab[id] = SerialTabBinding{.profile = *serial,
+                                                     .connection = serial_connection.value_or(nullptr)};
+                break;
+            case borealis::conn::ConnectionType::Telnet:
+                telnet_by_tab[id] = *telnet;
+                break;
+        }
+        if (!item.profile_id.empty()) {
+            tab_profile_id[id] = item.profile_id;
+        }
+        attach_broadcast_sink(id);
+
+        std::u32string tab_name =
+            named != nullptr ? decode_tab_name(named->name) : restored_type_label(item.kind);
+        window.tab_strip.add(id, std::move(tab_name));
+        window.current_tab_id = id;
+        if (!item.title.empty()) {
+            static_cast<void>(window.tab_strip.rename(id, decode_utf8(item.title)));
+        }
+        return id;
+    };
+
+    /// @brief 收尾一扇恢复窗：选中快照里那一格（缺了就取第一个恢复成功的），一格都没有就补一张缺省
+    ///        本地标签。
+    ///
+    /// 兜底标签走 `commit=false`：重放中途的半成品不进快照，否则一次失败的恢复会把「上次的布局」
+    /// 改写成「这次半成品」（稿 D2① 的写侧纪律）。
+    auto finish_restore_window = [&](WorkspaceWindow &window,
+                                     const borealis::ui::SnapshotWindow &saved) -> void {
+        std::optional<borealis::ui::TabId> selected;
+        if (saved.selected_tab < restore_tab_ids.size()) {
+            selected = restore_tab_ids[saved.selected_tab];
+        }
+        if (!selected.has_value()) {
+            for (const std::optional<borealis::ui::TabId> &candidate : restore_tab_ids) {
+                if (candidate.has_value()) {
+                    selected = candidate;
+                    break;
+                }
+            }
+        }
+        if (selected.has_value()) {
+            static_cast<void>(window.tab_strip.select(*selected));
+            window.current_tab_id = *selected;
+        } else {
+            create_new_tab(window, std::nullopt, false);
+        }
+        rebuild_root_children(window, tab_workspaces);
+    };
+
+    /// @brief 重放收尾后补 `--cwd` 单飞那一格（稿 D7① 的「不跳过恢复」半边）。
+    ///
+    /// 为什么不放在 `app.run()` 之前那一跳：恢复可能在等凭据，此刻补进去的标签会被之后的收尾选中
+    /// 压掉，用户点名要的那一格就沉到后面。挂在泵的完成点，它一定是最后被选中/补上的那一格。
+    auto apply_deferred_startup_cwd = [&]() -> void {
+        if (!startup_request.has_value() || startup_request->cwd.empty()) {
+            return;
+        }
+        const std::string problem = apply_startup_request(*startup_request, false);
+        startup_request.reset();  // 一次性：完成点只可能到这（挂起期间的每一次放行都汇入同一条泵）。
+        if (!problem.empty()) {
+            AURORA_LOG_WARN("main", "startup request not applied: ", problem);
+        }
+    };
+
+    pump_restore = [&]() -> void {
+        for (;;) {
+            if (restore_done) {
+                return;
+            }
+            const std::vector<borealis::ui::SnapshotWindow> &saved_windows =
+                restored_layout->windows;
+            if (restore_aborted) {
+                if (restore_window_id.has_value()) {
+                    if (WorkspaceWindow *const window = window_of(*restore_window_id);
+                        window != nullptr) {
+                        finish_restore_window(*window, saved_windows[restore_window_cursor]);
+                    }
+                }
+                restore_window_id.reset();
+                restore_tab_ids.clear();
+                restore_done = true;
+                AURORA_LOG_INFO("main", "session restore stopped: the credential prompt was cancelled");
+                apply_deferred_startup_cwd();
+                return;
+            }
+            if (restore_window_cursor >= saved_windows.size()) {
+                restore_done = true;
+                AURORA_LOG_INFO("main", "session restore complete");
+                apply_deferred_startup_cwd();
+                return;
+            }
+            if (!restore_window_id.has_value()) {
+                if (restore_window_cursor == 0U) {
+                    if (workspace_windows.empty()) {
+                        restore_done = true;
+                        return;
+                    }
+                    // 第 0 扇就是建好等在那里的主窗：窗序与 `windows.json` 的创建序键按同一条算式
+                    // 对齐（稿 D6①），故快照窗序不另存身份。
+                    restore_window_id = workspace_windows.front()->id;
+                } else {
+                    WorkspaceWindow *const created = open_new_window ? open_new_window() : nullptr;
+                    if (created == nullptr) {
+                        AURORA_LOG_WARN("main", "restore: saved window skipped, a new window could not be created");
+                        ++restore_window_cursor;
+                        continue;
+                    }
+                    restore_window_id = created->id;
+                }
+                restore_tab_cursor = 0U;
+                restore_tab_ids.assign(saved_windows[restore_window_cursor].tabs.size(), std::nullopt);
+            }
+            WorkspaceWindow *const window = window_of(*restore_window_id);
+            if (window == nullptr) {
+                // 只在凭据挂起期间可能发生（用户把那一扇关掉了）：余下的格无处可放，跳过整扇。
+                AURORA_LOG_WARN("main",
+                                "restore: the window being replayed is gone, its remaining tabs are skipped");
+                restore_window_id.reset();
+                restore_tab_ids.clear();
+                ++restore_window_cursor;
+                continue;
+            }
+            const borealis::ui::SnapshotWindow &saved = saved_windows[restore_window_cursor];
+            if (restore_tab_cursor >= saved.tabs.size()) {
+                finish_restore_window(*window, saved);
+                restore_window_id.reset();
+                restore_tab_ids.clear();
+                ++restore_window_cursor;
+                continue;
+            }
+            const borealis::ui::SnapshotTab &item = saved.tabs[restore_tab_cursor];
+            if (item.kind == borealis::conn::ConnectionType::Ssh) {
+                const borealis::conn::Profile *const named = restored_profile(item);
+                const borealis::conn::SshProfile *const profile =
+                    named != nullptr ? &named->ssh : (item.ssh.has_value() ? &*item.ssh : nullptr);
+                if (profile == nullptr) {
+                    AURORA_LOG_WARN("main", "restore: SSH tab skipped, the snapshot carries no profile");
+                    ++restore_tab_cursor;
+                    continue;
+                }
+                const borealis::conn::SecretAsk ask = borealis::conn::secret_ask_for(
+                    borealis::conn::normalized_auth_method(*profile));
+                if (ask != borealis::conn::SecretAsk::None && !restore_secret.has_value()) {
+                    if (credential_prompt == nullptr) {
+                        AURORA_LOG_WARN("main", "restore: SSH tab skipped, no credential prompt is available");
+                        ++restore_tab_cursor;
+                        continue;
+                    }
+                    // 挂起前先把问句搬到这一扇窗上（稿 D6 的唯一漏斗）：「一串旧窗恢复起来之后，
+                    // 材料框弹在用户没碰过的那一扇」比多问一次更难解释。
+                    restore_waiting_for_secret = true;
+                    retarget_panel_to(*credential_prompt, window);
+                    const std::string ask_name =
+                        named != nullptr && !named->name.empty()
+                            ? named->name
+                            : (item.profile_id.empty()
+                                   ? borealis::ui::settings_label("connections.type.ssh")
+                                   : item.profile_id);
+                    credential_prompt->ask(ask, ask_name);
+                    return;
+                }
+            } else {
+                restore_secret.reset();  // 非 SSH 腿不吃材料：上一条答案若还留在手上，到此作废。
+            }
+            const std::optional<borealis::ui::TabId> id =
+                build_restored_tab(*window, item, std::move(restore_secret));
+            restore_secret.reset();
+            if (id.has_value()) {
+                restore_tab_ids[restore_tab_cursor] = *id;
+            }
+            ++restore_tab_cursor;
+        }
+    };
+
+    if (restore_at_startup && restored_layout.has_value()) {
+        restore_secret_sink = [&](std::optional<std::string> secret) -> void {
+            restore_secret = std::move(secret);
+            if (!restore_secret.has_value()) {
+                restore_aborted = true;  // 取消＝中止余下重放；已恢复的格原样留下（on_cancel 的注释同一条）。
+            }
+            pump_restore();
+        };
+        pump_restore();
+    }
+
     if (startup_request.has_value() && !cold_startup_plain_tab_done) {
         const std::string problem = apply_startup_request(*startup_request, false);
         if (!problem.empty()) {
