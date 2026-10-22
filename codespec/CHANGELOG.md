@@ -4,6 +4,20 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.134（2026-10-22）**`SPEC.FEAT.WS.10` 的 SSH 档案腿落地：撤销重开按「档案 id 同型优先、关闭快照兜底」重连，凭据仍走 None／Stored／Ask 三路线，标签回插原窗原位原名；本地腿同时收进共用的 `restore_tab_at`（裁决 7.134；本地提交 `ac3c58c`）**
+
+**动机**：`SPEC.FEAT.WS.10` 原文要求「本地终端重连进程、SSH 按档案重连」，本地腿早在 2026-10-08 已落，SSH 腿一直随 `SPEC.FEAT.CONN.02` 挂账。档案域、真实凭据后端（CONN.09）与 WS.11 的「id／字段双写 + 快照兜底」先例都已到位，这一腿具备收口条件。
+
+**落地形态**：
+
+- **闭包栈扩型**：`ClosedTabSpec` 增 `leg`（`Local`／`Ssh`）、`profile_id` 与整份 `conn::SshProfile` 快照；凭据只带 `SecretHandle`，无明文。`ui::resolve_closed_ssh_profile` 是重连档案的单一判定点——id 命中**且同型**优先（以现在的档案为准），未命中回快照（quick connect 与已删档案），空 id 不参与回查，非 SSH 腿与无料可兜回空值。
+- **装配腿**：`perform_close` 按 `tab_kind` 记录 SSH 身份；`undo_close_tab` 按 `leg` 分两支，SSH 支调 `connect_profile_to` 复用凭据三路线（None 直连／Stored 后台取／Ask 询问），再把结论交给 `open_ssh_tab`。`RestoreAnchor`（`WindowId` + 原位置 + 原名）穿过异步问答；答话时按窗号现取，窗已散只 WARN。取料去重键对撤销取 `@undo/<id>/<n>`，同档案两次撤销不再互相吞掉。
+- **共用回插壳**：`restore_tab_at` 统一 `build_pane_view` / `wire_workspace_hooks` / `attach_broadcast_sink` / `insert_at` / `rebuild_root_children`，本地腿原先自己写一遍的那段旁路撤销；SSH 腿登记三张连接表后才提交快照。串口与 Telnet 仍按本地腿重开（需求只点名本地与 SSH）。
+
+**验收读数**：构建无新警告；`ctest --preset linux -E etest_` **108/108 全绿**，`borealis_test_runner` **1352/1352**（基线 1347 ⇒ +5 案，全部落在 `utest_closed_tab_stack` 5 → 10）。三支变异各有指名红案：删同型判据、删快照兜底、忽略 id 取表里第一份 SSH；第三支**首轮 0 红**（夹具只有一份 SSH 档案），补「表前垫一份合格诱饵 + 空 id 不得匹配任何档案」后转红。还原后两处读数逐位复现。
+
+**边界与不称可用**（`AGENTS.md` §4.4 第 33 条）：真机走查（凭据询问跨窗后的落位、本地与 SSH 两腿重开的手感与回插次序）一条未做；`src/main.cpp` 不编入 runner（裁决 7.83）⇒ 关闭记录与凭据回话后的回插无自动化证人；询问被取消时已弹出的闭包条目不再入栈；Win32／MSVC 通道未编译验证 ⇒ 本条不称「可用」。
+
 ## v0.133（2026-10-22）**`SPEC.FEAT.PREF.07` 导出件剥离凭据句柄：`CONN.09` 把 `SecretHandle` 带进 `Settings.profiles` 后，导出写侧改为「每次询问」哨兵，配置文件／快照／回滚仍存真实句柄（裁决 7.133；本地提交 `d4c5967`）**
 
 **动机**：`CONN.03` 让 `profiles` 进 schema、`CONN.09` 在 `SshProfile` 里放 `SecretHandle` 之后，`export_settings()` 复用的 `settings_to_json()` 经 `credential_to_json()` 无条件写出 `vault_id`，导出件因此带上了本机 OS 凭据库句柄，违反 `SPEC.FEAT.PREF.07` 原文「凭据句柄不导出」；裁决 7.87⑥ 那句「凭据结构上不在 `Settings` 内」的前提也随之失效。这是一条无头可断言的合规回归，不依赖 UI 走查。

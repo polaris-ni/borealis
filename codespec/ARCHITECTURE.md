@@ -310,7 +310,7 @@ SFTP（`SPEC.FEAT.CONN.04`）、隧道（`SPEC.FEAT.CONN.08`）、公钥推送�
 
 ### 8.3 布局持久化与恢复
 
-**窗口几何的分别记忆已落**（2026-10-21，裁决 **7.126**）：按框架 `persist_id` 键控（主窗 `main`、其余 `window-2`、`window-3`… 创建序且号不复用），经 `src/config/window_geometry_store.{h,cpp}` 这**第二枚** `preferences::Preferences` 落配置目录的 `windows.json`，`flush()` 取在「任一窗关闭后」与「退出前」两处；恢复那一跳写在框架的 `Application::register_host` 尾部，所以运行中新开的窗自动恢复自己的几何格，本仓零新增接缝。它**不进** `config::Settings` schema、**不进** `PREF.07` 导出件——几何是本机屏幕相关值，跨机导出即坏值，这是特性不是漏项；框架的 `WindowGeometry::mode` 存而不取（本仓不补偿）。**标签页级的会话恢复**（`SPEC.FEAT.WS.11`）仍属计划能力；**撤销关闭标签**（`SPEC.FEAT.WS.10`）的本地腿已落，其 `ClosedTabStack` 自多窗口起改**每窗一份**——撤销是把标签放回「关它的那扇窗」，跨窗撤销不在需求内。本文件不在需求之外扩展其语义。
+**窗口几何的分别记忆已落**（2026-10-21，裁决 **7.126**）：按框架 `persist_id` 键控（主窗 `main`、其余 `window-2`、`window-3`… 创建序且号不复用），经 `src/config/window_geometry_store.{h,cpp}` 这**第二枚** `preferences::Preferences` 落配置目录的 `windows.json`，`flush()` 取在「任一窗关闭后」与「退出前」两处；恢复那一跳写在框架的 `Application::register_host` 尾部，所以运行中新开的窗自动恢复自己的几何格，本仓零新增接缝。它**不进** `config::Settings` schema、**不进** `PREF.07` 导出件——几何是本机屏幕相关值，跨机导出即坏值，这是特性不是漏项；框架的 `WindowGeometry::mode` 存而不取（本仓不补偿）。**标签页级的会话恢复**（`SPEC.FEAT.WS.11`）已落（2026-10-22，裁决 7.131）；**撤销关闭标签**（`SPEC.FEAT.WS.10`）的本地与 SSH 两腿均已落（SSH 按档案重连并经凭据三路线取料，2026-10-22，裁决 7.134），其 `ClosedTabStack` 自多窗口起改**每窗一份**——撤销是把标签放回「关它的那扇窗」，跨窗撤销不在需求内。本文件不在需求之外扩展其语义。
 
 ### 8.4 其余工作区能力归属
 
