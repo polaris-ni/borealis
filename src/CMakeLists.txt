@@ -72,6 +72,7 @@ add_library(borealis_core STATIC
         ui/osc7.cpp
         ui/palette.cpp
         ui/pane_tree.cpp
+        ui/quick_select.cpp
         ui/right_click.cpp
         ui/selection.cpp
         ui/search.cpp
