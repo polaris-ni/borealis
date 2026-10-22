@@ -92,7 +92,8 @@ enum class EffectLevel : std::uint8_t {
     ///
     /// 追加这一档不是为了好看：`SPEC.FEAT.PREF.05` 的语言档就属这一类（词条在建任何控件之前装填，
     /// 而运行期换档要重建命令表与每一扇窗），把它挂进 `NextSession` 等于在界面上写一句错话。
-    /// 唯一消费点是面板角标那一支（`SPEC.FEAT.PREF.05` 稿 F16）。
+    /// 两处消费者是 `appearance.language` 与 `connection.restore_sessions`（后者见
+    /// `SPEC.FEAT.WS.11` 稿 D3①）；面板角标按档位统一渲染，不随键分叉。
     NextLaunch,
 };
 

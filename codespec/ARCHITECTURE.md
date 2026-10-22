@@ -52,10 +52,10 @@ Borealis 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨�
 | `include/borealis/grid/` | cell / 行 / 环形缓冲 / 主备屏 / 脏区 |
 | `include/borealis/session/` | 会话抽象、背压队列、生命周期；两份「锁内留存、锁外 IO」的落地件都在 `src/session/`——`clipboard_outbox`（52 写与读应答，全仓唯一触达框架剪贴板处）与 `notification_outbox`（9／777 投递，全仓唯一触达框架通知处，裁决 7.128），二者的公共头都不含框架类型 |
 | `include/borealis/conn/` | 连接类型与档案、凭据句柄 |
-| `include/borealis/ui/` | 终端视口、标签栏、pane 树、搜索浮层、设置面板 |
-| `include/borealis/config/` | 配置 schema、原子写与降级、profile；逐窗几何记忆另起第二枚框架接缝，实现与头都在 `src/config/`（`window_geometry_store`，裁决 7.126） |
+| `include/borealis/ui/` | 终端视口、标签栏、pane 树（含 `PaneShape` 的形状描述／重建，裁决 7.131）、工作区布局快照模型（`workspace_snapshot`，纯逻辑、fail-closed 编解码）、搜索浮层、设置面板 |
+| `include/borealis/config/` | 配置 schema、原子写与降级、profile；逐窗几何记忆另起第二枚框架接缝，实现与头都在 `src/config/`（`window_geometry_store`，裁决 7.126）；布局快照再起第三枚（`workspace_store`，绑 `workspace.json`、顶层键 `layout`、无删除入口，裁决 7.131） |
 | `include/borealis/cli/`、`src/cli/` | CLI 启动参数语法与档案解析、单实例转交的请求 / 回复编解码（纯逻辑，不碰文件系统与 UI，裁决 7.124） |
-| `src/ui/`（私有头） | 触达框架类型的控件实现（绘制侧类声明含 Aurora 类型，故不入公共头）；其中 `active_window_tracker.{h,cpp}` 是纯逻辑件，判「命令与快捷键落哪一扇窗」，为框架缺口 G42 的代偿（裁决 7.126）。`settings_i18n.{h,cpp}` 是本仓**上屏短语与框架 i18n 接缝的唯一归属**（裁决 7.130）：两张语言档表（`kStringsZh`／`kStringsEn`，各 470 条、key 集逐字相等）住在这一个文件里，`install_settings_strings(Language)` 是全仓唯一的装填点，也是唯一把语言档折成 `aurora::Locale` 的地方（装配层另在生产的场景根与用例驱动台各装一枚 `au::LocaleProvider`，`src/main.cpp`，裁决 7.130 的 D4／F19），界面上的显示文案一律经 `settings_label(key, args)` 取而不许就地写死——「引号内含汉字的字面量只许出现在这一个文件」已由常驻门禁 `tools/check/check_display_literals.py` 挂在 CTest 上守着（注释可中文、排版符号不在射程） |
+| `src/ui/`（私有头） | 触达框架类型的控件实现（绘制侧类声明含 Aurora 类型，故不入公共头）；其中 `active_window_tracker.{h,cpp}` 是纯逻辑件，判「命令与快捷键落哪一扇窗」，为框架缺口 G42 的代偿（裁决 7.126）。`settings_i18n.{h,cpp}` 是本仓**上屏短语与框架 i18n 接缝的唯一归属**（裁决 7.130）：两张语言档表（`kStringsZh`／`kStringsEn`，各 470 条、key 集逐字相等）住在这一个文件里，`install_settings_strings(Language)` 是全仓唯一的装填点，也是唯一把语言档折成 `aurora::Locale` 的地方（装配层另在生产的场景根与用例驱动台各装一枚 `au::LocaleProvider`，`src/main.cpp`，裁决 7.130 的 D4／F19），界面上的显示文案一律经 `settings_label(key, args)` 取而不许就地写死——「引号内含汉字的字面量只许出现在这一个文件」已由常驻门禁 `tools/check/check_display_literals.py` 挂在 CTest 上守着（注释可中文、排版符号不在射程）。另有 `pane_tree.cpp` 与 `workspace_snapshot.cpp` 两件纯逻辑实现（公共头在 `include/borealis/ui/`，裁决 7.131） |
 | `src/platform/win/`、`src/platform/posix/` | 平台相关实现（**平台假设不得渗入共享路径**，裁决 7.11）；含单实例通道与进程参数两腿（`instance_channel` / `process_args`，裁决 7.124），共享侧只见 `src/platform/` 下的同名接口头 |
 
 ### 2.3 依赖方向不变量
@@ -507,7 +507,7 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 
 落盘形态另有三条由**裁决 7.27** 定死的硬约束，它们来自框架 `Preferences::reconcile()` 的实现（拍平成点号复合键再按点号重建嵌套，只有数组是叶子）而不是本仓的选择：**⑤键名不得含点号**——对象键里的点会被拆成一层层嵌套对象，`shortcuts.overrides` 里的命令 id（`terminal.new_tab` 形态）因此不能作键；**⑥可空的映射落为数组**——空对象在拍平时不产生条目、重建后即消失，故覆盖表落 `[{command, combo}, ...]`，内存模型仍是映射，元素形态不合只丢该元素并留痕其下标；**⑦色值的回落线以「本文件点名的主题」为基准**——`palette.cursor` 缺键回落该主题的光标色并留痕，显式 null 才是「未配」（绘制侧回落 `default_foreground`，裁决 7.25③），开关与阈值不属色值、回落一律随 `Settings{}`。
 
-`borealis::config` 的模块边界：`settings.h` 是唯一默认值来源（`Settings{}` 即首次启动那份），`themes.{h,cpp}` 是色值唯一来源（`AppearanceSettings` 的默认调色板由它派生，开关不入库表以免成为第二真值源），`store.{h,cpp}` 是与框架 `Preferences` 的读写接缝（`Preferences` 藏在 PIMPL 内，本头与 `settings.h` 均不含 Aurora 类型，架构 §2.2）——**「唯一」自 2026-10-21 起不再成立**：`SPEC.FEAT.WS.03` 的逐窗几何另起第二枚同类接缝 `window_geometry_store.{h,cpp}`（裁决 **7.126** 的稿 D9），落同一配置目录的 `windows.json` 而**不进** `Settings` schema，理由是几何是本机屏幕相关值、跨机导出即坏值；两枚接缝各自独立，互不读写对方的键空间。三者的验收判据是「写盘再读回逐域等值」，故 `ui::PaletteSpec` 与四域结构各带默认比较（C++20 不隐式声明 `==`，缺了就整份配置的等值被静默删除）。
+`borealis::config` 的模块边界：`settings.h` 是唯一默认值来源（`Settings{}` 即首次启动那份），`themes.{h,cpp}` 是色值唯一来源（`AppearanceSettings` 的默认调色板由它派生，开关不入库表以免成为第二真值源），`store.{h,cpp}` 是与框架 `Preferences` 的读写接缝（`Preferences` 藏在 PIMPL 内，本头与 `settings.h` 均不含 Aurora 类型，架构 §2.2）——**「唯一」自 2026-10-21 起不再成立**：`SPEC.FEAT.WS.03` 的逐窗几何另起第二枚同类接缝 `window_geometry_store.{h,cpp}`（裁决 **7.126** 的稿 D9），落同一配置目录的 `windows.json` 而**不进** `Settings` schema，理由是几何是本机屏幕相关值、跨机导出即坏值；`SPEC.FEAT.WS.11` 的布局快照再起第三枚 `workspace_store.{h,cpp}`（裁决 **7.131** 的稿 D1①），落 `workspace.json`、顶层只有 `layout` 一枚整值键（快照自身的 `schema_version` 在值内部），同样**不进** `Settings` schema，理由相同（布局是本机记忆、需求明写不跨设备）。三枚接缝各自独立，互不读写对方的键空间。第三枚**没有任何删除入口**，坏文档整份丢弃且只落 `AURORA_LOG_WARN`（D8①／D9①），超界那份在用户手工清掉前等于废掉——界面上没有清理入口，这条代价在册。上述三件（`settings.h`／`themes`／`store`）的验收判据是「写盘再读回逐域等值」，故 `ui::PaletteSpec` 与四域结构各带默认比较（C++20 不隐式声明 `==`，缺了就整份配置的等值被静默删除）。
 
 ### 11.4 i18n
 

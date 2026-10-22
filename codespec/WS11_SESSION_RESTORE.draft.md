@@ -121,7 +121,7 @@
 - **不动 WS.10 的闭包栈**：那份是内存栈、字段与粒度都不同（F14）；本棒不复用它，也不顺手把它接上盘。
 - **不碰 `SPEC.NF.RELI.01` 的崩溃留存腿**：`src/main.cpp` 里那条 `TODO(SPEC.NF.RELI.01)`（信号钩子/dump/自写诊断的形态待人裁）与本棒的「崩溃后恢复布局」是两件事，本棒不借道实现它。
 - **不扩 `ui::StartupNotice`**：D8① 之后它仍只吃 `config::LoadReport`。
-- **连带改口的在册句**（批 7 落）：`EffectLevel::NextLaunch` 注释里那句「唯一消费点是面板角标」（F18）、`SPEC.FEAT.XFER.01` 的「『会话恢复时』那一档随 `SPEC.FEAT.WS.11` 落期」（`SPECIFICATIONS.md` 的该条原文）、`SPEC.FEAT.WS.01` 与 `INTEG.04` 里与启动首标签有关的句子（D7）、`PLAN.md` §3 的 WS.11 行与 §8 的 M4 行。
+- **连带改口的在册句**（批 7 已落，2026-10-22）：`EffectLevel::NextLaunch` 注释里那句「唯一消费点是面板角标」（F18）、`SPEC.FEAT.XFER.01` 的「『会话恢复时』那一档随 `SPEC.FEAT.WS.11` 落期」（`SPECIFICATIONS.md` 的该条原文）、`SPEC.FEAT.WS.01` 与 `INTEG.04` 里与启动首标签有关的句子（D7）、`PLAN.md` §3 的 WS.11 行与 §8 的 M4 行。
 
 ---
 
@@ -291,3 +291,5 @@ Edit 原样复原，复原后 `git diff --check` 干净、两套件复跑全绿�
 （`main.cpp` 不编入 runner，F21／判据 ⑤）；标签条显示名的三名折算、`selected_tab` 的实际切换与窗口创建仍
 只在 §5 走查里验。② 快照里串口恒单格是装配层的判据（读侧不查，见 F25 末条的职责分家），本件按合法样本
 造现场，不把「读侧该不该拒多格串口」混进恢复链。
+
+**批 7 已落地（2026-10-22）**：六处回写全部落定——`SPECIFICATIONS.md` 的 WS.11 现状句与裁决 7.131、`CHANGELOG.md` v0.131、`PLAN.md` §3 的 WS.11 行与 §8 的 M4 行、`ARCHITECTURE.md` §2.2／§11.3、`UI_SETTINGS.draft.md` 那一行与新增 C5-a、`EffectLevel::NextLaunch` 注释改口；连带改口 XFER.01／WS.01／INTEG.04 三句同时落。结项复跑：`cmake --build --preset linux` 通过、`ctest --preset linux -E etest_` **106/106 全绿**、`./build/borealis_test_runner` **1337/1337 全绿**、`check_display_literals` PASS 211 files。本条不称「可用」：判据 ⑤ 无证人、§5 八条真机走查未做、Win32／MSVC 腿未验。
