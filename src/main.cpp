@@ -60,6 +60,7 @@
 #include "conn/tunnel_client.h"
 #include "config/window_geometry_store.h"
 #include "config/workspace_store.h"
+#include "platform/credential_store.h"
 #include "platform/instance_channel.h"
 #include "platform/open_url.h"
 #include "platform/process_args.h"
@@ -2593,8 +2594,13 @@ auto main(int argc, char **argv) -> int {
         }));
     };
 
-    // 凭据询问件（CONN.09 降级腿）：本期无 OS 凭据库后端，要材料的认证一律走这里；
-    // 明文只经 on_secret 交给**本次**装配，不落盘不进日志（裁决 7.93）。
+    // 凭据询问件（CONN.09 的降级腿）：档案没有可用的 Reference（或库不可用）时才走到这里；
+    // 明文只经 on_secret 交给**本次**装配，不落盘不进日志（裁决 7.93）；提交后按 D6 先乐观
+    // 回写确定性句柄、再把明文异步入库。
+    auto credential_store = std::shared_ptr<borealis::conn::CredentialStore>{
+        borealis::platform::make_credential_store()};
+    // 同一档案的取料在途去重：连点两下只发一次后台 retrieve，结果回来再合并（D8）。
+    auto pending_credential_fetches = std::make_shared<std::set<std::string>>();
     auto pending_profile = std::optional<borealis::conn::Profile>{};
     // 隧道启动的异步凭据腿（D7）：询问型档案的隧道把「档案副本+定义」留在这里，
     // 明文回到 on_secret 后才真正拉起 Tunnel（同 pending_profile 的先例形态）。
@@ -2626,11 +2632,46 @@ auto main(int argc, char **argv) -> int {
     std::function<void(std::optional<std::string>)> restore_secret_sink;
     // 放行过来的明文只在泵里过一手、取用即清（材料不落盘、不进日志，同 `ssh_secret_by_tab` 的存活期）。
     std::optional<std::string> restore_secret;
+    // 询问提交后的回存（CONN.09 D6）：句柄是确定性的，先乐观写进档案并落盘，再把明文异步入库。
+    // 入库失败不回滚句柄——下一次 retrieve 落空即自然回到询问，绝不会误用旧秘密。档案不在
+    // `settings.profiles`（quick connect、临时档案、已删除档案）或库不可用时整段跳过。
+    auto remember_profile_secret = [&store, credential_store](const std::string &profile_id,
+                                                              const std::string &secret) -> void {
+        if (profile_id.empty() || !credential_store->available()) {
+            return;
+        }
+        auto next = store.settings();
+        borealis::conn::Profile *target = nullptr;
+        for (auto &candidate : next.profiles) {
+            if (candidate.id == profile_id) {
+                target = &candidate;
+                break;
+            }
+        }
+        if (target == nullptr || target->type != borealis::conn::ConnectionType::Ssh) {
+            return;
+        }
+        const std::string vault_id = borealis::platform::credential_vault_id(
+            borealis::platform::credential_vault_prefix(), profile_id);
+        if (vault_id.empty()) {
+            return;
+        }
+        target->ssh.credential = borealis::conn::SecretHandle::reference(vault_id);
+        if (const auto error = store.replace(next); error.has_value()) {
+            AURORA_LOG_WARN("main", "credential handle not persisted for ", profile_id, ": ", *error);
+        }
+        const std::string label = target->name;
+        // 返回 bool 而非 void：Aurora 的 async 值萃取对 void 没有特化；真值只表示「任务跑完了」。
+        static_cast<void>(au::async([credential_store, profile_id, label, secret]() -> bool {
+            static_cast<void>(credential_store->store(profile_id, label, secret));
+            return true;
+        }));
+    };
     borealis::ui::CredentialPrompt::Hooks prompt_hooks;
     prompt_hooks.on_secret =
         [&open_ssh_tab, &restart_ssh_tab, &pending_profile, &pending_restart,
-         &pending_tunnel, &pending_export, &pending_push,
-         &launch_tunnel, &submit_keys_export, &submit_keys_push,
+         &pending_tunnel, &pending_export, &pending_push, &remember_profile_secret,
+         &tab_profile_id, &launch_tunnel, &submit_keys_export, &submit_keys_push,
          &restore_waiting_for_secret, &restore_secret_sink](const std::string &secret) -> void {
         // 恢复腿先认领（批 5-C）：挂起期间的问句只可能是它发的，答话也只回到它那一侧。
         if (restore_waiting_for_secret) {
@@ -2643,12 +2684,16 @@ auto main(int argc, char **argv) -> int {
         if (pending_restart.has_value()) {
             const auto [id, ssh] = std::move(*pending_restart);
             pending_restart.reset();
+            if (const auto profile = tab_profile_id.find(id); profile != tab_profile_id.end()) {
+                remember_profile_secret(profile->second, secret);
+            }
             restart_ssh_tab(id, ssh, secret);
             return;
         }
         if (pending_profile.has_value()) {
             auto profile = std::move(*pending_profile);
             pending_profile.reset();
+            remember_profile_secret(profile.id, secret);
             open_ssh_tab(profile, secret);
             return;
         }
@@ -2709,23 +2754,53 @@ auto main(int argc, char **argv) -> int {
             return;
         }
         // Telnet 同串口那条：没有认证协议、没有材料可要（登录提示是远端程序给的文本，不是
-        // 本仓的凭据链），故它也必须**挡在** `secret_ask_for` 之前。少了这一支不会崩，但会静默
-        // 走错腿：空白 `profile.ssh` 的 `auth_method` 缺省是 "agent" ⇒ `SecretAsk::None` ⇒ 拿一个
-        // 空主机去拨 SSH，标签名却还是 Telnet 档案名——拨号失败的事实被挂到一条不存在的连接上。
+        // 本仓的凭据链），故它也必须**挡在**凭据计划之前。少了这一支不会崩，但会静默
+        // 走错腿：空白 `profile.ssh` 的 `auth_method` 缺省是 "agent" ⇒ `CredentialRoute::None` ⇒
+        // 拿一个空主机去拨 SSH，标签名却还是 Telnet 档案名——拨号失败的事实被挂到一条不存在的连接上。
         if (profile.type == borealis::conn::ConnectionType::Telnet) {
             open_telnet_tab(profile);
             return;
         }
-        const auto ask = borealis::conn::secret_ask_for(
-            borealis::conn::normalized_auth_method(profile.ssh));
-        if (ask == borealis::conn::SecretAsk::None) {
+        const auto plan = borealis::conn::plan_credential(profile.ssh, *credential_store);
+        if (plan.route == borealis::conn::CredentialRoute::None) {
             open_ssh_tab(profile, std::nullopt);  // agent 认证：无材料可要。
             return;
         }
-        // Reference 句柄本期同样落询问：真实 OS 后端（libsecret/Keychain/CredMan）留独立
-        // 任务，这是 CONN.09 的降级语义而非捷径（设计稿 Q3）。
+        if (plan.route == borealis::conn::CredentialRoute::Stored) {
+            // 钥匙环可能弹解锁框并阻塞（D8）：事件回调只发起任务，命中后回主线程再开标签。
+            if (!pending_credential_fetches->insert(profile.id).second) {
+                return;  // 同一档案的取料已在途：连点合并成一次。
+            }
+            auto task = au::async([credential_store, handle = plan.handle]()
+                                      -> std::optional<std::string> {
+                return credential_store->retrieve(handle);
+            });
+            static_cast<void>(task.then(
+                [profile = borealis::conn::Profile{profile}, ask = plan.ask,
+                 pending = pending_credential_fetches,
+                 prompt = std::weak_ptr<borealis::ui::CredentialPrompt>{credential_prompt},
+                 &pending_profile, &ask_secret,
+                 &open_ssh_tab](const au::Result<std::optional<std::string>> &result) -> void {
+                    pending->erase(profile.id);
+                    if (prompt.expired()) {
+                        return;  // 宿主已散：迟到结果不碰任何装配态。
+                    }
+                    if (result.ok() && result.value().has_value()) {
+                        open_ssh_tab(profile, *result.value());
+                        return;
+                    }
+                    if (!result.ok()) {
+                        AURORA_LOG_WARN("main", "credential retrieve failed for ", profile.id, ": ",
+                                        result.error().message);
+                    }
+                    // 取不到（未命中或后端出错）⇒ 回到询问，绝不拿空材料硬连（D3/D5）。
+                    pending_profile = profile;
+                    ask_secret(ask, profile.name);
+                }));
+            return;
+        }
         pending_profile = profile;
-        ask_secret(ask, profile.name);
+        ask_secret(plan.ask, profile.name);
     };
 
     borealis::ui::ConnectionWizard::Hooks wizard_hooks;

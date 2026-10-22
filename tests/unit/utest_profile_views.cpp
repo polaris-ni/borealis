@@ -279,6 +279,61 @@ AURORA_TEST_CASE(secret_ask_plan_follows_auth_method) {
     AURORA_TEST_CHECK_TRUE(conn::secret_ask_for("") == SecretAsk::None);
 }
 
+AURORA_TEST_CASE(credential_plan_covers_none_stored_and_ask) {
+    using conn::CredentialRoute;
+    using conn::plan_credential;
+    using conn::SecretAsk;
+    using conn::SecretHandle;
+    using conn::SecretKind;
+    using conn::SshProfile;
+
+    conn::InMemoryCredentialStore memory;
+    conn::UnavailableCredentialStore unavailable;
+
+    // agent：认证方式说了算，档案里挂着 Reference 也不取。
+    SshProfile ssh;
+    ssh.auth_method = "agent";
+    ssh.credential = SecretHandle::reference("libsecret:p1");
+    auto plan = plan_credential(ssh, memory);
+    AURORA_TEST_CHECK_TRUE(plan.route == CredentialRoute::None);
+    AURORA_TEST_CHECK_TRUE(plan.ask == SecretAsk::None);
+
+    // password + 可用 Reference ⇒ Stored，句柄原样带回。
+    ssh.auth_method = "password";
+    plan = plan_credential(ssh, memory);
+    AURORA_TEST_REQUIRE(plan.route == CredentialRoute::Stored);
+    AURORA_TEST_CHECK_TRUE(plan.ask == SecretAsk::Password);
+    AURORA_TEST_CHECK_TRUE(plan.handle == ssh.credential);
+
+    // 同一份档案，库不可用 ⇒ Ask（降级红线：绝不假装能取）。
+    plan = plan_credential(ssh, unavailable);
+    AURORA_TEST_CHECK_TRUE(plan.route == CredentialRoute::Ask);
+    AURORA_TEST_CHECK_TRUE(plan.ask == SecretAsk::Password);
+
+    // Reference 但引用为空 ⇒ Ask（空引用不是可取的句柄）。
+    ssh.credential = SecretHandle::reference("");
+    plan = plan_credential(ssh, memory);
+    AURORA_TEST_CHECK_TRUE(plan.route == CredentialRoute::Ask);
+
+    // AskEveryTime 哨兵 ⇒ Ask。
+    ssh.credential = SecretHandle::ask_every_time("p1", "label");
+    plan = plan_credential(ssh, memory);
+    AURORA_TEST_CHECK_TRUE(plan.route == CredentialRoute::Ask);
+    AURORA_TEST_CHECK_TRUE(plan.handle.kind == SecretKind::AskEveryTime);
+
+    // privatekey 的询问类型是 Passphrase；Stored 档不因类型而变。
+    ssh.auth_method = "privatekey";
+    ssh.credential = SecretHandle::reference("libsecret:p1");
+    plan = plan_credential(ssh, memory);
+    AURORA_TEST_CHECK_TRUE(plan.route == CredentialRoute::Stored);
+    AURORA_TEST_CHECK_TRUE(plan.ask == SecretAsk::Passphrase);
+
+    // 未识别认证方式按 agent 归一 ⇒ None。
+    ssh.auth_method = "unknown";
+    plan = plan_credential(ssh, memory);
+    AURORA_TEST_CHECK_TRUE(plan.route == CredentialRoute::None);
+}
+
 AURORA_TEST_CASE(quick_connect_parses_host_port_pairs) {
     // 纯主机 → 22；host:port → 显式端口；两端空白剥掉。
     auto parsed = conn::parse_quick_connect("gw.example.com");

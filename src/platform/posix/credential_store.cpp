@@ -222,4 +222,6 @@ auto make_credential_store() -> std::unique_ptr<conn::CredentialStore> {
     return std::make_unique<LibsecretCredentialStore>();
 }
 
+auto credential_vault_prefix() -> std::string_view { return kLibsecretVaultPrefix; }
+
 }  // namespace borealis::platform

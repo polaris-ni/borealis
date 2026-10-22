@@ -105,6 +105,27 @@ enum class SecretAsk : std::uint8_t {
 ///        调用方先查凭据库，查不到才落到这里要的询问）。
 [[nodiscard]] auto secret_ask_for(std::string_view auth_method) -> SecretAsk;
 
+/// @brief 一次连接该从哪儿取秘密材料（CONN.09 装配腿的唯一裁决点）。
+enum class CredentialRoute : std::uint8_t {
+    None,   ///< 认证方式不需要材料（agent／未识别值归一后的回落档）。
+    Stored, ///< 档案持可用的 Reference：按句柄去 OS 凭据库取，命中即连。
+    Ask,    ///< 需要向用户询问（无 Reference、库不可用或句柄为空）。
+};
+
+/// @brief 凭据计划：路线 + 询问类型 + 路线所用句柄。
+struct CredentialPlan {
+    CredentialRoute route{CredentialRoute::None};
+    SecretAsk ask{SecretAsk::None};
+    SecretHandle handle{};  ///< Stored：要取回的 Reference；Ask：档案原句柄（可能为哨兵）。
+};
+
+/// @brief 由认证方式与档案句柄算凭据计划（纯逻辑，不碰钥匙环）。
+///
+/// 判据次序：认证方式不需要材料 ⇒ None（即便档案挂着 Reference 也不取——认证方式说了算）；
+/// Reference 非空且凭据库 `available()` ⇒ Stored；其余（无句柄、AskEveryTime、库不可用）⇒ Ask。
+/// 「Reference 但库里取不到」是运行期事实，不改变本计划——装配层把取空按 Ask 处理。
+[[nodiscard]] auto plan_credential(const SshProfile &ssh, const CredentialStore &store) -> CredentialPlan;
+
 /// @brief quick connect 输入的解析（CONN.03：`host[:port]` 临时输入即连，不生成档案）。
 ///
 /// 宽容口径：两端空白剥掉；端口段非纯数字视为整体主机名的一部分（不猜）；空串/仅

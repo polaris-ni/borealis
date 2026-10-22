@@ -29,6 +29,12 @@ inline constexpr std::string_view kCredmanVaultPrefix{"credman:"};
 ///        （`available()==false`，`store` 只回询问哨兵）。
 [[nodiscard]] auto make_credential_store() -> std::unique_ptr<conn::CredentialStore>;
 
+/// @brief 当前平台腿的句柄前缀（POSIX `libsecret:` / Win32 `credman:`）。
+///
+/// 装配层要在**入库之前**乐观写句柄（设计稿 D6），故须先知道前缀；把「哪条腿」只留在
+/// 平台实现里，调用方不重抄 `#ifdef`。
+[[nodiscard]] auto credential_vault_prefix() -> std::string_view;
+
 /// @brief 把档案 id 编成句柄的 `vault_id`（前缀 + id）。
 /// @param prefix 平台前缀（`kLibsecretVaultPrefix` / `kCredmanVaultPrefix`）。
 /// @param profile_id 档案 id。

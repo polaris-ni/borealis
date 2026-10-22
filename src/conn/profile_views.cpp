@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "serial_model.h"  // is_supported_baud：向导的速率判据取那一份唯一档位表
+#include "ssh_dial.h"      // normalized_auth_method：与拨号腿同一份认证方式归一
 
 namespace borealis::conn {
 
@@ -183,6 +184,20 @@ auto secret_ask_for(std::string_view auth_method) -> SecretAsk {
         return SecretAsk::Interactive;
     }
     return SecretAsk::None;  // agent（含未识别值归一后的回落档）。
+}
+
+auto plan_credential(const SshProfile &ssh, const CredentialStore &store) -> CredentialPlan {
+    const auto ask = secret_ask_for(normalized_auth_method(ssh));
+    if (ask == SecretAsk::None) {
+        return CredentialPlan{.route = CredentialRoute::None, .ask = SecretAsk::None};
+    }
+    const bool usable_reference = ssh.credential.kind == SecretKind::Reference &&
+                                  !ssh.credential.vault_id.empty() && store.available();
+    return CredentialPlan{
+        .route = usable_reference ? CredentialRoute::Stored : CredentialRoute::Ask,
+        .ask = ask,
+        .handle = ssh.credential,
+    };
 }
 
 auto parse_quick_connect(std::string_view text) -> std::optional<std::pair<std::string, int>> {

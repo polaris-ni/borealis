@@ -90,6 +90,13 @@ AURORA_TEST_CASE(handle_encoding_carries_no_secret) {
     const std::string id = credential_vault_id(kLibsecretVaultPrefix, "profile-7");
     AURORA_TEST_CHECK_TRUE(id.find(secret) == std::string::npos);
     AURORA_TEST_CHECK_EQ(id, std::string{"libsecret:profile-7"});
+
+    // 当前平台的装配腿前缀非空，且与编码件同一条往返。
+    const auto prefix = borealis::platform::credential_vault_prefix();
+    AURORA_TEST_CHECK_FALSE(prefix.empty());
+    const auto own = credential_vault_profile(credential_vault_id(prefix, "profile-7"), prefix);
+    AURORA_TEST_REQUIRE(own.has_value());
+    AURORA_TEST_CHECK_EQ(*own, std::string{"profile-7"});
 }
 
 }  // namespace borealis::test_cases::utest_credential_store

@@ -127,4 +127,6 @@ auto make_credential_store() -> std::unique_ptr<conn::CredentialStore> {
     return std::make_unique<CredmanCredentialStore>();
 }
 
+auto credential_vault_prefix() -> std::string_view { return kCredmanVaultPrefix; }
+
 }  // namespace borealis::platform
