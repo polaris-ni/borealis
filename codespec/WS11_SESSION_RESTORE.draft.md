@@ -263,3 +263,31 @@ restart`）→ `codespec/UI_SETTINGS.draft.md` §2 C 段那一行。`main.cpp` �
 ③ 提交失败只落 WARN，布局静默消失，界面上没有清理入口与提示（D8①／D9① 的在册代价照旧）；④ 采集读到
 的形状是**变更后**那一份（钩子排在 `apply_focus` 之后），关格腿读到的已回收数是一——这两条正是「装错位置」
 在无头案里会露馅的地方。
+
+**批 5-C 已落地（2026-10-22）**：启动重放落在 `src/main.cpp` 建首窗之后、`app.run()` 之前，形态是「游标 +
+一次性泵」而非双层 for：SSH 询问型档案在 D4① 下要重新走凭据链，而答案从 `on_secret` 异步回来，泵因此在
+缺口处挂起、由同一枚 sink 放行。读侧在**建首窗之前**完成三档闸（开关关／D7① 显式请求／D8① 坏文档各自
+只落日志），首标签那一格按 `restore_at_startup` 让位（F16）。`--cwd` 单飞不跳过恢复，改在泵的完成点补开
+——挂起等凭据时若在 `app.run()` 前补，用户点名要的那一格会被之后 `finish_restore_window` 的选中压到后面。
+逐标签 fail-closed：形状、档案、本地料对位、串口单格任一不合即跳过且**不留账**（会话先 close 再散，四张
+连接表与 `tab_kind` 一处不写）；整窗一格都没恢复出来才补一张 `commit=false` 的缺省标签，半成品不进快照。
+取消（按钮或静默关闭）只收尾当前窗，已恢复的现场原样留下。静默关闭那条是实测补的：`CredentialPrompt::close()`
+**不**回调 `on_cancel`，Esc、搬窗时 `set_overlay_host` 与宿主消散都会把泵留在一个不会来的答案上，故帧边界
+兜底认领并中止（与按钮取消同一条语义）。读数：`cmake --build --preset linux` 通过、`ctest --preset linux -E
+etest_` **105/105 全绿**、`./build/borealis_test_runner` **1334 案全绿**。装配腿仍无自动化证人（F21／判据 ⑤），
+本批不称其已被自动证明。
+
+**批 6 已落地（2026-10-22）**：新套件 `tests/integration/itest_workspace_restore.cpp` **2 案**走完「样本快照
+→ `to_json` → 新宿主 `from_json` → 逐标签 `WorkspaceView::restore`」这条链：全文等值、两扇窗与四腿标签数、
+连接类型、手动标题、SSH/串口/Telnet 档案块与逐格本地料、格数、阅读序身份、形状与选中格逐项复算；判据 ④
+的接线半边在每条腿各断一次「恰一条初始尺寸」，并以第二遍呈现证明净变化为零不重发。`itest_workspace_layout`
+**34 案 → 35 案**（新增 `a_restored_tab_receives_one_initial_grid_per_pane_and_no_more`：三格各自一次、
+尺寸等于自己的矩形、再排一帧不重发）。读数：`ctest --preset linux -E etest_` **105/105 → 106/106**（新套件
+即新测试目标）、`./build/borealis_test_runner` **1334 → 1337 案全绿**、`check_display_literals` PASS 211 files。
+变异四支逐条转红、**无一空转**：读侧把 `title` 清空 → 新套件 1 案红（含全文等值与两处标题，共三处诊断）；
+写侧把 `kind` 恒写 Local → 新套件在读侧对位闸处整份拒；恢复忽略 `focused_order` → 新套件 1 案红 + 布局套件
+2 案红；跳过恢复格的 `wire_view` → 新套件 2 案红（逐腿行列与「恰一次」各一处）+ 布局套件 2 案红。四处均以
+Edit 原样复原，复原后 `git diff --check` 干净、两套件复跑全绿。两条边界在册：① 本件不造假宿主替装配层
+（`main.cpp` 不编入 runner，F21／判据 ⑤）；标签条显示名的三名折算、`selected_tab` 的实际切换与窗口创建仍
+只在 §5 走查里验。② 快照里串口恒单格是装配层的判据（读侧不查，见 F25 末条的职责分家），本件按合法样本
+造现场，不把「读侧该不该拒多格串口」混进恢复链。
