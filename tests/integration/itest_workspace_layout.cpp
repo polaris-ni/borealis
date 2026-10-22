@@ -1609,6 +1609,40 @@ AURORA_TEST_CASE(a_restored_shape_lays_out_every_pane_it_claims) {
     AURORA_TEST_CHECK_EQ(ws.focused_pane(), 3U);
 }
 
+AURORA_TEST_CASE(a_restored_tab_receives_one_initial_grid_per_pane_and_no_more) {
+    const PaneShape nested =
+        layer(PaneAxis::Horizontal, {leaf(0U), layer(PaneAxis::Vertical, {leaf(1U), leaf(2U)})});
+    Harness h{nested, 3U, 1U};
+    AURORA_TEST_REQUIRE(h.restored() != nullptr);
+    AURORA_TEST_REQUIRE(h.preflight());
+
+    // 构造段（`baseline=false`）已结算过尾沿：每格恰一条，且是该格自己的矩形折出来的行列。
+    // 判据 ④ 的「次数恰为格数」在这里是**逐格一次**：多了是重复挂载，少了是漏发。
+    AURORA_TEST_REQUIRE_EQ(h.dispatched_.size(), 3U);
+    for (const PaneBox &box : h.workspace().current_layout().boxes) {
+        const auto entries = std::count_if(
+            h.dispatched_.begin(), h.dispatched_.end(),
+            [&box](const std::pair<PaneId, GridSize> &entry) { return entry.first == box.pane; });
+        AURORA_TEST_CHECK_MSG(entries == 1, "pane " + std::to_string(box.pane) + " was dispatched " +
+                                                std::to_string(entries) + " times");
+        AURORA_TEST_CHECK_EQ(h.resize_count(box.pane), 1U);
+        const auto found = std::ranges::find_if(
+            h.dispatched_, [&box](const std::pair<PaneId, GridSize> &entry) { return entry.first == box.pane; });
+        AURORA_TEST_REQUIRE(found != h.dispatched_.end());
+        const GridSize expected = Harness::expected_grid(box.box.width, box.box.height);
+        AURORA_TEST_CHECK_MSG(found->second == expected, "pane " + std::to_string(box.pane) +
+                                                            " was told another pane's grid");
+    }
+
+    // 再排一帧并结算：布局没变，净变化为零的条目不得重发（去抖表那条既有纪律的恢复腿形态）。
+    h.render();
+    h.settle();
+    AURORA_TEST_CHECK_EQ(h.dispatched_.size(), 3U);
+    for (const PaneBox &box : h.workspace().current_layout().boxes) {
+        AURORA_TEST_CHECK_EQ(h.resize_count(box.pane), 1U);
+    }
+}
+
 AURORA_TEST_CASE(restore_is_refused_without_leaving_a_half_built_workspace) {
     const PaneShape three = layer(PaneAxis::Vertical, {leaf(0U), leaf(1U), leaf(2U)});
     // 视图份数与叶子数不等：少一份是一格没料，多一份是两格抢同一份料，两者都不如整份拒绝可解释。
