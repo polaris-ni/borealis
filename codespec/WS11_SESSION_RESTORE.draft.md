@@ -145,7 +145,7 @@
 | **2** | 快照数据模型 + JSON 编解码（fail-closed 读侧） | `include/borealis/ui/workspace_snapshot.h`、`src/ui/workspace_snapshot.cpp`、`src/CMakeLists.txt`（`borealis_core` 是显式清单，实测必须登记；测试侧 `cmake/BorealisTests.cmake` 的 GLOB 零改）、`include/borealis/conn/local_terminal.h`（补 `operator==`） | `utest_workspace_snapshot` 新套件（判据 ②⑥⑦） |
 | **3** | 第三枚 `Preferences` 的落盘件 | `src/config/workspace_store.{h,cpp}`、`src/CMakeLists.txt`（同批登记一行，`borealis_core` 显式清单） | 判据 ② 的落盘往返腿 + 判据 ③ 的档位半边（同套件扩案） |
 | **4** | 新键六处同步 + 面板那一行 + 两档词条 + 两处计数闸改口 | `settings.h`、`store.cpp`、`form_transfer.cpp`、`settings_catalog.cpp`、`settings_i18n.cpp`、`utest_settings_catalog.cpp`（另加两处实测必需的同步：`utest_config.cpp` 的缺省档与往返、`utest_form_transfer.cpp` 的布尔探针表，见 F27） | catalog 那一行案（判据 ③） |
-| **5** | 装配腿：本地 per-pane 账、采集、启动重放、D7 的 CLI 次序 | `src/main.cpp` | **无自动化证人**（F21），§5 走查第 ①–⑤ 条兜底 |
+| **5** | 装配腿：本地 per-pane 账、采集、启动重放、D7 的 CLI 次序 | **5-A** `src/ui/workspace_view.{h,cpp}` 的**恢复接缝**（实测前置：`WorkspaceView` 公开面只有 `split_focused` / `close_pane` / `replace_view`，没有任何「按一棵现成的形状重建」的入口，而 `PaneTree::restore` 在树件里、视图与挂载归本件——形状要落回界面必须有这一条接缝，形态与 WS.02 批 1 的 `origin` 形参 + `replace_view` 同档）；**5-B** `src/main.cpp` 的每格本地料账 + 采集腿 + 变更点落盘（D2①）+ 开关闸门；**5-C** `src/main.cpp` 的启动重放与 D7 的 CLI 次序（含 `WorkspaceStore` 声明须早于 `app`） | **无自动化证人**（F21），§5 走查第 ①–⑤ 条兜底；5-A 那条接缝例外，它能在 `itest_workspace_layout` 的无头面上立案 |
 | **6** | 无头集成用例：写快照 → 新宿主读回 → 断标签数/类型/格数/焦点/尺寸下发 | `tests/integration/itest_workspace_restore.cpp`（新）、`itest_workspace_layout.cpp`（扩） | 判据 ①④ 的接线半边 + 变异自证 |
 | **7** | 文档回写与结项：`SPECIFICATIONS.md` 现状句 + 裁决 7.131、`CHANGELOG.md` v0.131、`PLAN.md` §3/§8、`ARCHITECTURE.md` §2.2 与 §11、`UI_SETTINGS.draft.md` 那一行与 §4 相关句 | `codespec/` | 结项三件齐读数 |
 
