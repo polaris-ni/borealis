@@ -76,6 +76,13 @@ class WorkspaceView final : public aurora::Container {
         /// @brief 开一扇新工作区窗（`Ctrl+Shift+N`，`SPEC.FEAT.WS.03` 稿 D2）；缺省即该键只被认领、
         ///        什么都不做。窗与标签都归装配层造：本层不认识框架的窗，也不持有窗口清单。
         std::function<void()> open_new_window;
+        /// @brief 树形有任何一次**实际**变更之后调用（`SPEC.FEAT.WS.11` 批 5-B）：切分成功、关格成功各一次。
+        ///
+        /// 为什么需要这一支而不是让装配层在它自己的调用点上补：`Ctrl+Shift+D` 与关掉一格那两刀都发自
+        /// 本层的按键派发，装配层唯一的观察点是 `make_pane`／`teardown_pane`——前者排在 `tree_.split`
+        /// **之前**（工厂失败时树因此不动），在那里采集读到的是变更前的形状。把手步进改的是相对长度
+        /// 而不是拓扑，也不在「结构变更」这一档，故不调本钩（比例随下一次真变更或退出提交）。
+        std::function<void()> structure_changed;
     };
 
     /// @brief 以单叶工作区起步：@p first_view 挂在 pane 标识 1 上。

@@ -749,6 +749,11 @@ auto WorkspaceView::split_pane(PaneId target, PaneAxis axis) -> void {
     apply_focus(pane, aurora::FocusArrival::Keyboard);  // 新格当场选中（判据 1）
     refresh_broadcast_badges();  // 1 → 2 格：成员的 pill 从这一帧起显形（N4）
     mark_needs_paint();
+    // 树真的换了才算一次结构变更（`SPEC.FEAT.WS.11` 批 5-B）：排在 `apply_focus` 之后是让采集读到的
+    // 选中格就是屏幕上那一格；上面三条早退（无工厂、工厂回空、`tree_.split` 拒）一支都不到这里。
+    if (hooks_.structure_changed) {
+        hooks_.structure_changed();
+    }
 }
 
 auto WorkspaceView::close_pane(PaneId pane) -> void {
@@ -780,6 +785,10 @@ auto WorkspaceView::close_pane(PaneId pane) -> void {
     }
     refresh_broadcast_badges();  // 2 → 1 格：余下那格即使仍在组里也不再画 pill（N4）
     mark_needs_paint();
+    // 与 `split_pane` 末段同一条口径：本层的两条改树腿各调一次，装配层的提交点因此只有一处判断。
+    if (hooks_.structure_changed) {
+        hooks_.structure_changed();
+    }
 }
 
 auto WorkspaceView::step_divider(WorkspaceCommand command, PaneId pane) -> void {

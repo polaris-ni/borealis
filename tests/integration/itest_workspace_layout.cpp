@@ -490,6 +490,9 @@ class Harness {
         factory_calls = 0U;
         new_window_calls = 0U;
         dispatch_reports = 0U;
+        structure_changes = 0U;
+        structure_panes.clear();
+        structure_teardowns.clear();
         for (auto &[pane, connection] : connections_) {
             (void)pane;
             connection->reset();
@@ -536,6 +539,15 @@ class Harness {
     std::size_t dispatch_reports = 0U;
     /// @brief 工厂最后一次收到的 `origin`（判据「被切那一格交给工厂，而不是工厂自己猜焦点」）。
     PaneId last_origin = 0U;
+    /// @brief `structure_changed` 触发次数（`SPEC.FEAT.WS.11` 批 5-B 采集腿的唯一证人：装配层的落盘
+    ///        只挂在这一枚通知上，别处没有第二个观察点）。
+    std::size_t structure_changes = 0U;
+    /// @brief 每次触发那一刻的 pane 数。判据不是「响了几次」而是「响的那一刻树已经换了没有」：同一枚
+    ///        闭包若装进 `make_pane`，次数一条不差，写出去的形状却少一格。
+    std::vector<std::size_t> structure_panes;
+    /// @brief 每次触发那一刻已回收的 pane 数：切分腿上它是 0、关格腿上它是 1，故这一列钉的是「这一响
+    ///        出自哪条腿」——响在 `teardown_pane` 里而不是响在改树之后，会在这儿露出来。
+    std::vector<std::size_t> structure_teardowns;
 
   private:
     /// @brief 两条构造路径共用的前置：调度器与色板。
@@ -576,6 +588,13 @@ class Harness {
         // 第十五键的落点（`SPEC.FEAT.WS.03` 稿 D2）：本层不造窗，故这里只计数——「转交一次、树不动、
         // 一字节不发」三条判据要靠这一枚读数与既有观测面对照。
         hooks.open_new_window = [this]() -> void { ++new_window_calls; };
+        // 采集腿的观察点（`SPEC.FEAT.WS.11` 批 5-B）：树实际变更之后本层唯一的通知。闭包读的是
+        // `workspace_`，两条构造路径都在 `finish()` 之后才可能触发，故构造期不会取空。
+        hooks.structure_changed = [this]() -> void {
+            ++structure_changes;
+            structure_panes.push_back(workspace_->panes_in_order().size());
+            structure_teardowns.push_back(torn_down_.size());
+        };
     }
 
     /// @brief 两条构造路径共用的收尾：入根、给初始焦点、排帧并结算去抖。
@@ -1626,6 +1645,60 @@ AURORA_TEST_CASE(a_restored_workspace_still_splits_from_the_next_identity) {
     // 坏得多），而切完之后阅读序里新格紧挨被切那格——树的插入位置也没被恢复腿带歪。
     const std::vector<PaneId> kAfter{1U, 2U, 3U, 4U};
     AURORA_TEST_CHECK_MSG(h.workspace().panes_in_order() == kAfter, "a restored workspace reuses an identity");
+}
+
+AURORA_TEST_CASE(a_split_fires_the_structure_hook_after_the_tree_has_moved) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+
+    h.workspace().split_focused(PaneAxis::Horizontal);
+    AURORA_TEST_REQUIRE_EQ(h.structure_changes, 1U);
+    // 触发那一刻读到的已经含新格（装配层 `capture_workspace_snapshot` 就挂在这里，快照因此不慢一拍）。
+    AURORA_TEST_REQUIRE_EQ(h.structure_panes.size(), 1U);
+    AURORA_TEST_CHECK_EQ(h.structure_panes[0], 2U);
+    AURORA_TEST_CHECK_EQ(h.structure_teardowns[0], 0U);
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 2U);
+
+    // 关格是同一条腿的另一侧：叶子数当场回落到 1，落盘读到的因此是关完之后那一套。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::W, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_REQUIRE_EQ(h.structure_changes, 2U);
+    AURORA_TEST_CHECK_EQ(h.structure_panes[1], 1U);
+    // 回收先于本钩（`close_pane` 里 `teardown_pane` 排在末段之前），故此刻已回收数是一。这一列同时
+    // 钉住切分腿那条：错装在回收里会在上一列读出 1、这一列读出 2。
+    AURORA_TEST_CHECK_EQ(h.structure_teardowns[1], 1U);
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 1U);
+}
+
+AURORA_TEST_CASE(a_refused_change_and_a_handle_drag_leave_the_structure_hook_alone) {
+    // 工厂回空：`split_pane` 的第二道早退，树一步没动，落盘要是跟着写就写出一份屏幕上没有的形状。
+    Harness empty_factory(false);
+    AURORA_TEST_REQUIRE(empty_factory.preflight());
+    empty_factory.workspace().split_focused(PaneAxis::Horizontal);
+    AURORA_TEST_CHECK_EQ(empty_factory.structure_changes, 0U);
+    AURORA_TEST_CHECK_EQ(empty_factory.workspace().pane_count(), 1U);
+
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.workspace().split_focused(PaneAxis::Vertical);
+    h.render();
+    h.reset_counters();
+
+    // 把手步进改的是相对长度而不是拓扑：一次拖动几十步，逐步落盘等于把一份文档写成几十份。
+    h.drag_divider(0U, {h.cell_width_dp(), h.cell_width_dp()});
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.structure_changes, 0U);
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 2U);
+
+    // 关掉一格响一次，之后关末位那一格走的是本层的第一道早退（末位归关标签 / 关窗口），钩子不许再响——
+    // 否则落盘交出去的是零格文档，正是恢复腿读侧直接拒的那个形状。
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::W, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.structure_changes, 1U);
+    AURORA_TEST_REQUIRE(h.press(au::KeyCode::W, Harness::ctrl_shift()));
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.structure_changes, 1U);
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 1U);
 }
 
 #else
