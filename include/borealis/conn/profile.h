@@ -21,10 +21,9 @@
 // 配置文件里出现的 `secret` 段因此永远只是上面的引用或哨兵，明文凭据扫描
 // （`kBannedKeyNames` + `find_credential_key`）对本仓自有文档是永不触发分支。
 //
-// OS 凭据库的真实后端（libsecret / Keychain / CredMan）属独立任务，本切片只给出
-// 接口 `CredentialStore` 与两个纯逻辑替身：`InMemoryCredentialStore`（测试）、
-// `UnavailableCredentialStore`（运行期降级）。真实后端落地后接 `CredentialStore` 即可，
-// 档案模型与落盘形态不变。
+// OS 凭据库的真实后端由 `src/platform/credential_store.h` 的工厂提供（libsecret /
+// CredMan；平台假设不进本头）。本头仍只持纯逻辑接口与两个替身：
+// `InMemoryCredentialStore`（测试）、`UnavailableCredentialStore`（运行期降级）。
 // ============================================================
 
 #include <cstddef>
@@ -170,8 +169,8 @@ struct Profile {
 
 /// @brief 凭据库接口（CONN.09）：档案只持 `SecretHandle`，真实秘密由实现保管。
 ///
-/// 真实后端（libsecret / Keychain / CredMan）属独立任务；本切片提供两个纯逻辑替身
-/// （`InMemoryCredentialStore` / `UnavailableCredentialStore`）供运行期与测试使用。
+/// 真实后端由 `platform::make_credential_store()` 按平台给出；本头只留纯逻辑接口与
+/// `InMemoryCredentialStore` / `UnavailableCredentialStore` 两个替身。
 class CredentialStore {
   public:
     virtual ~CredentialStore() = default;
@@ -185,6 +184,10 @@ class CredentialStore {
 
     /// @brief 凭句柄取回秘密；句柄无效或不可用时回空。
     [[nodiscard]] virtual auto retrieve(const SecretHandle &handle) -> std::optional<std::string> = 0;
+
+    /// @brief 删除句柄对应的秘密。
+    /// @return true＝库中已无此条（删除成功或本来不存在）；false＝句柄不属本库或删除失败。
+    [[nodiscard]] virtual auto erase(const SecretHandle &handle) -> bool = 0;
 };
 
 /// @brief 测试/内存替身：秘密留在内存映射，便于单测；`available()` 恒 true。
@@ -194,6 +197,7 @@ class InMemoryCredentialStore : public CredentialStore {
     [[nodiscard]] auto store(std::string_view profile_id, std::string_view label,
                              std::string secret) -> SecretHandle override;
     [[nodiscard]] auto retrieve(const SecretHandle &handle) -> std::optional<std::string> override;
+    [[nodiscard]] auto erase(const SecretHandle &handle) -> bool override;
 
   private:
     std::map<std::string, std::string> vault_;
@@ -211,6 +215,7 @@ class UnavailableCredentialStore : public CredentialStore {
     [[nodiscard]] auto retrieve(const SecretHandle &) -> std::optional<std::string> override {
         return std::nullopt;
     }
+    [[nodiscard]] auto erase(const SecretHandle &) -> bool override { return false; }
 };
 
 /// @brief 档案集合：增删改查与分组/收藏/搜索（CONN.03 的查询侧，纯逻辑、可单测）。

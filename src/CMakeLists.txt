@@ -31,6 +31,7 @@ add_library(borealis_core STATIC
         conn/tunnel_client.cpp
         conn/tunnel_model.cpp
         conn/tunnel_socks.cpp
+        platform/credential_store.cpp
         ui/connection_glyph.cpp
         ui/connection_sidebar.cpp
         ui/connection_wizard.cpp
@@ -100,6 +101,7 @@ add_library(borealis_core STATIC
 if (WIN32)
     target_sources(borealis_core PRIVATE
             platform/win/conpty_connection.cpp
+            platform/win/credential_store.cpp
             platform/win/file_secure.cpp
             platform/win/instance_channel.cpp
             platform/win/local_terminal.cpp
@@ -111,6 +113,7 @@ if (WIN32)
             platform/win/win_text.cpp)
 elseif (UNIX)
     target_sources(borealis_core PRIVATE
+            platform/posix/credential_store.cpp
             platform/posix/file_secure.cpp
             platform/posix/forkpty_connection.cpp
             platform/posix/instance_channel.cpp
@@ -125,13 +128,17 @@ elseif (UNIX)
     if (UTIL_LIBRARY)
         target_link_libraries(borealis_core PRIVATE ${UTIL_LIBRARY})
     endif ()
+    # libsecret 腿经 dlopen 运行期接库（裁决 7.132 D1），只需动态装载器本身。
+    target_link_libraries(borealis_core PRIVATE ${CMAKE_DL_LIBS})
 endif ()
 
 # Win32 腿的 TCP 转发（platform/win/tcp.cpp，SPEC.FEAT.CONN.08）需要 Winsock2 库。
 # `shell32` 是打开外部 URI 那条腿（platform/win/open_url.cpp，SPEC.FEAT.INTERACT.05）要的
-# `ShellExecuteW` 所在库；**本沙箱无 MSVC，链接面未验证**（AGENTS.md §4.2 第 11 条）。
+# `ShellExecuteW` 所在库；`advapi32` 是 CredMan 腿（platform/win/credential_store.cpp，
+# SPEC.FEAT.CONN.09）的 `CredWriteW`/`CredReadW`/`CredDeleteW` 所在库。**本沙箱无 MSVC，
+# 链接面未验证**（AGENTS.md §4.2 第 11 条）。
 if (WIN32)
-    target_link_libraries(borealis_core PRIVATE ws2_32 shell32)
+    target_link_libraries(borealis_core PRIVATE ws2_32 shell32 advapi32)
 endif ()
 
 # SSH 传输腿（`SPEC.FEAT.CONN.02`）：libssh 经 vcpkg 获取，vcpkg 给出的 CMake 目标名是 `ssh`

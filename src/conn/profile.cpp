@@ -88,6 +88,15 @@ auto InMemoryCredentialStore::retrieve(const SecretHandle &handle) -> std::optio
     return it->second;
 }
 
+auto InMemoryCredentialStore::erase(const SecretHandle &handle) -> bool {
+    // 前缀即归属：别家句柄（libsecret:/credman:）落在这里是调用方串库，不能报成功。
+    if (handle.kind != SecretKind::Reference || !handle.vault_id.starts_with("mem:")) {
+        return false;
+    }
+    vault_.erase(handle.vault_id);  // 本来不存在也算「库里已无此条」。
+    return true;
+}
+
 // ------------------------------------------------------------
 // ProfileStore：查询侧
 // ------------------------------------------------------------

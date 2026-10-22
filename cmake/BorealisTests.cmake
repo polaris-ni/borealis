@@ -37,20 +37,22 @@ file(GLOB BOREALIS_TEST_FRAMEWORK_SOURCES CONFIGURE_DEPENDS
 file(GLOB BOREALIS_TEST_CASE_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/*.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/*.cpp")
+if (BOREALIS_BUILD_E2E)
+    file(GLOB BOREALIS_TEST_E2E_SOURCES CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/*.cpp")
+    list(APPEND BOREALIS_TEST_CASE_SOURCES ${BOREALIS_TEST_E2E_SOURCES})
+endif ()
 # 平台专属的探测腿套件只编进自己那一侧：`utest_posix_local_terminal` 取的是 `access()`/`setenv()`，
 # Windows 上没有这两个入口；反过来同理。按文件名过滤而不是在源里 `#ifdef` 掏空用例——后者会让
 # runner 拿到一条「no test case matched」的红灯（注册式框架按文件 stem 匹配，空套件等于失败）。
 # `itest_posix_serial_connection` 是同一条纪律的集成腿那一例：替身设备取 `openpty()` 的 slave
 # 路径（`SPEC.FEAT.CONN.05`，裁决 7.110 D13②），Win32 侧待真机（F10）。
+# e2e 同规：`etest_libsecret_credential_store` 要真 Secret Service（`SPEC.FEAT.CONN.09`），
+# Windows 侧由 `etest_win_` 前缀反向过滤。
 if (WIN32)
-    list(FILTER BOREALIS_TEST_CASE_SOURCES EXCLUDE REGEX "/(utest|itest)_posix_")
+    list(FILTER BOREALIS_TEST_CASE_SOURCES EXCLUDE REGEX "/(utest|itest|etest)_posix_")
 else ()
-    list(FILTER BOREALIS_TEST_CASE_SOURCES EXCLUDE REGEX "/(utest|itest)_win_")
-endif ()
-if (BOREALIS_BUILD_E2E)
-    file(GLOB BOREALIS_TEST_E2E_SOURCES CONFIGURE_DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/*.cpp")
-    list(APPEND BOREALIS_TEST_CASE_SOURCES ${BOREALIS_TEST_E2E_SOURCES})
+    list(FILTER BOREALIS_TEST_CASE_SOURCES EXCLUDE REGEX "/(utest|itest|etest)_win_")
 endif ()
 
 add_executable(borealis_test_runner
