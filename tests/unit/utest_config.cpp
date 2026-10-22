@@ -6,7 +6,7 @@
 ///           缺键/类型不符/域外的回落与留痕、色值段损坏时随**文件内主题名**回落，
 ///           以及 `SPEC.FEAT.PREF.07` 的损坏降级线（先备份再回落，裁决 7.26④）
 ///           与落盘形态（单文件 + 按域嵌套 + 顶层 `schema_version`，覆盖表用数组形态避开框架的
-///           点号路径模型，且无凭据字段，裁决 7.26⑥）。
+///           点号路径模型），以及导出件的凭据改写（句柄不跨机，落「每次询问」哨兵）。
 
 #include <algorithm>
 #include <cstddef>
@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -412,11 +413,38 @@ AURORA_TEST_CASE(an_exported_document_has_the_same_shape_as_the_config_file) {
     for (const auto &entry : stored.value().entries()) {
         stored_keys.emplace_back(entry.key);
     }
-    // 与配置文件同构（顶层版本 + 四域）：唯一差别是框架自己那份元数据键，它不属本仓 schema。
+    // 与配置文件同构（顶层版本 + 各域）：唯一差别是框架自己那份元数据键，它不属本仓 schema。
     std::erase(stored_keys, "__aurora_preference_meta__");
     std::ranges::sort(export_keys);
     std::ranges::sort(stored_keys);
     AURORA_TEST_CHECK_TRUE(export_keys == stored_keys);
+
+    // 「凭据句柄不导出」：配置文件里有真实句柄，导出件里连 `vault_id` 这个键都不该出现。
+    const auto export_text = read_file(target);
+    const auto stored_text = read_file(file);
+    AURORA_TEST_CHECK_MSG(stored_text.find("vault://demo-gateway") != std::string::npos, stored_text);
+    AURORA_TEST_CHECK_MSG(export_text.find("vault://demo-gateway") == std::string::npos, export_text);
+    AURORA_TEST_CHECK_MSG(export_text.find("\"vault_id\"") == std::string::npos, export_text);
+
+    // 导出件的凭据是「每次询问」哨兵：保留回指档案与标签，换机后导入自然走询问腿。
+    const au::json::Value *profiles_node = exported.value().at("profiles");
+    AURORA_TEST_REQUIRE(profiles_node != nullptr);
+    const au::json::Value *items = profiles_node->at("items");
+    AURORA_TEST_REQUIRE(items != nullptr);
+    AURORA_TEST_REQUIRE_EQ(items->size(), 1U);
+    const au::json::Value *profile_node = items->at(0);
+    AURORA_TEST_REQUIRE(profile_node != nullptr);
+    const au::json::Value *ssh_node = profile_node->at("ssh");
+    AURORA_TEST_REQUIRE(ssh_node != nullptr);
+    const au::json::Value *credential = ssh_node->at("credential");
+    AURORA_TEST_REQUIRE(credential != nullptr);
+    const au::json::Value *kind = credential->at("kind");
+    AURORA_TEST_REQUIRE(kind != nullptr);
+    AURORA_TEST_CHECK_TRUE(kind->as_string() == std::optional<std::string_view>{"ask"});
+    const au::json::Value *profile_id = credential->at("profile_id");
+    AURORA_TEST_REQUIRE(profile_id != nullptr);
+    AURORA_TEST_CHECK_TRUE(profile_id->as_string() == std::optional<std::string_view>{"demo-gateway"});
+
     // 临时文件不留残段（导出件是换机迁移的唯一素材，写一半的文件比不写更糟）。
     AURORA_TEST_CHECK_FALSE(std::filesystem::exists(std::filesystem::path{target.string() + ".tmp"}));
 }
@@ -426,20 +454,34 @@ AURORA_TEST_CASE(an_exported_document_imports_back_the_same_settings) {
     const auto target = make_path("roundtrip-target.json");
     const auto exported = make_path("roundtrip.json");
 
-    const auto wanted = non_default();
+    auto wanted = non_default();
+    AURORA_TEST_REQUIRE_EQ(wanted.profiles.size(), 1U);
+    // 句柄带一枚标签：导出后的哨兵要留住它（询问时的上下文），而不是整块丢掉。
+    wanted.profiles.front().ssh.credential.label = "gateway password";
     {
         Store store{source};
         AURORA_TEST_CHECK_FALSE(store.replace(wanted).has_value());
         AURORA_TEST_CHECK_FALSE(store.export_settings(exported).has_value());
+        // 本机存储仍是句柄本身；被剥离的只有导出件。
+        AURORA_TEST_CHECK_TRUE(store.settings().profiles.front().ssh.credential.kind ==
+                               conn::SecretKind::Reference);
+        AURORA_TEST_CHECK_EQ(store.settings().profiles.front().ssh.credential.vault_id,
+                             "vault://demo-gateway");
     }
+
+    // 导入件里那条凭据只能落成「每次询问」：句柄跨机必悬空，标成 Reference 会让连接腿
+    // 去一个不存在的库里取秘密。除这一枚句柄外，其余设置逐字段原样回来。
+    auto portable = wanted;
+    portable.profiles.front().ssh.credential =
+        conn::SecretHandle::ask_every_time("demo-gateway", "gateway password");
 
     Store other{target};
     AURORA_TEST_CHECK_TRUE(other.settings() == Settings{});
     AURORA_TEST_CHECK_FALSE(other.import_settings(exported).has_value());
-    AURORA_TEST_CHECK_TRUE(other.settings() == wanted);
+    AURORA_TEST_CHECK_TRUE(other.settings() == portable);
     // 导入即落盘：换一个新仓库读得到同一份，否则「一键回滚」在下次启动就消失。
     const Store reloaded{target};
-    AURORA_TEST_CHECK_TRUE(reloaded.settings() == wanted);
+    AURORA_TEST_CHECK_TRUE(reloaded.settings() == portable);
 }
 
 AURORA_TEST_CASE(an_unsafe_document_is_refused_whole_and_changes_nothing) {

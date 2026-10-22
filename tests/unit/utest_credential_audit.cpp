@@ -260,6 +260,11 @@ AURORA_TEST_CASE(the_three_preferences_leave_no_plaintext_credential_in_the_conf
     const auto workspace_text = read_file(dir / kWorkspaceFileName);
     AURORA_TEST_CHECK_MSG(workspace_text.find(artifacts.password_handle.vault_id) != std::string::npos,
                           workspace_text);
+    // 例外是导出件：`SPEC.FEAT.PREF.07` 的「凭据句柄不导出」——句柄只在本机的 OS 凭据库里有效。
+    const auto export_text = read_file(dir / "export.json");
+    AURORA_TEST_CHECK_MSG(export_text.find(artifacts.password_handle.vault_id) == std::string::npos,
+                          export_text);
+    AURORA_TEST_CHECK(export_text.find("\"vault_id\"") == std::string::npos);
     // 而库里那两枚明文一枚都不在盘上（值扫描的正面判据；键名臂由下面一条自证用例守）。
     AURORA_TEST_CHECK(settings_text.find(kPasswordSentinel) == std::string::npos);
     AURORA_TEST_CHECK(settings_text.find(kPassphraseSentinel) == std::string::npos);

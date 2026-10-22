@@ -579,11 +579,31 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return node;
 }
 
+/// @brief 凭据写给哪种文档：本机存储（保留句柄）还是换机导出（只留询问哨兵）。
+enum class CredentialProjection : std::uint8_t {
+    Stored,   ///< 配置文件、快照与回滚：句柄在本机有效，原样写。
+    Portable, ///< 导出件：句柄跨机必悬空，改写为「每次询问」。
+};
+
 [[nodiscard]] auto credential_to_json(const conn::SecretHandle &secret) -> Value {
     auto node = Value::object();
     put_enum(node, "kind", kSecretKindNames, static_cast<std::int64_t>(secret.kind));
     put(node, "vault_id", secret.vault_id);
     put(node, "profile_id", secret.profile_id);
+    put(node, "label", secret.label);
+    return node;
+}
+
+/// @brief 导出件里的凭据：`AskEveryTime` 哨兵，绝不带 `vault_id`（`SPEC.FEAT.PREF.07`）。
+///
+/// 句柄只在本机的 OS 凭据库里有效，换机后按它取秘密必然落空；带过去的只是一段无意义的
+/// 库标识。保留 `profile_id` 与 `label` 是为了让导入侧仍能给出「这条档案要问哪个口令」的
+/// 上下文，而哨兵本身不含任何秘密（`SecretHandle::is_plaintext()` 恒 false）。
+[[nodiscard]] auto portable_credential_to_json(std::string_view profile_id,
+                                               const conn::SecretHandle &secret) -> Value {
+    auto node = Value::object();
+    put_enum(node, "kind", kSecretKindNames, static_cast<std::int64_t>(conn::SecretKind::AskEveryTime));
+    put(node, "profile_id", std::string{profile_id});
     put(node, "label", secret.label);
     return node;
 }
@@ -600,7 +620,9 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return node;
 }
 
-[[nodiscard]] auto ssh_profile_to_json(const conn::SshProfile &ssh) -> Value {
+[[nodiscard]] auto ssh_profile_to_json(const conn::SshProfile &ssh,
+                                       std::string_view profile_id,
+                                       CredentialProjection projection) -> Value {
     auto node = Value::object();
     put(node, "host", ssh.host);
     put(node, "port", static_cast<std::int64_t>(ssh.port));
@@ -609,7 +631,9 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     put(node, "identity_file", ssh.identity_file);
     put(node, "agent_forwarding", ssh.agent_forwarding);
     put_enum(node, "known_hosts_policy", kKnownHostsPolicyNames, static_cast<std::int64_t>(ssh.known_hosts_policy));
-    node.set("credential", credential_to_json(ssh.credential));
+    node.set("credential", projection == CredentialProjection::Portable
+                               ? portable_credential_to_json(profile_id, ssh.credential)
+                               : credential_to_json(ssh.credential));
     return node;
 }
 
@@ -642,7 +666,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return node;
 }
 
-[[nodiscard]] auto profiles_to_json(const std::vector<conn::Profile> &profiles) -> Value {
+[[nodiscard]] auto profiles_to_json(const std::vector<conn::Profile> &profiles,
+                                    CredentialProjection projection) -> Value {
     auto node = Value::object();
     auto items = Value::array();
     for (const auto &profile : profiles) {
@@ -668,7 +693,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
         } else if (profile.type == conn::ConnectionType::Telnet) {
             item.set("telnet", telnet_profile_to_json(profile.telnet));
         } else {
-            item.set("ssh", ssh_profile_to_json(profile.ssh));
+            item.set("ssh", ssh_profile_to_json(profile.ssh, profile.id, projection));
         }
         items.push_back(std::move(item));
     }
@@ -1292,18 +1317,19 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return root;
 }
 
-/// @brief 一份配置 → 落盘/导出共用的顶层文档（版本号 + 各域，裁决 7.87④）。
+/// @brief 导出件的顶层文档（版本号 + 各域，裁决 7.87④）。
 ///
-/// 「导出的文件能原样被 `import_settings()` 装回」这条判据的根据就是这一份文档同时是给
-/// `Preferences` 的写入内容与导出件的正文；两处各列一遍各域，导出件就会落后于 schema。
-[[nodiscard]] auto settings_to_json(const Settings &settings) -> Value {
+/// 与配置文件的顶层形态逐键同构，故 `import_settings()` 能原样装回；`profiles` 是唯一的
+/// **内容**差异——按 `CredentialProjection::Portable` 把凭据句柄换成询问哨兵
+/// （`SPEC.FEAT.PREF.07` 的「凭据句柄不导出」）。配置文件自身、快照与回滚仍写真实句柄。
+[[nodiscard]] auto settings_to_json(const Settings &settings, CredentialProjection projection) -> Value {
     auto root = Value::object();
     root.set(kVersionKey, Value(kSupportedSchemaVersion));
     root.set("appearance", appearance_to_json(settings.appearance));
     root.set("terminal", terminal_to_json(settings.terminal));
     root.set("connection", connection_to_json(settings.connection));
     root.set("shortcuts", shortcuts_to_json(settings.shortcuts));
-    root.set("profiles", profiles_to_json(settings.profiles));
+    root.set("profiles", profiles_to_json(settings.profiles, projection));
     root.set("tunnels", tunnels_to_json(settings.tunnels));
     root.set("key_dirs", key_dirs_to_json(settings.key_dirs));
     return root;
@@ -1484,9 +1510,10 @@ auto prune_snapshots(const fs::path &file) -> void {
 
 /// @brief 禁列名单：任何层级的键名撞到其中之一就拒绝导出/导入。
 ///
-/// schema 里本来就没有凭据字段（裁决 7.26⑥ 把它挡在 `Settings` 之外），所以这道闸对本仓自己
-/// 写出的文件是永不开启的分支——它守的是**外部交回**的那一份：手改过的配置文件、别人机器上
-/// 旧版本的导出件。`utest_config` 的落盘形态例已在键名维度证过同一份名单，本件是它的执行点。
+/// 它守的是**明文**（裁决 7.26⑥）：本仓自有文档只存 `SecretHandle` 的引用/哨兵，故这条闸对
+/// 自家写出的文件是永不开启的分支。真正的句柄剥离在写侧（`CredentialProjection::Portable`）；
+/// 这道闸拦的是**外部交回**的那一份：手改过的配置文件、别人机器上旧版本的导出件。
+/// `utest_config` 的落盘形态例已在键名维度证过同一份名单，本件是它的执行点。
 constexpr std::array<std::string_view, 5> kBannedKeyNames{
     {"password", "passphrase", "secret", "token", "private_key"}};
 
@@ -1661,7 +1688,7 @@ struct Store::Impl {
         prefs.set("terminal", terminal_to_json(next.terminal));
         prefs.set("connection", connection_to_json(next.connection));
         prefs.set("shortcuts", shortcuts_to_json(next.shortcuts));
-        prefs.set("profiles", profiles_to_json(next.profiles));
+        prefs.set("profiles", profiles_to_json(next.profiles, CredentialProjection::Stored));
         prefs.set("tunnels", tunnels_to_json(next.tunnels));
         prefs.set("key_dirs", key_dirs_to_json(next.key_dirs));
         if (const auto flushed = prefs.flush(); !flushed.ok()) {
@@ -1754,7 +1781,7 @@ auto Store::rollback_to(const std::filesystem::path &snapshot) -> std::optional<
 }
 
 auto Store::export_settings(const std::filesystem::path &file) const -> std::optional<std::string> {
-    return write_document(file, settings_to_json(impl_->settings));
+    return write_document(file, settings_to_json(impl_->settings, CredentialProjection::Portable));
 }
 
 auto Store::import_settings(const std::filesystem::path &file) -> std::optional<std::string> {
