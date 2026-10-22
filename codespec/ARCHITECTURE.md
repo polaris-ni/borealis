@@ -505,7 +505,7 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 
 经 Aurora `Preferences` 落 JSON，schema 带版本号；写入原子化（临时文件 + 重命名）；启动校验失败则备份为 `*.corrupt-<时间戳>` 并回落默认配置启动，**绝不静默清空**（`SPEC.FEAT.PREF.03`、`SPEC.FEAT.PREF.07`）。版本升级迁移策略待定（首版仅预留版本号字段），见 §16 F。
 
-本节的执行形态由裁决 7.26 定死四处：**①存储**＝单文件 `borealis.json`（`Preferences::default_config_dir()`）+ 按域 `group()` 嵌套 + 顶层 `schema_version`，框架元数据在 `__aurora_preference_meta__` 下、对应用侧的 `keys()`/`get()` 不可见，故自校验只看用户数据树（附录 A.2 G7）。**②原子写不在本仓重造**——`Preferences::flush()` 已实现「`<file>.lock` 跨进程 advisory 锁 + 临时文件 + 原子 `rename`」，本仓只负责提交时机。**③降级线提前到首版**（`SPEC.FEAT.PREF.07` 的该腿随 M1 落）：缺键 / 类型不符 / 域外 → 回落默认并记诊断，未知键只记录不报错；JSON 解析失败（经 `last_load_error()`）或 `schema_version` 高于本仓支持 → **先备份 `*.corrupt-<epoch 秒>` 再回落默认**，备份必须早于任何 `flush`，否则「不静默清空」只剩口号；「显著提示」以 `LoadOutcome` 公共出口交 UI 侧，对话框落点 `TODO(SPEC.FEAT.PREF.07)`〔**已消除 2026-10-06**：`ui::StartupNotice::show_if_needed(LoadReport)`（`src/ui/startup_notice.{h,cpp}`）在 `main` 的装载之后按 `RecoveredCorrupt` / `RecoveredVersion` 两态弹一次，`LoadReport::message` 只进日志而不上界面，形态与判据见 `codespec/UI_SETTINGS.draft.md` §7 与裁决 **7.76⑤**〕；快照回滚与导出导入留原分期。**④首启不写盘**：首次启动只在内存得到全量默认值，用户第一次变更才 `flush`。凭据一律不入 schema（§12.1）。
+本节的执行形态由裁决 7.26 定死四处：**①存储**＝单文件 `borealis.json`（`Preferences::default_config_dir()`）+ 按域 `group()` 嵌套 + 顶层 `schema_version`，框架元数据在 `__aurora_preference_meta__` 下、对应用侧的 `keys()`/`get()` 不可见，故自校验只看用户数据树（附录 A.2 G7）。**②原子写不在本仓重造**——`Preferences::flush()` 已实现「`<file>.lock` 跨进程 advisory 锁 + 临时文件 + 原子 `rename`」，本仓只负责提交时机。**③降级线提前到首版**（`SPEC.FEAT.PREF.07` 的该腿随 M1 落）：缺键 / 类型不符 / 域外 → 回落默认并记诊断，未知键只记录不报错；JSON 解析失败（经 `last_load_error()`）或 `schema_version` 高于本仓支持 → **先备份 `*.corrupt-<epoch 秒>` 再回落默认**，备份必须早于任何 `flush`，否则「不静默清空」只剩口号；「显著提示」以 `LoadOutcome` 公共出口交 UI 侧，对话框落点 `TODO(SPEC.FEAT.PREF.07)`〔**已消除 2026-10-06**：`ui::StartupNotice::show_if_needed(LoadReport)`（`src/ui/startup_notice.{h,cpp}`）在 `main` 的装载之后按 `RecoveredCorrupt` / `RecoveredVersion` 两态弹一次，`LoadReport::message` 只进日志而不上界面，形态与判据见 `codespec/UI_SETTINGS.draft.md` §7 与裁决 **7.76⑤**〕；快照回滚与导出导入后已落（裁决 **7.87**；导出件的凭据句柄剥离见 **7.133**）。**④首启不写盘**：首次启动只在内存得到全量默认值，用户第一次变更才 `flush`。凭据**明文**一律不入 schema（§12.1）：SSH 档案只存 `SecretHandle` 的引用/哨兵，导出件在写侧剥离句柄。
 
 落盘形态另有三条由**裁决 7.27** 定死的硬约束，它们来自框架 `Preferences::reconcile()` 的实现（拍平成点号复合键再按点号重建嵌套，只有数组是叶子）而不是本仓的选择：**⑤键名不得含点号**——对象键里的点会被拆成一层层嵌套对象，`shortcuts.overrides` 里的命令 id（`terminal.new_tab` 形态）因此不能作键；**⑥可空的映射落为数组**——空对象在拍平时不产生条目、重建后即消失，故覆盖表落 `[{command, combo}, ...]`，内存模型仍是映射，元素形态不合只丢该元素并留痕其下标；**⑦色值的回落线以「本文件点名的主题」为基准**——`palette.cursor` 缺键回落该主题的光标色并留痕，显式 null 才是「未配」（绘制侧回落 `default_foreground`，裁决 7.25③），开关与阈值不属色值、回落一律随 `Settings{}`。
 
@@ -530,8 +530,8 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 
 ## 12 安全边界
 
-1. **凭据**：OS 凭据库存储 + 引用句柄；不可用则降级「每次询问」，非明文（`SPEC.FEAT.CONN.09`）。
-2. **审计**：审计范围为**配置目录**——全目录 grep 无明文凭据，做成**自动化用例**而非人工检查。日志目录不在审计范围内，单独标注为「用户显式开启、风险自负」。落点 `tests/unit/utest_credential_audit.cpp`（裁决 7.132 D9/D10）：三枚 `Preferences`（`borealis.json` 及其快照／导出件、`windows.json`、`workspace.json`）的全部写入产物逐文件过禁列键名与明文哨兵值，并以「种一份泄漏再抓、删掉后复检干净」自证非空转。
+1. **凭据**：OS 凭据库存储 + 引用句柄；不可用则降级「每次询问」，非明文（`SPEC.FEAT.CONN.09`）。配置文件与快照只存 `SecretHandle`；**导出件不导出句柄**——写侧一律改写成询问哨兵（`SPEC.FEAT.PREF.07`，裁决 **7.133**）。
+2. **审计**：审计范围为**配置目录**——全目录 grep 无明文凭据，做成**自动化用例**而非人工检查。日志目录不在审计范围内，单独标注为「用户显式开启、风险自负」。落点 `tests/unit/utest_credential_audit.cpp`（裁决 7.132 D9/D10）：三枚 `Preferences`（`borealis.json` 及其快照／导出件、`windows.json`、`workspace.json`）的全部写入产物逐文件过禁列键名与明文哨兵值，并以「种一份泄漏再抓、删掉后复检干净」自证非空转；导出件另断一句柄面——不含 `vault_id` 值也不含该键（裁决 **7.133**）。
 3. **剪贴板授权**：OSC 52 读方向默认禁止，三态可配；被拒时须回写空响应，避免远端程序挂起（`SPEC.FEAT.CONN.12`）。
 4. **会话日志**：默认关闭，开启须逐会话显式动作并给出风险提示；可选敏感输出过滤（裁决 7.9、`SPEC.FEAT.CONN.11`）。
 

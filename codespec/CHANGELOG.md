@@ -4,6 +4,21 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.133（2026-10-22）**`SPEC.FEAT.PREF.07` 导出件剥离凭据句柄：`CONN.09` 把 `SecretHandle` 带进 `Settings.profiles` 后，导出写侧改为「每次询问」哨兵，配置文件／快照／回滚仍存真实句柄（裁决 7.133；本地提交 `d4c5967`）**
+
+**动机**：`CONN.03` 让 `profiles` 进 schema、`CONN.09` 在 `SshProfile` 里放 `SecretHandle` 之后，`export_settings()` 复用的 `settings_to_json()` 经 `credential_to_json()` 无条件写出 `vault_id`，导出件因此带上了本机 OS 凭据库句柄，违反 `SPEC.FEAT.PREF.07` 原文「凭据句柄不导出」；裁决 7.87⑥ 那句「凭据结构上不在 `Settings` 内」的前提也随之失效。这是一条无头可断言的合规回归，不依赖 UI 走查。
+
+**落地形态**：
+
+- **写侧两投影**：`CredentialProjection::Stored`／`Portable`；`Store::Impl::store()`（配置文件与快照）用 `Stored`，只有 `export_settings()` 用 `Portable`。读侧不分叉，仍是唯一的 `read_settings()`。
+- **便携形态**：SSH 的 `credential` 写成 `kind=ask`、`profile_id=<profile.id>`、`label=<原 label>`，**不写 `vault_id`**；其余档案字段与各域逐字段照旧。哨兵不是句柄、不含秘密；保留 `profile_id`／`label` 供导入后的询问上下文。
+- **导入语义**：`kind=ask` 令 `plan_credential()` 落 `Ask`（即便本机库可用），连接腿不会拿跨机失效的句柄去取料；更旧的无 `credential` 块文档仍按空 Reference 装载并同样落 `Ask`。
+- **射程**：导出件与配置文件顶层逐键同构，仅凭据块内容不同；`workspace.json` 的本机会话恢复件不属导出，仍存句柄。`settings_to_json()` 的注释同步改口为「导出件文档」——它原本就只被导出调用，`store()` 是逐域写 `Preferences`。
+
+**验收读数**：构建无新警告；`ctest --preset linux -E etest_` **108/108 全绿**，`borealis_test_runner` **1347/1347**（本次只扩既有案，不新增案数）。`utest_config` 的形状案扩「配置含 `vault_id`、导出不含该值也不含该键、`kind=ask` 且 `profile_id` 保留」，回答案扩「句柄带 `label` → 导入为 `AskEveryTime` 且其余逐字段等值、重启读回仍等值」；`utest_credential_audit` 增导出件无句柄值／无 `vault_id` 键两断言。三支变异各有指名红案——导出误走 `Stored`、便携哨兵丢 `profile_id`、`store()` 误走 `Portable`；还原后全绿。
+
+**边界与不称可用**：本次闭合的是无头合规腿；导出／导入的文件对话框与动作留痕仍按 7.87⑨ 归真机走查，一条未做；Windows／MSVC 通道未验证 ⇒ 本条不称「可用」（`AGENTS.md` §4.4 第 33 条）。
+
 ## v0.132（2026-10-22）**`SPEC.FEAT.CONN.09` 真实 OS 凭据后端落地：POSIX 经运行期 `dlopen` 接 libsecret、Win32 CredMan 腿就位（未编译未实测）；档案连接按 None／Stored／Ask 三路线取料，询问提交先写确定性句柄再异步入库；配置目录审计扩为三枚 `Preferences` 全文件、键名与明文哨兵值双查并自证非空转（裁决 7.132，四批）**
 
 **动机**：CONN.09 的模型与询问降级早已落地，但真实后端一直缺位——生产代码里没有任何一处构造 `SecretHandle::reference`，`connect_profile` 对 Reference 与 AskEveryTime 一律询问，配置目录审计也只扫 `borealis.json` 且只查键名（稿 F6／F8）。本轮把「句柄 → OS 凭据库」这条链补全，并把需求原文「全配置目录 grep 无明文凭据」落成真正覆盖三枚 `Preferences` 的自动化用例。
