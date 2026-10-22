@@ -4,6 +4,21 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.135（2026-10-23）**`SPEC.FEAT.INTERACT.02` 的 quick select 延后子项落地：视区内 URL／路径／哈希按 `asdfghjkl` 标字母标签，按完整标签在帧边界复制冻结文本；触发为全局命令 `quick_select.open`（`Ctrl+Shift+Space`）落到焦点 pane（裁决 7.135）**
+
+**动机**：`SPEC.FEAT.INTERACT.02` 原文把 quick select 与智能选择并列为两条延后子项（目标 M4）。链接识别（INTERACT.05）、选区复制与 `Presentation::clipboard_write` 帧边界接缝、以及全局命令／命令面板同一真源的形态都已就位，quick select 只需组合这三块，不再等新的框架缺口。本棒只收 quick select；智能选择仍留 M4。
+
+**落地形态**：
+
+- **纯逻辑扫描件**：`ui::quick_select`（`include/borealis/ui/quick_select.h` + `src/ui/quick_select.cpp`）逐行产出 URL／路径／哈希三档候选——URL 认任意字母起首的 `scheme://` 与 `www.` 且不查协议白名单（只复制不打开），路径覆盖 `/`、`./`、`../`、`~/`、`~user/`、盘符与 UNC 并只收「≥2 分隔且含名字字符」的裸相对，哈希取 7–64 位且至少一枚 `a`–`f`；三档按 URL → 路径 → 哈希拒绝交叠，按 `(存储行, 起始列)` 排序。`span.row` 是存储行序，文本在扫描时冻结（双宽与组合标记与 `ui::copy_text` 同口径）。标签取 `asdfghjkl`：≤9 单字符、10–81 全双字符、>81 截断。
+- **视口模态**：`TerminalView::open_quick_select()` 只扫当前可见窗并存 `window_top`／`rows`／`columns`／`back_rows` 快照；`on_frame` 任一变化或失焦即退模。键拦截排在观察者派发之后、工作区前置过滤之前——`Escape`／非法键退模并消费，`Backspace` 退前缀一位，无修饰字母折小写后按「完整命中即复制／仍是前缀／无前缀存活」三分；字母与可打印键置 `swallow_next_text_`，文本通道另有模式期兜底。指针按下退模并吃掉，滚轮退模但照常滚动，输出推窗退模；只改写同一行不推窗时保留。
+- **复制与视觉**：命中标签只置 `CopyRequest::QuickSelect` 与冻结文本槽，下一帧由既有 `flush_copy_request()` 经 `Presentation::clipboard_write` 落地，按键回调零 IO。标签块从候选起点起 N 格、高恰一格，底取 `selection_ink()`、字色按 `enforce_contrast(default_foreground, 底, 4.5)`、字重 600，层序在链接悬停之后、两张状态卡之前；观测盒每帧重填，只含真的画了的候选。
+- **装配**：`quick_select.open` 以 `au::Command` 登记（`Ctrl+Shift+Space`，`ShortcutScope::Global`），命令面板同一入口；落点取当前窗当前标签的焦点 pane，搜索浮层开着时不进入。命令标题进中英两档词条表（`quick_select.action.open`）。
+
+**验收读数**：构建无新警告；`ctest --preset linux -E etest_` **110/110 全绿**（基线 108 ⇒ +2 套件），`borealis_test_runner` **1372/1372**（基线 1352 ⇒ +20 案）。`utest_quick_select` 12 案覆盖三档识别与形近串排除、六型路径与裸相对闸、交叠优先级、双宽／组合文本、存储行、标签切换与上限截断、前缀与整标签查找；`itest_quick_select` 8 案经真实会话与事件派发覆盖标签几何与 selection 底、帧边界复制与会话零增字、四种退模、滚轮退模且照常滚动、输出推窗、双字符 Backspace、无候选 no-op。四支变异各有指名红案：URL 尾部修剪禁用、裸相对闸 `>=2` 改 `>=1`、候选上限少一格、字母键吞位删除（后者红两案，会话真的收到漏出的字符）。还原后两处读数逐位复现。
+
+**边界与不称可用**（`AGENTS.md` §4.4 第 33 条）：真机键位与手感未走查（`Ctrl+Shift+Space` 可能被输入法占用）；`src/main.cpp` 不编入 runner（裁决 7.83）⇒ 命令闭包与「焦点 pane」那一跳无自动化证人；Win32／MSVC 未编译验证。未交付：跨行候选、OSC 8 隐藏目标、鼠标点标签、标签字母自定义与分页、智能选择（仍留 M4）。
+
 ## v0.134（2026-10-22）**`SPEC.FEAT.WS.10` 的 SSH 档案腿落地：撤销重开按「档案 id 同型优先、关闭快照兜底」重连，凭据仍走 None／Stored／Ask 三路线，标签回插原窗原位原名；本地腿同时收进共用的 `restore_tab_at`（裁决 7.134；本地提交 `ac3c58c`）**
 
 **动机**：`SPEC.FEAT.WS.10` 原文要求「本地终端重连进程、SSH 按档案重连」，本地腿早在 2026-10-08 已落，SSH 腿一直随 `SPEC.FEAT.CONN.02` 挂账。档案域、真实凭据后端（CONN.09）与 WS.11 的「id／字段双写 + 快照兜底」先例都已到位，这一腿具备收口条件。

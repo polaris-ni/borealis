@@ -52,10 +52,10 @@ Borealis 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨�
 | `include/borealis/grid/` | cell / 行 / 环形缓冲 / 主备屏 / 脏区 |
 | `include/borealis/session/` | 会话抽象、背压队列、生命周期；两份「锁内留存、锁外 IO」的落地件都在 `src/session/`——`clipboard_outbox`（52 写与读应答，全仓唯一触达框架剪贴板处）与 `notification_outbox`（9／777 投递，全仓唯一触达框架通知处，裁决 7.128），二者的公共头都不含框架类型 |
 | `include/borealis/conn/` | 连接类型与档案、凭据句柄 |
-| `include/borealis/ui/` | 终端视口、标签栏、pane 树（含 `PaneShape` 的形状描述／重建，裁决 7.131）、工作区布局快照模型（`workspace_snapshot`，纯逻辑、fail-closed 编解码）、搜索浮层、设置面板 |
+| `include/borealis/ui/` | 终端视口、标签栏、pane 树（含 `PaneShape` 的形状描述／重建，裁决 7.131）、工作区布局快照模型（`workspace_snapshot`，纯逻辑、fail-closed 编解码）、quick select 的行扫描与标签分配（`quick_select`，纯逻辑，裁决 7.135）、搜索浮层、设置面板 |
 | `include/borealis/config/` | 配置 schema、原子写与降级、profile；逐窗几何记忆另起第二枚框架接缝，实现与头都在 `src/config/`（`window_geometry_store`，裁决 7.126）；布局快照再起第三枚（`workspace_store`，绑 `workspace.json`、顶层键 `layout`、无删除入口，裁决 7.131） |
 | `include/borealis/cli/`、`src/cli/` | CLI 启动参数语法与档案解析、单实例转交的请求 / 回复编解码（纯逻辑，不碰文件系统与 UI，裁决 7.124） |
-| `src/ui/`（私有头） | 触达框架类型的控件实现（绘制侧类声明含 Aurora 类型，故不入公共头）；其中 `active_window_tracker.{h,cpp}` 是纯逻辑件，判「命令与快捷键落哪一扇窗」，为框架缺口 G42 的代偿（裁决 7.126）。`settings_i18n.{h,cpp}` 是本仓**上屏短语与框架 i18n 接缝的唯一归属**（裁决 7.130）：两张语言档表（`kStringsZh`／`kStringsEn`，各 470 条、key 集逐字相等）住在这一个文件里，`install_settings_strings(Language)` 是全仓唯一的装填点，也是唯一把语言档折成 `aurora::Locale` 的地方（装配层另在生产的场景根与用例驱动台各装一枚 `au::LocaleProvider`，`src/main.cpp`，裁决 7.130 的 D4／F19），界面上的显示文案一律经 `settings_label(key, args)` 取而不许就地写死——「引号内含汉字的字面量只许出现在这一个文件」已由常驻门禁 `tools/check/check_display_literals.py` 挂在 CTest 上守着（注释可中文、排版符号不在射程）。另有 `pane_tree.cpp` 与 `workspace_snapshot.cpp` 两件纯逻辑实现（公共头在 `include/borealis/ui/`，裁决 7.131） |
+| `src/ui/`（私有头） | 触达框架类型的控件实现（绘制侧类声明含 Aurora 类型，故不入公共头）；其中 `active_window_tracker.{h,cpp}` 是纯逻辑件，判「命令与快捷键落哪一扇窗」，为框架缺口 G42 的代偿（裁决 7.126）。`settings_i18n.{h,cpp}` 是本仓**上屏短语与框架 i18n 接缝的唯一归属**（裁决 7.130）：两张语言档表（`kStringsZh`／`kStringsEn`，各 470 条、key 集逐字相等）住在这一个文件里，`install_settings_strings(Language)` 是全仓唯一的装填点，也是唯一把语言档折成 `aurora::Locale` 的地方（装配层另在生产的场景根与用例驱动台各装一枚 `au::LocaleProvider`，`src/main.cpp`，裁决 7.130 的 D4／F19），界面上的显示文案一律经 `settings_label(key, args)` 取而不许就地写死——「引号内含汉字的字面量只许出现在这一个文件」已由常驻门禁 `tools/check/check_display_literals.py` 挂在 CTest 上守着（注释可中文、排版符号不在射程）。另有 `pane_tree.cpp`、`workspace_snapshot.cpp` 与 `quick_select.cpp` 三件纯逻辑实现（公共头在 `include/borealis/ui/`，前两件见裁决 7.131，后者见 7.135） |
 | `src/platform/win/`、`src/platform/posix/` | 平台相关实现（**平台假设不得渗入共享路径**，裁决 7.11）；含单实例通道与进程参数两腿（`instance_channel` / `process_args`，裁决 7.124）与凭据库两腿（`credential_store`：POSIX 运行期 `dlopen` libsecret、Win32 CredMan；工厂与句柄编码在共享私有头 `src/platform/credential_store.{h,cpp}`，裁决 7.132。Win32 腿**未编译未验证**），共享侧只见 `src/platform/` 下的同名接口头 |
 
 ### 2.3 依赖方向不变量
@@ -450,6 +450,8 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 - **逐块节流由 `Scheduler::set_timeout` 兑现，排期取累积延迟**（裁决 7.41⑥）：`PasteChunk::delay` 是「相对上一块」的量（7.33⑤），故累加后才是绝对时刻；`Scheduler::current()` 是 thread_local、无运行中 App 时恒空，此时按块次序一次发完（块边界与内容不变），所以无头用例锁「分了几块、每块发什么」而非「隔了多久」，节流那一腿的判据随真机走查。
 
 **余下未落**：`SPEC.FEAT.INTERACT.04` 的滚动区域带内位移补偿（7.39③ 的显式欠项）、三态与复制变换的 **UI 入口**（`SPEC.FEAT.PREF.02` 设置面板；键早已在 schema 内，7.38⑥ 所述「无消费方」自此闭合，缺的是面板）。「无选区时复制项置灰」的口径已随本棒实装（7.41②，判据见其验收段）。**真机走查未做**：拖拽跟手、跨回看滚动的选区跟随、copy-on-select 是否真落系统剪贴板、右键菜单的视觉与点选、多行警告对话框的呈现、逐行节流是否丢字——现有验收是无头像素 / 文本 / 集成断言，不据此宣称「可用」（AGENTS.md §4.6 第 33 条）。
+
+**quick select（2026-10-23，裁决 7.135）**：`SPEC.FEAT.INTERACT.02` 的另一条延后子项已落，架构上仍是「纯件判、控件演、装配触发」三段。纯件 `ui::quick_select`（`include/borealis/ui/quick_select.h` + `src/ui/quick_select.cpp`）不含 Aurora 类型也不碰 IO：逐行折出 URL／路径／哈希三档候选与文本，交调用方分配 `asdfghjkl` 标签；它与 `ui::url` 刻意**不共用**判定——quick select 只复制屏上文字，故不查协议白名单、不认 OSC 8 隐藏目标、不做落点命中。视口只持模态态（候选表、输入前缀、四枚视口快照、冻结文本），开模扫 `ScreenMirror` 当前可见窗、坐标存存储行序，`on_frame` 是唯一的失效判定点；复制仍走 `CopyRequest` + 帧边界 `flush_copy_request()` 这一条既有接缝，按键回调零 IO。标签块是绘制侧新增的最后一层装饰，只写观测盒、不吃指针；触发是装配层的全局命令 `quick_select.open`，落点按焦点 pane 解析，搜索浮层开着时不进入。
 
 ### 10.3 搜索
 
