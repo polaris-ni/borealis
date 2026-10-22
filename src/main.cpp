@@ -441,6 +441,22 @@ struct WorkspaceWindow {
     [[nodiscard]] auto take_window() -> std::unique_ptr<au::Window> { return std::move(window); }
 };
 
+/// @brief 撤销重开把标签放回哪扇窗、哪个位置、哪个名字（`SPEC.FEAT.WS.10`）。
+///
+/// 锚点只在闭包栈那条腿上出现，且要跨过凭据的异步问答——故存 `WindowId` 而不是
+/// `WorkspaceWindow *`：答话回来时那一扇可能已经关了，按号现取才判得出「窗没了」。
+struct RestoreAnchor {
+    au::WindowId window_id = au::AURORA_INVALID_WINDOW_ID;
+    std::size_t index_in_strip = 0;
+    std::u32string name;
+};
+
+/// @brief 询问型档案的挂起态：材料回来后开哪一份档案、带不带撤销重开的锚点。
+struct PendingProfileConnect {
+    borealis::conn::Profile profile;
+    std::optional<RestoreAnchor> anchor;
+};
+
 /// @brief 造一扇工作区窗的地基：后端窗口 + 浮层宿主 + 撑满窗宽的根 Column。
 /// @param title 窗口标题初值（真值随后由逐窗标题差分腿改写）。
 /// @param creation_index 本窗的创建序（稿 D9 的几何键来源，主窗是 0）。
@@ -1651,6 +1667,47 @@ auto main(int argc, char **argv) -> int {
         window.root_column->mark_needs_paint();
     };
 
+    /// @brief 撤销重开：把已建好的会话按原位置插回标签条（本地腿与 SSH 腿共用）。
+    ///
+    /// 与 `create_new_tab_with` 的差别只有「位置」与「名字」：那一支 `add` 到条尾并按档案名，
+    /// 这一支 `insert_at` 回原位并按闭包栈记下的名字。两处共用 `build_pane_view` /
+    /// `wire_workspace_hooks` / `attach_broadcast_sink`，闸门与浮层宿主因此不会因这条腿少接一段
+    /// （裁决 7.82②(b) 的同一条纪律）。插入失败即整张 `tab` 析构，成员次序保证视口先散、会话后散。
+    /// @param id 调用方从 `next_tab_id` 取走的号；本函数不发行身份。
+    /// @return true＝已入栏；false＝位置不合，本次不作数（号已烧掉，身份只增不复用）。
+    auto restore_tab_at = [&](WorkspaceWindow &window, borealis::ui::TabId id,
+                              std::shared_ptr<borealis::session::Session> session,
+                              const std::u32string &name, std::size_t index,
+                              borealis::conn::ConnectionType kind, PaneSessionFactory factory,
+                              std::optional<borealis::conn::LocalTerminalSpec> local_spec =
+                                  std::nullopt) -> bool {
+        const std::shared_ptr<borealis::ui::TerminalView> view =
+            build_pane_view(window, session, borealis::term::LineEnding::Lf);
+        borealis::ui::WorkspaceView::Hooks ws_hooks;
+        wire_workspace_hooks(id, ws_hooks);
+
+        TabWorkspace tab;
+        tab.owner = &window;
+        tab.sessions_by_pane[1U] = std::move(session);
+        if (local_spec.has_value()) {
+            tab.local_specs_by_pane[1U] = *local_spec;
+        }
+        tab.make_session = std::move(factory);
+        tab.workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
+        if (!window.tab_strip.insert_at(index, id, name)) {
+            AURORA_LOG_WARN("main", "undo close tab: insert_at failed at index ", index);
+            return false;
+        }
+        tab_workspaces[id] = std::move(tab);
+        tab_kind[id] = kind;
+        // 新格的成员表从空开始；端点仍按「三处构造点同源」登记。
+        attach_broadcast_sink(id);
+        window.current_tab_id = id;
+        window.tab_strip.select(id);
+        rebuild_root_children(window, tab_workspaces);
+        return true;
+    };
+
     // 浮层宿主已随 `open_workspace_window()` 建好（批 1 把它的归属挪进 `WorkspaceWindow`，场景根形态与
     // 裁决 7.41③ 那段理由都在工厂里）。这里给四面板与降级提示取的是**首格那一份的副本**（`shared_ptr`
     // 按值，而不是引用别名）——面板持的是 `OverlayHost &`（非拥有），若本装配层只留一枚指着容器元素的
@@ -1736,9 +1793,21 @@ auto main(int argc, char **argv) -> int {
                 static_cast<void>(borealis::term::encode_utf8(closed->name, spec.name));
                 spec.index_in_strip = closed->index_in_strip;
             }
-            // 本地终端的连接规格从配置取（目前只支持本地终端，SSH 腿到货后追加）
+            // 本地终端的连接规格从配置取；SSH 腿记档案 id 与整份档案快照（`SPEC.FEAT.WS.10`）——
+            // id 用来在重开时回查**现在**那一份档案，快照兜底 quick connect 与已删档案。串口／Telnet
+            // 仍按本地腿重开（本条需求只点名本地与 SSH 两条腿，这一档照旧）。
             spec.local_shell = settings.connection.local_shell;
             spec.startup_directory = settings.connection.startup_directory;
+            const auto kind = tab_kind.find(id);
+            if (kind != tab_kind.end() && kind->second == borealis::conn::ConnectionType::Ssh) {
+                spec.leg = borealis::ui::ClosedTabLeg::Ssh;
+                if (const auto profile = tab_profile_id.find(id); profile != tab_profile_id.end()) {
+                    spec.profile_id = profile->second;
+                }
+                if (const auto ssh = ssh_profile_by_tab.find(id); ssh != ssh_profile_by_tab.end()) {
+                    spec.ssh = ssh->second;
+                }
+            }
             window.closed_tab_stack.push(std::move(spec));
         }
         erase_tab_ledger(window, id);
@@ -2414,10 +2483,17 @@ auto main(int argc, char **argv) -> int {
         return window;
     };
 
+    // @param anchor 撤销重开（`SPEC.FEAT.WS.10`）的落点：有值时按**记下的那扇窗、原位置与原名字**
+    //        插回，而不是在最近被碰过的窗尾部按档案名新开一格。跨过凭据问答也要保住它，故随锚点带上窗号。
     auto open_ssh_tab = [&](const borealis::conn::Profile &profile,
-                            std::optional<std::string> secret) -> void {
-        WorkspaceWindow *const window = tab_host_or_none("ssh profile connect");
+                            std::optional<std::string> secret,
+                            std::optional<RestoreAnchor> anchor = std::nullopt) -> void {
+        WorkspaceWindow *const window = anchor.has_value() ? window_of(anchor->window_id)
+                                                           : tab_host_or_none("ssh profile connect");
         if (window == nullptr) {
+            if (anchor.has_value()) {
+                AURORA_LOG_WARN("main", "undo close tab: the host window is gone");
+            }
             return;
         }
         // SFTP 面板接线：留档副本先取，secret 照旧移交给 SshConnection。
@@ -2425,15 +2501,29 @@ auto main(int argc, char **argv) -> int {
         const borealis::conn::SshProfile sftp_profile = profile.ssh;
         auto session = make_ssh_session(profile.ssh, std::move(secret));
         // 工厂要的标签号就是本支即将取到的那个号（同 `create_new_tab` 处那一条）：取号点只有
-        // `create_new_tab_with` 里那一处，两处之间没有别的发号。
+        // `create_new_tab_with` 里那一处，两处之间没有别的发号。撤销重开那一支自己发号——它不走
+        // `create_new_tab_with`（那一支只会追加到条尾）。
         const borealis::ui::TabId id = next_tab_id;
-        create_new_tab_with(*window, std::move(session), decode_tab_name(profile.name), borealis::conn::ConnectionType::Ssh,
-                            make_ssh_pane_factory(id));
+        if (anchor.has_value()) {
+            ++next_tab_id;
+            if (!restore_tab_at(*window, id, std::move(session), anchor->name,
+                                anchor->index_in_strip, borealis::conn::ConnectionType::Ssh,
+                                make_ssh_pane_factory(id))) {
+                return;  // 会话与视口已随 `tab` 散掉，四张账一个都不登记。
+            }
+        } else {
+            create_new_tab_with(*window, std::move(session), decode_tab_name(profile.name),
+                                borealis::conn::ConnectionType::Ssh, make_ssh_pane_factory(id));
+        }
         ssh_profile_by_tab[id] = sftp_profile;
         ssh_secret_by_tab[id] = std::move(sftp_secret);
         tab_profile_id[id] = profile.id;
         flush_workspace_snapshot();  // 登记齐了才提交（同 `create_new_tab` 处那条次序）
         record_recent(profile.id);
+        if (anchor.has_value()) {
+            AURORA_LOG_INFO("main", "restored closed SSH tab: profile '", profile.id, "' at index ",
+                            anchor->index_in_strip);
+        }
     };
 
     // 本地档案会话：LocalProfile 与 LocalTerminalSpec 同构（命令/目录/环境三件），直搬。
@@ -2601,7 +2691,10 @@ auto main(int argc, char **argv) -> int {
         borealis::platform::make_credential_store()};
     // 同一档案的取料在途去重：连点两下只发一次后台 retrieve，结果回来再合并（D8）。
     auto pending_credential_fetches = std::make_shared<std::set<std::string>>();
-    auto pending_profile = std::optional<borealis::conn::Profile>{};
+    // 撤销重开取料的序号：同一档案可能在两格里各关一次，那两次撤销是两条**独立**意图，
+    // 不能共用去重键——共用就会让后到的那条被静默吞掉，而栈里的条目已经弹出、没有第二次机会。
+    std::uint64_t undo_fetch_serial = 0;
+    auto pending_profile = std::optional<PendingProfileConnect>{};
     // 隧道启动的异步凭据腿（D7）：询问型档案的隧道把「档案副本+定义」留在这里，
     // 明文回到 on_secret 后才真正拉起 Tunnel（同 pending_profile 的先例形态）。
     auto pending_tunnel =
@@ -2691,10 +2784,10 @@ auto main(int argc, char **argv) -> int {
             return;
         }
         if (pending_profile.has_value()) {
-            auto profile = std::move(*pending_profile);
+            auto pending = std::move(*pending_profile);
             pending_profile.reset();
-            remember_profile_secret(profile.id, secret);
-            open_ssh_tab(profile, secret);
+            remember_profile_secret(pending.profile.id, secret);
+            open_ssh_tab(pending.profile, secret, std::move(pending.anchor));
             return;
         }
         if (pending_tunnel.has_value()) {
@@ -2744,7 +2837,11 @@ auto main(int argc, char **argv) -> int {
         credential_prompt->ask(ask, name);
     };
 
-    auto connect_profile = [&](const borealis::conn::Profile &profile) -> void {
+    // 档案连接的四条腿共用这一支。@p anchor 只有撤销重开（`SPEC.FEAT.WS.10`）会给：它是 SSH
+    // 标签的「原窗原位原名」落点，穿过凭据计划的三条路线一直带到 `open_ssh_tab`。其余三条腿
+    // 不认这一枚（撤销只对 SSH 与本地两档分腿，本地那一档不走 `connect_profile`）。
+    auto connect_profile_to = [&](const borealis::conn::Profile &profile,
+                                  std::optional<RestoreAnchor> anchor) -> void {
         if (profile.type == borealis::conn::ConnectionType::Local) {
             open_local_profile_tab(profile);
             return;
@@ -2763,12 +2860,19 @@ auto main(int argc, char **argv) -> int {
         }
         const auto plan = borealis::conn::plan_credential(profile.ssh, *credential_store);
         if (plan.route == borealis::conn::CredentialRoute::None) {
-            open_ssh_tab(profile, std::nullopt);  // agent 认证：无材料可要。
+            open_ssh_tab(profile, std::nullopt, std::move(anchor));  // agent 认证：无材料可要。
             return;
         }
         if (plan.route == borealis::conn::CredentialRoute::Stored) {
             // 钥匙环可能弹解锁框并阻塞（D8）：事件回调只发起任务，命中后回主线程再开标签。
-            if (!pending_credential_fetches->insert(profile.id).second) {
+            // 在途去重的键对撤销重开另起一档并带序号：撤销与侧栏连接是两条意图，两次撤销
+            // 之间也是两条意图，共用一格就会让后到的那条被静默吞掉，而撤销栈的条目已经弹出、
+            // 没有第二次机会。
+            const std::string fetch_key =
+                anchor.has_value() ? std::string{"@undo/"} + profile.id + "/" +
+                                         std::to_string(++undo_fetch_serial)
+                                   : profile.id;
+            if (!pending_credential_fetches->insert(fetch_key).second) {
                 return;  // 同一档案的取料已在途：连点合并成一次。
             }
             auto task = au::async([credential_store, handle = plan.handle]()
@@ -2776,17 +2880,17 @@ auto main(int argc, char **argv) -> int {
                 return credential_store->retrieve(handle);
             });
             static_cast<void>(task.then(
-                [profile = borealis::conn::Profile{profile}, ask = plan.ask,
-                 pending = pending_credential_fetches,
+                [profile = borealis::conn::Profile{profile}, ask = plan.ask, anchor,
+                 fetch_key, pending = pending_credential_fetches,
                  prompt = std::weak_ptr<borealis::ui::CredentialPrompt>{credential_prompt},
                  &pending_profile, &ask_secret,
                  &open_ssh_tab](const au::Result<std::optional<std::string>> &result) -> void {
-                    pending->erase(profile.id);
+                    pending->erase(fetch_key);
                     if (prompt.expired()) {
                         return;  // 宿主已散：迟到结果不碰任何装配态。
                     }
                     if (result.ok() && result.value().has_value()) {
-                        open_ssh_tab(profile, *result.value());
+                        open_ssh_tab(profile, *result.value(), std::move(anchor));
                         return;
                     }
                     if (!result.ok()) {
@@ -2794,13 +2898,17 @@ auto main(int argc, char **argv) -> int {
                                         result.error().message);
                     }
                     // 取不到（未命中或后端出错）⇒ 回到询问，绝不拿空材料硬连（D3/D5）。
-                    pending_profile = profile;
+                    pending_profile = PendingProfileConnect{profile, anchor};
                     ask_secret(ask, profile.name);
                 }));
             return;
         }
-        pending_profile = profile;
+        pending_profile = PendingProfileConnect{profile, std::move(anchor)};
         ask_secret(plan.ask, profile.name);
+    };
+    // 入口形态（侧栏 / 向导 / CLI 转交）只要「按档案连一标签」：锚点为空即原先的行为。
+    auto connect_profile = [&connect_profile_to](const borealis::conn::Profile &profile) -> void {
+        connect_profile_to(profile, std::nullopt);
     };
 
     borealis::ui::ConnectionWizard::Hooks wizard_hooks;
@@ -3404,11 +3512,9 @@ auto main(int argc, char **argv) -> int {
     undo_close_tab.id = "tab.undo_close";
     undo_close_tab.title = borealis::ui::settings_label("tab.action.undo_close");
     undo_close_tab.category = "workspace";
-    undo_close_tab.action = [&command_window, &settings, &make_local_session,
-                             &build_pane_view, &next_tab_id, &wire_workspace_hooks,
-                             &make_local_pane_factory, &tab_workspaces, &tab_kind,
-                             &attach_broadcast_sink, &rebuild_root_children,
-                             &flush_workspace_snapshot]() -> void {
+    undo_close_tab.action = [&command_window, &settings, &make_local_session, &next_tab_id,
+                             &make_local_pane_factory, &restore_tab_at, &decode_tab_name,
+                             &flush_workspace_snapshot, &connect_profile_to]() -> void {
         WorkspaceWindow *const resolved = command_window ? command_window() : nullptr;
         if (resolved == nullptr) {
             AURORA_LOG_INFO("main", "undo close tab: there is no window to restore into");
@@ -3422,62 +3528,41 @@ auto main(int argc, char **argv) -> int {
         }
         const borealis::ui::ClosedTabSpec &spec = spec_opt.value();
 
-        // 重建会话（目前只支持本地终端，SSH 腿到货后追加分支）
-        borealis::conn::LocalTerminalSpec conn_spec;
-        conn_spec.command_line = spec.local_shell.empty() ? settings.connection.local_shell : spec.local_shell;
-        conn_spec.working_directory = spec.startup_directory.empty() ? settings.connection.startup_directory : spec.startup_directory;
-        const std::shared_ptr<borealis::session::Session> session = make_local_session(conn_spec);
-        // 会话起用、视口与两条闸门都在 `build_pane_view` 一处：撤销重开曾是「八处构造点」里最后一条
-        // 自己写一遍的旁路（漏接闸门就是一格看着正常、实际永远 deny 的标签），同源之后结构上不可能漏。
-        // 视口的浮层宿主与唤醒腿按**落点窗**取（稿 §6 批 2 的 `wire_view` 形参），故 B 窗重开的那一格
-        // 弹浮层不会盖到 A 窗脸上。
-        const auto view = build_pane_view(window, session, borealis::term::LineEnding::Lf);
-
-        // 建工作区分屏容器（单 pane 起步）
-        // 生成新标签 ID：走共享的那支只增计数器，不复用已发过的身份。声明提前到 hooks 之前，
-        // 广播接缝与切分工厂都要拿它当身份的一半；原先它紧挨 `insert_at`，只是碰巧没有更早的读者。
-        const borealis::ui::TabId id = next_tab_id++;
-
-        borealis::ui::WorkspaceView::Hooks ws_hooks;
-        // 接缝装的是与新开标签同一份定义（F3 的空 `teardown_pane` 与 F4 的「恒打首会话」就此消失）。
-        // 切分工厂走**缺省本地腿**那一支：新格按被切那一格现读的 OSC 7 继承目录，而不是照闭包栈里
-        // 那份旧规格复制——闭包栈存的是「这张标签当初怎么开的」，不是「这一格现在在哪」。
-        wire_workspace_hooks(id, ws_hooks);
-
-        TabWorkspace tab;
-        tab.owner = &window;
-        tab.sessions_by_pane[1U] = session;
-        // 有效料同源登记（稿 D4① 的本地半边）：这一格起的正是上面折算出来的那一份，快照按序位要它。
-        tab.local_specs_by_pane[1U] = conn_spec;
-        tab.make_session = make_local_pane_factory(id);
-        tab.workspace = std::make_shared<borealis::ui::WorkspaceView>(view, std::move(ws_hooks));
-
-        // 标签名按 UTF-8 解回码点：闭包栈存的是 `encode_utf8` 的产物，逐字节折成码点会把
-        // CJK 名拆成 Latin-1 乱码，重开回来的标签就成了一串问号。
-        borealis::term::Utf8Decoder decoder;
-        DecodeCollector collector;
-        const auto *bytes = reinterpret_cast<const std::byte *>(spec.name.data());
-        decoder.feed(std::span<const std::byte>(bytes, spec.name.size()), collector);
-        decoder.finish(collector);
-        const bool inserted = window.tab_strip.insert_at(spec.index_in_strip, id, collector.out);
-        if (!inserted) {
-            AURORA_LOG_WARN("main", "undo close tab: insert_at failed at index ", spec.index_in_strip);
-            return;  // `tab` 随之消散：成员次序保证视口先散、会话后散（稿 §5）
+        // SSH 腿（`SPEC.FEAT.WS.10`）：按档案重连，**不是**按关闭时的字节复制一条连接——档案这
+        // 期间改过主机就以现在那一份为准；quick connect 与已删档案才用快照兜底。凭据仍走
+        // `connect_profile_to` 的三路线（None 直连 / Stored 后台取 / Ask 询问），故撤销回来的一格
+        // 与侧栏点开的一格共用同一条取料链，不会出现「重开时静默拿空口令硬连」。
+        if (spec.leg == borealis::ui::ClosedTabLeg::Ssh) {
+            const auto profile = borealis::ui::resolve_closed_ssh_profile(settings.profiles, spec);
+            if (!profile.has_value()) {
+                AURORA_LOG_WARN("main", "undo close tab: SSH profile '", spec.profile_id,
+                                "' is gone and the closed tab carries no snapshot");
+                return;
+            }
+            RestoreAnchor anchor{.window_id = window.id,
+                                 .index_in_strip = spec.index_in_strip,
+                                 .name = decode_tab_name(spec.name)};
+            connect_profile_to(*profile, std::move(anchor));
+            return;
         }
 
-        tab_workspaces[id] = std::move(tab);
-        // 闭包栈只存本地终端的规格，重开回来仍是本地标签（`SPEC.FEAT.INTEG.02` 的类型表同源登记）。
-        tab_kind[id] = borealis::conn::ConnectionType::Local;
-        // 新格的成员表从空开始（闭包栈只存标签规格，不存广播资格）；端点仍按「三处构造点同源」登记。
-        attach_broadcast_sink(id);
-        window.current_tab_id = id;
-
-        // 选中恢复的标签并重建根节点子节点
-        window.tab_strip.select(id);
-        rebuild_root_children(window, tab_workspaces);
-
-        // 布局变更的提交点（稿 D2①「开标签」）：排在这里而不是 `create_new_tab_with` 那一处，是因为
-        // 撤销重开不经过那支壳；`insert_at` 失败早退的那一支不到这里——栏里没这一格，快照也不该有。
+        // 本地腿：重建会话并回插原位（需求原文「本地终端重连进程」）。
+        borealis::conn::LocalTerminalSpec conn_spec;
+        conn_spec.command_line =
+            spec.local_shell.empty() ? settings.connection.local_shell : spec.local_shell;
+        conn_spec.working_directory =
+            spec.startup_directory.empty() ? settings.connection.startup_directory
+                                           : spec.startup_directory;
+        const borealis::ui::TabId id = next_tab_id++;
+        // 切分工厂走**缺省本地腿**那一支：新格按被切那一格现读的 OSC 7 继承目录，而不是照闭包栈里
+        // 那份旧规格复制——闭包栈存的是「这张标签当初怎么开的」，不是「这一格现在在哪」。
+        if (!restore_tab_at(window, id, make_local_session(conn_spec), decode_tab_name(spec.name),
+                            spec.index_in_strip, borealis::conn::ConnectionType::Local,
+                            make_local_pane_factory(id), conn_spec)) {
+            return;
+        }
+        // 布局变更的提交点（稿 D2①「开标签」）：撤销重开不经过 `create_new_tab_with` 那支壳，
+        // 故在这里补一次；`insert_at` 失败早退的那一支不到这里——栏里没这一格，快照也不该有。
         flush_workspace_snapshot();
         AURORA_LOG_INFO("main", "restored closed tab: '", spec.name, "' at index ", spec.index_in_strip);
     };

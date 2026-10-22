@@ -14,6 +14,7 @@
 
 namespace borealis::test_cases::utest_closed_tab_stack {
 
+using borealis::ui::ClosedTabLeg;
 using borealis::ui::ClosedTabSpec;
 using borealis::ui::ClosedTabStack;
 
@@ -23,6 +24,17 @@ namespace {
     ClosedTabSpec spec;
     spec.name = std::move(name);
     spec.index_in_strip = index;
+    return spec;
+}
+
+[[nodiscard]] auto ssh_spec(std::string profile_id) -> ClosedTabSpec {
+    ClosedTabSpec spec;
+    spec.name = profile_id;
+    spec.leg = ClosedTabLeg::Ssh;
+    spec.profile_id = std::move(profile_id);
+    borealis::conn::SshProfile ssh;
+    ssh.host = "gateway.example";
+    spec.ssh = ssh;
     return spec;
 }
 
@@ -100,6 +112,98 @@ AURORA_TEST_CASE(pushing_after_the_cap_stays_at_the_cap) {
     const auto got = stack.pop();
     AURORA_TEST_REQUIRE_TRUE(got.has_value());
     AURORA_TEST_CHECK_EQ(got->name, "t19");
+}
+
+AURORA_TEST_CASE(popped_spec_carries_the_ssh_identity_fields_through) {
+    // SSH 腿重开只靠这三件料：哪条腿、哪份档案、档案已删时的快照。
+    ClosedTabStack stack;
+    ClosedTabSpec spec;
+    spec.name = "gateway";
+    spec.leg = ClosedTabLeg::Ssh;
+    spec.profile_id = "demo-gateway";
+    borealis::conn::SshProfile ssh;
+    ssh.host = "gateway.example";
+    ssh.user = "deploy";
+    spec.ssh = ssh;
+    stack.push(std::move(spec));
+
+    const auto got = stack.pop();
+    AURORA_TEST_REQUIRE_TRUE(got.has_value());
+    AURORA_TEST_CHECK_TRUE(got->leg == ClosedTabLeg::Ssh);
+    AURORA_TEST_CHECK_EQ(got->profile_id, "demo-gateway");
+    AURORA_TEST_REQUIRE_TRUE(got->ssh.has_value());
+    AURORA_TEST_CHECK_EQ(got->ssh->host, "gateway.example");
+    AURORA_TEST_CHECK_EQ(got->ssh->user, "deploy");
+}
+
+AURORA_TEST_CASE(resolve_prefers_the_live_profile_of_the_same_type) {
+    // 档案还在就以配置里那一份为准：关闭后改过名/改过主机，撤销回来的应是现在的档案。
+    auto closed = ssh_spec("demo-gateway");
+    closed.ssh->host = "old.example";
+
+    borealis::conn::Profile live;
+    live.id = "demo-gateway";
+    live.name = "Gateway (renamed)";
+    live.type = borealis::conn::ConnectionType::Ssh;
+    live.ssh.host = "new.example";
+    // 前面垫一份**同样合格**的 SSH 档案：判据是「id 相等」而不是「表里第一份 SSH」。
+    borealis::conn::Profile decoy;
+    decoy.id = "other-gateway";
+    decoy.name = "Other";
+    decoy.type = borealis::conn::ConnectionType::Ssh;
+    const std::vector<borealis::conn::Profile> profiles{decoy, live};
+
+    const auto resolved = borealis::ui::resolve_closed_ssh_profile(profiles, closed);
+    AURORA_TEST_REQUIRE_TRUE(resolved.has_value());
+    AURORA_TEST_CHECK_EQ(resolved->name, "Gateway (renamed)");
+    AURORA_TEST_CHECK_EQ(resolved->ssh.host, "new.example");
+}
+
+AURORA_TEST_CASE(resolve_falls_back_to_the_snapshot_when_the_profile_is_gone) {
+    // quick connect 与已删档案都走这一档：没有活档案可回查，但关闭时那份快照足够重拨。
+    const auto closed = ssh_spec("quick-172.16.0.9");
+    const std::vector<borealis::conn::Profile> profiles{};
+
+    const auto resolved = borealis::ui::resolve_closed_ssh_profile(profiles, closed);
+    AURORA_TEST_REQUIRE_TRUE(resolved.has_value());
+    AURORA_TEST_CHECK_EQ(resolved->id, "quick-172.16.0.9");
+    AURORA_TEST_CHECK_EQ(resolved->name, closed.name);
+    AURORA_TEST_CHECK_TRUE(resolved->type == borealis::conn::ConnectionType::Ssh);
+    AURORA_TEST_CHECK_EQ(resolved->ssh.host, "gateway.example");
+}
+
+AURORA_TEST_CASE(resolve_falls_back_when_the_live_profile_changed_type) {
+    // 同 id 但已改成本地档案：不能拿它拨 SSH，快照才是这条闭包标签的原身份。
+    auto closed = ssh_spec("demo-gateway");
+    borealis::conn::Profile live;
+    live.id = "demo-gateway";
+    live.name = "now local";
+    live.type = borealis::conn::ConnectionType::Local;
+    const std::vector<borealis::conn::Profile> profiles{live};
+
+    const auto resolved = borealis::ui::resolve_closed_ssh_profile(profiles, closed);
+    AURORA_TEST_REQUIRE_TRUE(resolved.has_value());
+    AURORA_TEST_CHECK_EQ(resolved->ssh.host, "gateway.example");
+}
+
+AURORA_TEST_CASE(resolve_returns_nothing_without_ssh_material) {
+    // 本地腿与「无活档案且无快照」两种形态都回空值：调用方据此不做任何事，而不是造一格空连接。
+    auto local = spec_named("local", 0);
+    AURORA_TEST_CHECK_FALSE(borealis::ui::resolve_closed_ssh_profile({}, local).has_value());
+
+    ClosedTabSpec empty_ssh;
+    empty_ssh.leg = ClosedTabLeg::Ssh;
+    empty_ssh.profile_id = "gone";
+    AURORA_TEST_CHECK_FALSE(borealis::ui::resolve_closed_ssh_profile({}, empty_ssh).has_value());
+
+    // 空 id 不参与回查：表里有一份合格 SSH 档案也不该被它顺手取走（取走就是接了别人的身份）。
+    borealis::conn::Profile unrelated;
+    unrelated.id = "someone-else";
+    unrelated.type = borealis::conn::ConnectionType::Ssh;
+    ClosedTabSpec no_id;
+    no_id.leg = ClosedTabLeg::Ssh;
+    AURORA_TEST_CHECK_FALSE(
+        borealis::ui::resolve_closed_ssh_profile({unrelated}, no_id).has_value());
 }
 
 }  // namespace borealis::test_cases::utest_closed_tab_stack
