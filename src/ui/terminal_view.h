@@ -40,6 +40,7 @@
 #include "borealis/ui/command_block.h"
 #include "borealis/ui/grid_size_debounce.h"
 #include "borealis/ui/palette.h"
+#include "borealis/ui/quick_select.h"
 #include "borealis/ui/right_click.h"
 #include "borealis/ui/search.h"
 #include "borealis/ui/selection.h"
@@ -474,6 +475,38 @@ class TerminalView final : public aurora::LeafWidget {
         return search_overlay_.get();
     }
 
+    /// @brief 一个 quick select 标签块：指向哪条候选、落在哪个 dp 盒（绘制观测点）。
+    struct QuickSelectLabelBox {
+        std::size_t candidate = 0U;  ///< 候选在 `quick_select_candidates()` 里的下标。
+        Rect box{};                  ///< 控件局部 dp：候选起点起、标签字符数举宽、一格高。
+
+        [[nodiscard]] auto operator==(const QuickSelectLabelBox &other) const noexcept -> bool = default;
+    };
+
+    /// @brief 打开 quick select（`SPEC.FEAT.INTERACT.02` 的延后子项）：扫当前可见窗、按标签复制。
+    ///
+    /// 扫描与标签分配都在这一次调用里做完：候选来自 `ScreenMirror` 的**当前副本**，不取会话锁，
+    /// 也不跨回看历史。空表、零行列、搜索浮层已开三种情形不进入模式（没有可标的东西 / 键位归搜索）。
+    /// 开模快照（窗顶、行列、距底行数）由 `on_frame` 逐帧比对，任一变化即自动退模（D5）。
+    auto open_quick_select() -> void;
+
+    /// @brief 退出 quick select：清候选、输入前缀与标签盒；**不写剪贴板**（那是帧边界的复制腿）。
+    ///
+    /// 未开时是无操作，故取消路径不必先问状态；已开时标脏，让屏上的标签在同一帧序里消失。
+    auto close_quick_select() -> void;
+
+    /// @brief 模式是否开着（无头用例的首要观测点）。
+    [[nodiscard]] auto quick_select_active() const noexcept -> bool { return quick_select_.has_value(); }
+
+    /// @brief 当前输入前缀：单字符档为一位、双字符档最多两位；退模后为空。
+    [[nodiscard]] auto quick_select_typed() const noexcept -> std::string_view;
+
+    /// @brief 本次开模的候选表（含已分配的标签与冻结文本）；未开模时为空。
+    [[nodiscard]] auto quick_select_candidates() const noexcept -> std::span<const QuickSelectCandidate>;
+
+    /// @brief 本帧画出的标签块；未开模、早退帧或装不下时为空。
+    [[nodiscard]] auto quick_select_label_boxes() const noexcept -> std::span<const QuickSelectLabelBox>;
+
     /// @brief 装上一键重启的钩子（`SPEC.FEAT.WS.05` 的本地腿）。
     ///
     /// 视口不重建会话（那是装配层的职责），只在会话进程已退出时把浮层上的「重启」按钮点亮，
@@ -589,6 +622,7 @@ class TerminalView final : public aurora::LeafWidget {
         None,           ///< 没有待落地的复制。
         Selection,      ///< 当前选区（copy-on-select 与菜单「复制」共用）。
         CommandOutput,  ///< 右键那一刻存下的命令块输出（`menu_block_`）。
+        QuickSelect,    ///< quick select 命中的候选（文本已在开模时冻结，见 `quick_select_copy_text_`）。
     };
 
     /// @brief 帧内取用的光标快照：只收绘制需要的那五个字段，且要可比（`term::Cursor` 无 `==`）。
@@ -600,6 +634,20 @@ class TerminalView final : public aurora::LeafWidget {
         bool blinking = true;
 
         [[nodiscard]] constexpr auto operator==(const CursorState &) const noexcept -> bool = default;
+    };
+
+    /// @brief quick select 的开模快照（`SPEC.FEAT.INTERACT.02` 延后子项的 D5/D6）。
+    ///
+    /// 候选的 `span.row` 是**存储行序**，绘制时按 `window_top` 折算成绘制行；四枚读数一并存下，
+    /// `on_frame` 在副本并入后逐枚比对，任一变化即退模——标签坐标已不再对应同一段文字。
+    /// 输入前缀与候选同存，故退模只需丢掉这一整份快照。
+    struct QuickSelectState {
+        std::vector<QuickSelectCandidate> candidates;  ///< 阅读序；标签已分配、文本已冻结。
+        std::string typed;                             ///< 已输入的标签前缀（小写 ASCII）。
+        std::size_t window_top = 0U;                   ///< 开模时的副本窗顶（存储行序）。
+        std::size_t rows = 0U;                         ///< 开模时的可见行数。
+        std::size_t columns = 0U;                      ///< 开模时的列数。
+        std::size_t back_rows = 0U;                    ///< 开模时的距底行数。
     };
 
     /// @brief 取（并按需重取）给定缩放下、叠上排版可调量之后的整格度量。
@@ -679,6 +727,14 @@ class TerminalView final : public aurora::LeafWidget {
 
     /// @brief 把要发的字节交进会话：空值即本层不发（编码层已判过层级与事件形态）。
     auto send_report(const std::optional<std::string> &bytes) -> void;
+
+    /// @brief quick select 开模后的按键处置：Escape 退、Backspace 退一位、字母前缀收敛、其余退模。
+    ///
+    /// 只认未修饰的字母（大小写同解）：标签是 ASCII 小写，带修饰的字母属于终端应用，不该被本模式
+    /// 截走。命中的那一条把冻结文本放进 `quick_select_copy_text_` 并置 `CopyRequest::QuickSelect`，
+    /// 写剪贴板仍留到帧边界（AGENTS.md §4.5 第 25 条）。
+    /// @return 是否吃掉了这一键（吃掉即不再进 `key_pre_filter_` / 编码 / 发送三腿）。
+    [[nodiscard]] auto handle_quick_select_key(const aurora::KeyEvent &e) -> bool;
 
     /// @brief 每帧重投影（裁决 D6①「距底恒定」）：返回本次生效的距底行数。
     [[nodiscard]] auto reproject(std::size_t total_lines, std::size_t rows) -> std::size_t;
@@ -959,6 +1015,14 @@ class TerminalView final : public aurora::LeafWidget {
     /// 取线宽与吸附，只把用色换成 accent——线宽 1 物理像素与「基线 +1px」那条口径不在这里重述一遍。
     auto paint_link_hover(aurora::Painter &p, const aurora::Rect &bounds) -> void;
 
+    /// @brief 画 quick select 的字母标签块（`SPEC.FEAT.INTERACT.02` 延后子项，稿 D7①）。
+    ///
+    /// 每帧先清 `quick_select_label_boxes_` 再按实际落笔回填，与 `paint_link_hover` 的「盒即证人」
+    /// 同一条纪律：装不下或滚出可见窗的标签不画、也不留盒。块宽按标签字符数举宽（一位或两位），
+    /// 高恰一格；底色取 `selection_ink()`（与选区同一强调色，失焦自动降档），字色经
+    /// `enforce_contrast` 对块底取 4.5 对比度——标签压在候选首字符上，可读性不能由主题碰运气。
+    auto paint_quick_select(aurora::Painter &p, const aurora::Rect &bounds) -> void;
+
     session::Session *session_ = nullptr;  ///< 非拥有。
     PaletteSpec spec_{};
     aurora::Font ref_font_{};
@@ -1035,6 +1099,15 @@ class TerminalView final : public aurora::LeafWidget {
     bool search_dirty_ = false;    ///< 本帧要扫（字面量档每键置脏、正则档只在提交时置脏）。
     bool search_invalid_ = false;  ///< 上次扫描因表达式非法而保留旧表（判据 B4）。
     std::size_t search_scans_ = 0; ///< 实际扫描次数；空文本的清表不计（判据 A2-a）。
+
+    /// @brief quick select 的四件：开模快照、命中后待帧边界写出的冻结文本、本帧标签盒、以及
+    ///        「这次按键已进本模式」的文本通道闸（置位后紧随的 `on_text_input` 被吞掉）。
+    ///
+    /// 候选表与输入前缀同居一份 optional：退模只丢这一整份，不会留下「表还在、前缀没了」的半态。
+    /// `swallow_next_text_` 是既有字段，这里不另设第二枚布尔——文本通道只有一条，两枚闸会打架。
+    std::optional<QuickSelectState> quick_select_;
+    std::string quick_select_copy_text_;               ///< 待落地复制的候选文本（开模时冻结）。
+    std::vector<QuickSelectLabelBox> quick_select_label_boxes_;  ///< 本帧实际画出的标签块。
 
     /// @brief 浮层本体的三条外部依赖（均非拥有，装配阶段经 `set_overlay_host` 与
     ///        `set_search_dependencies` 交）：建浮层那一刻一次读齐。

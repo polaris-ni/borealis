@@ -115,6 +115,21 @@ constexpr float kBroadcastBadgeFontPt = 11.0F;
 constexpr aurora::Color kBroadcastBadgeBg{0x5A, 0x44, 0x20};
 constexpr aurora::Color kBroadcastBadgeInk{0xF1, 0xFA, 0x8C};
 
+/// @brief 键位是否会产生文本输入（字母/数字/空格/美式标点/小键盘数字）。
+///
+/// quick select 的「其它键」分支要靠它决定是否置 `swallow_next_text_`：置早了会吞掉一枚
+/// 与本次按键无关的文本，置晚了同一物理键会经文本通道漏进会话（稿 §2 的表）。
+[[nodiscard]] auto is_printable_key(aurora::KeyCode code) noexcept -> bool {
+    const int value = static_cast<int>(code);
+    return (value >= static_cast<int>(aurora::KeyCode::A) && value <= static_cast<int>(aurora::KeyCode::Z)) ||
+           (value >= static_cast<int>(aurora::KeyCode::D0) && value <= static_cast<int>(aurora::KeyCode::D9)) ||
+           (value >= static_cast<int>(aurora::KeyCode::Minus) &&
+            value <= static_cast<int>(aurora::KeyCode::Backquote)) ||
+           (value >= static_cast<int>(aurora::KeyCode::KP_0) &&
+            value <= static_cast<int>(aurora::KeyCode::KP_9)) ||
+           code == aurora::KeyCode::Space;
+}
+
 /// @brief 把滚轮增量折成「档」：一 notch 即一档（Win32 与 X11 给 ±1，高分屏与 GLFW 可给小数）。
 ///        非零增量至少算一档——发零条上报等于吞掉这一事件而不告诉任何人。
 [[nodiscard]] auto wheel_notches(float delta_rows) -> int {
@@ -523,6 +538,63 @@ auto TerminalView::open_search() -> void {
     search_overlay_->open();
 }
 
+auto TerminalView::open_quick_select() -> void {
+    // 搜索浮层开着时不开：它占着键盘焦点，标签即使画出来也按不到（稿 F10）。
+    if (search_overlay_ != nullptr && search_overlay_->is_open()) {
+        return;
+    }
+    // 只扫这一帧画得出的格子：`geometry` 可能比副本小（刚改小窗口、会话尚未 resize 回来），
+    // 多扫出的候选没有落笔位置，按标签复制却照样可用——那会让「看不见的候选」也能被按到。
+    const std::size_t rows = std::min(mirror_.rows(), geometry_.rows);
+    const std::size_t columns = std::min(mirror_.columns(), geometry_.columns);
+    if (rows == 0U || columns == 0U) {
+        return;  // 字体未就绪或窗口最小化：没有可标的格子
+    }
+    // 候选坐标是存储行序（稿 F4）：屏幕行 i 只在这里加一次窗顶，之后绘制再减回去。
+    std::vector<QuickSelectCandidate> candidates;
+    const std::size_t top = mirror_.window_top();
+    for (std::size_t screen_row = 0; screen_row < rows; ++screen_row) {
+        auto found = scan_quick_select_row(mirror_.line(screen_row), top + screen_row);
+        candidates.insert(candidates.end(), std::make_move_iterator(found.begin()),
+                          std::make_move_iterator(found.end()));
+    }
+    assign_quick_select_labels(candidates);
+    if (candidates.empty()) {
+        return;  // 没有可标的东西：不进模式、不画空标签、不改任何状态
+    }
+    quick_select_ = QuickSelectState{
+        .candidates = std::move(candidates),
+        .typed = {},
+        .window_top = top,
+        .rows = rows,
+        .columns = columns,
+        .back_rows = mirror_.back_rows(),
+    };
+    mark_needs_paint();
+}
+
+auto TerminalView::close_quick_select() -> void {
+    if (!quick_select_.has_value()) {
+        return;  // 取消路径不必先问状态
+    }
+    quick_select_.reset();
+    quick_select_label_boxes_.clear();
+    mark_needs_paint();
+}
+
+auto TerminalView::quick_select_typed() const noexcept -> std::string_view {
+    return quick_select_.has_value() ? std::string_view{quick_select_->typed} : std::string_view{};
+}
+
+auto TerminalView::quick_select_candidates() const noexcept -> std::span<const QuickSelectCandidate> {
+    return quick_select_.has_value() ? std::span<const QuickSelectCandidate>{quick_select_->candidates}
+                                     : std::span<const QuickSelectCandidate>{};
+}
+
+auto TerminalView::quick_select_label_boxes() const noexcept -> std::span<const QuickSelectLabelBox> {
+    return quick_select_label_boxes_;
+}
+
 auto TerminalView::on_frame() -> void {
     const std::vector<session::Damage> frame = session_->drain_damage();
     const std::size_t previous_back = mirror_.back_rows();
@@ -563,6 +635,19 @@ auto TerminalView::on_frame() -> void {
     // 代价如实登记：程序持续刷屏时这条线会一直不显形，指针下一次 Move 才恢复。
     if (!frame.empty()) {
         clear_hover_link();
+    }
+    // quick select 的标签是从**开模那一帧**的格子读出来的：窗顶、可见行列或距底行数任一变了，
+    // 同一序号的行/列就不再指着同一段文字（稿 D5）。四枚读数与开模时逐一比对，整模作废；
+    // 「输出只改写同一行」不在此列——候选文本已在开模时冻结，按标签复制不读改写后的格子。
+    // 失焦同样退模：键已经不会进本视口，留着标签就是一块按不动的装饰。
+    if (quick_select_.has_value()) {
+        const std::size_t rows = std::min(mirror_.rows(), geometry_.rows);
+        const std::size_t columns = std::min(mirror_.columns(), geometry_.columns);
+        if (!is_focused() || mirror_.window_top() != quick_select_->window_top ||
+            rows != quick_select_->rows || columns != quick_select_->columns ||
+            mirror_.back_rows() != quick_select_->back_rows) {
+            close_quick_select();
+        }
     }
     flush_copy_request();
     flush_paste_request();
@@ -631,8 +716,10 @@ auto TerminalView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, cons
     // ①：整盒铺默认底色。部分裁剪帧里框架会先把裁剪区清回零基底，不铺这层就露出黑底——它与
     //    「本帧有没有脏」无关，每次进入绘制都要铺。
     p.fill_rect(bounds, to_color(spec_.default_background));
-    // 角标盒每帧先清：早退的帧（零行列 / 整个网格在裁剪盒外）不该留下上一帧的读数。
+    // 角标盒与 quick select 标签盒每帧先清：早退的帧（零行列 / 整个网格在裁剪盒外）不该留下
+    // 上一帧的读数。
     broadcast_badge_box_.reset();
+    quick_select_label_boxes_.clear();
     const std::size_t rows = std::min(geometry_.rows, mirror_.rows());
     if (rows == 0U || geometry_.columns == 0U) {
         return;
@@ -662,6 +749,9 @@ auto TerminalView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, cons
     // 悬停那一段的 accent 线与目标提示条排在正文与指示条之后、两张状态卡之前：线要盖在底色之上才读得出
     // 是「这一串可点」，而条要**让位**于更重的状态卡——两者同框时先保住「发送侧被拒」或「会话已退出」那条。
     paint_link_hover(p, bounds);
+    // quick select 的标签块压在正文与链接悬停之上：它是一块实心底色，被下划线穿过就读不清；
+    // 让位于下面两张状态卡——那两条是更重的信息（稿 §5 的层序 ⑤）。
+    paint_quick_select(p, bounds);
     // 发送侧一次性提示卡在 dead-session 那一层**之前**画：本卡非模态、不铺带，两者同框时让位于
     // 「会话已退出」那条更重的状态（裁决 7.104 的 D2①，判据文 §1 事实 3）。
     paint_unrepresentable_notice(p, bounds);
@@ -687,6 +777,9 @@ auto TerminalView::can_cache_display_list() const -> bool { return false; }
 auto TerminalView::can_cache_layout() const -> bool { return false; }
 
 auto TerminalView::on_scroll(aurora::ScrollEvent &e) -> void {
+    // 滚轮是「用户要看别处」的信号：退模，但**不吃**这一档——滚动照常发生（稿 F11／§6）。
+    // 排在缩放与上报之前：此刻标签已经无法覆盖用户即将看到的另一段内容。
+    close_quick_select();
     // Ctrl+滚轮是字号缩放档（`SPEC.FEAT.RENDER.02`）：修饰态由后端在事件产生处盖章、派发器只透传，
     // 本层据此分流而不轮询物理按键态（G18 回货字段在选区之外的第二个消费点）。
     if ((e.modifiers & aurora::ModifierKey::Control) != 0U) {
@@ -743,6 +836,12 @@ auto TerminalView::on_key_event(aurora::KeyEvent &e) -> void {
     if (dispatch_observer_) {
         dispatch_observer_();
     }
+    // quick select 是模态：排在 `key_pre_filter_` 之前，否则工作区键会在模式期被抢走（稿 F3）。
+    // 认领即不转发，连编码腿都不进——模式期的字母属于标签，不属于终端应用。
+    if (quick_select_.has_value() && handle_quick_select_key(e)) {
+        e.is_handled = true;
+        return;
+    }
     const auto press = to_key_press(e);
     // 工作区层的键位先于本层判定（裁决 7.47②：不经框架快捷键层，而在焦点 pane 的按键入口前置
     // 过滤）。未认领即照原路编码发会话——裸方向键与 `Ctrl+方向键` 恒归会话（`SPEC.FEAT.INTERACT.01`）。
@@ -766,12 +865,75 @@ auto TerminalView::on_key_event(aurora::KeyEvent &e) -> void {
     }
 }
 
+auto TerminalView::handle_quick_select_key(const aurora::KeyEvent &e) -> bool {
+    if (!quick_select_.has_value()) {
+        return false;
+    }
+    const auto code = static_cast<aurora::KeyCode>(e.key);
+    if (code == aurora::KeyCode::Escape) {
+        close_quick_select();
+        return true;
+    }
+    if (code == aurora::KeyCode::Backspace) {
+        // 空前缀时什么都不做：稿 §2 的表把「退一位」与「退模」分成两件事，Backspace 不兼任出口。
+        if (!quick_select_->typed.empty()) {
+            quick_select_->typed.pop_back();
+            mark_needs_paint();
+        }
+        return true;
+    }
+    const bool pressable =
+        (static_cast<std::uint8_t>(e.modifiers) & aurora::AURORA_MODIFIER_PRESSABLE_MASK) == 0U;
+    // 无修饰字母折成小写进前缀（`Shift+A` 不算 `a`，稿 D3）：带修饰的字母属于终端应用，
+    // 按「其它键」那一档退模，而不是被当成标签。
+    if (pressable && code >= aurora::KeyCode::A && code <= aurora::KeyCode::Z) {
+        swallow_next_text_ = true;  // 同一物理键还会经文本通道来一次
+        quick_select_->typed.push_back(static_cast<char>('a' + (static_cast<int>(code) -
+                                                               static_cast<int>(aurora::KeyCode::A))));
+        if (const auto *hit = quick_select_lookup(quick_select_->candidates, quick_select_->typed);
+            hit != nullptr) {
+            quick_select_copy_text_ = hit->text;
+            copy_request_ = CopyRequest::QuickSelect;
+            close_quick_select();
+            return true;
+        }
+        // 前缀已不可能完成任何标签：这条输入不再是「在选」，退模并消费（不再是前缀的阶段）。
+        const bool prefix_alive = std::ranges::any_of(quick_select_->candidates, [this](const auto &candidate) {
+            return quick_select_label_matches(candidate.label, quick_select_->typed);
+        });
+        if (!prefix_alive) {
+            close_quick_select();
+        } else {
+            mark_needs_paint();  // 前缀变了 = 位数可能变（单字符档仍一位，双字符档第二击才完整）
+        }
+        return true;
+    }
+    // 其它任何键：退模并消费。可打印档要让同一物理键的文本通道也闭嘴；带 Ctrl/Alt/Meta 的组合
+    // 通常不产生文本，故不置吞位——那一位会一直留到下一次文本事件，吞错一枚无关字符。
+    constexpr std::uint8_t kTextSuppressingModifiers =
+        static_cast<std::uint8_t>(aurora::ModifierKey::Control) |
+        static_cast<std::uint8_t>(aurora::ModifierKey::Alt) |
+        static_cast<std::uint8_t>(aurora::ModifierKey::Meta);
+    const bool text_key = (static_cast<std::uint8_t>(e.modifiers) & kTextSuppressingModifiers) == 0U;
+    if (text_key && is_printable_key(code)) {
+        swallow_next_text_ = true;
+    }
+    close_quick_select();
+    return true;
+}
+
 auto TerminalView::on_text_input(aurora::TextInputEvent &e) -> void {
     // TODO(SPEC.FEAT.INTERACT.06): 输入法上屏走 `on_text_composition` 的 `committed`，本入口只覆盖
     // 直接按键产生的文本；preedit 就地绘制与候选窗定位随那一棒接。
     if (swallow_next_text_) {
         swallow_next_text_ = false;
         e.is_handled = true;  // 已由按键通道发过，此处消费但不写会话
+        return;
+    }
+    // 模式期文本通道也闭嘴（稿 §2）：覆盖后端先发文本、或输入法绕过按键通道的形态。
+    // 排在吞位之后，故「按完整标签后退模」这帧紧随的文本事件仍由上一段消费。
+    if (quick_select_.has_value()) {
+        e.is_handled = true;
         return;
     }
     const std::u32string text = to_code_points(e.text);
@@ -786,6 +948,13 @@ auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
     if (e.action == aurora::MouseAction::Press && dispatch_observer_) {
         // 与按键同一档的事实上报（稿 D7）：不问按钮、不问落点，命中选区还是菜单都算「这扇窗被碰过」。
         dispatch_observer_();
+    }
+    // quick select 期按下指针只做一件事：退模并吃掉这一击（稿 F11）——不在标签底下顺带起选区，
+    // 也不让同一击去开链接。排在菜单与上报之前：此刻屏幕上的标签是用户正在看的层。
+    if (e.action == aurora::MouseAction::Press && quick_select_.has_value()) {
+        close_quick_select();
+        e.is_handled = true;
+        return;
     }
     // 菜单开着时，任何按下都先问宿主：落在菜单外即收下这一击并关菜单，不再让它去推进选区或
     // 触发第二个动作（`OverlayHost::handle_outside_click` 只由调用方在事件入口驱动，框架不代劳）。
@@ -1754,6 +1923,11 @@ auto TerminalView::flush_copy_request() -> void {
                                              const term::TermModes &) {
             text = copy_command_output(grid, block, grid.dropped_lines(), options_.copy);
         });
+    } else if (request == CopyRequest::QuickSelect) {
+        // 开模时冻结的文本，不读当下网格（稿 D6）：即使那一行已被程序改写，复制的仍是标签所指
+        // 的那段文字。取走即清，免得下一次按键借到上一枚候选。
+        text = std::move(quick_select_copy_text_);
+        quick_select_copy_text_.clear();
     }
     if (text.empty()) {
         return;
@@ -2315,6 +2489,42 @@ auto TerminalView::paint_link_hover(aurora::Painter &p, const aurora::Rect &boun
                         bounds.origin),
                 hover_link_->target, ref_font_, chrome.text, layout_opts_);
     link_notice_box_ = strip;
+}
+
+auto TerminalView::paint_quick_select(aurora::Painter &p, const aurora::Rect &bounds) -> void {
+    if (!quick_select_.has_value() || geometry_.columns == 0U) {
+        return;
+    }
+    // 底色与字色的口径见稿 §5：底取 `selection_ink()`（失焦自动减半），字取对底 4.5 对比度的
+    // `default_foreground`——标签压在候选首字符上，可读性不能交给主题碰运气。不新增主题槽。
+    const RgbaColor backdrop = selection_ink();
+    const aurora::Color fill = to_color(backdrop);
+    const aurora::Color ink = to_color(enforce_contrast(spec_.default_foreground, backdrop, 4.5));
+    aurora::Font font = ref_font_;
+    font.weight = 600;  // 只换字重：族与字号沿用参考字体（与 `font_for` 的粗体同一档）
+    const std::size_t top = mirror_.window_top();
+    for (std::size_t index = 0; index < quick_select_->candidates.size(); ++index) {
+        const QuickSelectCandidate &candidate = quick_select_->candidates[index];
+        if (candidate.label.empty() || candidate.span.row < top) {
+            continue;  // 未标（超上限截断）或已滚出可见窗
+        }
+        const std::size_t screen_row = candidate.span.row - top;
+        if (screen_row >= geometry_.rows || screen_row >= mirror_.rows() ||
+            candidate.span.first_column >= geometry_.columns) {
+            continue;
+        }
+        // 块宽 = 标签字符数 × 格宽，高恰一格：于是两位标签自然占两格，与稿的逐格几何一致。
+        const std::size_t last_column =
+            std::min(candidate.span.first_column + candidate.label.size(), geometry_.columns);
+        const Rect box = rect_for(geometry_, screen_row, candidate.span.first_column, last_column);
+        if (box.width <= 0.0 || box.height <= 0.0) {
+            continue;  // 两个合法列之间取不出盒：度量未就绪的早退帧
+        }
+        p.fill_rect(to_rect(box, bounds.origin), fill);
+        const Rect text_box{box.x, box.y + glyph_top_dp(), box.width, box.height};
+        p.draw_text(to_rect(text_box, bounds.origin), candidate.label, font, ink, layout_opts_);
+        quick_select_label_boxes_.push_back(QuickSelectLabelBox{.candidate = index, .box = box});
+    }
 }
 
 auto TerminalView::on_right_click(aurora::MouseEvent &e) -> void {
