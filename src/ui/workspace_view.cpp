@@ -190,6 +190,58 @@ WorkspaceView::WorkspaceView(std::shared_ptr<TerminalView> first_view, Hooks hoo
 
 WorkspaceView::~WorkspaceView() { debounce_timer_.cancel(); }
 
+auto WorkspaceView::restore(std::vector<std::shared_ptr<TerminalView>> views, const PaneShape &shape,
+                            std::size_t focused_order, Hooks hooks)
+    -> std::shared_ptr<WorkspaceView> {
+    // 探针先跑完整套自检，为的是拿到「这份形状有几格」这一枚数——视图份数比对是界面侧的判据，树件
+    // 不认识视图，给不出这一问的答案。探针与下面真正装进工作区的那棵树同规格（同样从标识 1 起发、
+    // 容器标识也从 1 起发），故自检通过即重建必成，不需要第二个失败出口。
+    PaneTree probe{1U};
+    if (!probe.restore(shape, 1U)) {
+        AURORA_LOG_WARN("workspace", "restore refused: the saved shape is not a valid pane tree");
+        return nullptr;
+    }
+    const std::size_t leaves = probe.pane_count();
+    if (views.size() != leaves) {
+        AURORA_LOG_WARN("workspace", "restore refused: shape has ", leaves,
+                        " panes but ", views.size(), " views were handed in");
+        return nullptr;
+    }
+    if (focused_order >= leaves) {
+        AURORA_LOG_WARN("workspace", "restore refused: focused order ", focused_order,
+                        " is outside a ", leaves, "-pane shape");
+        return nullptr;
+    }
+    for (const std::shared_ptr<TerminalView> &view : views) {
+        if (view == nullptr) {
+            // 恢复腿的工厂在装配层手里（六条腿各一份），空值就是那一格的会话没起来。宁可整份不建，
+            // 也不建一棵「少一格且无人知道少了谁」的树（与 `split_pane` 的工厂回空同一取向）。
+            AURORA_LOG_WARN("workspace", "restore refused: one of the ", leaves, " pane views is null");
+            return nullptr;
+        }
+    }
+
+    // 自此每一跳只消费已验过的输入。首格走构造路径：它挂的正是标识 1，与序位 0 同格，换树时不必动它。
+    auto workspace = std::make_shared<WorkspaceView>(std::move(views.front()), std::move(hooks));
+    workspace->tree_ = std::move(probe);
+    for (std::size_t order = 1U; order < views.size(); ++order) {
+        const PaneId pane = static_cast<PaneId>(order) + 1U;  // 序位 i ↔ 标识 i+1（本层公开约定）
+        std::shared_ptr<TerminalView> view = std::move(views[order]);
+        TerminalView *raw = view.get();
+        workspace->views_.emplace(pane, raw);
+        workspace->wire_view(*raw, pane);
+        workspace->add(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(view))});
+    }
+    workspace->next_pane_ = static_cast<PaneId>(views.size()) + 1U;  // 往后切分从这一格之后续号
+    // 只写模型投影，不碰框架焦点：恢复的可能是后台那张标签，`set_focus` 会把键盘从当前标签抢走。
+    // 构造路径同口径——它也不派焦点，初始焦点归装配层给（真机走查抓过的那条）。
+    static_cast<void>(workspace->tree_.set_focus(static_cast<PaneId>(focused_order) + 1U));
+    workspace->last_focused_ = static_cast<PaneId>(focused_order) + 1U;
+    workspace->refresh_broadcast_badges();  // 1 → N 格：成员的 pill 从这一帧起显形（N4）
+    workspace->mark_needs_paint();
+    return workspace;
+}
+
 auto WorkspaceView::pane_count() const -> std::size_t { return tree_.pane_count(); }
 
 auto WorkspaceView::focused_pane() const -> PaneId {

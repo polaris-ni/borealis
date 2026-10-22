@@ -73,6 +73,7 @@ using borealis::ui::PaneAxis;
 using borealis::ui::PaneBox;
 using borealis::ui::PaneDivider;
 using borealis::ui::PaneId;
+using borealis::ui::PaneShape;
 using borealis::ui::PaletteSpec;
 using borealis::ui::Rect;
 using borealis::ui::RgbaColor;
@@ -165,50 +166,34 @@ class Harness {
   public:
     /// @param with_factory 置假即不装切分工厂（工厂缺失时树不许动的判据）。
     explicit Harness(bool with_factory = true) : with_factory_(with_factory) {
-        au::Scheduler::set_current(&scheduler_);
-        // 前景取浅色：块形光标色未配时回落 `default_foreground`，全零色板的「光标 on 相」会画成
-        // 黑底黑块，于是挂载证人（相位翻动）在像素上什么都看不见。
-        palette_.default_foreground = RgbaColor{0xF8, 0xF8, 0xF2, 255};
-        palette_.default_background = RgbaColor{0x00, 0x00, 0x00, 255};
-
+        bootstrap();
         WorkspaceView::Hooks hooks;
-        hooks.make_pane = [this](PaneId pane, PaneId origin) -> std::shared_ptr<TerminalView> {
-            if (!with_factory_) {
-                return nullptr;
-            }
-            ++factory_calls;
-            last_origin = origin;
-            return make_view(pane);
-        };
-        hooks.dispatch_grid = [this](PaneId pane, GridSize size) -> void {
-            dispatched_.emplace_back(pane, size);
-            const auto it = sessions_.find(pane);
-            if (it != sessions_.end()) {
-                it->second->resize(Size{size.columns, size.rows});  // 真送进会话：连接侧因此有证人
-            }
-        };
-        hooks.teardown_pane = [this](PaneId pane) -> void {
-            torn_down_.push_back(pane);
-            live_.erase(pane);
-            const auto it = sessions_.find(pane);
-            if (it != sessions_.end()) {
-                it->second->close();
-                sessions_.erase(it);
-            }
-        };
-        // 第十五键的落点（`SPEC.FEAT.WS.03` 稿 D2）：本层不造窗，故这里只计数——「转交一次、树不动、
-        // 一字节不发」三条判据要靠这一枚读数与既有观测面对照。
-        hooks.open_new_window = [this]() -> void { ++new_window_calls; };
-
+        wire_hooks(hooks);
         workspace_ = std::make_shared<WorkspaceView>(make_view(1U), std::move(hooks));
-        root_ = au::Node{std::static_pointer_cast<au::Widget>(workspace_)};
-        // 装配事实的复刻：框架不在启动时给焦点序首个控件派焦点，初始焦点须由装配层显式给（真机走查
-        // 抓过的那条），否则按键一个也到不了控件。
-        focus_.set_root(&root_.widget());
-        focus_.set_focus(workspace_->view_of(1U));
-        render();
-        settle();  // 让会话先处在自己的网格上，喂入内容因此不受标称尺寸 80×24 的牵制
-        reset_counters();
+        finish(workspace_->focused_pane(), true);
+    }
+
+    /// @brief 恢复腿的驱动台：以 `WorkspaceView::restore` 起步而不是单叶构造。
+    ///
+    /// 视图按**序位**先造好再整份交出去（会话与替身连接照 `make_view` 入表，标识即那条公开约定的
+    /// i+1）；`restore` 回空即这份工作区根本没建起来，本驱动台于是没有可渲染的根，用例只断言「没建
+    /// 起来」而不排帧——这正是那条接缝的失败形态。
+    /// @param shape 待重建的形状。
+    /// @param views 交出去的视图份数：故意可以与形状的叶子数不等，那是份数判据的证人。
+    /// @param focused_order 选中格的阅读序序位。
+    Harness(const PaneShape &shape, std::size_t views, std::size_t focused_order) {
+        bootstrap();
+        WorkspaceView::Hooks hooks;
+        wire_hooks(hooks);
+        std::vector<std::shared_ptr<TerminalView>> built;
+        built.reserve(views);
+        for (std::size_t order = 0U; order < views; ++order) {
+            built.push_back(make_view(static_cast<PaneId>(order) + 1U));
+        }
+        workspace_ = WorkspaceView::restore(std::move(built), shape, focused_order, std::move(hooks));
+        if (workspace_ != nullptr) {
+            finish(workspace_->focused_pane(), false);
+        }
     }
 
     ~Harness() { au::Scheduler::set_current(nullptr); }
@@ -533,6 +518,9 @@ class Harness {
 
     [[nodiscard]] auto palette() const noexcept -> const PaletteSpec & { return palette_; }
     [[nodiscard]] auto workspace() noexcept -> WorkspaceView & { return *workspace_; }
+    /// @brief 恢复腿是否真建出了工作区（拒绝案的唯一读数：回空即「没有半个工作区」，而不是「建了
+    ///        一棵少一格的树」）。没建起来时本驱动台没有根，其余观测面一概不可用。
+    [[nodiscard]] auto restored() const noexcept -> WorkspaceView * { return workspace_.get(); }
     /// @brief 焦点管理器的裸访问：用于把**框架侧**焦点移到工作区没有下令的位置（判据「框架是权威、
     ///        模型不得在指针事件里复活自己陈旧的那一格」）。真实来源是浮层收起后的焦点归还、或标签条
     ///        直接给某一格派焦点——两条都不经过 `WorkspaceView::apply_focus`，于是模型读数会落后。
@@ -550,6 +538,64 @@ class Harness {
     PaneId last_origin = 0U;
 
   private:
+    /// @brief 两条构造路径共用的前置：调度器与色板。
+    auto bootstrap() -> void {
+        au::Scheduler::set_current(&scheduler_);
+        // 前景取浅色：块形光标色未配时回落 `default_foreground`，全零色板的「光标 on 相」会画成
+        // 黑底黑块，于是挂载证人（相位翻动）在像素上什么都看不见。
+        palette_.default_foreground = RgbaColor{0xF8, 0xF8, 0xF2, 255};
+        palette_.default_background = RgbaColor{0x00, 0x00, 0x00, 255};
+    }
+
+    /// @brief 三条接缝换成观测替身（构造与恢复两条路径同一份）。
+    auto wire_hooks(WorkspaceView::Hooks &hooks) -> void {
+        hooks.make_pane = [this](PaneId pane, PaneId origin) -> std::shared_ptr<TerminalView> {
+            if (!with_factory_) {
+                return nullptr;
+            }
+            ++factory_calls;
+            last_origin = origin;
+            return make_view(pane);
+        };
+        hooks.dispatch_grid = [this](PaneId pane, GridSize size) -> void {
+            dispatched_.emplace_back(pane, size);
+            const auto it = sessions_.find(pane);
+            if (it != sessions_.end()) {
+                it->second->resize(Size{size.columns, size.rows});  // 真送进会话：连接侧因此有证人
+            }
+        };
+        hooks.teardown_pane = [this](PaneId pane) -> void {
+            torn_down_.push_back(pane);
+            live_.erase(pane);
+            const auto it = sessions_.find(pane);
+            if (it != sessions_.end()) {
+                it->second->close();
+                sessions_.erase(it);
+            }
+        };
+        // 第十五键的落点（`SPEC.FEAT.WS.03` 稿 D2）：本层不造窗，故这里只计数——「转交一次、树不动、
+        // 一字节不发」三条判据要靠这一枚读数与既有观测面对照。
+        hooks.open_new_window = [this]() -> void { ++new_window_calls; };
+    }
+
+    /// @brief 两条构造路径共用的收尾：入根、给初始焦点、排帧并结算去抖。
+    /// @param initial_focus 装配层该派焦点的那一格（恢复腿上它是快照里的选中格，不是恒 1）。
+    /// @param baseline 置真即把构造期产生的观测读数清零。构造路径清（判据只测「这一步之后新增了
+    ///        什么」），恢复路径不清——「三格各收到一份自己的行列」这件事只发生在构造那一段，清了
+    ///        就没有第二处能看见它。
+    auto finish(PaneId initial_focus, bool baseline) -> void {
+        root_ = au::Node{std::static_pointer_cast<au::Widget>(workspace_)};
+        // 装配事实的复刻：框架不在启动时给焦点序首个控件派焦点，初始焦点须由装配层显式给（真机走查
+        // 抓过的那条），否则按键一个也到不了控件。
+        focus_.set_root(&root_.widget());
+        focus_.set_focus(workspace_->view_of(initial_focus));
+        render();
+        settle();  // 让会话先处在自己的网格上，喂入内容因此不受标称尺寸 80×24 的牵制
+        if (baseline) {
+            reset_counters();
+        }
+    }
+
     [[nodiscard]] static auto make_window() -> au::Window {
         auto surface = std::make_unique<au::HeadlessSurface>();
         (void)surface->begin_frame(kWindowWidth, kWindowHeight);
@@ -619,6 +665,24 @@ class Harness {
         out += "L" + std::to_string(i) + " alpha beta\r\n";
     }
     return out;
+}
+
+/// @brief 造一枚叶子：序位就是它在阅读序里的第几格，也是快照里那份逐格料的下标。
+[[nodiscard]] auto leaf(std::size_t order) -> PaneShape {
+    PaneShape shape;
+    shape.leaf = true;
+    shape.order = order;
+    return shape;
+}
+
+/// @brief 造一枚容器层：沿 @p axis 排 @p kids，每子相对长度都是 1（等分）。
+[[nodiscard]] auto layer(PaneAxis axis, std::vector<PaneShape> kids) -> PaneShape {
+    PaneShape shape;
+    shape.leaf = false;
+    shape.axis = axis;
+    shape.lengths.assign(kids.size(), 1.0);
+    shape.children = std::move(kids);
+    return shape;
 }
 
 }  // namespace
@@ -1478,6 +1542,90 @@ AURORA_TEST_CASE(split_without_a_factory_leaves_the_tree_alone) {
     h.workspace().split_focused(PaneAxis::Horizontal);
     AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 1U);
     AURORA_TEST_CHECK(h.workspace().current_layout().dividers.empty());
+}
+
+AURORA_TEST_CASE(a_restored_shape_lays_out_every_pane_it_claims) {
+    const PaneShape nested =
+        layer(PaneAxis::Horizontal, {leaf(0U), layer(PaneAxis::Vertical, {leaf(1U), leaf(2U)})});
+    Harness h{nested, 3U, 2U};
+    AURORA_TEST_REQUIRE(h.restored() != nullptr);
+    AURORA_TEST_REQUIRE(h.preflight());
+    WorkspaceView &ws = h.workspace();
+
+    AURORA_TEST_CHECK_EQ(ws.pane_count(), 3U);
+    // 「序位 i 的格挂标识 i+1」这条公开约定的唯一证人：装配层就是按它把逐格的会话登进账表的。
+    const std::vector<PaneId> kRestored{1U, 2U, 3U};
+    AURORA_TEST_CHECK_MSG(ws.panes_in_order() == kRestored, "restored pane ids drifted");
+    // 取回来的形状即交进去的那一份：相对长度没被折算路径改写，嵌套也没在重建里塌掉一层。
+    AURORA_TEST_CHECK_MSG(ws.pane_shape() == nested, "the restored shape is not the shape handed in");
+
+    TerminalView *left = ws.view_of(1U);
+    TerminalView *upper = ws.view_of(2U);
+    TerminalView *lower = ws.view_of(3U);
+    AURORA_TEST_REQUIRE(left != nullptr && upper != nullptr && lower != nullptr);
+    // 每格各有一份视图（切分腿花了两批才拧过来的那条，恢复腿一上来就得满足：共用一份就等于共用
+    // 一份会话，两格显示同一屏内容）。
+    AURORA_TEST_CHECK(left != upper && upper != lower && left != lower);
+
+    const auto &layout = ws.current_layout();
+    AURORA_TEST_REQUIRE_EQ(layout.boxes.size(), 3U);
+    AURORA_TEST_REQUIRE_EQ(layout.dividers.size(), 2U);  // 根层一条 + 竖层一条
+    for (const PaneBox &box : layout.boxes) {
+        const TerminalView *view = ws.view_of(box.pane);
+        AURORA_TEST_REQUIRE(view != nullptr);
+        const GridSize expected = Harness::expected_grid(box.box.width, box.box.height);
+        const GridSize actual{view->grid_geometry().columns, view->grid_geometry().rows};
+        AURORA_TEST_CHECK_MSG(actual == expected, "pane " + std::to_string(box.pane) + " keeps another pane's grid");
+    }
+    // 三格各收到一份**自己的**行列：形状落回界面这件事的最后一条判据在会话侧，而「只把行列打给首格」
+    // 那一族缺陷（`SPEC.FEAT.WS.02` 的 F4）在屏上看着是好的。
+    AURORA_TEST_REQUIRE_EQ(h.dispatched_.size(), 3U);
+    AURORA_TEST_CHECK_EQ(h.dispatched_[0].first, 1U);
+    AURORA_TEST_CHECK_EQ(h.dispatched_[1].first, 2U);
+    AURORA_TEST_CHECK_EQ(h.dispatched_[2].first, 3U);
+    for (const PaneId pane : kRestored) {
+        AURORA_TEST_CHECK_GE(h.resize_count(pane), 1U);
+    }
+    // 选中格是快照里记下的那一格（序位 2 ⇒ 标识 3），不是「恒第一格」。
+    AURORA_TEST_CHECK_EQ(ws.focused_pane(), 3U);
+}
+
+AURORA_TEST_CASE(restore_is_refused_without_leaving_a_half_built_workspace) {
+    const PaneShape three = layer(PaneAxis::Vertical, {leaf(0U), leaf(1U), leaf(2U)});
+    // 视图份数与叶子数不等：少一份是一格没料，多一份是两格抢同一份料，两者都不如整份拒绝可解释。
+    AURORA_TEST_CHECK(Harness(three, 2U, 0U).restored() == nullptr);
+    AURORA_TEST_CHECK(Harness(three, 4U, 0U).restored() == nullptr);
+    // 选中序位越界：焦点无处可落，猜一个落点就是替用户改布局。
+    AURORA_TEST_CHECK(Harness(three, 3U, 3U).restored() == nullptr);
+    // 零格的「恢复」不成立：工作区至少有一格，空表既不是单叶也不是没布局。
+    AURORA_TEST_CHECK(Harness(three, 0U, 0U).restored() == nullptr);
+    // 坏形状（单子层）由树件那六道闸先拒，本层不许在它之前把视图挂出去。
+    AURORA_TEST_CHECK(Harness(layer(PaneAxis::Horizontal, {leaf(0U)}), 1U, 0U).restored() == nullptr);
+    // 含空指针的那一份：装配层的六条腿各有一份工厂，恢复腿只要有一格的会话没起来，交进来的就是
+    // 「N 份视图里有一枚空」。这一支不经驱动台——它连会话都不必真存在，判据只在「不许建半棵树」。
+    std::vector<std::shared_ptr<TerminalView>> one_missing(3U);
+    AURORA_TEST_CHECK(WorkspaceView::restore(one_missing, three, 0U, WorkspaceView::Hooks{}) == nullptr);
+}
+
+AURORA_TEST_CASE(a_restored_workspace_still_splits_from_the_next_identity) {
+    const PaneShape three = layer(PaneAxis::Vertical, {leaf(0U), leaf(1U), leaf(2U)});
+    Harness h{three, 3U, 2U};
+    AURORA_TEST_REQUIRE(h.restored() != nullptr);
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.reset_counters();
+
+    // 走装配层那一刀（不是键盘腿）：`split_focused` 读的是**模型**投影的焦点，而恢复腿写那一份的
+    // 就是快照里的选中格。切下去落在谁头上，就是「选中格真的被恢复了」的唯一证人——屏上的焦点描边
+    // 由框架持焦说话，掩盖掉模型投影没跟上这一种错。
+    h.workspace().split_focused(PaneAxis::Horizontal);
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 4U);
+    AURORA_TEST_CHECK_EQ(h.factory_calls, 1U);
+    AURORA_TEST_CHECK_EQ(h.last_origin, 3U);  // 切的是选中那一格（序位 2 ⇒ 标识 3）
+    // 新号续在恢复出来的三格之后：恢复不许把已经发出去的号退回给下一格（会话按号记账，撞号比少一格
+    // 坏得多），而切完之后阅读序里新格紧挨被切那格——树的插入位置也没被恢复腿带歪。
+    const std::vector<PaneId> kAfter{1U, 2U, 3U, 4U};
+    AURORA_TEST_CHECK_MSG(h.workspace().panes_in_order() == kAfter, "a restored workspace reuses an identity");
 }
 
 #else

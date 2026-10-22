@@ -30,6 +30,7 @@
 #include <optional>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "aurora/app/scheduler.h"
 #include "aurora/environment/build_context.h"
@@ -148,6 +149,42 @@ class WorkspaceView final : public aurora::Container {
     /// @param pane 目标格。
     /// @param next 新的视图，本容器自此持有它。
     auto replace_view(PaneId pane, std::shared_ptr<TerminalView> next) -> bool;
+
+    // ---- 恢复腿（`SPEC.FEAT.WS.11`）：形状的描述与重建都在本层，树件只认树 ----
+
+    /// @brief 当前分屏形状（采集腿）：叶子的序位与 `panes_in_order()` 同一条阅读序，故第 i 枚叶子
+    ///        对得上装配层那份按序位排列的逐格料。
+    ///
+    /// 树的重建能力（`PaneTree::describe` / `restore`）在批 1 就落在树件里了，本层只补两件树给不出的
+    /// 东西：**这一份读数是界面用的**（视图与挂载归本件），以及**形状落回界面**那一步。缺这一条接缝，
+    /// 快照里的形状就只是屏幕上看着像、却没有任何一格真按它排的读数。
+    [[nodiscard]] auto pane_shape() const -> PaneShape { return tree_.describe(); }
+
+    /// @brief 全部 pane 标识，按深度优先、自左而右的阅读序（与 `PaneTree::panes()` 同序）。
+    ///
+    /// 标识只增不复用，切分与关闭之后**不连续**（`1、2、4` 是合法读数），故快照记的是序位不是它
+    /// （`include/borealis/ui/workspace_snapshot.h` 文件头第四条）；装配层要按序位对料就得先取这一份表。
+    /// 恢复出来的工作区没有这段历史，所以它的读数恰是 `1..N`（见 `restore`）。
+    [[nodiscard]] auto panes_in_order() const -> std::vector<PaneId> { return tree_.panes(); }
+
+    /// @brief 以「上次那套形状」起步造一份工作区（重放腿）：@p views 按序位给，第 i 份挂在标识
+    ///        `i + 1` 上。
+    ///
+    /// 为什么是静态工厂而不是「改一扇现成的工作区」：重建一棵树必然要把旧格全部散掉，而新格与旧格
+    /// 在同一段里重叠时，任何一步失败都留下一棵半棵树加上一批已散的手柄。工厂形态给了第三条出路
+    /// ——什么都不成立，调用方手里的会话由它自己按既有次序回收。恢复只发生在启动那一刻，本层不需要
+    /// 「运行中换形状」那一条腿（那条腿的既有形态是切分与关闭，各判各的）。
+    ///
+    /// 三道前置（形状自检、视图份数与空值、焦点序位）**全部跑在造对象之前**，故回空即「没有半个
+    /// 工作区」，与 `PaneTree::restore` 的先自检后换根同一条取向。
+    /// @param views 逐格的视图，第 i 份属序位 i 那一格；本容器自此持有它们。为空或含空指针即拒绝。
+    /// @param shape 上次那套分屏形状（`pane_shape()` 的产物）。
+    /// @param focused_order 选中格的阅读序序位（快照里的 `focused_order`）。
+    /// @param hooks 三条接缝，与构造路径同一份。
+    /// @return 建好的工作区；任一前置不合即回空值。
+    [[nodiscard]] static auto restore(std::vector<std::shared_ptr<TerminalView>> views,
+                                      const PaneShape &shape, std::size_t focused_order, Hooks hooks)
+        -> std::shared_ptr<WorkspaceView>;
 
   protected:
     /// @brief 折算树、按矩形以紧约束排每个视图，并把矩形写回节点 bounds。
