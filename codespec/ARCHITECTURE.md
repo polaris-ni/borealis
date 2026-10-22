@@ -56,7 +56,7 @@ Borealis 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨�
 | `include/borealis/config/` | 配置 schema、原子写与降级、profile；逐窗几何记忆另起第二枚框架接缝，实现与头都在 `src/config/`（`window_geometry_store`，裁决 7.126）；布局快照再起第三枚（`workspace_store`，绑 `workspace.json`、顶层键 `layout`、无删除入口，裁决 7.131） |
 | `include/borealis/cli/`、`src/cli/` | CLI 启动参数语法与档案解析、单实例转交的请求 / 回复编解码（纯逻辑，不碰文件系统与 UI，裁决 7.124） |
 | `src/ui/`（私有头） | 触达框架类型的控件实现（绘制侧类声明含 Aurora 类型，故不入公共头）；其中 `active_window_tracker.{h,cpp}` 是纯逻辑件，判「命令与快捷键落哪一扇窗」，为框架缺口 G42 的代偿（裁决 7.126）。`settings_i18n.{h,cpp}` 是本仓**上屏短语与框架 i18n 接缝的唯一归属**（裁决 7.130）：两张语言档表（`kStringsZh`／`kStringsEn`，各 470 条、key 集逐字相等）住在这一个文件里，`install_settings_strings(Language)` 是全仓唯一的装填点，也是唯一把语言档折成 `aurora::Locale` 的地方（装配层另在生产的场景根与用例驱动台各装一枚 `au::LocaleProvider`，`src/main.cpp`，裁决 7.130 的 D4／F19），界面上的显示文案一律经 `settings_label(key, args)` 取而不许就地写死——「引号内含汉字的字面量只许出现在这一个文件」已由常驻门禁 `tools/check/check_display_literals.py` 挂在 CTest 上守着（注释可中文、排版符号不在射程）。另有 `pane_tree.cpp` 与 `workspace_snapshot.cpp` 两件纯逻辑实现（公共头在 `include/borealis/ui/`，裁决 7.131） |
-| `src/platform/win/`、`src/platform/posix/` | 平台相关实现（**平台假设不得渗入共享路径**，裁决 7.11）；含单实例通道与进程参数两腿（`instance_channel` / `process_args`，裁决 7.124），共享侧只见 `src/platform/` 下的同名接口头 |
+| `src/platform/win/`、`src/platform/posix/` | 平台相关实现（**平台假设不得渗入共享路径**，裁决 7.11）；含单实例通道与进程参数两腿（`instance_channel` / `process_args`，裁决 7.124）与凭据库两腿（`credential_store`：POSIX 运行期 `dlopen` libsecret、Win32 CredMan；工厂与句柄编码在共享私有头 `src/platform/credential_store.{h,cpp}`，裁决 7.132。Win32 腿**未编译未验证**），共享侧只见 `src/platform/` 下的同名接口头 |
 
 ### 2.3 依赖方向不变量
 
@@ -275,6 +275,8 @@ UTF-8 为本地终端与 SSH 默认；**串口默认 GB18030**（裁决 7.6）�
 ### 7.4 凭据
 
 凭据经 OS 凭据库存储，配置只存引用句柄；OS 凭据库不可用时降级为「每次询问」，**绝不降级为明文**（`SPEC.FEAT.CONN.09`）。
+
+两条真实腿已落（裁决 7.132）：POSIX 腿在运行期 `dlopen("libsecret-1.so.0")` + `dlopen("libglib-2.0.so.0")`，自声明 libsecret 0.21.7 最小 ABI，不引入构建期依赖；Win32 腿走 `CredWriteW`/`CredReadW`/`CredDeleteW`，但**未编译未实测**。工厂 `platform::make_credential_store()` 与句柄编码 `credential_vault_id()`／`credential_vault_profile()`／`credential_vault_prefix()` 在共享私有头 `src/platform/credential_store.h`，`vault_id` 只编码档案 id（`libsecret:` / `credman:`），秘密只在 `store` 调用栈里存在。装配层的 `plan_credential` 按认证方式、句柄形态与库可用性给出 None／Stored／Ask 三路线；retrieve 与 store 都在后台任务，询问提交后先乐观写确定性句柄并落盘、再异步入库（入库失败不回滚句柄，下次取不到自然回询问）。隧道、密钥导出／推送、SFTP 重拨与会话恢复的询问腿本轮仍不存取（D7①）。
 
 ### 7.5 SSH 之上的子系统归属
 
@@ -529,7 +531,7 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 ## 12 安全边界
 
 1. **凭据**：OS 凭据库存储 + 引用句柄；不可用则降级「每次询问」，非明文（`SPEC.FEAT.CONN.09`）。
-2. **审计**：审计范围为**配置目录**——全目录 grep 无明文凭据，做成**自动化用例**而非人工检查。日志目录不在审计范围内，单独标注为「用户显式开启、风险自负」。
+2. **审计**：审计范围为**配置目录**——全目录 grep 无明文凭据，做成**自动化用例**而非人工检查。日志目录不在审计范围内，单独标注为「用户显式开启、风险自负」。落点 `tests/unit/utest_credential_audit.cpp`（裁决 7.132 D9/D10）：三枚 `Preferences`（`borealis.json` 及其快照／导出件、`windows.json`、`workspace.json`）的全部写入产物逐文件过禁列键名与明文哨兵值，并以「种一份泄漏再抓、删掉后复检干净」自证非空转。
 3. **剪贴板授权**：OSC 52 读方向默认禁止，三态可配；被拒时须回写空响应，避免远端程序挂起（`SPEC.FEAT.CONN.12`）。
 4. **会话日志**：默认关闭，开启须逐会话显式动作并给出风险提示；可选敏感输出过滤（裁决 7.9、`SPEC.FEAT.CONN.11`）。
 

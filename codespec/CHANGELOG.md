@@ -4,6 +4,23 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.132（2026-10-22）**`SPEC.FEAT.CONN.09` 真实 OS 凭据后端落地：POSIX 经运行期 `dlopen` 接 libsecret、Win32 CredMan 腿就位（未编译未实测）；档案连接按 None／Stored／Ask 三路线取料，询问提交先写确定性句柄再异步入库；配置目录审计扩为三枚 `Preferences` 全文件、键名与明文哨兵值双查并自证非空转（裁决 7.132，四批）**
+
+**动机**：CONN.09 的模型与询问降级早已落地，但真实后端一直缺位——生产代码里没有任何一处构造 `SecretHandle::reference`，`connect_profile` 对 Reference 与 AskEveryTime 一律询问，配置目录审计也只扫 `borealis.json` 且只查键名（稿 F6／F8）。本轮把「句柄 → OS 凭据库」这条链补全，并把需求原文「全配置目录 grep 无明文凭据」落成真正覆盖三枚 `Preferences` 的自动化用例。
+
+**落地形态**：
+
+- **POSIX 腿（D1①）**：运行期 `dlopen("libsecret-1.so.0")` + `dlopen("libglib-2.0.so.0")`，自声明 libsecret 0.21.7 的最小 ABI（`SecretSchema` 布局、`secret_password_store_sync`／`lookup_sync`／`clear_sync`／`secret_password_free`、`g_error_free`），不引入构建期依赖；符号不齐 ⇒ `available()==false`，`store` 回 AskEveryTime、`retrieve` 回空。schema 名 `org.borealis.Connection`、属性 `profile_id`、集合 `default`。
+- **Win32 腿**：`CredWriteW`／`CredReadW`／`CredDeleteW`（`CRED_TYPE_GENERIC`、`CRED_PERSIST_LOCAL_MACHINE`、目标名 `borealis/<profile_id>`、blob 为 UTF-8、上限 `CRED_MAX_CREDENTIAL_BLOB_SIZE`），CMake 补 `advapi32`。本沙箱无 MSVC，**未编译未实测**，文件头与文档均标推断／未验证。
+- **句柄与 `erase`（D2①）**：`credential_vault_id(prefix, profile_id)` 只编码档案 id，前缀 `libsecret:`／`credman:` 由 `credential_vault_prefix()` 单点给出，装配层不重抄平台分支；`CredentialStore` 补 `erase`，内存替身按 `mem:` 归属擦除、不可用替身恒 false。句柄不含任何秘密，跨机搬配置取不到即回询问。
+- **空串与未命中分离（D3①）**：`retrieve` 命中空口令回 `optional{""}`、未命中回 `nullopt`；libsecret 0.21.7 的 `clear_sync` 对无匹配项回 FALSE 且不设 GError（批 1 e2e 首跑抓到，一次性探针实证），故 `ok==0 && error==nullptr` 判为「库里已无此条」成功。
+- **凭据计划与装配（D4①／D6①／D7①／D8①）**：`plan_credential` 给三路线——认证方式不要材料 ⇒ None（直连）；Reference 非空且库可用 ⇒ Stored（后台 retrieve，命中即连）；其余 ⇒ Ask。未命中是运行期事实，自然回询问。询问提交后先乐观写确定性 Reference 句柄并 `store.replace()` 落盘，再 `au::async` 入库；失败只 WARN、不回滚句柄，下一次 retrieve 落空即回询问，绝不退回明文。retrieve／store 全在后台，回投主线程后以 `CredentialPrompt` 的 `weak_ptr` 作存活性哨兵，同档案 id 在途去重。只接档案连接这一条腿；隧道、密钥导出／推送、SFTP 重拨与会话恢复仍每次询问，quick connect 与临时档案不回存。
+- **审计扩案（D9①／D10①）**：新套件 `utest_credential_audit` 在同目录生成 `borealis.json`（当前文件＋两份快照＋导出件）、`windows.json`、`workspace.json`（含 SSH 块与句柄），逐文件查禁列键名与明文哨兵值；自证段先种一份键名泄漏与一份值泄漏、证明两臂各自抓得到，再删掉证明生产产物干净。原 `utest_config` 的窄用例与专用 helper 一并移出，同一事实不留两份判据。
+
+**验收读数**：构建通过且无新警告；`ctest --preset linux -E etest_` **108/108 全绿**、`borealis_test_runner` **1347/1347 全绿**、`etest_libsecret_credential_store` **4/4**（真 Secret Service 上 UTF-8／空串／覆盖写／删除后取不到／跨腿句柄不命中）。相对 WS.11 收口时的 1337 案，本轮 **+10 案**＝`utest_credential_store` 4 + `etest_libsecret_credential_store` 4 + `utest_profile_views` 1 + 审计净 +1（新增 2、移除旧窄案 1）。审计两支变异各 **2 案红**（键名臂取反、值臂取反），还原后全绿。
+
+**边界与不称可用**（§4.4 第 33 条）：Win32 CredMan 腿未编译未实测，macOS Keychain 未实现；没有「清除已存秘密」的界面入口，`erase` 目前只被测试使用；隧道、密钥导出／推送、SFTP 重拨与会话恢复仍走每次询问；真机走查（钥匙环解锁框、锁定集合下的询问手感、Win32 凭据管理器）一条未做 ⇒ 本条不称「可用」。稿面细节与逐批读数见 `codespec/CONN09_CREDENTIAL_BACKEND.draft.md` §6。
+
 ## v0.131（2026-10-22）**`SPEC.FEAT.WS.11` 会话恢复落地：标签布局（连接类型／档案／手动标题／分屏形状与比例／焦点）在重启与崩溃后逐窗重放，`workspace.json` 是第三枚 `Preferences`；判据 ①–④⑥⑦ 有自动化证人、⑤ 无证人，真机走查未做 ⇒ 不称「可用」**
 
 **动机**：WS.11 长期被「分屏结构恢复依赖 `WS.02` 生产侧多会话欠账」挡着，2026-10-21 裁决 7.125 闭合后排序取舍解除；本次把「上次的标签布局」落成可独立单测的形状件 + 快照模型 + 第三枚 `Preferences`，并在装配层接上采集与启动重放。需求明写会话内容不恢复、不跨设备，故只记拓扑与档案规格，不碰 scrollback／OSC 标题／屏幕内容。

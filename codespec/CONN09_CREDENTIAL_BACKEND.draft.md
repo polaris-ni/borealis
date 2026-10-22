@@ -18,6 +18,7 @@
 | F7 | `CredentialStore` 只有 `available`／`store`／`retrieve` 三入口；两个替身分别覆盖内存与「永远不可用」 | `include/borealis/conn/profile.h` |
 | F8 | 配置目录审计用例已存在，但只扫 `borealis.json` 及其快照／导出件，且只查**键名**，不查值；不含 `windows.json` 与 `workspace.json` | `tests/unit/utest_config.cpp` 的 `no_file_written_into_the_config_directory_carries_a_credential_name` |
 | F9 | 本沙箱无 MSVC／Win32 头；CredMan 腿只能按公开 API 形状写，标「推断／未验证」 | 与既有 Win32 腿同档 |
+| F10 | libsecret 0.21.7 的 `secret_password_clear_sync` 对**无匹配项**回 `FALSE` 且**不设 GError**；带 GError 才是真失败 | 批 1 e2e 首跑抓到（`erase` 对不存在条目误报 false），另以一次性 C 探针实证（探针不入库） |
 
 ## 1 范围
 
@@ -44,6 +45,7 @@
 
 ```cpp
 [[nodiscard]] auto make_credential_store() -> std::unique_ptr<conn::CredentialStore>;
+[[nodiscard]] auto credential_vault_prefix() -> std::string_view;
 [[nodiscard]] auto credential_vault_id(std::string_view prefix,
                                        std::string_view profile_id) -> std::string;
 [[nodiscard]] auto credential_vault_profile(std::string_view vault_id,
@@ -51,6 +53,7 @@
 ```
 
 - 前两件由 `src/platform/credential_store.cpp` 提供，纯字符串、可单测。
+- `credential_vault_prefix()`（批 2 增补）由平台腿各自给出 `libsecret:` / `credman:`：装配层写回句柄时只有这一处需要前缀，让 `main` 自己写 `#ifdef` 会多出第二个平台真值源。
 - 工厂按平台编入 `src/platform/posix/credential_store.cpp` 或 `src/platform/win/credential_store.cpp`。
 - 前缀：POSIX `libsecret:`、Win32 `credman:`。`vault_id` 只含档案 id，不含任何秘密。
 
@@ -65,7 +68,7 @@
 - `store` 成功 ⇒ `Reference{libsecret:<profile_id>}`；失败 ⇒ 记 WARN（只带档案 id 与
   GError 文案）后回 `AskEveryTime`，**不保存**。
 - `retrieve` 只认本腿前缀；命中空串也回 `optional{""}`（F5 的区分是承重的）。
-- `erase` 调 `clear_sync`；前缀不符回 false。
+- `erase` 调 `clear_sync`；前缀不符回 false。「无匹配项」按 F10 的口径算成功（`ok == 0 && error == nullptr`），带 GError 才记 WARN 回 false——否则测试清理一个本来就不存在的条目会误报失败。
 - 线程：`dlopen` 句柄只读；同步调用可跨线程，装配层仍把它放到后台任务里跑（§3 D8）。
 
 ### 2.3 Win32 腿
@@ -97,7 +100,7 @@
 | D4 | `available()` 只表示「符号齐备」，不探活服务 | 探活要在启动路径做一次 D-Bus 往返；真正的失败由 `store`／`retrieve` 当场降级，不另设缓存真值源 |
 | D5 | 存储失败不写明文、不改档案句柄 | 需求红线；失败后下一次连接仍询问 |
 | D6 | 询问提交后**先乐观写句柄、再异步入库** | 句柄是确定性的（D2），无需等库回话；入库失败时下一次 `retrieve` 落空即回询问，不会误用旧秘密 |
-| D7 | 只接线「档案连接」这一条生产腿 | 隧道／密钥／恢复三条询问腿的输入不是持久档案或没有句柄字段（§7）；一次只改一个意图，避免半截实现 |
+| D7 | 只接线「档案连接」这一条生产腿 | 隧道／密钥导出／推送两条询问腿的输入不是持久档案；会话恢复与 SFTP 重拨虽有档案，本轮仍走既有询问路径（恢复腿在下一轮可复用 `plan_credential`）；一次只改一个意图，避免半截实现 |
 | D8 | `retrieve` 与 `store` 放后台任务 | AGENTS.md §4.5 第 25 条：钥匙环可能弹解锁框并阻塞；事件回调只发起任务，结果回主线程再开标签或询问 |
 | D9 | 审计用例扩到三枚 `Preferences` + 明文哨兵 | F8 的现状只查键名与一份文件；本条需求原文是「全配置目录 grep 无任何明文凭据」 |
 | D10 | 审计用例自带「种一份泄漏再抓」的自证段 | 防止扫描器只扫空集合；与 AGENTS.md §4.4 第 22 条同一条纪律 |
@@ -109,7 +112,7 @@
 `connect_profile` 的 SSH 分支改为：
 
 1. `ask == None` ⇒ 照旧直连。
-2. `handle.kind == Reference` 且前缀非空 ⇒ 后台 `retrieve`；命中 ⇒ `open_ssh_tab(profile, secret)`。
+2. `handle.kind == Reference`、`vault_id` 非空且库 `available()` ⇒ 后台 `retrieve`；命中 ⇒ `open_ssh_tab(profile, secret)`。前缀由腿自己过滤（去问另一条腿的句柄回空即落询问）。
 3. 未命中／不可用／AskEveryTime ⇒ 挂 `pending_profile` 并询问。
 
 后台结果的回投用 `au::async(...).then(...)`（Application 已装主线程投递器）。回调以
@@ -131,17 +134,17 @@
 
 | 层 | 套件 | 判据 |
 |:---|:---|:---|
-| 纯逻辑 | `utest_credential_store`（新） | 前缀编码／解析往返；非法前缀回空；`InMemoryCredentialStore` 的 `erase`；句柄不含秘密 |
-| 纯逻辑 | `utest_profile_views`（扩） | 凭据计划四档：None／Stored／Ask（Reference 未命中）／Ask（AskEveryTime）；Reference 但库不可用 ⇒ Ask |
-| 真后端 | `etest_libsecret_credential_store`（新，POSIX） | 真 Secret Service 上 store→retrieve 逐字节相等；覆盖写；空串；`erase` 后取不到；错误前缀不命中。Windows 侧由 CMake 过滤掉该文件 |
-| 审计 | `utest_credential_audit`（新） | 三枚 `Preferences` 同目录落盘后，全目录逐文件扫：禁列键名 + 明文哨兵值；先种一份泄漏证明扫描能抓到，再删掉证明生产产物干净 |
+| 纯逻辑 | `utest_credential_store`（新，4 案） | 前缀编码／解析往返；非法前缀回空；`InMemoryCredentialStore` 的 `erase`；句柄不含秘密；`credential_vault_prefix()` 与本腿编码件往返 |
+| 纯逻辑 | `utest_profile_views`（扩，1 案 7 断言） | 凭据计划四档：None／Stored／Ask（Reference 未命中）／Ask（AskEveryTime）；Reference 但库不可用 ⇒ Ask；未识别 auth 归一后 ⇒ None |
+| 真后端 | `etest_libsecret_credential_store`（新，POSIX，4 案） | 真 Secret Service 上 store→retrieve 逐字节相等；覆盖写；空串；`erase` 后取不到（含「本来就不存在」）；错误前缀不命中。Windows 侧由 CMake 过滤掉该文件 |
+| 审计 | `utest_credential_audit`（新，2 案） | 三枚 `Preferences` 同目录落盘后，全目录逐文件扫：禁列键名 + 明文哨兵值；先种一份键名泄漏与一份值泄漏证明两臂各自抓得到，再删掉证明生产产物干净 |
 
 ## 6 分批
 
-- **批 0（本稿）**：地基实测与设计稿，单笔 docs 提交。
-- **批 1**：平台两腿 + `erase` + 编码件 + 单测 + `etest_libsecret_credential_store`。
-- **批 2**：凭据计划件 + 装配接线（连接与询问回存）。
-- **批 3**：审计扩案、变异自证、四处文档回写与结项。
+- **批 0（本稿）**：地基实测与设计稿，单笔 docs 提交（`8f034fb`）。
+- **批 1**：平台两腿 + `erase` + 编码件 + 单测 + `etest_libsecret_credential_store`（`ff9f0d1`）。读数：`utest_credential_store` 4/4；`etest_libsecret_credential_store` 4/4（修掉 F10 的 `clear_sync` 口径后）；`ctest -E etest_` 107/107。
+- **批 2**：凭据计划件 + 装配接线（连接与询问回存）（`4ee5e2c`）。读数：`utest_profile_views` 11/11（新增计划三路线一案）；`utest_credential_store` 扩到前缀 getter 后仍 4/4；`ctest -E etest_` 107/107。
+- **批 3**：审计扩案、变异自证、四处文档回写与结项（用例 `99f7c02`，本笔文档回写）。读数：`utest_credential_audit` 2/2；`ctest -E etest_` **108/108**；`borealis_test_runner` **1347/1347**；审计键名臂与值臂各一支变异 → 各 2 案红，还原后全绿。
 
 ## 7 边界与在册
 
