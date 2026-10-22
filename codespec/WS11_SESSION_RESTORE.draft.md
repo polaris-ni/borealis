@@ -39,6 +39,7 @@
 | **F26** | **落地阶段（批 3）读数：框架的 `remove(key)` 删不掉「值是整棵对象」的那种键**。实测同一份 `Preferences`：①`set("layout", <一棵对象>)` + `flush()` 写盘；②换实例 `remove("layout")` + `flush()`；③再换新实例——`contains("layout")` 仍为 **true**，整棵布局原样在盘上。原因是墓碑按 `flatten` 之后的**叶子复合键**记账，中间对象层只作前缀、自己不落成独立条目，故顶层那个容器键找不到对应墓碑；`clear()` 则靠「清空纪元」对叶子生效，是**唯一**能清掉整棵布局的那一跳（探针 `/tmp/wsprobe/rmprobe.cpp`，不入库） | 判据 ③ 那句「开关关掉之前已有的快照不被删除」因此**连框架那跳都挡得住**——不是本件刻意留了后门，而是这条路本来走不通。反向的约束落在批 5／批 7：装配层**不许**指望用 `remove` 清快照，界面上也确实没有清理入口（D9① 的在册代价照旧成立）；真要清只能整份 `clear()`，而那是把别人的键也一起清掉的爆炸半径，本棒不用 |
 | **F27** | **落地阶段（批 4）读数：一枚缺省为开的布尔键，同步面比 F19 那句「六处 + 两处计数闸」还多一处**。实测红的第一枚不是 catalog 的计数闸而是 `utest_form_transfer` 里的布尔覆盖闸——`a_boolean_key_reads_the_boolean_it_names` 断 `bool_probes().size() == boolean_key_count()`（按 `ValueDomain::Boolean` 现数 catalog），新增布尔键即 21→22 直接转红，故 `bool_probes()` 那张表是**第三处必须同步的清单**。它与「缺省开」这一档还有第二处咬合：该表与 `made_up()` 的通用写法都是「取离缺省最远的那个值」，缺省 `true` 的键在这里必须填 `false`，填反了那条探针就成了恒真空话（本案按此形态填，`utest_config` 的往返位同理取 `false`） | F19 那条清单在结项回写时补上这一处（批 7 的 `SPECIFICATIONS.md` 口径位）。对本棒的直接影响：批 4 的证人范围从「catalog 那一行」扩到「行案 + 缺省案 + 往返案 + 布尔探针案 + 两档词条案」五处，M5／M6／M7／M9 四支变异正是落在这四处而非行案上——**判据 ③ 的 catalog 半边只是入口，真把「键存在但存不回去／搬不进表单」抓住的是那三张既有清点表** |
 | **F28** | **落地阶段（批 5-A）读数：恢复接缝的形态是静态工厂，不是「扩 `Hooks` 的形参」**。§8 表中那句「形态与 WS.02 批 1 的 `origin` 形参 + `replace_view` 同档」是开工前的推测，实测两头都不成立：① `make_pane(pane, origin)` 的 `origin` 语义是**被切那一格**，恢复腿没有源格可给，硬套就要装配层把「阅读序序位」当 `PaneId` 传进自己的会话工厂——本地腿的 OSC 7 继承据此读错格（正是 F4 那一族「按错的号取料」）；② 「改一扇现成的工作区」这条路必先散旧格再造新格，任何一步失败都留下一棵半棵树加一批已散的手柄，而 `PaneTree::restore` 的「先整体自检再一次性换根」在视图这一层没有对应物可借。落地为 `WorkspaceView::restore(views, shape, focused_order, hooks)`：**四道前置（形状自检、视图份数与叶子数相符、无空指针、选中序位不越界）全部跑在造对象之前**，回空即「没有半个工作区」，`Hooks` 一个字段没动。附带把「序位 i 的格挂标识 `i + 1`」这条既有约定写成公开承诺（构造路径本就这么发号），并补两枚采集读数 `pane_shape()` / `panes_in_order()`——装配层按序位对料必须要有一份「阅读序 → 标识」的表，而标识在切分与关闭之后**不连续**（`1、2、4` 是合法读数） | 批 5-B 的采集腿因此只调这两枚读数，不必自己反查树；批 5-C 的重放腿只管「按序位把会话造出来再交出去」，标识由本层按同一条算式发。反空转的两条硬账：删掉「按选中序位写模型投影」那一跳，**只有**「恢复之后再切一刀、看落在谁头上」那案能转红（`focused_pane()` 优先读框架焦点，只看它会漏掉模型投影没跟上这一种错）；跳过逐格 `wire_view` 由「三格各收到一份自己的行列」那条断言转红 |
+| **F29** | **落地阶段（批 5-B）读数：`Hooks` 原先没有一处看得见「树已经换了」**。`make_pane` 排在 `tree_.split` **之前**（工厂失败时树因此不动，F28 同一族），`teardown_pane` 拿到的是被回收的那一格，两者都不是「变更后的拓扑」；而切分与关格都发自 `WorkspaceView` 自己的按键派发，装配层没有第二个调用点可挂。落地补第四条接缝 `structure_changed`（`Hooks` 末位，缺省空即不关心）：`split_pane` / `close_pane` 两条改树腿的末段各调一次，三条早退（无工厂、工厂回空、`tree_.split` 拒）与把手步进都不调。证人落在 `itest_workspace_layout`：切分后一响且**钩内已是两格**、已回收数为 0；关格后一响且已回收数为一；工厂回空／把手步进／关末位格三档零响（**32 案 → 34 案**） | ① 把手比例不在变更点内：只拖过把手就崩，比例丢一次（随下一次真变更或退出提交）——D2① 把「拓扑」与「相对长度」分档的代价，在册；② 提交次序承重：`create_new_tab_with` **内部不提交**，四个档案腿在 `tab_profile_id` 与四张连接表登记齐之后才提交——否则 SSH 腿会先写出一张「类型有、档案无」的标签，采集侧按 fail-closed 跳过它（等于白关一次崩溃窗口）；③ 实测的变更点比 D2① 那张表多两类：标签条 `.move`（条内序就是快照的标签序）当场提交，重启腿的本地料改写不改拓扑、不单独提交（随下一次真变更或退出落盘）；④ fail-closed 的落点定在**单张标签**（跳过 + WARN）：既不冻结整份文档，也不写出恢复侧读不了的「半个连接」；零标签的窗同样不进快照 |
 
 ---
 
@@ -146,7 +147,7 @@
 | **2** | 快照数据模型 + JSON 编解码（fail-closed 读侧） | `include/borealis/ui/workspace_snapshot.h`、`src/ui/workspace_snapshot.cpp`、`src/CMakeLists.txt`（`borealis_core` 是显式清单，实测必须登记；测试侧 `cmake/BorealisTests.cmake` 的 GLOB 零改）、`include/borealis/conn/local_terminal.h`（补 `operator==`） | `utest_workspace_snapshot` 新套件（判据 ②⑥⑦） |
 | **3** | 第三枚 `Preferences` 的落盘件 | `src/config/workspace_store.{h,cpp}`、`src/CMakeLists.txt`（同批登记一行，`borealis_core` 显式清单） | 判据 ② 的落盘往返腿 + 判据 ③ 的档位半边（同套件扩案） |
 | **4** | 新键六处同步 + 面板那一行 + 两档词条 + 两处计数闸改口 | `settings.h`、`store.cpp`、`form_transfer.cpp`、`settings_catalog.cpp`、`settings_i18n.cpp`、`utest_settings_catalog.cpp`（另加两处实测必需的同步：`utest_config.cpp` 的缺省档与往返、`utest_form_transfer.cpp` 的布尔探针表，见 F27） | catalog 那一行案（判据 ③） |
-| **5** | 装配腿：本地 per-pane 账、采集、启动重放、D7 的 CLI 次序 | **5-A** `src/ui/workspace_view.{h,cpp}` 的**恢复接缝**（实测前置：`WorkspaceView` 公开面只有 `split_focused` / `close_pane` / `replace_view`，没有任何「按一棵现成的形状重建」的入口，而 `PaneTree::restore` 在树件里、视图与挂载归本件——形状要落回界面必须有这一条接缝。**落地形态与表中那句猜测不同，见 F28**：静态工厂 `WorkspaceView::restore(views, shape, focused_order, hooks)` 加两枚采集读数 `pane_shape()` / `panes_in_order()`，`Hooks` 零改）；**5-B** `src/main.cpp` 的每格本地料账 + 采集腿 + 变更点落盘（D2①）+ 开关闸门；**5-C** `src/main.cpp` 的启动重放与 D7 的 CLI 次序（含 `WorkspaceStore` 声明须早于 `app`） | **5-A 有自动化证人**：`itest_workspace_layout` 新增三案（判据 ① 的形状半边，该套件 **29 案 → 32 案**）；5-B／5-C **无自动化证人**（F21），§5 走查第 ①–⑤ 条兜底 |
+| **5** | 装配腿：本地 per-pane 账、采集、启动重放、D7 的 CLI 次序 | **5-A** `src/ui/workspace_view.{h,cpp}` 的**恢复接缝**（实测前置：`WorkspaceView` 公开面只有 `split_focused` / `close_pane` / `replace_view`，没有任何「按一棵现成的形状重建」的入口，而 `PaneTree::restore` 在树件里、视图与挂载归本件——形状要落回界面必须有这一条接缝。**落地形态与表中那句猜测不同，见 F28**：静态工厂 `WorkspaceView::restore(views, shape, focused_order, hooks)` 加两枚采集读数 `pane_shape()` / `panes_in_order()`，`Hooks` 零改）；**5-B** `src/main.cpp` 的每格本地料账 + 采集腿 + 变更点落盘（D2①）+ 开关闸门（**采集点要的第四条接缝 `structure_changed` 见 F29**）；**5-C** `src/main.cpp` 的启动重放与 D7 的 CLI 次序（含 `WorkspaceStore` 声明须早于 `app`） | **5-A 有自动化证人**：`itest_workspace_layout` 新增三案（判据 ① 的形状半边，该套件 **29 案 → 32 案**）；**5-B 的 ui 接缝有自动化证人**（同套件再增两案、**32 案 → 34 案**，F29），5-B 的装配腿与 5-C **无自动化证人**（F21），§5 走查第 ①–⑤ 条兜底 |
 | **6** | 无头集成用例：写快照 → 新宿主读回 → 断标签数/类型/格数/焦点/尺寸下发 | `tests/integration/itest_workspace_restore.cpp`（新）、`itest_workspace_layout.cpp`（扩） | 判据 ①④ 的接线半边 + 变异自证 |
 | **7** | 文档回写与结项：`SPECIFICATIONS.md` 现状句 + 裁决 7.131、`CHANGELOG.md` v0.131、`PLAN.md` §3/§8、`ARCHITECTURE.md` §2.2 与 §11、`UI_SETTINGS.draft.md` 那一行与 §4 相关句 | `codespec/` | 结项三件齐读数 |
 
@@ -243,3 +244,22 @@ restart`）→ `codespec/UI_SETTINGS.draft.md` §2 C 段那一行。`main.cpp` �
 启动入口正是这么走的（`split_focused` 读 `tree_.focused()`，见 `SPEC.FEAT.INTEG.04` 那条「栈外读数落后一拍」），
 故这一支转红同时是判据 ① 里「选中格真的恢复了」的唯一证人。③ 本批只覆盖判据 ① 的**形状半边**（形状 → 界面）；
 标签数、连接类型、档案与凭据重取那半边仍无证人，归批 6 的 `itest_workspace_restore`。
+
+**批 5-B 已落地（2026-10-22）**：装配层的每格本地料账、采集腿与提交腿落在 `src/main.cpp`，另补
+`src/ui/workspace_view.{h,cpp}` 的第四条接缝 `structure_changed`（F29——既有 `Hooks` 没有任何一处看得见
+「树已经换了」，而切分与关格又都发自本层的按键派发）。账目三件：`PaneBundle.local_spec`（工厂算完就丢
+的那份有效料）、`TabWorkspace::local_specs_by_pane`（按格存，切分／撤销重开／重启三条腿各登记）、
+`tab_profile_id`（D4① 的 id 半边，四腿档案与撤账链同步）。采集腿逐窗逐标签只读现成账，缺料按单张标签
+跳过并 WARN；提交腿的「当场」共八类：开标签（含四条档案腿与撤销重开，均排在登记齐之后）、切分、关格、
+关标签、改名、换选中、移动（稿外补的一类，条内序即快照标签序）、关窗；第九类是退出。闸门在提交腿入口：
+`connection.restore_sessions` 关掉即不写，已有文件不动（判据 ③ 的写侧）。
+读数：`itest_workspace_layout` **32 案 → 34 案**（两支新案见 F29）、`ctest --preset linux -E etest_` **105/105
+全绿**（零新套件）、`./build/borealis_test_runner` **1334 案全绿**（起点 1332，增量 +2）、
+`check_display_literals` PASS 211 files。变异两支逐条转红、**无一空转**：删 `split_pane` 末跳 → 切分案红
+（`0 vs 1`）；删 `close_pane` 末跳 → 两支各红一处（`0 vs 1`）。`workspace_view.{h,cpp}` 与用例件均按 Edit 原样复原，提交前逐文件 `git diff --check` 干净、复原后套件 34/34 全绿。
+四条口径在册：① 接缝的新证人与装配腿的无证人分隔清楚——`src/main.cpp` 不编入 runner（F21），本批在
+`main.cpp` 里的采集／提交／账目没有自动化断言，§5 走查第 ①–⑤ 条兜底；② 把手比例不在变更点内、重启腿
+改写的本地料不单独提交：两者都随下一次真变更或退出落盘，只在这之间崩掉才丢一次（F29 的两条代价）；
+③ 提交失败只落 WARN，布局静默消失，界面上没有清理入口与提示（D8①／D9① 的在册代价照旧）；④ 采集读到
+的形状是**变更后**那一份（钩子排在 `apply_focus` 之后），关格腿读到的已回收数是一——这两条正是「装错位置」
+在无头案里会露馅的地方。
