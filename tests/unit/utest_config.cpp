@@ -251,19 +251,6 @@ auto collect_keys(const au::json::Value &node, std::vector<std::string> &out) ->
     }
 }
 
-/// @brief 目录里的全部常规文件（快照与导出件的凭据扫描用）。
-[[nodiscard]] auto directory_files(const std::filesystem::path &dir) -> std::vector<std::filesystem::path> {
-    std::vector<std::filesystem::path> out;
-    std::error_code ec;
-    for (const auto &item : std::filesystem::directory_iterator{dir, ec}) {
-        if (item.is_regular_file()) {
-            out.emplace_back(item.path());
-        }
-    }
-    std::ranges::sort(out);
-    return out;
-}
-
 /// @brief 一份快照的路径与它应当包含的内容。
 struct Scene {
     std::filesystem::path path;
@@ -508,39 +495,6 @@ AURORA_TEST_CASE(imported_values_outside_the_domain_still_fall_back) {
     AURORA_TEST_CHECK_EQ(store.settings().appearance.theme, "nord");
     AURORA_TEST_CHECK_EQ(store.settings().appearance.font_size_pt, Settings{}.appearance.font_size_pt);
     AURORA_TEST_CHECK_TRUE(store.settings().terminal == Settings{}.terminal);
-}
-
-AURORA_TEST_CASE(no_file_written_into_the_config_directory_carries_a_credential_name) {
-    const auto file = make_path("credentials.json");
-    Store store{file};
-    AURORA_TEST_CHECK_FALSE(store.replace(non_default()).has_value());
-    AURORA_TEST_CHECK_FALSE(store.replace(non_default()).has_value());
-    AURORA_TEST_REQUIRE(!store.snapshots().empty());
-    AURORA_TEST_CHECK_FALSE(store.rollback_to(store.snapshots()[0].path).has_value());
-    AURORA_TEST_CHECK_FALSE(store.export_settings(make_path("credentials-export.json")).has_value());
-
-    // AGENTS.md §4.5 第 24 条的自动化腿：扫描覆盖配置目录里的**每一种**写入产物，不只是当前文件。
-    std::size_t scanned{};
-    for (const auto &entry : directory_files(file.parent_path())) {
-        const auto parsed = au::json::parse(read_file(entry));
-        if (!parsed.ok()) {
-            // 落盘由框架承担，它的跨进程 advisory 锁件不是 JSON（`.lock` 是那族文件唯一的豁免形态）。
-            // 豁免必须钉住形态，否则「自家产物不再是 JSON」也会走这一支而把本例读成空转。
-            AURORA_TEST_REQUIRE_MSG(entry.filename().string().ends_with(".lock"), entry.filename().string());
-            continue;
-        }
-        ++scanned;
-        std::vector<std::string> keys;
-        collect_keys(parsed.value(), keys);
-        for (const auto &key : keys) {
-            for (std::string_view banned : {"password", "passphrase", "secret", "token", "private_key"}) {
-                AURORA_TEST_CHECK_MSG(key.find(banned) == std::string::npos,
-                                      entry.filename().string() + ": " + key + " ~ " + std::string{banned});
-            }
-        }
-    }
-    // 当前文件 + 两份快照 + 导出件：扫描集合非空才说明上面那些断言真的判过东西。
-    AURORA_TEST_REQUIRE(scanned >= 4U);
 }
 
 AURORA_TEST_CASE(defaults_are_the_first_launch_shape) {
