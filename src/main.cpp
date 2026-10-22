@@ -2025,8 +2025,9 @@ auto main(int argc, char **argv) -> int {
         }
         return nullptr;
     };
-    // 五类闭包（`search.open`／`session.restart`／`serial.set_baud`／`workspace.toggle_fullscreen`／
-    // `tab.undo_close`）的落点：tracker 无记录时回的是**主窗号**（构造期那枚兜底），故正常路径恒有一扇窗；
+    // 六类闭包（`search.open`／`quick_select.open`／`session.restart`／`serial.set_baud`／
+    // `workspace.toggle_fullscreen`／`tab.undo_close`）的落点：tracker 无记录时回的是**主窗号**
+    //（构造期那枚兜底），故正常路径恒有一扇窗；
     // 只有主窗自己也没了才回空值，调用方按「无事发生」处理。
     auto target_window = [&active_window_tracker, &window_of]() -> WorkspaceWindow * {
         return window_of(active_window_tracker.active());
@@ -3418,6 +3419,32 @@ auto main(int argc, char **argv) -> int {
     open_search.default_binding = au::KeyCombo{au::ModifierKey::Control, au::KeyCode::F};
     open_search.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(open_search));
+
+    // quick select 的打开入口（`SPEC.FEAT.INTERACT.02` 的延后子项，稿 §2）：与搜索同一条「命令是共同真源」
+    // 形态，故 `Ctrl+Shift+Space` 与命令面板一处登记。落点是**焦点格**而非 1 号格（`search.open` 是后者，
+    // 它那一笔逐格搜索仍欠着）：quick select 复制的是用户正看着的那一格，聚焦在别的 pane 上却扫 1 号格
+    // 会把标签贴到看不见的文本上。组合键全仓未占用（稿 F8），由快捷键层在控件消费之前拦截，不进会话。
+    au::Command open_quick_select;
+    open_quick_select.id = "quick_select.open";
+    open_quick_select.title = borealis::ui::settings_label("quick_select.action.open");
+    open_quick_select.category = "terminal";
+    open_quick_select.action = [&tab_workspaces, &command_tab_id]() -> void {
+        const std::optional<borealis::ui::TabId> target = command_tab_id();
+        if (!target.has_value()) {
+            return;
+        }
+        auto it = tab_workspaces.find(target.value());
+        if (it == tab_workspaces.end() || it->second.workspace == nullptr) {
+            return;
+        }
+        if (auto *view = it->second.workspace->view_of(it->second.workspace->focused_pane())) {
+            view->open_quick_select();
+        }
+    };
+    open_quick_select.default_binding =
+        au::KeyCombo{au::ModifierKey::Control | au::ModifierKey::Shift, au::KeyCode::Space};
+    open_quick_select.scope = au::ShortcutScope::Global;
+    app.commands().add(std::move(open_quick_select));
 
     // 命令面板实例（`SPEC.FEAT.WS.07`）：挂在 `OverlayHost` 上作为全局模态浮层，与设置面板同级。
     // 先建实例再登记打开命令，这样 action 闭包可以捕获面板指针。

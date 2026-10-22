@@ -365,6 +365,11 @@ const Tier kStringsZh{
     {"search.next", "下一个"},
     {"search.close", "关闭"},
 
+    // ---- quick select（`SPEC.FEAT.INTERACT.02` 的延后子项，稿 `codespec/UI_QUICK_SELECT.draft.md` §1）----
+    // 只有命令标题一枚：标签字母是**输入键位不是文案**，标签块上的 `a`/`as` 不进表（换语言即换字母集，
+    // 而字母集是 WezTerm 缺省的那九枚固定值）。
+    {"quick_select.action.open", "快速选择"},
+
     // ---- 工作区操作（`SPEC.FEAT.WS.06` 全屏切换、`SPEC.FEAT.WS.03` 新开一扇窗的命令标题）----
     {"workspace.action.toggle_fullscreen", "切换全屏"},
     {"workspace.action.new_window", "新建窗口"},
@@ -1000,6 +1005,9 @@ const Tier kStringsEn{
     {"search.prev", "Previous"},
     {"search.next", "Next"},
     {"search.close", "Close"},
+
+    // ---- quick select（同中文表那条注：标签字母是输入键位，只有命令标题进表）----
+    {"quick_select.action.open", "Quick Select"},
 
     // ---- 工作区操作与广播输入（WS.06 / WS.03 / WS.09）----
     // 标题的 {0} 是成员名、{1} 是去重后的会话数，两者都是取值故走位置参数；「点击此处退出」是 D8
