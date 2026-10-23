@@ -78,6 +78,7 @@
 #include "ui/settings_i18n.h"
 #include "ui/settings_panel.h"
 #include "ui/sftp_panel.h"
+#include "ui/snippet_panel.h"
 #include "ui/startup_notice.h"
 #include "ui/tab_bar.h"
 #include "ui/terminal_view.h"
@@ -3376,6 +3377,55 @@ auto main(int argc, char **argv) -> int {
     open_keys.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(open_keys));
 
+    // 快捷片段（`SPEC.FEAT.CONN.07` 的延后子项，稿 `UI_SNIPPETS.draft.md` D1/D3/D6）：app 级一份面板，
+    // 打开前先搬到发起命令的那一扇窗。三条接缝与面板的分工照私有头那段：本层只交「取表／整表落盘／
+    // 发一段已渲染 UTF-8」，校验、占位符渲染与留痕都在面板；面板不碰文件，也就不必知道 `Store` 的形态。
+    borealis::ui::SnippetPanel::Hooks snippet_hooks;
+    snippet_hooks.load = [&store]() -> std::vector<borealis::conn::Snippet> {
+        return store.settings().snippets;
+    };
+    snippet_hooks.persist = [&store](const std::vector<borealis::conn::Snippet> &next) -> bool {
+        borealis::config::Settings settings_next = store.settings();
+        settings_next.snippets = next;
+        return !store.replace(settings_next).has_value();
+    };
+    // 落点（稿 D3）：**活动窗当前标签的焦点格**，只发这一格、不广播、不回退到 1 号格——把命令发进用户
+    // 没看着的那一格比「这一条没发出去」更难解释（`quick_select.open` 取焦点格同一条理由）。取不到窗／
+    // 标签／视图一律交回 false，面板据此留 `snippets.notice.no_session`。
+    snippet_hooks.send = [&tab_workspaces, &command_tab_id](const std::string &payload) -> bool {
+        const std::optional<borealis::ui::TabId> target = command_tab_id();
+        if (!target.has_value()) {
+            return false;
+        }
+        auto it = tab_workspaces.find(target.value());
+        if (it == tab_workspaces.end() || it->second.workspace == nullptr) {
+            return false;
+        }
+        auto *const view = it->second.workspace->view_of(it->second.workspace->focused_pane());
+        if (view == nullptr) {
+            return false;
+        }
+        view->send_text_utf8(payload);
+        return true;
+    };
+    borealis::ui::SnippetPanel snippet_panel{*host, std::move(snippet_hooks)};
+
+    // `snippets.open`（稿 D6）：与搜索／quick select 同一条「命令是共同真源」形态，登记一次即同时得到
+    // `Ctrl+Shift+K` 与命令面板里的同一行。组合键全仓未占用（稿 F7），由快捷键层在控件消费之前拦截，
+    // 不进会话。打开腿先搬窗再 toggle：关着时开在发起窗上，开着时再按一次即收掉当前窗那一份。
+    au::Command open_snippets;
+    open_snippets.id = "snippets.open";
+    open_snippets.title = borealis::ui::settings_label("snippets.title");
+    open_snippets.category = "terminal";
+    open_snippets.action = [&snippet_panel, &retarget_panel]() -> void {
+        retarget_panel(snippet_panel);
+        snippet_panel.toggle();
+    };
+    open_snippets.default_binding =
+        au::KeyCombo{au::ModifierKey::Control | au::ModifierKey::Shift, au::KeyCode::K};
+    open_snippets.scope = au::ShortcutScope::Global;
+    app.commands().add(std::move(open_snippets));
+
     // 打开入口按 `SPEC.FEAT.PREF.02` 走命令层：命令是快捷键、菜单与命令面板的共同真源（架构 §11.2），
     // 在此登记一次即同时得到 `Ctrl+,` 与将来面板/命令面板里的同一条目。
     au::Command open_settings;
@@ -4331,7 +4381,8 @@ auto main(int argc, char **argv) -> int {
                               &broadcast_router, &active_window_tracker, &fallback_window,
                               &startup_wake, &retarget_panel_to, &abandon_destination_to,
                               &remount_overlay, &sidebar, &wizard, &credential_prompt, &panel,
-                              &tunnel_panel, &sftp_panel, &keys_panel, &debug_panel, &notice,
+                              &tunnel_panel, &sftp_panel, &keys_panel, &snippet_panel, &debug_panel,
+                              &notice,
                               &command_palette, &serial_baud_dialog, &log_dialog, &palette_mount,
                               &serial_baud_mount, &log_dialog_mount,
                               &flush_window_geometry,
@@ -4420,6 +4471,7 @@ auto main(int argc, char **argv) -> int {
         retire_panel(&tunnel_panel);
         retire_panel(&sftp_panel);
         retire_panel(&keys_panel);
+        retire_panel(&snippet_panel);
         retire_destination(&debug_panel);
         retire_destination(&notice);
         retire_mount(command_palette, palette_mount);

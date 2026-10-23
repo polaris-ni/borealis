@@ -154,6 +154,9 @@ class Harness {
     [[nodiscard]] auto written() const -> std::string { return connection_->written_text(); }
     auto clear_written() -> void { connection_->clear_written(); }
 
+    /// @brief 视口本体（`send_text_utf8` 这类不经键位路由的直发入口；判据见对应用例）。
+    [[nodiscard]] auto view() -> TerminalView & { return *view_; }
+
     /// @brief 焦点开关：无焦点时派发器不该把按键交给任何控件。
     auto set_focused(bool focused) -> void {
         if (focused) {
@@ -289,6 +292,23 @@ AURORA_TEST_CASE(printable_characters_are_sent_once_through_the_text_channel) {
 
     AURORA_TEST_REQUIRE(!h.release(au::KeyCode::A));
     AURORA_TEST_CHECK(h.written().empty());
+}
+
+AURORA_TEST_CASE(send_text_utf8_shares_the_session_encoding_leg) {
+    Harness h;
+    // 面板交付的已渲染正文走这一支（`SPEC.FEAT.CONN.07` 稿 D3）：空串不发，非空与键入同一条
+    // `Session::send_text` 腿（UTF-8 解码后按会话编码重编）。CJK-LITERAL: 断言素材 - 直发中文是
+    // 片段正文按会话编码出线的输入腿
+    h.view().send_text_utf8("");
+    AURORA_TEST_CHECK(h.written().empty());
+
+    h.view().send_text_utf8("echo 中");
+    AURORA_TEST_CHECK_EQ(h.written(), "echo \xE4\xB8\xAD");
+    h.clear_written();
+
+    // `enter` 只追加一个 `\n`（面板侧），行尾折算归会话：本地/SSH 未给档即原样下发。
+    h.view().send_text_utf8("ls\n");
+    AURORA_TEST_CHECK_EQ(h.written(), "ls\n");
 }
 
 AURORA_TEST_CASE(tab_reaches_the_connection_instead_of_focus_travel) {
