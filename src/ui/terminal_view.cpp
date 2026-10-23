@@ -1044,6 +1044,14 @@ auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
                          : e.click_count == 2U ? DragMode::Word
                                                : DragMode::Cell;
             pressed_cell_ = cell;
+            // 双击的智能档先于词粒度：落点严格在一对引号/括号内时以整段为拖拽起点。未命中
+            // 保持空值，`extend_selection` 照旧走 `span_of` 的词粒度（含落在断点上回空）。
+            pressed_smart_span_.reset();
+            if (drag_mode_ == DragMode::Word) {
+                if (const auto *row = mirror_line_of(cell.row); row != nullptr) {
+                    pressed_smart_span_ = smart_span_at(*row, cell);
+                }
+            }
             extend_selection(cell, e.modifiers);  // 单击即两端重合，旧选区就此清空
             e.is_handled = true;
             break;
@@ -1759,8 +1767,21 @@ auto TerminalView::extend_selection(const GridCellPos &current_storage, aurora::
     };
     // 取不到区间（Word 粒度落在断点上、或行已滚出可见窗）时退化为「那一格」：按下端退化保住
     // 「双击断点不成选区」（两端重合），拖拽端退化保住「从断点拖出去仍能扩」（裁决 7.39④）。
-    const RowSpan from = span_of(pressed_cell_, drag_mode_).value_or(single(pressed_cell_));
-    const RowSpan to = span_of(current_storage, drag_mode_).value_or(single(current_storage));
+    // 双击命中智能配对时按下端改取整段（含两端定界符）：起点不能用词粒度重算，否则拖动第一帧
+    // 就会把整段缩回一个词。当前端移出配对后按词粒度，于是跨行拖动得到「配对起点→当前词尾」
+    // 的流式选区。
+    const bool smart_start = drag_mode_ == DragMode::Word && pressed_smart_span_.has_value();
+    const RowSpan from = smart_start ? *pressed_smart_span_
+                                     : span_of(pressed_cell_, drag_mode_).value_or(single(pressed_cell_));
+    // 当前端仍在配对区间内（含两端定界符）时保持整段：双击的抬起就在按下那一格上，若照常按
+    // 词粒度重算，整段会在抬指时缩回按下那一词，单击双击都看不到配对。
+    std::optional<RowSpan> to_span = span_of(current_storage, drag_mode_);
+    if (smart_start && current_storage.row == pressed_smart_span_->row &&
+        current_storage.column >= pressed_smart_span_->first_column &&
+        current_storage.column < pressed_smart_span_->last_column) {
+        to_span = *pressed_smart_span_;
+    }
+    const RowSpan to = to_span.value_or(single(current_storage));
     // 折成阅读序的外沿：`row_spans` 只认两个端点格，直接拿按下格与当前格会让按词/按行的向后拖
     // 只选到起始行的第一列（裁决 7.40）。
     GridCellPos start{from.row, from.first_column};

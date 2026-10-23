@@ -1269,6 +1269,74 @@ AURORA_TEST_CASE(double_click_selects_the_word_and_nothing_on_a_break) {
 #endif
 }
 
+AURORA_TEST_CASE(double_click_inside_quotes_or_brackets_expands_to_the_pair) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 缺省交互选项的断点集是空串（只有空格与制表断词），这里按生产缺省的口径把引号列为断点，
+    // 才验得到「双击落在定界符本身不算在内、回退到词粒度即无选区」。
+    TerminalView::InteractionOptions options;
+    options.word_delimiters = "\"";
+    Harness h(test_palette(), options);
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto &background = h.palette().default_background;
+    const auto ink = borealis::ui::selection_color(h.palette());
+    h.feed("\x1b[?25l\x1b[2;1Hsay \"hello world\" now\r\n\x1b[3;1Hrun (alpha beta) end");
+
+    h.click(1U, 6U);  // 双击落在 hello 内：选区扩到整对双引号（含引号）。
+    h.click(1U, 6U);
+    h.render();
+    auto px = h.pixels();
+    AURORA_TEST_CHECK(h.cell_probe(px, 1U, 4U, 0.06) == ink);
+    AURORA_TEST_CHECK(h.cell_probe(px, 1U, 16U, 0.06) == ink);
+    AURORA_TEST_CHECK(h.cell_probe(px, 1U, 3U, 0.06) == background);
+    AURORA_TEST_CHECK(h.cell_probe(px, 1U, 17U, 0.06) == background);
+    AURORA_TEST_CHECK_EQ(h.selected_text(), "\"hello world\"");
+
+    h.click(2U, 6U);  // 圆括号同理，且不吞掉括号外的词。
+    h.click(2U, 6U);
+    h.render();
+    px = h.pixels();
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 4U, 0.06) == ink);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 15U, 0.06) == ink);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 3U, 0.06) == background);
+    AURORA_TEST_CHECK(h.cell_probe(px, 2U, 16U, 0.06) == background);
+    AURORA_TEST_CHECK_EQ(h.selected_text(), "(alpha beta)");
+
+    // 无配对时回退词粒度：双击 `end` 仍只说那一词。
+    h.click(2U, 18U);
+    h.click(2U, 18U);
+    AURORA_TEST_CHECK_EQ(h.selected_text(), "end");
+
+    // 落在定界符本身不算「在内」：引号是断点，回退到词粒度即无选区。
+    h.click(1U, 4U);
+    h.click(1U, 4U);
+    h.render();
+    px = h.pixels();
+    AURORA_TEST_CHECK(h.cell_probe(px, 1U, 4U, 0.06) == background);
+    AURORA_TEST_CHECK_EQ(h.selected_text(), std::string{});
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(double_click_smart_selection_starts_a_drag_from_the_pair) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.feed("\x1b[?25l\x1b[2;1Hsay \"hello world\" now");
+
+    // 第二击按下时已选中整对引号；继续拖到 `now` 的应当是「配对起点 → 当前词尾」，
+    // 起点不能被词粒度重算回 hello。
+    h.pointer(au::MouseAction::Press, 1U, 6U);
+    h.pointer(au::MouseAction::Release, 1U, 6U);
+    h.pointer(au::MouseAction::Press, 1U, 6U);
+    h.pointer(au::MouseAction::Move, 1U, 18U);
+    h.pointer(au::MouseAction::Release, 1U, 18U);
+    AURORA_TEST_CHECK_EQ(h.selected_text(), "\"hello world\" now");
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
 AURORA_TEST_CASE(triple_click_selects_the_row_and_dragging_up_extends_whole_rows) {
 #ifdef AURORA_BACKEND_HEADLESS
     Harness h;

@@ -1064,6 +1064,11 @@ class TerminalView final : public aurora::LeafWidget {
     std::optional<Selection> selection_;  ///< 端点是**存储行序**（`ui/selection.h` 的坐标约定）。
     std::vector<RowSpan> bands_{};        ///< `row_spans` 的产物，行号升序；绘制与复制共用这一张表。
     GridCellPos pressed_cell_{};          ///< 按下那一格（同为存储行序），拖拽的两端之一。
+    /// @brief 双击命中的智能配对区间（`SPEC.FEAT.INTERACT.02`）：只作拖拽起点，未命中即空。
+    ///
+    /// 不把智能档做成第四个 `DragMode`：它只改起点，不改变拖拽中「配对内保持整段、移出后按
+    /// 词粒度」的判定。
+    std::optional<RowSpan> pressed_smart_span_;
     DragMode drag_mode_ = DragMode::Cell;
     bool dragging_ = false;
     /// @brief 上报在途的按下是哪一个键（框架四后端都把 Move 盖成 `MouseButton::Left`，故悬停与拖动
