@@ -4,6 +4,21 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.145（2026-10-24）**`SPEC.FEAT.CONN.02` 的 agent 转发延后子项落地：反向通道受理 + 本机 agent 字节中继（裁决 7.145；本地提交 `111eb1a` → 文档回写（本笔））**
+
+**动机**：`SshProfile::agent_forwarding` 早已入模型、`~/.ssh/config` 的 `ForwardAgent` 也能导入，但传输层从不下发 `auth-agent-req@openssh.com`，也不受理服务器反向打开的通道——用户即便开了转发开关，远端 `ssh -A` 一类用法仍然拿不到本机 agent。本次按常存授权收口。
+
+**落地形态**：
+
+- **受理面在 `connect` 之前装、请求在 shell 之前发**：`setup_agent_forwarding()` 在 `ssh_new()` 之后挂 `channel_open_request_auth_agent_function`（连接期内服务器随时可能反向开口），`request_agent_forwarding()` 排在 `ssh_channel_open_session` 成功之后、PTY 之前。库侧前提如实登记：该回调的派发在 `#ifdef WITH_SERVER` 内，本机 vcpkg 构建档已开（`#define WITH_SERVER 1`）；未开该档的构建会让本腿静默不生效。
+- **先探本机 agent 再发请求**：`agent_connect()` 探不通时只留 WARN、不发请求——没有 agent 还发请求，只会让远端每次反向打开都被拒。反向打开那一刻再逐条连，失败回 NULL（libssh 对 NULL 回默认拒绝）。反向通道上限 8 条，超限释放通道并拒绝。
+- **透明中继**：每条反向通道一张表项，远端→agent 走 `ssh_channel_read_nonblocking`，agent→远端走 `AgentSocket::read` 的非阻塞一拍再 `ssh_channel_write`；不解析 agent 协议。通道表用 `std::recursive_mutex` 并按**下标**推进——libssh 非线程安全，`ssh_channel_poll` 内部会派发回调（UI 线程的 `write()`/`resize()` 同样会走到），回调可能当场 `push_back` 使迭代器与元素引用失效。
+- **平台腿**：新增 `src/platform/agent_socket.{h}` 与 POSIX／Win32 两腿——POSIX 连 `SSH_AUTH_SOCK` 的 unix socket（超 `sun_path` 直接拒，不截断去连别的 socket；写侧 1 s 上限 + `MSG_NOSIGNAL`）；Win32 走 `SSH_AUTH_SOCK` 命名管道或缺省 `\\.\pipe\openssh-ssh-agent`，**未经 MSVC 编译验证（推断／未验证）**。
+
+**验收读数**：构建通过；新增 `utest_posix_agent_socket` 四案（环境缺失／连不上／路径超长各回 `nullptr`，写进去的字节从替身 unix-socket agent 原样回来）；`ctest --preset linux -E etest_` **116/116 全绿**、`borealis_test_runner` **1424/1424 全绿**（基线 1420 ⇒ +4 案）。两则变异各有指名红案：删 `connect` 失败判据 ⇒ `an_unreachable_socket_yields_no_connection` 红；把读成功档的 `Data` 改报 `Closed` ⇒ `bytes_round_trip_through_the_agent_pipe` 红；还原后复绿。
+
+**边界与不称可用**（`AGENTS.md` §4.4 第 33 条）：本沙箱无 sshd，「远端命令用转发来的 agent 签名」没有端到端证人——证人只到本机一侧的字节管道；Win32 腿未编译、未实测，真机代理链路（`ssh -A` 经跳板机再跳）未走查；向导里的 `ForwardAgent` 复选框仍按 `UI_OVERVIEW.draft.md` 为延后项，设置页全局键 `connection.ssh.agent_forwarding` 仍是无消费方的缺省，开关的唯一入口是档案字段。
+
 ## v0.144（2026-10-24）**`SPEC.FEAT.CONN.02` 最后一条延后子项落地：KEX／主机密钥算法表可配，显式启用旧算法（裁决 7.144；本地提交 `08d1430` → 文档回写（本笔））**
 
 **动机**：CONN.02 原文把「密钥交换与主机密钥算法可配并允许显式启用旧算法（兼容老交换机/嵌入式设备，启用时给出安全提示）」列为延后子项，两枚键此前只入模型、协商面仍由库缺省决定——连老设备（只支持 `ssh-rsa` 或 `diffie-hellman-group14-sha1`）时用户没有出口。本次按常存授权收口。
