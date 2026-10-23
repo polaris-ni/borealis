@@ -32,6 +32,7 @@
 #include "borealis/config/settings.h"
 #include "borealis/config/store.h"
 #include "borealis/config/themes.h"
+#include "borealis/diag/crash_report.h"
 #include "borealis/session/clipboard_outbox.h"
 #include "borealis/session/notification_outbox.h"
 #include "borealis/session/session.h"
@@ -62,6 +63,7 @@
 #include "config/window_geometry_store.h"
 #include "config/workspace_store.h"
 #include "platform/credential_store.h"
+#include "platform/crash_handler.h"
 #include "platform/instance_channel.h"
 #include "platform/open_url.h"
 #include "platform/process_args.h"
@@ -539,6 +541,23 @@ auto main(int argc, char **argv) -> int {
     // 控件树都随它消散，会话与宽度判定策略仍活着，控件不会摸到已销毁的会话。
     borealis::config::Store store;  // 面板要 `replace()`，故本对象不再 `const`
     const borealis::config::Settings &settings = store.settings();
+    // 崩溃留存腿（`SPEC.NF.RELI.01`，裁决 7.142）：自写诊断快照，只留结构计数与每格身份，
+    // 不含终端文本、标签名、主机名与凭据。声明紧跟 `store` 故几乎最后析构——处理函数只持它的
+    // 指针，而进程终止前它必须一直有效。安装点放在这里而不是建窗之后：启动途中的崩溃同样要留档。
+    // 目录建不出来只落一条 WARN，不拦启动（诊断腿不得成为新的启动失败点）。
+    borealis::diag::CrashFactsStore crash_facts;
+    {
+        const std::filesystem::path config_directory = store.report().file.parent_path();
+        if (config_directory.empty()) {
+            AURORA_LOG_WARN("main", "crash handler not armed: config directory unknown");
+        } else {
+            const std::filesystem::path crash_directory = config_directory / "crash";
+            if (!borealis::platform::install_crash_handler(
+                    borealis::platform::CrashHandlerConfig{crash_directory, &crash_facts})) {
+                AURORA_LOG_WARN("main", "crash handler not armed: ", crash_directory.string());
+            }
+        }
+    }
     // OSC 52 读方向的授权闸门（`SPEC.FEAT.CONN.12` 判据 ①②）：全 app 一份，会话状态机与视口各持
     // 一枚观察指针——同一枚 atomic 同时决定「登记不登记」与「问不问」，分两处就会造出「状态机收了
     // 一条请求、界面那侧却按另一档答掉」的窗口。声明紧挨 `store` 故**几乎最后析构**：会话线程现读
@@ -4055,9 +4074,8 @@ auto main(int argc, char **argv) -> int {
 
     // 调试面板（`SPEC.NF.RELI.01`）：F12 开合，打开那一刻对**全部标签的每个会话**取一次计数器快照
     // （解析降级 / 非法字节 / 发送侧不可表示 / 背压水位四族）。快照而非活读：面板只在打开时被填一次，之后不再触碰会话，
-    // 于是 `Session` 的四个 stats 取数点只在主线程这一次调用上发生锁竞争。
-    // TODO(SPEC.NF.RELI.01): 崩溃留存腿（信号钩子、dump 还是自写诊断文件、Windows/POSIX 分平台形态）
-    // 与既有文档无出处可依，待人裁决后再开工，本棒不自行择一实现。
+    // 于是 `Session` 的四个 stats 取数点只在主线程这一次调用上发生锁竞争。崩溃留存腿走另一条路
+    // （自写诊断快照，裁决 7.142）：四族计数器不进去——取数要碰会话锁，信号上下文不安全。
     // 宿主与焦点权威**成对**交进来（稿 §0 的 F3：`app.focus()` 恒指宿主表里的主窗那一份，跟着
     // `main_host_` 易主）：这一对在启动时是首格那扇窗，之后每次搬窗由 `set_overlay_destination` 一起换，
     // 于是「压进哪一栈就由哪一栈弹出」那条不变量不会因中间有人关了主窗而断掉。
@@ -4255,7 +4273,7 @@ auto main(int argc, char **argv) -> int {
                       &keys_panel, &logging_state_probe, &add_logging_command, &logging_command_shows,
                       &show_log_notice, &startup_mutex, &startup_queue, &apply_startup_request,
                       &frame_bytes, &reply_wire, &credential_prompt, &restore_waiting_for_secret,
-                      &restore_secret_sink]() -> void {
+                      &restore_secret_sink, &tab_kind, &crash_facts]() -> void {
         // 恢复的凭据挂起兜底（`SPEC.FEAT.WS.11` 批 5-C）：问句被**静默关掉**（Esc、搬窗时
         // `set_overlay_host` 的 close、宿主散了）不会回调 `on_cancel`，而那个缺口会让泵永远停在
         // 「等一个不会来的答案」上。帧边界是唯一能看见「框已经不在了」的地方：认领并中止余下重放，
@@ -4346,7 +4364,37 @@ auto main(int argc, char **argv) -> int {
             // 会话重启（`SPEC.FEAT.WS.05`）之后不必另找清除入口——下一帧推进来的就是 false。
             owner.tab_strip.set_exited(tab_id, !has_live_session(tab_id));
         }
-        
+
+        // 崩溃快照的发布点（`SPEC.NF.RELI.01` 的留存腿，裁决 7.142）：每帧把结构计数与每格身份写进
+        // 无锁双缓冲，崩溃处理函数只读这一份。会话文本、标签名、主机名与凭据一概不进——终端输出可能
+        // 含口令，而会话日志默认关闭（裁决 7.9）；把屏幕内容搬进一份默认开启的崩溃文件等于绕过那条默认。
+        // 逐帧只做一次原子与计数（不碰会话锁、不取标题），发布侧写的是非当前缓冲（见 `CrashFactsStore`）。
+        {
+            borealis::diag::CrashFactsSnapshot crash_snapshot;
+            crash_snapshot.windows = static_cast<std::uint64_t>(workspace_windows.size());
+            crash_snapshot.last_publish_epoch = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count());
+            for (const auto &[tab_id, workspace] : tab_workspaces) {
+                ++crash_snapshot.tabs;
+                const auto kind = tab_kind.find(tab_id);
+                for (const auto &[pane, session] : workspace.sessions_by_pane) {
+                    ++crash_snapshot.panes;
+                    if (crash_snapshot.session_count < borealis::diag::kMaxCrashSessions) {
+                        crash_snapshot.sessions[crash_snapshot.session_count++] =
+                            borealis::diag::CrashSessionFact{
+                                .tab = tab_id,
+                                .pane = pane,
+                                .kind = kind == tab_kind.end() ? borealis::conn::ConnectionType::Local
+                                                               : kind->second,
+                                .alive = session->alive()};
+                    }
+                }
+            }
+            crash_facts.publish(crash_snapshot);
+        }
+
         // 窗口标题＝**该窗选中标签的显示名**（`SPEC.FEAT.WS.06`）：名只经 `resolve_tab_name` 这一个判定处
         //（裁决 7.43③），窗口侧再读一次 OSC 就是第二套优先级，标签条与标题栏会在手动重命名那一刻分叉。
         // 逐窗各写各的（稿 §6 批 2）：一扇窗的标题取的是它自己那一栏的选中格，`last_title` 也是逐窗账，

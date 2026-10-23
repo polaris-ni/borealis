@@ -33,6 +33,7 @@ add_library(borealis_core STATIC
         conn/tunnel_client.cpp
         conn/tunnel_model.cpp
         conn/tunnel_socks.cpp
+        diag/crash_report.cpp
         platform/credential_store.cpp
         ui/connection_glyph.cpp
         ui/connection_sidebar.cpp
@@ -105,6 +106,7 @@ add_library(borealis_core STATIC
 if (WIN32)
     target_sources(borealis_core PRIVATE
             platform/win/conpty_connection.cpp
+            platform/win/crash_handler.cpp
             platform/win/credential_store.cpp
             platform/win/file_secure.cpp
             platform/win/instance_channel.cpp
@@ -118,6 +120,7 @@ if (WIN32)
 elseif (UNIX)
     target_sources(borealis_core PRIVATE
             platform/posix/credential_store.cpp
+            platform/posix/crash_handler.cpp
             platform/posix/file_secure.cpp
             platform/posix/forkpty_connection.cpp
             platform/posix/instance_channel.cpp
@@ -162,6 +165,9 @@ aurora_setup_consumer_target(borealis_core "${CMAKE_CURRENT_SOURCE_DIR}/../inclu
 # 私有头互引路径：conn/ssh_connection.h、conn/profile_views.h 等私有头按
 # "conn/xxx.h" 相对 src/ 解析（头仍在 src/ 树内，公共面不因此扩一寸）。
 target_include_directories(borealis_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+# 崩溃报告头行的产品版本（`diag::product_version()`，裁决 7.142）：由工程版本注入，
+# 不在源码里硬编码第二份。
+target_compile_definitions(borealis_core PRIVATE BOREALIS_VERSION="${PROJECT_VERSION}")
 
 add_executable(borealis main.cpp)
 
