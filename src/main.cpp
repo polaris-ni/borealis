@@ -58,6 +58,7 @@
 #include "conn/ssh_connection.h"
 #include "conn/telnet_connection.h"
 #include "conn/tunnel_client.h"
+#include "config/shortcut_overrides.h"
 #include "config/window_geometry_store.h"
 #include "config/workspace_store.h"
 #include "platform/credential_store.h"
@@ -4073,10 +4074,12 @@ auto main(int argc, char **argv) -> int {
     open_diagnostics.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(open_diagnostics));
 
-    // TODO(SPEC.FEAT.PREF.04): 装配层启动重放 `shortcuts.overrides` 的一腿待 G40 回货
-    //   （`CommandRegistry` 无「改绑定而不动元数据」入口、`KeyCombo` 无 `from_string`；
-    //   本仓若自造文本 → 键位的反向解析就是第二真值源，违 AGENTS.md §5 第 2 条与裁决 7.72。
-    //   回货判据与接货形态见 `codespec/FRAMEWORK_TASK_PREF04.md`；代价登记于裁决 7.84。）
+    // 启动重放 `shortcuts.overrides`（`SPEC.FEAT.PREF.04`，任务书 §5）：这一段必须排在投影**之前**——
+    // `set_binding` 在注册表尚未投影时只改 `default_binding`，随后 `bind_shortcuts` 一次性建立投影；
+    // 反过来写就会先按缺省绑定建一遍、再逐条撤建。解析与跳过口径落在 `replay_shortcut_overrides`
+    // （畸形串与未知 id 各留一条 warn，一条坏覆盖不拦启动、也不静默失效），装配层只负责排序。
+    static_cast<void>(
+        borealis::config::replay_shortcut_overrides(app.commands(), settings.shortcuts.overrides));
     app.commands().bind_shortcuts(app.shortcuts());
 
     // ---- 启动请求落地（`SPEC.FEAT.INTEG.04`，稿 §5）------------------------------------------

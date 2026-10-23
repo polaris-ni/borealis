@@ -10,6 +10,7 @@ add_library(borealis_core STATIC
         cli/startup.cpp
         config/form_transfer.cpp
         config/settings.cpp
+        config/shortcut_overrides.cpp
         config/store.cpp
         config/themes.cpp
         config/window_geometry_store.cpp
