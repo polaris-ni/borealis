@@ -4054,8 +4054,10 @@ auto main(int argc, char **argv) -> int {
                 if (target == nullptr) {
                     return;
                 }
-                // TODO(SPEC.FEAT.CONN.11): 目录与文件名在确认前算定，答话那一刻不再重读配置——
-                //   「对话框开着时改了目录」这一窗口的口径未裁，本棒不自行择一。
+                // 快照即契约（裁决 7.143）：目录、文件名与打码器都在弹框那一刻算定并写进正文，
+                // 答话时只做 IO、不重读配置。否则用户在框开着时改了目录，就会出现「答的是屏上这条
+                // 路径、开的却是另一条」——确认框与副作用脱钩，判据 3 的风险提示会指错文件。
+                // 配置在两步之间失效（目录不可建、文件打不开）仍走 `cannot_open` 的 fail-closed。
                 if (const auto failure = ensure_log_directory(std::filesystem::path{directory});
                     failure.has_value()) {
                     show_log_notice("session.log.alert.cannot_open", *failure);
