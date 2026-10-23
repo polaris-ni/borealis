@@ -4,6 +4,21 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.146（2026-10-24）**SSH 见证地基：进程内 libssh 假服务器落地，`itest_posix_ssh_connection` 成为 CONN.02 终端腿与 agent 转发的真协议端到端证人；同棒修掉「远端 EOF 永不归 RemoteExit」（裁决 7.146；本地提交 `e2a53b1` → 文档回写（本笔））**
+
+**动机**：裁决 7.144⑥ 与 7.145⑦ 各自在册同一条欠账——本沙箱没有 sshd，SSH 终端传输与 agent 转发都只有本机一侧的证人。libssh 的 server 腿在本机 vcpkg 构建档里是开着的（`WITH_SERVER`），足以在测试进程内起一台真协议对端，把这条欠账从「无端到端」抬到「POSIX 真协议端到端」，同时为 CONN.02 的连接复用预置计数判据。
+
+**落地形态**：
+
+- **对端不是桩**：`tests/support/fake_ssh_server` 用 libssh 的 server 腿起最小服务器——loopback 临时端口（内核择定）、一次性 ED25519 主机密钥（老加密后端退 RSA）、password 认证、session 通道、PTY/shell、字节回显，以及按需反向打开的 `auth-agent@openssh.com` 通道。连接走真 KEX、真加密、真通道多路复用。
+- **线程模型**：一个受理线程用 `select` 100 ms 分片等连接，`ssh_bind_accept_fd` 后把会话交给新的工作线程（会话不跨线程）；工作线程 `ssh_handle_key_exchange` 后挂 `ssh_event` 每 10 ms 一拍，回调用 server callbacks 与 channel callbacks 派发。回调表比会话/通道活得久；析构序＝停止位 → join 受理线程 → `shutdown` 各连接 → join 工作线程 → 释放通道/会话 → 释放 bind。
+- **五案六判据**：认证 + session + PTY 首尺寸 + shell；banner 与写出方向回显；`resize`→PTY window-change；`AuthFailed` 不重拨；通道 EOF＝`RemoteExit` 不重拨、链路丢失＝`LinkLost` 同端口重拨新 shell；agent 转发＝请求→反向通道→本机 `SSH_AUTH_SOCK` 替身（探活一轮 + 中继一轮）→回显回到对端。
+- **抓到的生产缺陷**：libssh 0.12 的 `ssh_channel_read_nonblocking` 在 EOF 态经 `ssh_channel_poll` 直接返回 `SSH_EOF`（-127）并原样透传，而 `read_loop` 只认「读到 0 且 `is_eof`」——远端 shell 正常退出后循环空转，`RemoteExit` 永不成立、会话不关、重连判定也走不到。修法是同时认 `SSH_EOF`；这是运行期行为修正，不只是补证人。
+
+**验收读数**：构建通过；`ctest --preset linux -E etest_` 116→**117**、`borealis_test_runner` 1424→**1429** 全绿。两则变异各有指名红案：把 `read_loop` 的 `SSH_EOF` 判据还原成只认 `0 + is_eof` ⇒ `channel_eof_is_remote_exit_and_not_redialed` 红；令 `request_agent_forwarding()` 立即返回 ⇒ `agent_forwarding_relays_a_reverse_channel_to_the_local_agent` 红；还原后均复绿。
+
+**边界与不称可用**（`AGENTS.md` §4.4 第 33 条）：设施用 POSIX `select`/`getsockname`/`shutdown`，Win32 下只留空实现，消费用例按 `itest_posix_` 前缀排除（不编进另一侧，不是在源里 `#ifdef` 掏空）；Win32 的 libssh `WITH_SERVER` 与 Winsock 半截均未验证。对端是 libssh 而非 OpenSSH，agent 是只回显字节的替身而非真签名链 ⇒ 真机 sshd、真 agent 签名与用户交互桌面仍未验；SFTP／隧道／ProxyJump 尚未复用本设施。故本条只称「无头证据链闭合」，**不称「可用」**。
+
 ## v0.145（2026-10-24）**`SPEC.FEAT.CONN.02` 的 agent 转发延后子项落地：反向通道受理 + 本机 agent 字节中继（裁决 7.145；本地提交 `111eb1a` → 文档回写（本笔））**
 
 **动机**：`SshProfile::agent_forwarding` 早已入模型、`~/.ssh/config` 的 `ForwardAgent` 也能导入，但传输层从不下发 `auth-agent-req@openssh.com`，也不受理服务器反向打开的通道——用户即便开了转发开关，远端 `ssh -A` 一类用法仍然拿不到本机 agent。本次按常存授权收口。
