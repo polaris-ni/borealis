@@ -79,7 +79,7 @@
 | `SPEC.FEAT.WS.11` | 会话恢复 | P2 | M4；**已落（2026-10-22，裁决 7.131，分七批同日收口）**：`PaneTree` 形状描述／重建、`WorkspaceSnapshot` 的 fail-closed 编解码、第三枚 `Preferences`（`workspace.json`，顶层键 `layout`）与 `connection.restore_sessions`（缺省开）四层已齐；装配层在九类拓扑变更与退出时提交、启动时逐窗重放（SSH 腿重走凭据询问），显式 CLI 请求跳过、`--cwd` 单飞补开。判据 ①–④⑥⑦ 有自动化证人（`utest_pane_tree` 24、`utest_workspace_snapshot` 16、`utest_settings_catalog` 12、`itest_workspace_layout` 35、`itest_workspace_restore` 2），判据 ⑤（装配腿与凭据重取）无证人；真机走查 ①–⑧ 未做、Win32／MSVC 未验 ⇒ 不称「可用」。明文凭据仍不得进快照（`SPEC.FEAT.CONN.09`） |
 | `SPEC.FEAT.WS.12` | Quick Terminal | P3 | M5 |
 | `SPEC.FEAT.CONN.01` | 本地终端 | P0 | M1 |
-| `SPEC.FEAT.CONN.02` | SSH 连接 | P1 | M3；**已落（2026-10-09）**：`SshConnection`（libssh 0.12.0 经 vcpkg，裁决 7.94）——连接/主机密钥核对/认证/PTY/shell 全腿，agent 转发下发延后（§7.94 边界） |
+| `SPEC.FEAT.CONN.02` | SSH 连接 | P1 | M3；**已落（2026-10-09）**：`SshConnection`（libssh 0.12.0 经 vcpkg，裁决 7.94）——连接/主机密钥核对/认证/PTY/shell 全腿，agent 转发下发延后（§7.94 边界）；**算法可配子项亦已落（2026-10-24，裁决 7.144）**：`settings.connection.ssh` 的 `kex_algorithms`／`host_key_algorithms` 两键非空即整表替换协商面，沿终端／SFTP／隧道／密钥推送四条拨号路径生效，设置页 SSH 段首行挂安全旁注；真机协商与 Windows／MSVC 腿未验，不称「可用」 |
 | `SPEC.FEAT.CONN.03` | SSH 档案管理 | P1 | M3；**已落（2026-10-09）**：数据模型＋config::Store 第五域（裁决 7.93）＋侧栏消费（分组/收藏/搜索/quick connect/`~/.ssh/config` 只读导入），ProxyJump 延后 |
 | `SPEC.FEAT.CONN.04` | SFTP 浏览器 | P2 | M3；**已落（2026-10-09）**：纯逻辑模型＋libssh 传输腿＋右停靠双栏面板（设计稿 D1–D9 收口，裁决 7.95）；递归目录传输/拖拽对传/chmod/队列持久化延后 |
 | `SPEC.FEAT.CONN.05` | 串口终端 | P2 | M4；**批 1–3 已落（2026-10-11）**：档案模型 + `conn::serial_model` + `platform::serial` 两腿 + `flow` 键（裁决 7.107）→ `conn::SerialConnection` + `Session` 写出侧行尾折算 + 替身设备 `itest`（裁决 7.108）→ 向导第三型（三张类型卡 + 串口九行 + 设备三件套）+ `ui::serial_format` + `main.cpp` 串口装配（枚举快照/重启分流/`serial.set_baud` 命令）+ 核对表七行改判 `Wired`（裁决 7.111），`src/main.cpp` 的两条 `TODO(SPEC.FEAT.CONN.05)` 全闭合；**真机走查未做 ⇒ 不称「可用」**，欠账两条＝真设备 `etest_serial_device`（F1 的 EACCES 挡住）与稿 §6 六条走查（含置灰颜色），Win32/MSVC 腿未编译验证（F10） |
@@ -123,7 +123,6 @@
 |:---|:---|:---|
 | `SPEC.FEAT.CONN.02` | agent 转发（`ForwardAgent`，按 profile 开关） | M4 |
 | `SPEC.FEAT.CONN.02` | 同一 profile 的连接复用（多标签共享一条 TCP 连接） | M4 |
-| `SPEC.FEAT.CONN.02` | 密钥交换与主机密钥算法可配、显式启用旧算法 | M4 |
 | `SPEC.FEAT.CONN.03` | 跳板机（ProxyJump 语义） | M4 |
 | `SPEC.FEAT.CONN.05` | 十六进制收发视图与行首时间戳前缀 | M4 之后 |
 | `SPEC.FEAT.WS.04` | 可听铃声（beep；框架音频后端已具备，须开 `AURORA_ENABLE_AUDIO`） | M5 观察池 |

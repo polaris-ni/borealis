@@ -4,6 +4,21 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.144（2026-10-24）**`SPEC.FEAT.CONN.02` 最后一条延后子项落地：KEX／主机密钥算法表可配，显式启用旧算法（裁决 7.144；本地提交 `08d1430` → 文档回写（本笔））**
+
+**动机**：CONN.02 原文把「密钥交换与主机密钥算法可配并允许显式启用旧算法（兼容老交换机/嵌入式设备，启用时给出安全提示）」列为延后子项，两枚键此前只入模型、协商面仍由库缺省决定——连老设备（只支持 `ssh-rsa` 或 `diffie-hellman-group14-sha1`）时用户没有出口。本次按常存授权收口。
+
+**落地形态**：
+
+- **口径＝整表替换**：`settings.connection.ssh` 增 `kex_algorithms`／`host_key_algorithms` 两键（逗号分隔），非空即整个协商面由用户接管（`SSH_OPTIONS_KEY_EXCHANGE`／`SSH_OPTIONS_HOSTKEYS` 的裸值语义），空串不写、留给库缺省。不做「默认表 + 用户追加」——那需要本仓复刻 libssh 的算法优先级表，且让「我列了什么」与「实际谈了什么」之间多一层不透明。
+- **库语义如实回写**：`ssh_options_set_algo` 对陌生名字是**逐个静默滤掉**，只有整表没有一个可用名字才 `SSH_ERROR`。故本仓不做逐名 fail-closed、界面也不预校验算法名（词表随 libssh 版本漂移）；写入失败落新档 `DialOutcome::Options`，与 `Unallocated` 同为**不可重拨**（配置错误重拨只会原样再失败）。
+- **四条拨号路径同一处收口**：`ssh_dial_and_authenticate` 收一枚 `SshAlgorithmOverrides`，终端／SFTP／隧道／密钥推送四条腿不再各自读配置。生效档 NextSession：终端与隧道在建会话时快照、SFTP 每次 Connect 现取、密钥推送在 UI 线程提交时快照后交 worker。
+- **设置页**：连接页 SSH 段两行 `Wired`／NextSession，段首行上方挂安全旁注，明示「非空即整表替换、旧算法降安全性、仅连旧设备时启用」。
+
+**验收读数**：构建通过；`utest_ssh` 三案（写入回读逐字相等、整表无名被拒、空覆盖不动默认表）、`utest_settings_catalog` 计数 71 → 73、`itest_settings_panel` 旁注 3 → 4；`ctest --preset linux -E etest_` **115/115 全绿**、`borealis_test_runner` **1420/1420 全绿**（基线 1417 ⇒ +3 案）。两则变异各有指名红案：交换 `SSH_OPTIONS_KEY_EXCHANGE` 与 `SSH_OPTIONS_HOSTKEYS` 槽位 ⇒ 回读案红；删 `value.empty()` 早退 ⇒ 空覆盖案红；还原后复绿。
+
+**边界与不称可用**（`AGENTS.md` §4.4 第 33 条）：本沙箱无 sshd，协商面是否真生效没有端到端证人——证人只到「会话分配后写入并 `ssh_options_get` 回读」，测试目标单独链接 libssh（core 的 libssh 依赖保持 PRIVATE）；真机协商、Windows／MSVC 腿与设置页真机走查均未做，本条不称「可用」。
+
 ## v0.143（2026-10-24）**`SPEC.FEAT.CONN.11` 的「确认前算定目录/文件名」口径收口：弹框时刻的快照即契约（裁决 7.143；零行为改动）**
 
 **动机**：裁决 7.117⑨ 在 `src/main.cpp` 的 confirm 答话回调里留了一处**未裁窗口**——目录与文件名在提示之前算定，答话那一刻不重读配置；「对话框开着时改了目录」该按哪一档处理当时未裁，代码以 `TODO(SPEC.FEAT.CONN.11)` 留痕。这是一条口径欠账，不是功能缺口：两条实现路径都只差一个开关。
