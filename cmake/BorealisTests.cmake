@@ -34,6 +34,10 @@ option(BOREALIS_BUILD_E2E "Build end-to-end tests that need a real window backen
 
 file(GLOB BOREALIS_TEST_FRAMEWORK_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/framework/*.cpp")
+# 测试公共设施的实现源（tests/support/*.cpp）：进程内假 SSH 服务器
+# （`SPEC.FEAT.CONN.02` 的真协议证人）需要落一个 TU；support 此前只有头文件。
+file(GLOB BOREALIS_TEST_SUPPORT_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/support/*.cpp")
 file(GLOB BOREALIS_TEST_CASE_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/*.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/*.cpp")
@@ -57,6 +61,7 @@ endif ()
 
 add_executable(borealis_test_runner
         ${BOREALIS_TEST_FRAMEWORK_SOURCES}
+        ${BOREALIS_TEST_SUPPORT_SOURCES}
         ${BOREALIS_TEST_CASE_SOURCES})
 
 # tests/ 供框架头按 "framework/xxx.h" 解析；include/ 供用例包含本仓公共头；

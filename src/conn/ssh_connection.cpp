@@ -225,7 +225,12 @@ auto SshConnection::read_loop() -> session::CloseReason {
             events_->on_bytes({buffer.data(), static_cast<std::size_t>(bytes_read)});
         } else if (bytes_read == SSH_ERROR || ssh_channel_is_closed(channel_)) {
             return session::CloseReason::LinkLost;
-        } else if (bytes_read == 0 && ssh_channel_is_eof(channel_)) {
+        } else if (bytes_read == SSH_EOF || (bytes_read == 0 && ssh_channel_is_eof(channel_))) {
+            // 远端 EOF 有两条读数：`ssh_channel_poll` 一经进 EOF 态就直接回 `SSH_EOF`
+            // （-127，0.12 实测，见 `ssh_channel_read_nonblocking` 的实现），此时
+            // `read_nonblocking` 原样透传；`0 + is_eof` 是它内部另一条退路。只认后者
+            // 会让远端 shell 正常退出后本循环空转到用户关标签——进程内假服务器的
+            // `itest_posix_ssh_connection` 同名用例即此缺陷的证人。
             return session::CloseReason::RemoteExit;
         }
         // 反向 agent 通道与 shell 共用同一条连接：每拍都得搬一次，否则远端的
