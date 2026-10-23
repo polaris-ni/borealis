@@ -4,6 +4,21 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.139（2026-10-24）**`SPEC.FEAT.INTERACT.06` 输入法界面腿落地：preedit 就地绘制、候选窗定位盒与 commit 上屏（裁决 7.139；本地提交 `d48474a` → 文档回写（本笔））**
+
+**动机**：需求要求组合中文本就地渲染在光标格、候选窗按光标屏幕坐标定位、组合中间态不发往会话。框架 `TextCompositionEvent`（含 preedit）在 Win32／X11／Wayland 三后端齐备，但终端是自绘网格，框架不会把 cell 内容暴露给输入法，preedit 绘制与「光标 → 屏幕坐标」换算只能在视口实现。`committed` 文本腿此前已随键盘映射接上，本棒补的是组合态本体与候选窗定位。
+
+**落地形态**：
+
+- **候选窗门禁**：`TerminalView::accessibility_role()` 覆写为 `aurora::AccessibilityRole::TextInput`。`WindowHost` 只对该角色取候选窗定位盒（`composition_caret_bounds()`），其余角色拿零盒、候选窗退回默认位置——这是需求「候选窗出现在光标处」的前置，不是可选元数据。
+- **定位盒**：窗口逻辑 dp 的零宽竖盒、盒高取终端格高。未组合时也返回终端光标格（Win32 的 `WM_IME_STARTCOMPOSITION` 早于首个 preedit，只在组合中给盒会让第一帧落在角落）；组合中 x 沿 preedit 插入点右移并钳到网格右沿；未布局、光标滚出可见窗、失焦一律回零盒（框架契约：零盒＝无有效定位）。
+- **组合态与绘制**：私有 `CompositionState{preedit, length, caret, sel_start, sel_end, has_selection}` 一份快照，三枚下标按码点夹取（框架给的下标都是码点序）；`sel_end` 含尾、端点倒置退化单点。绘制层序为「默认底色擦底 → 组合选区 → `push_clip` 裁到网格右沿内画字形 → 整段 1 物理像素下划线 → 2 物理像素插入点」，宽度与候选盒 x 同源用 `FontEngine::display_caret_x` / `display_width`；组合期 `paint_cursor` 早退，两种光标不同帧争同一格。失焦经 `on_focus_change(false)` 撤组合态并标脏。
+- **上屏腿**：只有 `e.committed` 走 `send_committed_text`，与 `on_text_input` 共用同一条路径（会话编码、行尾折算、广播镜像各一处）；组合中间态一字不发，quick select 期与文本通道同闸。
+
+**验收读数**：构建无新警告；`ctest --preset linux -E etest_` **113/113 全绿**，`./build/borealis_test_runner --run itest_render_viewport` **57/57**（新增三案：preedit 帧与关光标 bare 帧像素差分且不上会话、候选盒 x 位移等于 `display_caret_x` 且失焦回零盒、GB18030 会话 commit 出 `C4 E3 BA C3`）。第一案的 bare 对照是刻意补上的：初版只比「组合帧 vs 有块光标帧」，删掉 `paint_composition` 调用仍绿——让位本身就会改像素；加对照后才真正断言 preedit 被画出。变异自证两组：role 改 Generic ＋ 去调用 `paint_composition` ⇒ 两案指名红；把 `e.preedit` 误当 committed 发进会话 ⇒ 两案指名红；还原后逐案复绿。
+
+**边界与不称可用**（`AGENTS.md` §4.4 第 33 条）：真机走查未做——Win32 IMM32／TSF 候选窗的实际位置与焦点切换、X11／Wayland 下的 preedit 观感均只有无头读数；Windows／MSVC 腿本轮未编译验证。preedit 宽度超出网格右沿时按格宽裁剪而非换行（终端组合串不折行，与 xterm 的 preedit 着色带同口径）。故本条只称「无头证据链闭合」，**不称「可用」**。
+
 ## v0.138（2026-10-23）**Aurora 侧 G38–G44 回货后的本仓接货：`shortcuts.overrides` 启动重放落地（G40）、关窗确认闸门接上（G44）、G38／G39／G41／G43 逐条确认，G42 判为部分闭合并保留 `ActiveWindowTracker` 代偿（裁决 7.138；本地提交 `93238b4` → `b85a9eb` → 文档回写（本笔））**
 
 **动机**：`SPEC.FEAT.WS.03`／`WS.07`／`PREF.04` 三处长期挂着「等框架补能力」的延后子项，七张缺口单（附录 A.2 的 G38–G44）已在 Aurora 活动分支 `34d8a4fa` 上逐一回货。本棒做两件事：把回货公共 API 消费到本仓（能落地的落地），并逐条**读源确认**是否真的闭合——不凭「上游说补了」改口径，也不把框架侧补齐写成应用侧已实测（`AGENTS.md` §5 第 1、6 条）。

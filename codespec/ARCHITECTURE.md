@@ -106,7 +106,7 @@ grid 由后台线程写、主线程读，故需同步保护：
 
 ### 3.5 输入路径
 
-UI 事件 → 键映射（`SPEC.FEAT.INTERACT.01`）→ **文本按会话编码编码**（`SPEC.FEAT.TERM.09` 的发送方向）→ 会话写接口 → PTY/连接。输入法路径（`SPEC.FEAT.INTERACT.06`）：框架 `TextCompositionEvent` 的 preedit 由视口就地绘制在光标单元格处、候选窗按光标屏幕坐标定位，**组合中间态不发往会话**，仅 commit 文本经同一编码环节写入。鼠标上报模式与本地选择交互的切换由终端状态驱动（`SPEC.FEAT.TERM.06`）。
+UI 事件 → 键映射（`SPEC.FEAT.INTERACT.01`）→ **文本按会话编码编码**（`SPEC.FEAT.TERM.09` 的发送方向）→ 会话写接口 → PTY/连接。输入法路径（`SPEC.FEAT.INTERACT.06`）：框架 `TextCompositionEvent` 的 preedit 由视口就地绘制在光标单元格处、候选窗按光标屏幕坐标定位，**组合中间态不发往会话**，仅 commit 文本经同一编码环节写入。落地形态（2026-10-24，裁决 7.139）：视口以 `accessibility_role() = TextInput` 换得候选窗定位盒（零宽竖盒、组合中随 preedit 插入点右移），preedit 按码点快照就地绘制并让终端光标让位；`committed` 与直接按键共用同一条上屏腿。鼠标上报模式与本地选择交互的切换由终端状态驱动（`SPEC.FEAT.TERM.06`）。
 
 **已落地形态（2026-10-02，裁决 7.30）**：键映射是纯逻辑件 `term::encode_key(const KeyPress &, const TermModes &) -> std::optional<std::string>`（`include/borealis/term/keymap.h` + `src/term/keymap.cpp`，公共头不含 Aurora 类型），`term::KeySym` 与 `aurora::KeyCode` 逐值对齐、互转即 `static_cast`。视口控件的两个入口按通道分工下笔：`on_key_event` 只发**已过编码环节的转义字节**（`Session::send_bytes`），`on_text_input` 只发**码点**（`Session::send_text`，故非 UTF-8 会话的编码环节仍归 `SPEC.FEAT.TERM.09` 那一棒）；`encode_key` 对「无 Alt/Meta 的可打印键」返回空正是这条分工的落点——真实后端先给 `WM_KEYDOWN` 再给 `WM_CHAR`，两份都发即每字符上屏两次。控制字符不冲突：Win32 后端在 `ch < 0x20` 时不发文本事件（其注释自陈「控制字符交给 `KeyEvent` 处理」）。模式快照（`DECCKM` 等）经既有的 `Session::read` 短临界区取用，不新增跨线程协调点。`Ctrl+Alt` 系一律返回空：框架 `Application` 在按键到达控件之前先跑 `ShortcutRegistry`，该系归快捷键层独占（配置裁决口径见 `SPEC.FEAT.PREF.05`）。
 
@@ -470,7 +470,9 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 
 ### 10.5 输入法
 
-框架 `TextCompositionEvent`（含 preedit，Win32 / X11 / Wayland 三后端已实现，见 `SPECIFICATIONS.md` 附录 A.1）→ 视口就地绘制组合中文本于光标单元格、候选窗按「光标 → 屏幕坐标」换算定位、commit 文本经会话编码写入（`SPEC.FEAT.INTERACT.06`、`SPEC.FEAT.TERM.09` 发送方向）。**终端为自绘网格，框架不会自动把 cell 内容暴露给输入法**，preedit 的绘制与坐标换算须由视口自行实现；坐标换算须与 `SPEC.FEAT.RENDER.05` 的 DPI 缩放口径一致，否则高分屏下候选窗错位。
+框架 `TextCompositionEvent`（含 preedit，Win32 / X11 / Wayland 三后端已实现，见 `SPECIFICATIONS.md` 附录 A.1）→ 视口就地绘制组合中文本于光标单元格、候选窗按「光标 → 屏幕坐标」换算定位、commit 文本经会话编码写入（`SPEC.FEAT.INTERACT.06`、`SPEC.FEAT.TERM.09` 发送方向）。
+
+**已落地形态（2026-10-24，裁决 7.139）**：候选窗定位盒由 `TerminalView::composition_caret_bounds()` 给出——窗口逻辑 dp 的零宽竖盒，未组合时也返回终端光标格（覆盖 Win32 `WM_IME_STARTCOMPOSITION` 早于首个 preedit 的查询），组合中沿 preedit 插入点右移并钳到网格右沿。**`WindowHost` 只对 `AccessibilityRole::TextInput` 取该盒**，故视口覆写角色是候选窗定位的前置条件而非元数据。preedit 与插入点按码点存一份快照，绘制宽度与盒的 x 同源用 `FontEngine::display_caret_x` / `display_width`，坐标换算与 `SPEC.FEAT.RENDER.05` 的缩放口径一致（否则高分屏下候选窗错位）。组合中间态一字不发，只有 `committed` 经与直接按键共用的上屏腿写入；组合期 `paint_cursor` 让位。真机走查未做，边界见裁决 7.139 的代价段。
 
 ### 10.6 无障碍（延后项的落点约束）
 
