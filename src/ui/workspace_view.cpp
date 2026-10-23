@@ -758,8 +758,11 @@ auto WorkspaceView::split_pane(PaneId target, PaneAxis axis) -> void {
 
 auto WorkspaceView::close_pane(PaneId pane) -> void {
     if (pane_count() <= 1U) {
-        // TODO(SPEC.FEAT.WS.01): 末位 pane 的关闭是「关标签 / 关窗口」，判据只在那一处（裁决 7.42⑤
-        // 与 7.43④ 同口径），本层不代劳也不在此判定退出。
+        // 末位 pane 的关闭是「关标签」（裁决 7.42⑤ 与 7.43⑤ 同口径）：判据、确认与撤账只在装配层
+        // 那一条，本层只转交这一请求——不代造空树，也不在此判定退出。
+        if (hooks_.close_last_pane) {
+            hooks_.close_last_pane();
+        }
         return;
     }
     TerminalView *view = view_of(pane);

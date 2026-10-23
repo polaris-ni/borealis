@@ -73,6 +73,11 @@ class WorkspaceView final : public aurora::Container {
         std::function<void(PaneId pane, const term::KeyPress &press)> mirror_key;
         /// @brief 源格已提交文本的转交（同上）。
         std::function<void(PaneId pane, std::u32string_view text)> mirror_text;
+        /// @brief 树里只剩一格时按下关格键的转交（`Ctrl+Shift+W`，`SPEC.FEAT.WS.01`）。
+        ///
+        /// 末位 pane 的关闭就是「关标签」：判据、确认框与撤账只在装配层那一条（裁决 7.42⑤ 与
+        /// 7.43⑤ 同口径），本层不造空树也不在此判定退出。缺省即该键仍被认领、什么都不做。
+        std::function<void()> close_last_pane;
         /// @brief 开一扇新工作区窗（`Ctrl+Shift+N`，`SPEC.FEAT.WS.03` 稿 D2）；缺省即该键只被认领、
         ///        什么都不做。窗与标签都归装配层造：本层不认识框架的窗，也不持有窗口清单。
         std::function<void()> open_new_window;

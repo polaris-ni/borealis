@@ -1275,6 +1275,11 @@ auto main(int argc, char **argv) -> int {
     // 那支 `std::function`，点击时读最新那一份）。缺钩即这一键只被认领、什么都不做。
     std::function<void()> open_new_window_request;
 
+    // 关标签的请求（`SPEC.FEAT.WS.01` 的末位 pane 腿）：标签条那颗关闭钮与 `Ctrl+Shift+W` 在单格
+    // 标签上走同一条请求，判据、确认与撤账只在 `perform_close` 一处。与 `open_new_window_request`
+    // 同形态——工作区的 `Hooks` 建得比关标签闭包早，故这里只声明、由建钩处按引用捕获。
+    std::function<void(borealis::ui::TabId)> close_tab_request;
+
     // 只开一扇新窗、**不**落首标签，回该窗指针（没建成回 nullptr）。CLI `--new-window` 那一腿要用它：
     // 首标签吃哪份料（`--profile` 的档案或 `--cwd` 的目录）由请求决定，先落一格缺省本地标签再补一条
     // 就成了两格。`open_new_window_request` 是它加 D1 缺省首标签的那一层壳。
@@ -1418,6 +1423,13 @@ auto main(int argc, char **argv) -> int {
         hooks.open_new_window = [&open_new_window_request]() -> void {
             if (open_new_window_request) {
                 open_new_window_request();
+            }
+        };
+        // 末位 pane 的关格键转交「关标签」：本层不造空树、也不判退出（`SPEC.FEAT.WS.01`，裁决
+        // 7.42⑤）。缺钩即该键只被认领、什么都不做；生产路径在关标签闭包就绪后赋值。
+        hooks.close_last_pane = [&close_tab_request, id]() -> void {
+            if (close_tab_request) {
+                close_tab_request(id);
             }
         };
         // 布局变更的提交点（`SPEC.FEAT.WS.11` 稿 D2①的「切分」「关格」两类）。装在这里而不是各调用点
@@ -1851,6 +1863,23 @@ auto main(int argc, char **argv) -> int {
         window.close_confirm->show();
     };
 
+    // 关标签的请求收敛到一处（`SPEC.FEAT.WS.01`）：标签条那颗关闭钮与单格标签上的 `Ctrl+Shift+W`
+    // 都走它，判据 `has_live_session`、确认框与撤账因此只有一份。末位标签仍由 `TabStrip::close()`
+    // 拒绝（裁决 7.43⑤）——本闭包不接管「关窗口」，那条路径归 `SPEC.FEAT.WS.03`。
+    close_tab_request = [&tab_workspaces, &has_live_session, &ask_close_confirm,
+                         &perform_close](borealis::ui::TabId id) -> void {
+        const auto found = tab_workspaces.find(id);
+        if (found == tab_workspaces.end() || found->second.owner == nullptr) {
+            return;  // fail-closed：账已撤或没有属主窗时，不猜一扇窗去弹框
+        }
+        WorkspaceWindow &window = *found->second.owner;
+        if (has_live_session(id)) {
+            ask_close_confirm(window, id);
+            return;
+        }
+        perform_close(window, id);
+    };
+
     // 标签栏的构造按窗一份（稿 §6 批 3）：六条 hooks 读的全是**本窗**那一份真值源——标签表、当前号、
     // 闭包栈（`perform_close` 里）。留在全局的只有「这张标签的工作区与会话」那几张应用级表（稿 §0
     // 的 F10：`TabId` 全局唯一），它们按号查、与窗无关。变更钩子同样装在本窗的 `TabStrip` 上。
@@ -1895,15 +1924,11 @@ auto main(int argc, char **argv) -> int {
                 // 布局变更的提交点（稿 D2①「换选中」）：快照里的 `selected_tab` 就是这一格改的。
                 flush_workspace_snapshot();
             },
-            .close = [&window, &has_live_session, &ask_close_confirm, &perform_close](
-                         std::uint64_t id) -> void {
-                // 判据：该标签任一 pane 的会话进程仍在 ⇒ 一次确认关整张标签；全部已退出 ⇒ 直接关、不再问
-                //（裁决 7.47⑧）。与退出角标共用 `has_live_session`，两处不可能各判一次。
-                if (has_live_session(static_cast<borealis::ui::TabId>(id))) {
-                    ask_close_confirm(window, id);
-                    return;
+            .close = [&close_tab_request](std::uint64_t id) -> void {
+                // 与单格标签上的关格键同一条请求：判据、确认与撤账只在 `close_tab_request` 一处。
+                if (close_tab_request) {
+                    close_tab_request(static_cast<borealis::ui::TabId>(id));
                 }
-                perform_close(window, id);
             },
             .rename = [&window, &flush_workspace_snapshot](std::uint64_t id, std::u32string name) -> void {
                 window.tab_strip.rename(static_cast<borealis::ui::TabId>(id), std::move(name));

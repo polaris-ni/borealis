@@ -489,6 +489,7 @@ class Harness {
         torn_down_.clear();
         factory_calls = 0U;
         new_window_calls = 0U;
+        close_tab_requests = 0U;
         dispatch_reports = 0U;
         structure_changes = 0U;
         structure_panes.clear();
@@ -539,6 +540,11 @@ class Harness {
     std::size_t dispatch_reports = 0U;
     /// @brief 工厂最后一次收到的 `origin`（判据「被切那一格交给工厂，而不是工厂自己猜焦点」）。
     PaneId last_origin = 0U;
+    /// @brief 末位 pane 的关格键转交「关标签」的次数（`SPEC.FEAT.WS.01`，裁决 7.42⑤）。
+    ///
+    /// 本层不造空树、也不判退出：单格标签上按 `Ctrl+Shift+W` 只该让装配层收到一次请求，树与回收
+    /// 读数一概不动。缺这一枚读数，「按键落空」与「转交了但生产侧接错」在无头面分不开。
+    std::size_t close_tab_requests = 0U;
     /// @brief `structure_changed` 触发次数（`SPEC.FEAT.WS.11` 批 5-B 采集腿的唯一证人：装配层的落盘
     ///        只挂在这一枚通知上，别处没有第二个观察点）。
     std::size_t structure_changes = 0U;
@@ -588,6 +594,8 @@ class Harness {
         // 第十五键的落点（`SPEC.FEAT.WS.03` 稿 D2）：本层不造窗，故这里只计数——「转交一次、树不动、
         // 一字节不发」三条判据要靠这一枚读数与既有观测面对照。
         hooks.open_new_window = [this]() -> void { ++new_window_calls; };
+        // 末位 pane 的关格键落点（`SPEC.FEAT.WS.01`，裁决 7.42⑤）：本层只转交，故这里只计数。
+        hooks.close_last_pane = [this]() -> void { ++close_tab_requests; };
         // 采集腿的观察点（`SPEC.FEAT.WS.11` 批 5-B）：树实际变更之后本层唯一的通知。闭包读的是
         // `workspace_`，两条构造路径都在 `finish()` 之后才可能触发，故构造期不会取空。
         hooks.structure_changed = [this]() -> void {
@@ -1152,13 +1160,17 @@ AURORA_TEST_CASE(closing_a_pane_recycles_view_and_session) {
     AURORA_TEST_CHECK_EQ(h.workspace().focused_pane(), 1U);
     AURORA_TEST_CHECK(h.workspace().current_layout().dividers.empty());
     AURORA_TEST_CHECK(h.resize_count(2U) == 0U || true);  // 回收之后不再有该格的期望下发
+    AURORA_TEST_CHECK_EQ(h.close_tab_requests, 0U);  // 关的是普通格，不转交关标签
 
-    // 末位 pane 不归本层关（那是关标签 / 关窗口，判据在 `SPEC.FEAT.WS.01` / `03`）。
+    // 末位 pane 不归本层关：只把请求转交「关标签」一次（裁决 7.42⑤ / 7.43⑤），树不动、
+    // 不回收、也不报结构变更——落盘交出一份零格文档正是恢复腿读侧直接拒的形状。
     h.reset_counters();
     AURORA_TEST_REQUIRE(h.press(au::KeyCode::W, Harness::ctrl_shift()));
     h.render();
     AURORA_TEST_CHECK_EQ(h.workspace().pane_count(), 1U);
     AURORA_TEST_CHECK(h.torn_down_.empty());
+    AURORA_TEST_CHECK_EQ(h.close_tab_requests, 1U);
+    AURORA_TEST_CHECK_EQ(h.structure_changes, 0U);
 }
 
 AURORA_TEST_CASE(split_factory_receives_the_pane_being_split) {
