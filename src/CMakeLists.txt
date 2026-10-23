@@ -24,6 +24,7 @@ add_library(borealis_core STATIC
         conn/serial_model.cpp
         conn/sftp_client.cpp
         conn/sftp_model.cpp
+        conn/snippet.cpp
         conn/ssh_connection.cpp
         conn/ssh_dial.cpp
         conn/telnet_connection.cpp
