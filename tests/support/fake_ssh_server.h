@@ -27,6 +27,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 #include "borealis/conn/profile.h"
 
@@ -70,6 +71,13 @@ class FakeSshServer final {
     [[nodiscard]] auto shell_requests() const -> std::size_t;
     [[nodiscard]] auto last_pty_columns() const -> int;
     [[nodiscard]] auto last_pty_rows() const -> int;
+
+    /// @brief 第 @p index 条 session 通道（按打开次序，自 0 起）的最近 PTY 尺寸
+    ///        `(columns, rows)`；越界回 `(0, 0)`。
+    ///
+    /// 连接复用落地后（`SPEC.FEAT.CONN.02`）一条 TCP 上有多条通道，逐通道尺寸是
+    /// 「每个标签各有自己的行列」的线上证人；旧用例读的全局最近一档保持不动。
+    [[nodiscard]] auto pty_size_at(std::size_t index) const -> std::pair<int, int>;
 
     // ---- agent 转发腿的事实（`SPEC.FEAT.CONN.02`，裁决 7.145 的真协议证人）----
     [[nodiscard]] auto agent_forward_requests() const -> std::size_t;

@@ -66,6 +66,8 @@ struct FakeSshServer::Impl {
         ssh_channel_callbacks_struct callbacks{};
         bool shell_open{false};
         bool agent{false};  ///< 反向 auth-agent 通道：只记录收到的应答，不回显。
+        bool closed{false}; ///< 已收到关闭（判定「整条连接是否收摊」用）。
+        int index{-1};      ///< session 通道的打开次序（逐通道 PTY 尺寸表的下标）。
     };
 
     /// @brief 一条已受理连接的现场（工作线程独占，故内部字段不加锁）。
@@ -99,8 +101,8 @@ struct FakeSshServer::Impl {
     // ---- 事实计数（工作线程写、用例线程读）----
     auto note_connection() -> void;
     auto note_auth() -> void;
-    auto note_channel() -> void;
-    auto note_pty(int columns, int rows) -> void;
+    auto note_channel() -> std::size_t;
+    auto note_pty(int index, int columns, int rows) -> void;
     auto note_shell() -> void;
     auto note_agent_request() -> void;
     auto note_agent_channel() -> void;
@@ -148,6 +150,7 @@ struct FakeSshServer::Impl {
     std::size_t agent_channel_count{0};
     int last_columns{0};
     int last_rows{0};
+    std::vector<std::pair<int, int>> channel_sizes{};
     std::string received{};
     std::string agent_received{};
 
@@ -200,7 +203,7 @@ auto FakeSshServer::Impl::on_pty_request(ssh_session /*session*/, ssh_channel ch
                                          int /*pxwidth*/, int /*pxheight*/, void *userdata) -> int {
     auto &state = *static_cast<ChannelState *>(userdata);
     state.channel = channel;
-    state.impl->note_pty(width, height);
+    state.impl->note_pty(state.index, width, height);
     return 0;
 }
 
@@ -209,7 +212,7 @@ auto FakeSshServer::Impl::on_pty_window_change(ssh_session /*session*/, ssh_chan
                                                int /*pxheight*/, void *userdata) -> int {
     auto &state = *static_cast<ChannelState *>(userdata);
     state.channel = channel;
-    state.impl->note_pty(width, height);
+    state.impl->note_pty(state.index, width, height);
     return 0;
 }
 
@@ -234,7 +237,25 @@ auto FakeSshServer::Impl::on_channel_close(ssh_session /*session*/, ssh_channel 
                                            void *userdata) -> void {
     auto &state = *static_cast<ChannelState *>(userdata);
     // 反向 agent 通道关掉不代表这条连接的 session 收摊（客户端换拨时会先收火）。
-    if (!state.agent) {
+    if (state.agent) {
+        return;
+    }
+    state.closed = true;
+    // 连接复用的证人（设计稿 §7.3）：只有**全部** session 通道都关了，整条连接才算收摊。
+    // 旧行为「任一通道关闭即断整条连接」会让「关一个标签、另一个继续」的用例证不出来。
+    auto all_closed = true;
+    auto any_session = false;
+    for (auto &other : state.owner->channels) {
+        if (other->agent) {
+            continue;
+        }
+        any_session = true;
+        if (!other->closed) {
+            all_closed = false;
+            break;
+        }
+    }
+    if (any_session && all_closed) {
         state.owner->peer_closed = true;
     }
 }
@@ -252,12 +273,12 @@ auto FakeSshServer::Impl::on_channel_open(ssh_session session, void *userdata) -
     if (channel == nullptr) {
         return nullptr;
     }
-    worker.impl->note_channel();
 
     auto state = std::make_unique<ChannelState>();
     state->impl = worker.impl;
     state->owner = &worker;
     state->channel = channel;
+    state->index = static_cast<int>(worker.impl->note_channel());
     ssh_callbacks_init(&state->callbacks);
     state->callbacks.userdata = state.get();
     state->callbacks.channel_data_function = &Impl::on_data;
@@ -428,7 +449,7 @@ auto FakeSshServer::Impl::serve(const std::shared_ptr<Worker> &worker) -> void {
 
 auto FakeSshServer::Impl::end_channels(Worker &worker) -> void {
     for (auto &state : worker.channels) {
-        if (state->channel != nullptr) {
+        if (state->channel != nullptr && !state->agent) {
             static_cast<void>(ssh_channel_send_eof(state->channel));
         }
     }
@@ -497,16 +518,25 @@ auto FakeSshServer::Impl::note_auth() -> void {
     ++auth_attempts;
 }
 
-auto FakeSshServer::Impl::note_channel() -> void {
+auto FakeSshServer::Impl::note_channel() -> std::size_t {
     const std::lock_guard lock{stats_mutex};
+    const auto index = channel_count;
     ++channel_count;
+    return index;
 }
 
-auto FakeSshServer::Impl::note_pty(int columns, int rows) -> void {
+auto FakeSshServer::Impl::note_pty(int index, int columns, int rows) -> void {
     const std::lock_guard lock{stats_mutex};
     ++pty_count;
     last_columns = columns;
     last_rows = rows;
+    if (index >= 0) {
+        const auto slot = static_cast<std::size_t>(index);
+        if (slot >= channel_sizes.size()) {
+            channel_sizes.resize(slot + 1, std::pair<int, int>{0, 0});
+        }
+        channel_sizes[slot] = std::pair<int, int>{columns, rows};
+    }
 }
 
 auto FakeSshServer::Impl::note_shell() -> void {
@@ -609,6 +639,14 @@ auto FakeSshServer::last_pty_columns() const -> int {
 auto FakeSshServer::last_pty_rows() const -> int {
     const std::lock_guard lock{impl_->stats_mutex};
     return impl_->last_rows;
+}
+
+auto FakeSshServer::pty_size_at(std::size_t index) const -> std::pair<int, int> {
+    const std::lock_guard lock{impl_->stats_mutex};
+    if (index >= impl_->channel_sizes.size()) {
+        return std::pair<int, int>{0, 0};
+    }
+    return impl_->channel_sizes[index];
 }
 
 auto FakeSshServer::received_text() const -> std::string {
