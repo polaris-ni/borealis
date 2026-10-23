@@ -2514,9 +2514,9 @@ auto TerminalView::dispatch_open(std::string_view target) -> void {
         presentation_.open_url(target);
         return;
     }
-    // TODO(SPEC.FEAT.INTERACT.05: 批 3 的装配层把 `platform::open_url` 装进这条接缝)。
-    // 刻意**不做「留空即调生产腿」的回落**（与上面几条接缝的口径相反）：平台腿落地前这里没有腿可调，
-    // 而落地后一旦默认调它，每次跑用例就会真的开出一个浏览器窗口——稿 F15 记的正是这样一次事故。
+    // 生产腿由装配层装进 `presentation_.open_url`（`src/main.cpp` 的 `production_presentation`）。
+    // 这里刻意**不做「留空即调生产腿」的回落**（与上面几条接缝的口径相反）：一旦默认调它，
+    // 每次跑用例就会真的开出一个浏览器窗口——稿 F15 记的正是这样一次事故。
     AURORA_LOG_WARN("ui", "open_url seam not installed, nothing opened for: ", target);
 }
 
