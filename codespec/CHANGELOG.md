@@ -4,6 +4,22 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.138（2026-10-23）**Aurora 侧 G38–G44 回货后的本仓接货：`shortcuts.overrides` 启动重放落地（G40）、关窗确认闸门接上（G44）、G38／G39／G41／G43 逐条确认，G42 判为部分闭合并保留 `ActiveWindowTracker` 代偿（裁决 7.138；本地提交 `93238b4` → `b85a9eb` → 文档回写（本笔））**
+
+**动机**：`SPEC.FEAT.WS.03`／`WS.07`／`PREF.04` 三处长期挂着「等框架补能力」的延后子项，七张缺口单（附录 A.2 的 G38–G44）已在 Aurora 活动分支 `34d8a4fa` 上逐一回货。本棒做两件事：把回货公共 API 消费到本仓（能落地的落地），并逐条**读源确认**是否真的闭合——不凭「上游说补了」改口径，也不把框架侧补齐写成应用侧已实测（`AGENTS.md` §5 第 1、6 条）。
+
+**落地形态**：
+
+- **G40（`SPEC.FEAT.PREF.04` 的启动重放）**：新增 `config::replay_shortcut_overrides`（`src/config/shortcut_overrides.{h,cpp}`），把 `settings.shortcuts.overrides` 逐条经 `au::KeyCombo::from` 解析后交 `CommandRegistry::set_binding`；**重放排在 `bind_shortcuts` 之前**，否则框架把默认键抢回去。回执 `ShortcutReplayReport{applied, unparsable, unknown_command}` 三档计数，畸形串与未知 id 只跳过该条并各留一条 `AURORA_LOG_WARN`——一个坏键不吃掉其余全部快捷键。原 `TODO(SPEC.FEAT.PREF.04)` 撤除。
+- **G44（`SPEC.FEAT.WS.03` 的关窗确认）**：按 [`WS03_WINDOW_CLOSE_CONFIRM.draft.md`](WS03_WINDOW_CLOSE_CONFIRM.draft.md)（新）的推荐档全量落地——`app.set_on_close_requested` 闸门只认 `OperatingSystem` 来源，`Programmatic`／`PolicyCascade` 直接放行（D1：拿闸门挡本层自己发起的关闭会把退出序卡在无人可答的框上）；判据与关标签同源，本窗任一标签任一 pane 的 `Session::alive()` 才询问，折法复用 `has_live_session`（D2：不复制第二份「活会话」定义）；确认框按窗一份 `window_close_confirm` 且不复用关标签那只（D3：两件事可同时发生，共用换 `content` 会覆盖另一句问题）；确认后走 `close_window()` 汇入既有帧末回收与撤账链（D4：不另写销毁路径）；取不到窗即放行（D5）；新增 `window.close_confirm.{title,body}` 两条词条、中英各一档，表长 510 → 512（D6）。不加「以后不再询问」偏好键、不逐会话追问、不改 `ExitPolicy`、不在应用侧轮询 `should_close()`。
+- **G38／G39（`SPEC.FEAT.WS.07` 的命令面板文案）**：框架回货 `AURORA_DEFAULT_PLACEHOLDER_KEY`／`AURORA_DEFAULT_EMPTY_MESSAGE_KEY` 与「文本覆盖 > key 查表 > 英文兜底」三档优先级；本仓**刻意不调** `set_placeholder()`／`set_empty_message()`——文本覆盖会把文案锁死在第一档，切语言即失效。
+- **G41／G43（确认型）**：G41 是 `au::file_dialog::open_folder()` 的 POSIX 自绘腿，本仓既有调用点自动受益、零改动；G43 是 `apply_host_geometry` 经幂等 `Surface::set_window_mode` 消费落盘的 `mode`，写读对称、窗口态回得来、零改动。
+- **G42（部分闭合，本条唯一改判）**：`03c1190a` 回的是应用级 `active_window()`，但 `record_dispatch` 只在 `Application` 的六个派发入口记账，`WindowHost::dispatch(Event&)` 的 Mouse／Scroll／TextInput／Touch／SystemDrop 五分支不记账，框架自己的用例 `active_window_ignores_pointer_move` 注释原文「宿主级无挂点，不翻转」⇒ 真实后端的指针移动与宿主级派发不翻转命令落点，本仓 `ui::ActiveWindowTracker` **保留**。缺陷与两条最小修复建议（`set_dispatch_sink` 或派发观察器；`active_window()` 的 `@note` 应补宿主级限定）写进 [`FRAMEWORK_TASK_WS03_G42.md`](FRAMEWORK_TASK_WS03_G42.md) §7，附录 A.2 与 WS.03 现状句同口径；不私改框架、不在应用侧补第二套记账。
+
+**验收读数**：构建无新警告；`ctest --preset linux -E etest_` **113/113 全绿**（新套件 `utest_shortcut_overrides`）、`borealis_test_runner` **1401/1401 全绿**（基线 1395 ⇒ `utest_shortcut_overrides` 4 案 + `itest_workspace_window` 2 案，后者 14 → 16 案）。`itest_workspace_window` 两案为无头双窗、`set_should_close` 驱动：①闸门否决档——恰一问且来源 `OperatingSystem`、窗仍活、`should_close()` 双清、`on_window_closed` 不触发，随后 `close_window()` 第二次询问来源可辨、回收恰一次；②无活会话档——恰一问即放行。变异自证各有指名红案：重放排到绑定之后／覆盖不生效／坏键整组弃用 ⇒ `utest_shortcut_overrides`；闸门恒 `true` ⇒ 有活会话也不弹框、窗被带走；闸门恒 `false` ⇒ 窗永远关不掉；程序化来源也询问 ⇒ 退出序卡死（与上一条同构，由第二案的恒假注入指名）；还原后逐案复绿。同批把 `src/ui/settings_i18n.cpp` 与 `ARCHITECTURE.md` 的两处表长读数改为 512。
+
+**边界与不称可用**（`AGENTS.md` §4.4 第 33 条）：真机欠账集中在 G44——OS 关闭钮的置位时机、否决后 WM 是否重发关闭请求、Wayland compositor 的期望行为，POSIX 无头面读不到；Windows／MSVC 腿未编译未实测。`src/main.cpp` 不编入 runner（裁决 7.83）⇒ 闸门闭包里的弹框与词条两跳**无自动化证人**，由编译、链接与真机走查兜底；G42 的指针档同样只有无头读数。故 `SPEC.FEAT.WS.03` 的关窗确认与 `SPEC.FEAT.PREF.04` 的重放均**不称「可用」**。G42 的框架侧最小修复仍随该缺口单在册。
+
 ## v0.137（2026-10-23）**`SPEC.FEAT.CONN.07` 的 snippets 延后子项落地：片段库／分组／搜索／`{{name}}` 占位符／发送至焦点 pane 五件齐备，`snippets.open`（`Ctrl+Shift+K`）唤起左侧 520 dp 面板（裁决 7.137；本地提交 `c4577f9` → `7eb1f24` → `2356db1` → `e9e1026` → `8a44986`）**
 
 **动机**：`SPEC.FEAT.CONN.07` 原文把快捷片段列为延后子项（目标 M4）。面板族生命周期（左停靠卡片、搬窗、撤账）、`Session::send_text` 的统一发送路径、八域配置与导出/导入、命令层与快捷键层都已就位，snippets 只需组合这些既有接缝，不新增框架缺口。

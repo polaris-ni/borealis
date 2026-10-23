@@ -84,3 +84,22 @@
 - 走 **甲** 路：闭包签名变更要过全仓与示例，且要决定是否保留无参重载 ⇒ **中**，语义上最贴「快捷键作用于哪一扇窗」，日后还能在同一 context 里带更多派发信息。
 
 **本仓优先级**：**中**——不阻塞 `SPEC.FEAT.WS.03` 的落地（本仓代偿已落，七批已于 2026-10-21 收口），阻塞的是「代偿能否撤除」与真机走查清单里那一条。按 AGENTS §5.1 的类别分流，本条属事件链路（裁决 7.13①），故走「Aurora 补公共 API + 单测 + 该仓文档回写，本仓只消费公共头」这一路，本仓不私挂分叉、不在应用侧自算派发来源的权威态。
+
+---
+
+## 7 回货与缺陷补记（2026-10-23）
+
+Aurora 活动分支推进到 `34d8a4fa`（本仓 `add_subdirectory` 源码树已同步），其中 `03c1190a` 落了形态乙：`Application::active_window() const -> WindowId`。**本条按现状判为「部分闭合」，本仓不撤代偿**；理由与证据如下。
+
+**已回货的部分（读源实测）**：记账位 `last_dispatch_` 与六条应用级程序化入口——`dispatch_click`、`dispatch_pointer` 的 Press、`dispatch_key` 的 Down、`dispatch_text`、`dispatch_touch`（有活跃触点）、`dispatch_system_drop`；外加 `register_host` 注入 `WindowHost::set_key_pre_handler` 的那枚 lambda 在 `KeyEvent(Down)` 时记账（`src/aurora/app/application.cpp` 的 `record_dispatch` 各调用点）。`reap_closed` 回收宿主时清位，无记录回落到存活主宿主。这条范围足以覆盖「键盘快捷键的派发来源」，`utest_application.cpp` 的 `active_window_visible_inside_shortcut_action` 等案已证。
+
+**未回货的部分（本仓不能消费的那一半）**：`WindowHost::dispatch(Event&)` 在 `MouseEvent` / `ScrollEvent` / `TextInputEvent` / `TouchEvent` / `SystemDropEvent` 五个分支里**不调用** `record_dispatch`（`src/aurora/app/window_host.cpp`）。真实后端的指针、滚轮、输入法文本、触摸与系统拖放都是经这一条宿主级入口进来的，而应用级的 `dispatch_pointer` 等六条只是**程序化派发**的另一条腿。Aurora 自己的用例把这一档钉成了预期读数：`utest_application.cpp` 的 `active_window_ignores_pointer_move` 在 `host_b->dispatch(MouseEvent{Press})` 之后断言活动窗**仍是主窗**（注释原文「宿主级无挂点，不翻转」）；提交 `03c1190a` 的说明亦明写刻意不给宿主级派发加反指。
+
+**对本仓的影响**：生产路径上「点 B 窗的标签条/视口 → 再按全局快捷键」不会把活动窗翻到 B——指针 Press 只经 `WindowHost::dispatch`，记账不发生；而本仓 `ui::ActiveWindowTracker` 的三处上报点恰好覆盖「本窗的视口 / 标签条 / 横幅收到过一次按键或指针 Press」，所以在指针场景下**代偿比框架公共面更准**。`Application::active_window()` 与 tracker 的语义差异只在键盘路径上收敛，撤 tracker 会把指针场景改坏。故保留 tracker、三处上报点与七案单测；`target_window` 解析器不改读公共面。
+
+**最小修复建议（Aurora 侧任选其一，选路权在 Aurora）**：
+
+1. 在 `WindowHost::dispatch` 的 `MouseEvent(Press)` / `ScrollEvent` / `TextInputEvent` / `TouchEvent(有活跃触点)` / `SystemDropEvent` 分支入口补一次「向 `Application` 报告本宿主」的挂点——但 `WindowHost` 不持有 `Application`，需要新增一枚 `set_dispatch_sink(std::function<void()>)`（与 `set_state_sink` 同形），由 `register_host` 注入，宿主机在五处分支调用；`record_dispatch` 仍留在 `Application`，不把记账权下放给宿主（避免应用侧伪造）。
+2. 或者由 `Application` 在 `register_host` 时给宿主装一枚「派发观察器」回调（与键盘 pre-handler 并列、语义只读），宿主在五类分支入口各调一次；`Application::active_window()` 从此覆盖真实后端指针。
+
+两条都要保持「Move / Release 不记账」「模态选择器运行期不记账」「回收后不返回死宿主」三条既有口径，并补一条宿主级指针直调后活动窗翻转的框架用例（现有 `active_window_ignores_pointer_move` 需按新口径改断言）。另建议把 `application.h` 里 `active_window()` 的 `@note` 记账范围句补上「宿主级派发」限定——当前文字读起来像已覆盖真实后端指针，与实现与用例都不一致。
