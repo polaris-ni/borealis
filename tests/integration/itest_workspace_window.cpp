@@ -853,6 +853,80 @@ AURORA_TEST_CASE(the_last_host_is_retained_so_the_closed_hook_skips_it) {
 #endif
 }
 
+AURORA_TEST_CASE(a_close_request_can_be_vetoed_and_a_later_programmatic_close_reaps) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 关窗闸门的接货腿（`SPEC.FEAT.WS.03` 稿 D4／G44）：装配层在回调里按窗判定活会话、弹确认并回
+    // `false`，用户确认后走 `close_window()`（`Programmatic`）再进一次。这里用一枚「OS 一律否决、
+    // 其余放行」的回调把那条往返钉成读数——判据在装配层（`has_live_session`），机制在这条帧环上。
+    //
+    // 三档读数：① 一次抬沿只问一次（`run()` 跑了三帧，账上仍只有一条）；② 被否后后端旗标已清、
+    // 宿主还在、`on_window_closed` 一声不响；③ 程序化那条带着 `Programmatic` 来源进来并当帧末回收。
+    TwoWindowRig rig{3, false};
+    AURORA_TEST_REQUIRE(rig.preflight());
+
+    std::vector<std::pair<au::WindowId, au::CloseRequestSource>> asked;
+    rig.app().set_on_close_requested(
+        [&asked](au::WindowId id, au::CloseRequestSource source) -> bool {
+            asked.emplace_back(id, source);
+            return source != au::CloseRequestSource::OperatingSystem;
+        });
+
+    rig.request_close(1U);
+    rig.run();
+
+    AURORA_TEST_REQUIRE_EQ(asked.size(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(asked.front().first, rig.id_of(1U));
+    AURORA_TEST_CHECK_TRUE(asked.front().second == au::CloseRequestSource::OperatingSystem);
+    AURORA_TEST_CHECK_EQ(rig.window_count(), std::size_t{2});
+    AURORA_TEST_REQUIRE_NOT_NULL(rig.host(1U));
+    AURORA_TEST_CHECK_TRUE(!rig.host(1U)->should_close());  // 否决已落到后端旗标，不是只在本层记账
+    AURORA_TEST_CHECK_TRUE(rig.closed_windows().empty());
+
+    rig.app().close_window(rig.id_of(1U));  // 用户答「关」之后装配层那一跳
+    rig.run();
+
+    AURORA_TEST_REQUIRE_EQ(asked.size(), std::size_t{2});
+    AURORA_TEST_CHECK_EQ(asked.back().first, rig.id_of(1U));
+    AURORA_TEST_CHECK_TRUE(asked.back().second == au::CloseRequestSource::Programmatic);
+    AURORA_TEST_CHECK_EQ(rig.window_count(), std::size_t{1});
+    AURORA_TEST_CHECK_NULL(rig.host(1U));
+    AURORA_TEST_REQUIRE_EQ(rig.closed_windows().size(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(rig.closed_windows().front(), rig.id_of(1U));
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(an_os_close_request_without_a_live_session_passes_straight_through) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 无活会话那一档（稿 D2／D5）：装配层不弹框、直接回 `true`，净效果必须与闸门落地之前逐帧一致
+    // ——第一帧问一次、帧末回收，另一扇继续在渲染集合里。来源必为 `OperatingSystem`：装配层只认
+    // 这一档弹框，若这里读成别的值，真机点 × 就永远问不到。
+    TwoWindowRig rig{3, false};
+    AURORA_TEST_REQUIRE(rig.preflight());
+
+    std::vector<au::CloseRequestSource> sources;
+    rig.app().set_on_close_requested(
+        [&sources](au::WindowId, au::CloseRequestSource source) -> bool {
+            sources.push_back(source);
+            return true;
+        });
+
+    rig.request_close(1U);
+    rig.run();
+
+    AURORA_TEST_REQUIRE_EQ(sources.size(), std::size_t{1});
+    AURORA_TEST_CHECK_TRUE(sources.front() == au::CloseRequestSource::OperatingSystem);
+    AURORA_TEST_CHECK_EQ(rig.window_count(), std::size_t{1});
+    AURORA_TEST_CHECK_NULL(rig.host(1U));
+    AURORA_TEST_CHECK_NOT_NULL(rig.host(0U));
+    AURORA_TEST_REQUIRE_EQ(rig.closed_windows().size(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(rig.closed_windows().front(), rig.id_of(1U));
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
 AURORA_TEST_CASE(each_window_restores_the_geometry_stored_under_its_own_key) {
 #ifdef AURORA_BACKEND_HEADLESS
     // 稿 §7「每扇窗记住自己的位置与尺寸」的自动化半区。两格几何都由**本仓那枚 `window_persist_id`**

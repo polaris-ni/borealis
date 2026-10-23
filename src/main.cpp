@@ -438,6 +438,10 @@ struct WorkspaceWindow {
     /// 那句确认弹在 A 窗脸上，而答话回来的 `raw_id` 又是按 A 窗那栏算的。
     std::shared_ptr<au::Dialog> close_confirm{};
     bool close_confirm_mounted = false;  ///< 首次挂入后复用同一实例换文案（`add_overlay` 只走一次）
+    /// 本窗的**关窗**确认框（`SPEC.FEAT.WS.03` 稿 D4／G44）：与关标签那只分开——两件事可能同时
+    /// 发生，共用一只换 `content` 会把另一句问题覆盖掉。生存期同样跨 Show→答话。
+    std::shared_ptr<au::Dialog> window_close_confirm{};
+    bool window_close_confirm_mounted = false;
 
     /// @brief 交出后端窗口的所有权：`Application` 的宿主接管它。
     [[nodiscard]] auto take_window() -> std::unique_ptr<au::Window> { return std::move(window); }
@@ -4365,6 +4369,53 @@ auto main(int argc, char **argv) -> int {
         keys_panel.tick();     // 密钥行表随快照刷新（D6① 同族；面板关着即空操作）
     });
 
+    // 关窗闸门（`SPEC.FEAT.WS.03` 稿 D4，G44 回货的接货腿）：用户点 × 时先问一句，可否决。
+    // 回 false 是**同步**答复——框架在 `on_frame` 之后、回收之前逐窗问一次（边沿闩），被否的窗
+    // 当帧继续渲染；确认框在回调里 `show()` 即当帧上屏。判据与关标签同源（`has_live_session`），
+    // 窗口级的折法是遍历本窗栏位再复用那一枚，不另立第二份「活会话」定义。
+    //
+    // 来源只认 OS 关闭钮：本层 `close_window()`（含用户确认后那一次）与策略连带一律放行，
+    // 拿闸门挡自己发起的关闭会把退出序卡在一个没人能答的框上。取不到窗（已散／不归本层管）同样放行。
+    app.set_on_close_requested(
+        [&app, &window_of, &has_live_session](au::WindowId id, au::CloseRequestSource source) -> bool {
+            if (source != au::CloseRequestSource::OperatingSystem) {
+                return true;
+            }
+            WorkspaceWindow *const window = window_of(id);
+            if (window == nullptr) {
+                return true;
+            }
+            bool live = false;
+            for (const auto &tab : window->tab_strip.tabs()) {
+                if (has_live_session(tab.id)) {
+                    live = true;
+                    break;
+                }
+            }
+            if (!live) {
+                return true;  // 没有活会话：不必问，直接关
+            }
+            if (!window->window_close_confirm) {
+                window->window_close_confirm = std::make_shared<au::Dialog>();
+            }
+            if (!window->window_close_confirm_mounted) {
+                static_cast<void>(window->overlay_host->add_overlay(
+                    aurora::Node{std::static_pointer_cast<au::Widget>(window->window_close_confirm)}));
+                window->window_close_confirm_mounted = true;
+            }
+            window->window_close_confirm->set_content(au::confirm(
+                borealis::ui::settings_label("window.close_confirm.title"),
+                borealis::ui::settings_label("window.close_confirm.body"),
+                [&app, id, dialog = window->window_close_confirm](bool accepted) -> void {
+                    dialog->close();
+                    if (accepted) {
+                        app.close_window(id);  // Programmatic：闸门直接放行，帧末走既有撤账链
+                    }
+                }));
+            window->window_close_confirm->show();
+            return false;  // 撤销本次关闭；用户确认后那条程序化路径再进来
+        });
+
     // 关窗撤账链（`SPEC.FEAT.WS.03` 稿 §6 批 4-B）：一扇窗被框架收走时，挂在它名下的账目必须一起撤
     // 干净——否则横幅继续列一张已经不存在的标签、命令落点指向已经析构的对象、四张连接表里留着一条
     // 没人认领的绑定。稿 §5 第 4 条那句「窗拆后 `tab_workspaces`／四张连接表／广播成员三处账目为空」
@@ -4375,7 +4426,8 @@ auto main(int argc, char **argv) -> int {
     // 而本层的对象一旦在那一跳里从容器 `erase`，同一帧仍会为这扇已请求关闭的窗布局与绘制——
     // `TabBarWidget` 与横幅的 hooks 捕的是 `WorkspaceWindow &`，读的就是刚被析构的那一格。宿主回收
     // 之后（此刻）这扇窗再不会被渲染，控件树随宿主一起散，本层的对象才是可以安全落地的时点。
-    // 「销毁前要能看见关闭请求」那一半留给稿 D4（关闭确认／否决），本棒不做（F18：框架不给否决入口）。
+    // 「销毁前要能看见关闭请求」那一半由上面的闸门承担（稿 D4，G44 回货后）：命中活会话先弹确认，
+    // 本钩子只在窗**真被收走**之后撤账，两者时序不重叠。
     //
     // 代价照实记（F19）：关最后一扇时框架保留主宿主，这一跳**不触发**，于是那一扇的账目留到 `run()`
     // 返回之后由退出序统一收（本函数末尾那条逐窗关会话的腿，形态与批 4-C-2 之前的扫表读法等价），
@@ -4403,8 +4455,8 @@ auto main(int argc, char **argv) -> int {
         WorkspaceWindow &window = *workspace_windows[index];
         // `surface` 先抄下来：对象在下面 `erase` 那一刻就散，而唤醒指针的比较与重指要在那之后。
         au::Surface *const closing_surface = window.surface;
-        // ① 本窗名下全部标签走与关标签**同一条**链。不弹确认：关闭请求已经发生且窗已回收，此刻问一句
-        //    只会把「窗没了、账还在」挂在一整轮答话上（稿 D4 的推荐档＝本棒不做）。
+        // ① 本窗名下全部标签走与关标签**同一条**链。不弹确认：用户的关闭意图已在闸门处问过（稿 D4），
+        //    此刻窗已回收，再问一句只会把「窗没了、账还在」挂在一整轮答话上。
         //    先取快照再逐张关：`perform_close` 会搬动栏位表，边遍历 `tabs()` 边关就是迭代器失效。
         std::vector<borealis::ui::TabId> strip_ids;
         for (const auto &tab : window.tab_strip.tabs()) {

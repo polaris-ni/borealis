@@ -433,6 +433,11 @@ const Tier kStringsZh{
     {"tab.close_confirm.title", "关闭标签"},
     {"tab.close_confirm.body", "该标签里还有正在运行的进程，关闭会终止它们。确定关闭吗？"},
 
+    // ---- 关窗确认框（`SPEC.FEAT.WS.03` 稿 D4：G44 回货后的窗口级确认；与关标签那只分属两事，
+    // 本窗的活会话聚合按窗判定，文案也不共用——「这扇窗口」与「该标签」对用户是两种范围）----
+    {"window.close_confirm.title", "关闭窗口"},
+    {"window.close_confirm.body", "这扇窗口里还有正在运行的会话，关闭会终止它们。确定关闭吗？"},
+
     // ---- dead-session 一键重启（`SPEC.FEAT.WS.05`：`session.restart` 命令标题 + 视口浮层两处文案）----
     {"session.restart.title", "重启会话"},
     {"session.restart.hint", "会话已退出"},
@@ -718,15 +723,15 @@ const Tier kStringsZh{
 /// @brief 英文档（`en`）的 key → 模板：批 3 按域四段推完，**段 1 落 `connections.*` 与 `keys.*` 146 条、
 /// 段 2 落 `settings.*` 77 条、段 3 落终端与会话侧 93 条、段 4 落连接域与其余 150 条（`connection.*`／
 /// `serial.*`／`sftp.*`／`tunnel.*`／`shortcuts.*`／`appearance.*`），批 6 的表外四处再补 4 枚，
-/// **合计 510 条，与中文表逐 key 相等**（2026-10-23 按运行期读数更正：原文停在 470，此后各棒补入
-/// 40 枚，其中快捷片段 38 枚见裁决 7.137）。
+/// **合计 512 条，与中文表逐 key 相等**（2026-10-23 按运行期读数更正：原文停在 470，此后各棒补入
+/// 42 枚，其中快捷片段 38 枚见裁决 7.137、关窗确认 2 枚见裁决 7.138）。
 ///
 /// CJK-LITERAL: locale-output - 本表与中文表同为上屏文案的真值源，换成转写即失去并排对照的价值。表内
 /// 非 ASCII 的字面量只有两类共九枚：三枚字形（`settings.chain.*`，与中文表同字）与六枚 `" · "` 分隔符
 /// （沿 `serial_format.cpp` 与 `settings_panel.cpp` 那两处同类别已标的既定视觉形态）。
 ///
-/// 位置刻意紧跟中文表（该稿 D4），并排校对是这一档存在的唯一理由——510 条 key（批 1 收敛后的 464 条加
-/// 批 2 两枚、批 6 四枚，及此后各棒补入的 40 枚）分在两个文件里，「两档同 key 集」那条判据就要跨文件聚合。段内条目序与中文表逐条一致，
+/// 位置刻意紧跟中文表（该稿 D4），并排校对是这一档存在的唯一理由——512 条 key（批 1 收敛后的 464 条加
+/// 批 2 两枚、批 6 四枚，及此后各棒补入的 42 枚）分在两个文件里，「两档同 key 集」那条判据就要跨文件聚合。段内条目序与中文表逐条一致，
 /// 中文表里解释「为什么是这个措辞」的那几条注也随条目一起搬过来：改一条时两档同屏可见。
 ///
 /// 两档文本逐字相同的 13 枚不是漏译：`CR`／`CRLF`／`LF`／`SSH`／`Telnet`／`Ed25519`／`RSA`／`SOCKS5 -D`
@@ -1111,6 +1116,11 @@ const Tier kStringsEn{
     {"tab.close_confirm.title", "Close the tab"},
     {"tab.close_confirm.body",
      "This tab still has processes running, and closing it terminates them. Close it anyway?"},
+
+    // ---- 关窗确认框（WS.03 稿 D4）----
+    {"window.close_confirm.title", "Close the window"},
+    {"window.close_confirm.body",
+     "This window still has running sessions, and closing it terminates them. Close it anyway?"},
 
     // ---- dead-session 一键重启与自动重连浮层（WS.05）----
     // 终态三档只以快照里的**档位**分档，关闭原因本身不外传（D3），故「不自动重试」那一档必须同时
