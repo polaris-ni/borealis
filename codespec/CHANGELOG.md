@@ -4,6 +4,20 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.141（2026-10-24）**`SPEC.FEAT.WS.01` 的末位 pane 关闭收口：单格标签上的 `Ctrl+Shift+W` 转交关标签请求（裁决 7.141；本地提交 `90635bc` → 文档回写（本笔））**
+
+**动机**：`WorkspaceView::close_pane` 里挂着一句带 TODO 的早退——树只剩一格时直接返回。分工本身没错（末位 pane 的关闭是「关标签」，判据归装配层，裁决 7.42⑤ / 7.43⑤），但最常见的单格标签状态下 `Ctrl+Shift+W` 因此被认领却什么也不做。这是按键静默落空，不是有意留白；`PaneTree` 与 `TabStrip` 都不会替你接住这一刀。
+
+**落地形态**：
+
+- **本层只转交**：`WorkspaceView::Hooks` 新增 `close_last_pane`。`pane_count() == 1` 时调用它后早退——树不动、不回收、不报 `structure_changed`，空树这个非法形态仍然造不出来；缺钩即该键保持原样（认领后无动作），与本层其余转交钩同一档。
+- **装配侧一处收敛**：新增 `close_tab_request(TabId)`，标签条关闭钮与这条转交都走它。`has_live_session` 判据、`ask_close_confirm` 确认框与 `perform_close` 撤账链因此各只有一份；按 `tab_workspaces` 查属主窗，账已撤或无属主即 fail-closed 返回。标签条那颗钮的闭包从内联三段改为转调，行为等价。
+- **不借道关窗**：末位标签仍由 `TabStrip::close()` 拒绝（只剩一张标签时回 false），故单标签窗上该键落空；关窗口仍只有 OS 关闭钮，`workspace.close_window` 的欠项状态（裁决 7.126④）不变。
+
+**验收读数**：构建无新警告；`itest_workspace_layout` **35/35 全绿**、`ctest --preset linux -E etest_` **113/113 全绿**。`closing_a_pane_recycles_view_and_session` 补两段读数：关普通格时转交次数为 0；关末位格时转交恰一次、`torn_down_` 为空、`structure_changes` 为 0。变异一组指名红：删掉 `close_last_pane()` 调用 ⇒ 该案转交次数读出 0；还原后复绿。
+
+**边界与不称可用**（`AGENTS.md` §4.4 第 33 条）：`src/main.cpp` 的 `close_tab_request` 装配行不编入 runner（裁决 7.83），「确认框在单格标签上真弹出」与「`perform_close` 真正撤账」两跳只有源码审查与真机走查；Win32／MSVC 腿本轮未编译验证。单标签窗按键落空是有意边界而非缺陷。故本条只称「无头证据链闭合」，**不称「可用」**。
+
 ## v0.140（2026-10-24）**`SPEC.FEAT.TERM.01` 边界收口：SO/SI 接通 GL 的 G0/G1 换槽，DCS 补 DECRQSS 状态串应答（裁决 7.140；本地提交 `d9a241b` → 文档回写（本笔））**
 
 **动机**：`Terminal` 里还挂着两处「能力在册但没接完」的旧注释——`do_print` 恒取 G0 而 SO/SI 只登记不动作（`ESC ) 0` 指派到 G1 的线条表永远到不了 GL，等于死存储），DCS 的三个 kind 是裸 `TODO`。`vim`／`tmux` 一类程序会发 `DCS $ q m ST` 取回当前 SGR 以便保存/恢复屏幕，不答并不致命，但会走它们的降级分支；线条表则直接影响需求「边框线条不得显示为乱码字母」的验收。
