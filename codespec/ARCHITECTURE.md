@@ -51,11 +51,11 @@ Borealis 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨�
 | `include/borealis/term/` | 终端状态机、编码解码、字符集指派与映射、宽度判定 |
 | `include/borealis/grid/` | cell / 行 / 环形缓冲 / 主备屏 / 脏区 |
 | `include/borealis/session/` | 会话抽象、背压队列、生命周期；两份「锁内留存、锁外 IO」的落地件都在 `src/session/`——`clipboard_outbox`（52 写与读应答，全仓唯一触达框架剪贴板处）与 `notification_outbox`（9／777 投递，全仓唯一触达框架通知处，裁决 7.128），二者的公共头都不含框架类型 |
-| `include/borealis/conn/` | 连接类型与档案、凭据句柄 |
+| `include/borealis/conn/` | 连接类型与档案、凭据句柄、快捷片段（`snippet`：`{{name}}` 占位符、分组／搜索过滤、编号与校验的纯逻辑件，裁决 7.137） |
 | `include/borealis/ui/` | 终端视口、标签栏、pane 树（含 `PaneShape` 的形状描述／重建，裁决 7.131）、工作区布局快照模型（`workspace_snapshot`，纯逻辑、fail-closed 编解码）、选区的归一／取文本与智能配对（`selection`，纯逻辑；配对档见裁决 7.136）、quick select 的行扫描与标签分配（`quick_select`，纯逻辑，裁决 7.135）、搜索浮层、设置面板 |
 | `include/borealis/config/` | 配置 schema、原子写与降级、profile；逐窗几何记忆另起第二枚框架接缝，实现与头都在 `src/config/`（`window_geometry_store`，裁决 7.126）；布局快照再起第三枚（`workspace_store`，绑 `workspace.json`、顶层键 `layout`、无删除入口，裁决 7.131） |
 | `include/borealis/cli/`、`src/cli/` | CLI 启动参数语法与档案解析、单实例转交的请求 / 回复编解码（纯逻辑，不碰文件系统与 UI，裁决 7.124） |
-| `src/ui/`（私有头） | 触达框架类型的控件实现（绘制侧类声明含 Aurora 类型，故不入公共头）；其中 `active_window_tracker.{h,cpp}` 是纯逻辑件，判「命令与快捷键落哪一扇窗」，为框架缺口 G42 的代偿（裁决 7.126）。`settings_i18n.{h,cpp}` 是本仓**上屏短语与框架 i18n 接缝的唯一归属**（裁决 7.130）：两张语言档表（`kStringsZh`／`kStringsEn`，各 470 条、key 集逐字相等）住在这一个文件里，`install_settings_strings(Language)` 是全仓唯一的装填点，也是唯一把语言档折成 `aurora::Locale` 的地方（装配层另在生产的场景根与用例驱动台各装一枚 `au::LocaleProvider`，`src/main.cpp`，裁决 7.130 的 D4／F19），界面上的显示文案一律经 `settings_label(key, args)` 取而不许就地写死——「引号内含汉字的字面量只许出现在这一个文件」已由常驻门禁 `tools/check/check_display_literals.py` 挂在 CTest 上守着（注释可中文、排版符号不在射程）。另有 `pane_tree.cpp`、`workspace_snapshot.cpp`、`quick_select.cpp` 与 `selection.cpp` 四件纯逻辑实现（公共头在 `include/borealis/ui/`，前两件见裁决 7.131，`quick_select.cpp` 见 7.135，`selection.cpp` 的选区口径见裁决 7.38–7.40、智能配对见 7.136） |
+| `src/ui/`（私有头） | 触达框架类型的控件实现（绘制侧类声明含 Aurora 类型，故不入公共头）；其中 `active_window_tracker.{h,cpp}` 是纯逻辑件，判「命令与快捷键落哪一扇窗」，为框架缺口 G42 的代偿（裁决 7.126）。`settings_i18n.{h,cpp}` 是本仓**上屏短语与框架 i18n 接缝的唯一归属**（裁决 7.130）：两张语言档表（`kStringsZh`／`kStringsEn`，各 510 条、key 集逐字相等）住在这一个文件里，`install_settings_strings(Language)` 是全仓唯一的装填点，也是唯一把语言档折成 `aurora::Locale` 的地方（装配层另在生产的场景根与用例驱动台各装一枚 `au::LocaleProvider`，`src/main.cpp`，裁决 7.130 的 D4／F19），界面上的显示文案一律经 `settings_label(key, args)` 取而不许就地写死——「引号内含汉字的字面量只许出现在这一个文件」已由常驻门禁 `tools/check/check_display_literals.py` 挂在 CTest 上守着（注释可中文、排版符号不在射程）。另有 `pane_tree.cpp`、`workspace_snapshot.cpp`、`quick_select.cpp` 与 `selection.cpp` 四件纯逻辑实现（公共头在 `include/borealis/ui/`，前两件见裁决 7.131，`quick_select.cpp` 见 7.135，`selection.cpp` 的选区口径见裁决 7.38–7.40、智能配对见 7.136） |
 | `src/platform/win/`、`src/platform/posix/` | 平台相关实现（**平台假设不得渗入共享路径**，裁决 7.11）；含单实例通道与进程参数两腿（`instance_channel` / `process_args`，裁决 7.124）与凭据库两腿（`credential_store`：POSIX 运行期 `dlopen` libsecret、Win32 CredMan；工厂与句柄编码在共享私有头 `src/platform/credential_store.{h,cpp}`，裁决 7.132。Win32 腿**未编译未验证**），共享侧只见 `src/platform/` 下的同名接口头 |
 
 ### 2.3 依赖方向不变量
@@ -504,6 +504,8 @@ Aurora 中字体测量在逻辑 dp 空间、光栅化按真实屏幕 DPI 生成�
 ### 11.2 命令、快捷键与面板
 
 复用框架 `CommandRegistry` 与 `CommandPalette`；**全部 UI 动作一律注册为 Command，快捷键绑定以 Command 为锚**（与 `SPEC.FEAT.WS.07`、`SPEC.FEAT.PREF.04` 统一）。命令 id 一律 ASCII 英文入框架，**中/英词条由本仓 `StringTable` 的「命令 id → 词条」映射表维护**（裁决 7.25⑬、`SPEC.FEAT.PREF.05`），面板渲染时按当前语言查表；新增命令须同步词条。
+
+**快捷片段面板（2026-10-23，裁决 7.137）**照同一条「命令为共同真源」形态登记 `snippets.open`（缺省 `Ctrl+Shift+K`、`Global`）——快捷键层在控件消费之前拦截，命令面板里是同一行，打开前 `retarget_panel` 搬到发起命令的那一扇窗，关窗链 `retire_panel` 撤账（与密钥／隧道／SFTP 面板同族）。架构上是**纯件判、面板演、装配交三条闭包**：`conn::snippet`（`include/borealis/conn/snippet.h` + `src/conn/snippet.cpp`）不含 Aurora 类型也不碰文件系统，负责 `{{name}}` 占位符、分组与三字段搜索、`snip-N` 编号与校验；`ui::SnippetPanel`（`src/ui/snippet_panel.{h,cpp}`，私有头）只持片段表的内存副本与三张二级浮层，**不持有 `Session`／`TerminalView`、不读写配置文件**——取表、整表落盘、发送各经一枚 Hook 交回装配层。发送的落点是活动窗当前标签的**焦点 pane**（与 `quick_select.open` 同一条解析：`command_tab_id()` → `tab_workspaces` → `view_of(focused_pane())`），只发这一格、不广播、无目标留痕不发；面板交出的是一段已渲染 UTF-8，`enter` 只追加一个换行，编码与行尾折算仍归 `Session::send_text`（§3.5 的唯一发送腿）。存储是 `Settings` 的 `snippets` 域（§11.3 的同一份 `borealis.json`，结构域不进设置页，导出/导入自动覆盖）。
 
 ### 11.3 持久化与韧性
 

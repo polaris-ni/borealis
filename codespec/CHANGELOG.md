@@ -4,6 +4,21 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.137（2026-10-23）**`SPEC.FEAT.CONN.07` 的 snippets 延后子项落地：片段库／分组／搜索／`{{name}}` 占位符／发送至焦点 pane 五件齐备，`snippets.open`（`Ctrl+Shift+K`）唤起左侧 520 dp 面板（裁决 7.137；本地提交 `c4577f9` → `7eb1f24` → `2356db1` → `e9e1026` → `8a44986`）**
+
+**动机**：`SPEC.FEAT.CONN.07` 原文把快捷片段列为延后子项（目标 M4）。面板族生命周期（左停靠卡片、搬窗、撤账）、`Session::send_text` 的统一发送路径、八域配置与导出/导入、命令层与快捷键层都已就位，snippets 只需组合这些既有接缝，不新增框架缺口。
+
+**落地形态**：
+
+- **纯逻辑件**：`conn::snippet`（`include/borealis/conn/snippet.h` + `src/conn/snippet.cpp`）不含 Aurora 类型也不碰文件系统——`{{name}}` 限 1–32 字节 `[A-Za-z0-9_.-]`，首现序去重、替换全部出现、缺值原样保留，非法名或未闭合按字面保留并继续扫描；分组首现序且排除空串；搜索命中名称/分组/正文、仅 ASCII 折叠、与分组过滤取交集并返回存储序下标；`snip-N` 号取最大已用号 + 1；保存前名称 1–64、分组 0–32、正文 1–8192 字节三档校验，均拒控制字符。
+- **第 8 配置域**：`Settings.snippets` 落顶层 `{items:[{id,name,group,body,enter}]}`，与 `profiles`/`tunnels`/`key_dirs` 同形；存储序即显示序；`schema_version` 不升，旧文件缺域回落空库。读侧逐元素容错：非对象元素留痕下标后跳过，坏字段只回该字段缺省。导出/导入自动覆盖该域；面板拥有增删改，故在 `settings_catalog` 的非偏好叶子例外里登记 `snippets.items`。
+- **面板与发送接缝**：`ui::SnippetPanel`（`src/ui/snippet_panel.{h,cpp}`，左侧 520 dp、默认隐藏）三条 Hook `load`/`persist`/`send`，本件不持有 `Session`／`TerminalView`、不碰配置文件。标题行（行数/新建/关闭）、搜索行、分组下拉、行内发送/编辑/删除、新建编辑框（三枚单行输入 + 「发送后追加回车」+ 明文警告）、占位符填充框、删除两段式确认、顶行留痕。主卡只建一次，键入只换行区（搜索框焦点不丢），保存/删除后整卡重装以同步分组候选；搜索行与行区叠 `Stack`，否则下拉命中会被 `Scroll` 抢走；`Text::set_content` 之后显式标脏。`TerminalView::send_text_utf8` 是新的公开直发口，复用 `to_code_points` 后交 `Session::send_text`，空串不发，编码与行尾折算仍归会话；`enter` 只在面板侧追加一个 `\n`。
+- **装配**：`snippets.open` 登记为 `au::Command`（`Ctrl+Shift+K`、`ShortcutScope::Global`，命令面板同一入口），打开前 `retarget_panel` 搬窗，关窗链 `retire_panel` 撤账；落点取活动窗当前标签的焦点 pane，只发这一格、不广播、无目标留痕不发（稿 D3）；保存以整表副本走 `Store::replace`，失败内存不变。38 条中英词条并入两档表。
+
+**验收读数**：构建无新警告；`utest_snippet` 7 案、`itest_snippet_panel` 8 案（稿 §5 判据 ①–⑧）、`utest_config` 域往返与坏元素扩案、`itest_key_input` 增 1 案锁 `send_text_utf8`；`ctest --preset linux -E etest_` **112/112 全绿**、`borealis_test_runner` **1395/1395 全绿**（基线 1378 ⇒ +17 案）。四支变异各有指名红案：占位符替换丢值（`utest_snippet` 1 案）、过滤忽略查询（`itest_snippet_panel` 2 案）、`enter` 不追加换行（`itest_snippet_panel` 1 案）、直发截断为首字节（`itest_key_input` 1 案）；还原后逐案复绿。同批按运行期读数更正 `settings_i18n.cpp` 与 `ARCHITECTURE.md` 的两处表长注释：两档各 510 条（原注释停在 470，此后各棒补入 40 枚）。
+
+**边界与不称可用**（`AGENTS.md` §4.4 第 33 条）：真机键盘／输入法／DPI 走查未做；Win32／MSVC 未编译验证。`src/main.cpp` 不编入 runner（裁决 7.83）⇒ 命令触发、焦点 pane 取法与搬窗／撤账无自动化证人。未交付：逐片段快捷键（等 G40 的启动重放）、多行正文、分组改名/删除/排序、占位符默认值/转义/引号处理、Unicode case folding、发送历史、跨设备同步（稿 §6）。片段正文按纯文本落配置，编辑框固定提示不要写密码或令牌；本仓不扫描用户正文。
+
 ## v0.136（2026-10-23）**`SPEC.FEAT.INTERACT.02` 的智能选择延后子项落地：双击严格落在同一行引号／括号对内时扩到最内层整对（含两端定界符），无配对回退既有词粒度；视口只改拖拽起点（裁决 7.136；本地提交 `d6818d6` → `c6d9a55`）**
 
 **动机**：`SPEC.FEAT.INTERACT.02` 原文把智能选择与 quick select 并列为两条延后子项（目标 M4）；quick select 已于 v0.135 收口，本棒只碰智能选择。多击序号（`click_count`）、双击选词与选区复制接缝均已就位，不需要新的框架缺口，也不新增配置键。
