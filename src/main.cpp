@@ -57,6 +57,7 @@
 #include "conn/serial_connection.h"
 #include "conn/serial_model.h"
 #include "conn/ssh_connection.h"
+#include "conn/ssh_shared.h"
 #include "conn/telnet_connection.h"
 #include "conn/tunnel_client.h"
 #include "config/shortcut_overrides.h"
@@ -2410,6 +2411,11 @@ auto main(int argc, char **argv) -> int {
         static_cast<void>(store.replace(std::move(next)));
     };
 
+    // 连接复用的共享表（CONN.02，裁决 7.147 / 稿 D6、D11）：装配层建**一枚**，六条 SSH 腿都经
+    // `make_ssh_session` 取它。表只持弱引用，活下来的共享会话由适配器们强持有；键不含档案 id，
+    // 同一主机+用户+认证+秘密的两格因此自然共线。
+    auto ssh_registry = std::make_shared<borealis::conn::SshSessionRegistry>();
+
     // SSH 会话装配（CONN.02）：SshConnection + 与本地腿同一套视口参数。
     // 自动重连档（WS.05，裁决 7.99 D4①）在这里折算：三键在**建会话那一刻**折成 `conn::RetryPolicy`
     // 交进构造参数，故设置面板把这三行登记为「下次会话生效」。不让传输腿回头读 store——配置的宿主在
@@ -2481,23 +2487,26 @@ auto main(int argc, char **argv) -> int {
     ///
     /// 每次一份宽度表：这张表被写侧与折算侧共享，跨会话共用就是让两条连接互相污染列宽缓存（同本地腿
     /// 那一条理由）。`secret` 照旧移交给 `SshConnection`，调用方要留档就自己先复制一份。
+    /// 末位交共享表：生效参数与秘密都相同的两格落在同一条 TCP 上，各自一条 shell 通道。
     auto make_ssh_session = [&](const borealis::conn::SshProfile &ssh, std::optional<std::string> secret)
         -> std::shared_ptr<borealis::session::Session> {
         auto connection = std::make_unique<borealis::conn::SshConnection>(
             ssh, std::move(secret), kNominalViewport, reconnect_policy(),
             borealis::conn::SshAlgorithmOverrides{settings.connection.ssh.kex_algorithms,
-                                                  settings.connection.ssh.host_key_algorithms});
+                                                  settings.connection.ssh.host_key_algorithms},
+            ssh_registry);
         auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
         return std::make_shared<borealis::session::Session>(
             std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
             width_policy, make_terminal_defaults(settings), make_session_encoding(settings));
     };
 
-    /// @brief SSH 腿的切分工厂：同一份档案 + 留档秘密再拨一条连接（新 TCP 会话，稿 §4 的 F13）。
+    /// @brief SSH 腿的切分工厂：同一份档案 + 留档秘密再起一格（稿 §4 的 F13）。
     ///
     /// 档案与秘密都从两张表里**现读**，不在闭包里留副本：`on_secret` 那一腿会把询问到的材料改写进
     /// `ssh_secret_by_tab`，工厂拿副本就会重拨成过期的那份材料。表里没有档案身份即回空值——正常路径
     /// 不会走到（登记与建标签同批发生），留这一条是 fail-closed 而非第二重判据。
+    /// 连接复用后这里不再必然新拨一条 TCP：档案与秘密相同的那条链路还在，切分格挂上去即可。
     auto make_ssh_pane_factory = [&](borealis::ui::TabId id) -> PaneSessionFactory {
         return [&ssh_profile_by_tab, &ssh_secret_by_tab, &make_ssh_session, id](
                    borealis::ui::PaneId /*origin*/) -> std::optional<PaneBundle> {
@@ -4827,7 +4836,8 @@ auto main(int argc, char **argv) -> int {
                     session = make_local_session(local_specs[order]);
                     break;
                 case borealis::conn::ConnectionType::Ssh: {
-                    // 每格各拨一条连接，最后一份材料 move 走（同 `open_ssh_tab` 的「留档副本先取」）。
+                    // 同一档案的各格共用一条 TCP、各持一条通道；最后一份材料 move 走（同
+                    // `open_ssh_tab` 的「留档副本先取」）。
                     std::optional<std::string> material =
                         order + 1U < leaves ? retained_secret : std::move(secret);
                     session = make_ssh_session(*ssh, std::move(material));
