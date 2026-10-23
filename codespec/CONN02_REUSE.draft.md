@@ -107,7 +107,7 @@ EOF 必须先于「通道已关」判：这是裁决 7.146 抓到的 `SSH_EOF` �
 
 ### D7 关闭同步：`Detach` 带 ack，保证「close 返回后不再回调」
 
-`SshConnection::close()` 压入带 ack 的 `Detach` 并等待。I/O 线程处理该命令时先关通道、再从租约表删掉这一份、最后置 ack；处理完此前已入队的命令之后才置 ack 的语义由「同一线程顺序处理」保证。因此 `close()` 返回时，该租约的 `events` 指针不会再被 I/O 线程使用。`close()` 是幂等的（`call_once`），第二次调用等第一次完成。
+`SshConnection::close()` 压入带 ack 的 `Detach` 并等待。I/O 线程处理该命令时按「投 `on_finished` → 进度 `UserStopped` → `on_closed(LocalClose)` → 关通道 → 从租约表删掉 → 置 ack」的顺序走；处理完此前已入队的命令之后才置 ack 的语义由「同一线程顺序处理」保证。因此 `close()` 返回时，该租约的 `events` 指针不会再被 I/O 线程使用，且既有单标签用例「`close()` 后收到 `LocalClose`」的观测面原样保留。`close()` 是幂等的（`call_once`），第二次调用等第一次完成。
 
 若 I/O 线程正卡在拨号里，`Detach` 要等拨号返回才处理——与现行 `close()` join 读线程同一条最坏等待（10 s 连接超时）。
 
@@ -184,7 +184,8 @@ class SshSharedSession final {
                                const std::optional<std::string> &secret) const -> bool;
     [[nodiscard]] auto accepting() const noexcept -> bool;
 
-    auto attach(SshConnection *lease, session::ConnectionEvents &events, session::Size size) -> bool;
+    auto attach(SshConnection *lease, session::ConnectionEvents &events, session::Size size,
+                std::function<void()> on_open, std::function<void()> on_finished) -> bool;
     auto detach(SshConnection *lease) -> void;
     auto write(SshConnection *lease, std::span<const std::byte> bytes) -> void;
     auto resize(SshConnection *lease, session::Size size) -> void;
@@ -201,7 +202,7 @@ class SshSharedSession final {
 }  // namespace borealis::conn
 ```
 
-`SshConnection` 的公开面（`start` / `write` / `resize` / `close` / `alive` / `retry_now` / `stop_reconnect` 与构造签名）除末位追加 registry 外不变；`SshSharedSession` 以 `friend` 身份调适配器的两枚私有钩子（`on_shared_open()` / `on_shared_finished()`），只写原子位。
+`SshConnection` 的公开面（`start` / `write` / `resize` / `close` / `alive` / `retry_now` / `stop_reconnect` 与构造签名）除末位追加 registry 外不变；适配器在 `attach` 时交两枚闭包（`on_open` / `on_finished`）给共享会话，会话只调闭包写适配器的原子位——不用 `friend`，适配器的私有面不出头。
 
 ## 5 I/O 线程伪码
 

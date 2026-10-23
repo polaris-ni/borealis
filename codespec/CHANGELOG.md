@@ -4,6 +4,22 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.147（2026-10-24）**`SPEC.FEAT.CONN.02` 的连接复用延后子项落地：同参数同秘密的多标签共享一条 TCP、各持一条 shell 通道（裁决 7.147；本地提交 `4a0260e` → `7c5321f` → `0391ae8` → 文档回写（本笔））**
+
+**动机**：CONN.02 的「同一 profile 的连接复用（多标签共享一条 TCP 连接）」此前只列为延后子项——每开一个 SSH 标签／分屏 pane 就新拨一条 TCP，服务器上因此多出一条登录记录，`MaxSessions` 也更早见顶。需求点名的是终端多标签，本次只做终端腿的传输复用，SFTP／隧道／密钥推送不改。
+
+**落地形态**：
+
+- **共享判据是键加秘密全等**：`SshSessionKey` 收 host/port/user/auth_method/identity_file/agent_forwarding/known_hosts_policy/kex/host_key 算法表（端口与认证方式走既有归一），档案 id 与 `SecretHandle` 不入键；秘密材料必须逐字节相等——两种口令不同的标签绝不共线，否则第二个标签等于绕过自己的认证。registry 表项只存键与 `weak_ptr`，秘密比较由仍活着的会话回答，**表里不留明文**。
+- **一条 TCP、一条 I/O 线程、N 条通道**：`SshSharedSession` 持有 libssh 会话与全部通道；`SshConnection` 退为薄适配器，UI 线程只压 Attach/Detach/Write/Resize 命令、等 ack 或读原子位，所有 libssh 调用只在 I/O 线程。关闭序为「投 `on_finished` → 进度 `UserStopped` → `on_closed(LocalClose)` → 关通道 → 摘租约 → 置 ack」，`close()` 返回后不再回调该租约。
+- **通道级与链路级分开裁决**：通道打开/PTY/shell 失败只收该标签；通道 EOF 归 `RemoteExit` 只关该通道；链路级事件才进退避环，重拨一次给全部挂接标签各开新通道。每格各持 PTY 尺寸，退避期间的 `resize` 记账并在重拨时使用。尾格 Detach 与新 Attach 的竞态由「队列非空不收口」在锁下裁决。
+- **重拨与停止是连接级**：进度广播给全部挂接标签，`retry_now` 截断共享退避，一个标签 `stop_reconnect` 停整条链路；终态会话置「不再接纳」，registry 不再借出，新标签得到新 TCP。
+- **装配**：`src/main.cpp` 建一枚 `SshSessionRegistry`，经 `make_ssh_session` 末位实参覆盖新开／分屏／重启／撤销／启动恢复／CLI 六条腿。无新设置键、无新 UI；「重启」在链路活着时变成共享链路上换一条新通道。
+
+**验收读数**：构建通过；`ctest --preset linux -E etest_` 118→**119**、`borealis_test_runner` 1429→**1443** 全绿。新证人 `itest_posix_ssh_shared_connection` 十案（一条 TCP 两通道、互不串话、逐通道 PTY 尺寸、关一格不动链路、断链一次重拨双方复原、远端 EOF 双双收口不重拨、秘密或 agent 转发不同则分线、stop 连接级、终态不复用）＋ `utest_ssh_session_key` 四案（归一、逐字段分离、算法表分离、秘密全等）。假服务器为见证「关一个通道」补逐通道关闭表、逐通道尺寸表并让 `end_channels` 跳过 agent 通道，既有五案不回归。六支变异各有指名红案：M1 registry 不查表 ⇒ `two_tabs_share_one_tcp_and_one_channel_each`；M2 秘密比较恒真 ⇒ `different_secret_keeps_a_separate_connection`；M3 键忽略 `agent_forwarding` ⇒ `agent_forwarding_flag_keeps_a_separate_connection`；M4 Detach 连坐其他通道 ⇒ `closing_one_tab_keeps_the_link_and_the_other_tab`；M5 通道 EOF 当链路事故 ⇒ `remote_eof_finishes_both_tabs_without_redial`；M6 进度只投第一份租约 ⇒ `link_loss_redials_once_and_both_tabs_recover`；还原后均复绿。
+
+**边界与不称可用**（`AGENTS.md` §4.4 第 33 条）：需求只点名终端标签，SFTP／隧道／密钥推送仍各自拨号；服务器 `MaxSessions`（OpenSSH 缺省 10）超限时第 11 条通道打开失败只收该标签（假服务器不设上限，**推断／未验证**）；无 keepalive；Win32／MSVC 腿未编译、真机 OpenSSH 未验，故本条**不称「可用」**。
+
 ## v0.146（2026-10-24）**SSH 见证地基：进程内 libssh 假服务器落地，`itest_posix_ssh_connection` 成为 CONN.02 终端腿与 agent 转发的真协议端到端证人；同棒修掉「远端 EOF 永不归 RemoteExit」（裁决 7.146；本地提交 `e2a53b1` → 文档回写（本笔））**
 
 **动机**：裁决 7.144⑥ 与 7.145⑦ 各自在册同一条欠账——本沙箱没有 sshd，SSH 终端传输与 agent 转发都只有本机一侧的证人。libssh 的 server 腿在本机 vcpkg 构建档里是开着的（`WITH_SERVER`），足以在测试进程内起一台真协议对端，把这条欠账从「无端到端」抬到「POSIX 真协议端到端」，同时为 CONN.02 的连接复用预置计数判据。
