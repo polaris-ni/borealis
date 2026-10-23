@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -208,7 +209,8 @@ class Harness {
     explicit Harness(const PaletteSpec &palette = test_palette(),
                      const TerminalView::InteractionOptions &options = {},
                      const Typography &typography = {}, std::vector<std::string> font_fallback_chain = {},
-                     bool with_scheduler = false, int window_height = kWindowHeight)
+                     bool with_scheduler = false, int window_height = kWindowHeight,
+                     term::SessionEncoding encoding = {})
         : window_height_{window_height},
           window_{make_window(window_height)},
           appearance_(TerminalView::Appearance{.palette = palette,
@@ -218,7 +220,9 @@ class Harness {
                                                .blink_period = std::chrono::milliseconds{kBlinkPeriodMs},
                                                .font_fallback_chain = std::move(font_fallback_chain)}),
           options_(options),
-          session_(std::make_unique<Session>(own_connection(), kNominalSize, kScrollback, width_policy)),
+          session_(
+              std::make_unique<Session>(own_connection(), kNominalSize, kScrollback, width_policy, term::TerminalDefaults{},
+                                        encoding)),
           view_(std::make_shared<TerminalView>(*session_, appearance_, options_)),
           root_(std::static_pointer_cast<au::Widget>(view_)) {
         // 闪烁任务只在 `on_mount` 那一刻读 `Scheduler::current()`，而挂载发生在首次 present，
@@ -301,6 +305,34 @@ class Harness {
             focus_.clear();
         }
     }
+
+    /// @brief 投一次输入法组合事件（`SPEC.FEAT.INTERACT.06`）并排帧：preedit、插入点与已提交串。
+    ///
+    /// 走真实派发器（只投焦点控件），`sel_end` 缺省即无选区；下标是**码点**序、选区含尾。
+    auto compose(std::string_view preedit, std::size_t caret, std::string_view committed = {},
+                 std::size_t sel_start = 0,
+                 std::size_t sel_end = au::TextCompositionEvent::AURORA_NO_SELECTION) -> bool {
+        au::TextCompositionEvent event;
+        event.preedit = std::string{preedit};
+        event.cursor_index = caret;
+        event.sel_start = sel_start;
+        event.sel_end = sel_end;
+        event.committed = std::string{committed};
+        const bool handled = au::EventDispatcher::dispatch(root_.widget(), event, focus_);
+        render();
+        return handled;
+    }
+
+    /// @brief 已写出的字节：IME 组合中间态必须一字节不发，提交才落会话。
+    [[nodiscard]] auto written() const -> std::string {
+        const auto &bytes = connection_->written;
+        return std::string{reinterpret_cast<const char *>(bytes.data()), bytes.size()};
+    }
+
+    /// @brief 候选窗定位盒（窗口逻辑 dp）与控件角色：平台 IME 桥的两枚输入。
+    [[nodiscard]] auto caret_bounds() const -> au::Rect { return view_->composition_caret_bounds(); }
+    [[nodiscard]] auto view_role() const -> au::AccessibilityRole { return view_->accessibility_role(); }
+    [[nodiscard]] auto is_composing() const -> bool { return view_->is_composing(); }
 
     /// @brief 滚轮回看：@p rows 为正向上看更早的行，负向反之。
     auto scroll(int rows) -> void {
@@ -983,6 +1015,108 @@ AURORA_TEST_CASE(cursor_shapes_and_focus_state_land_on_their_cells) {
     px = h.pixels();
     AURORA_TEST_CHECK(h.sample(px, cell, 0.5, 0.5) == background);
     AURORA_TEST_CHECK(h.sample(px, top_edge, 0.5, 0.5) == background);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(ime_preedit_stays_in_the_view_until_commit_reaches_the_session) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.set_focused(true);
+    h.feed("\x1b[2J\x1b[H");  // 空屏、光标回左上：preedit 的落点只有一格可争
+    const auto idle = h.pixels();
+    // 关掉终端光标留一张「只剩底色」的对照帧：组合串若没落笔，组合帧就与它逐位相同——只看
+    // 「块光标有没有让位」会把「什么都没画」误判成「画了 preedit」。
+    h.feed("\x1b[?25l");
+    const auto bare = h.pixels();
+    h.feed("\x1b[?25h");
+    const auto cell = borealis::ui::rect_for(h.geometry(), 0U, 0U, 1U);
+
+    // 组合中间态：画面出现 preedit，会话一字节都收不到。
+    AURORA_TEST_CHECK(h.compose("nihao", 5U));
+    AURORA_TEST_CHECK(h.is_composing());
+    AURORA_TEST_CHECK_MSG(h.written().empty(), "the preedit leaked into the session before commit");
+    const auto composing = h.pixels();
+    AURORA_TEST_CHECK_MSG(Harness::count_diff(bare, composing) > 0U,
+                          "the preedit was not painted at all (only the block cursor yielded)");
+    AURORA_TEST_CHECK_MSG(Harness::count_diff(h.cell_band(bare, 0U, 0U), h.cell_band(composing, 0U, 0U)) > 0U,
+                          "the preedit was not painted into the cursor cell");
+    const auto rows = h.changed_rows(idle, composing);
+    AURORA_TEST_REQUIRE_MSG(rows.size() == 1U && rows.front() == 0U,
+                            "the preedit spilled outside the cursor row");
+    // 组合期块光标让位：格底不再是整块光标色（插入点只有 2 物理像素）。
+    AURORA_TEST_CHECK_MSG(h.sample(composing, cell, 0.5, 0.9) != *h.palette().cursor_color,
+                          "the block cursor stayed under the preedit");
+
+    // 提交：字经会话编码写入，本层组合态撤下、画面逐位回到空闲帧。
+    AURORA_TEST_CHECK(h.compose("", 0U, "\xE4\xBD\xA0\xE5\xA5\xBD"));
+    AURORA_TEST_CHECK(!h.is_composing());
+    AURORA_TEST_CHECK_MSG(h.written() == std::string{"\xE4\xBD\xA0\xE5\xA5\xBD"},
+                          "the committed text did not reach the session as UTF-8");
+    AURORA_TEST_CHECK_MSG(Harness::count_diff(idle, h.pixels()) == 0U,
+                          "the view did not return to the idle frame after commit");
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(ime_caret_bounds_track_the_preedit_and_follow_focus) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.set_focused(true);
+    h.feed("\x1b[2J\x1b[H");
+    AURORA_TEST_CHECK(h.view_role() == au::AccessibilityRole::TextInput);
+
+    // 未组合：盒即光标格（Win32 在首个 preedit 之前就会来问一次）。
+    const auto idle = h.caret_bounds();
+    AURORA_TEST_CHECK_EQ(idle.size.width, 0.0F);
+    AURORA_TEST_CHECK_MSG(
+        std::abs(static_cast<double>(idle.origin.x) - static_cast<double>(h.paint_box().origin.x) -
+                 h.geometry().padding) < 0.01,
+        "the idle candidate box is not anchored at the cursor cell");
+    AURORA_TEST_CHECK(
+        std::abs(static_cast<double>(idle.origin.y) - static_cast<double>(h.paint_box().origin.y) -
+                 h.geometry().padding) < 0.01);
+    AURORA_TEST_CHECK(std::abs(static_cast<double>(idle.size.height) - h.geometry().cell_height) < 0.01);
+
+    // 组合中：沿插入点右移，高度与纵位不动（候选窗跟着 preedit 的插入点）。
+    AURORA_TEST_CHECK(h.compose("nihao", 3U));
+    const auto composed = h.caret_bounds();
+    const double advance = static_cast<double>(au::render::FontEngine::display_caret_x(
+        std::string{"nihao"}, 3U, test_font(), h.layout_options(), h.geometry().scale));
+    AURORA_TEST_CHECK_MSG(
+        std::abs(static_cast<double>(composed.origin.x - idle.origin.x) - advance) < 0.01,
+        "the candidate box did not track the preedit insertion point");
+    AURORA_TEST_CHECK_EQ(composed.origin.y, idle.origin.y);
+    AURORA_TEST_CHECK_EQ(composed.size.height, idle.size.height);
+    AURORA_TEST_CHECK_EQ(composed.size.width, 0.0F);
+
+    // 失焦撤组合（框架把这条写成控件侧契约），候选窗盒随之退零。
+    h.set_focused(false);
+    h.render();
+    AURORA_TEST_CHECK(!h.is_composing());
+    const auto lost = h.caret_bounds();
+    AURORA_TEST_CHECK(lost.size.width == 0.0F && lost.size.height == 0.0F);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(ime_commit_is_encoded_in_the_session_charset) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h{test_palette(), {}, {}, {}, false, kWindowHeight,
+              term::SessionEncoding{.name = "GB18030"}};
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.set_focused(true);
+    // 组合串一个字节不发；提交时按会话编码（GB18030 的「你好」= C4 E3 BA C3）写入。
+    AURORA_TEST_CHECK(h.compose("\xE4\xBD\xA0\xE5\xA5\xBD", 2U));
+    AURORA_TEST_CHECK_MSG(h.written().empty(), "the preedit leaked into the session before commit");
+    AURORA_TEST_CHECK(h.compose("", 0U, "\xE4\xBD\xA0\xE5\xA5\xBD"));
+    AURORA_TEST_CHECK_MSG(h.written() == std::string{"\xC4\xE3\xBA\xC3"},
+                          "the committed text bypassed the session charset");
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif

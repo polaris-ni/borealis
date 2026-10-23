@@ -748,6 +748,9 @@ auto TerminalView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, cons
     for (std::size_t screen_row = first; screen_row <= last; ++screen_row) {
         paint_row(p, bounds, screen_row);
     }
+    // 组合串压在正文之上、终端光标之前：组合期 `paint_cursor` 让位，故两者不会同帧争同一格
+    // （`SPEC.FEAT.INTERACT.06` 判据「组合期光标形态与位置可辨」）。
+    paint_composition(p, bounds, rows);
     paint_cursor(p, bounds, rows);
     paint_scroll_indicator(p, bounds, rows);
     // 命令块分隔线排在正文、光标与回看指示条之后，链接悬停层与两张状态卡之前（裁决 7.123 D8①）：
@@ -769,6 +772,12 @@ auto TerminalView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, cons
     // 广播角标排在最末（稿 §2.3）：它标识的是「这一格在组里」这一操作态，压住终端内容与两张状态卡
     // 才读得出；纯展示，不进命中链（指针入口不认识这枚盒）。
     paint_broadcast_badge(p, bounds);
+}
+
+auto TerminalView::accessibility_role() const -> aurora::AccessibilityRole {
+    // 角色是候选窗定位盒的硬门禁：`WindowHost` 只对 `TextInput` 向 `composition_caret_bounds()`
+    // 取盒，报通用档会让候选窗退回窗口角落（`SPEC.FEAT.INTERACT.06`）。
+    return aurora::AccessibilityRole::TextInput;
 }
 
 auto TerminalView::type_name() const -> const char * { return "TerminalView"; }
@@ -930,8 +939,6 @@ auto TerminalView::handle_quick_select_key(const aurora::KeyEvent &e) -> bool {
 }
 
 auto TerminalView::on_text_input(aurora::TextInputEvent &e) -> void {
-    // TODO(SPEC.FEAT.INTERACT.06): 输入法上屏走 `on_text_composition` 的 `committed`，本入口只覆盖
-    // 直接按键产生的文本；preedit 就地绘制与候选窗定位随那一棒接。
     if (swallow_next_text_) {
         swallow_next_text_ = false;
         e.is_handled = true;  // 已由按键通道发过，此处消费但不写会话
@@ -943,12 +950,74 @@ auto TerminalView::on_text_input(aurora::TextInputEvent &e) -> void {
         e.is_handled = true;
         return;
     }
-    const std::u32string text = to_code_points(e.text);
-    session_->send_text(text);
-    if (text_mirror_) {
-        text_mirror_(text);  // 广播：已提交文本按同伴自己的编码与行尾再发一次（D5/D6）
-    }
+    // 直接按键与输入法 `committed` 共用同一条上屏腿：编码、行尾折算与广播镜像只此一处。
+    send_committed_text(e.text);
     e.is_handled = true;
+}
+
+auto TerminalView::send_committed_text(std::string_view text) -> void {
+    if (text.empty()) {
+        return;
+    }
+    const std::u32string code_points = to_code_points(text);
+    session_->send_text(code_points);
+    if (text_mirror_) {
+        text_mirror_(code_points);  // 广播：已提交文本按同伴自己的编码与行尾再发一次（D5/D6）
+    }
+}
+
+auto TerminalView::on_text_composition(aurora::TextCompositionEvent &e) -> void {
+    // 与基类契约同向：无论落不落字都置消费位，免得平台侧因「无人处理」重复上屏。
+    e.is_handled = true;
+    if (!is_focused()) {
+        return;  // 派发器只投焦点控件；防御性分支，不在这里制造状态
+    }
+    // 与文本通道同闸（稿 §2）：quick select 期连已提交串也不漏进会话，正在显示的标签才算唯一真相。
+    if (quick_select_.has_value()) {
+        if (composition_.has_value()) {
+            composition_.reset();
+            mark_needs_paint();
+        }
+        return;
+    }
+    if (!e.committed.empty()) {
+        send_committed_text(e.committed);
+    }
+    if (e.preedit.empty()) {
+        // 空 preedit 即组合结束或取消：撤下本层显示态，字已由上面的 `committed` 上屏。
+        if (composition_.has_value()) {
+            composition_.reset();
+            mark_needs_paint();
+        }
+        return;
+    }
+    CompositionState next;
+    next.preedit = e.preedit;
+    // 下标一律按**码点**计（框架契约），故先解码取长度再夹取；字节长不是下标。
+    next.length = to_code_points(next.preedit).size();
+    next.caret = std::min(e.cursor_index, next.length);
+    next.sel_start = std::min(e.sel_start, next.length);
+    if (e.has_preedit_selection()) {
+        next.has_selection = true;
+        next.sel_end = std::min(e.sel_end, next.length);
+        if (next.sel_end < next.sel_start) {
+            next.sel_end = next.sel_start;  // 端点倒置退化为单点选区（与框架文本控件同一处置）
+        }
+    }
+    if (composition_.has_value() && *composition_ == next) {
+        return;  // 同一份快照重复到达：不白标一次脏
+    }
+    composition_ = std::move(next);
+    mark_needs_paint();
+}
+
+auto TerminalView::on_focus_change(bool focused) -> void {
+    Widget::on_focus_change(focused);
+    if (!focused) {
+        // 框架 Win32 桥把「失焦撤 preedit」写成控件侧契约：不撤会在下一次获焦时画出旧组合串。
+        // 基类已标脏，这里只需丢状态。
+        composition_.reset();
+    }
 }
 
 auto TerminalView::on_pointer_event(aurora::MouseEvent &e) -> void {
@@ -1379,6 +1448,9 @@ auto TerminalView::paint_row(aurora::Painter &p, const aurora::Rect &bounds, std
 }
 
 auto TerminalView::paint_cursor(aurora::Painter &p, const aurora::Rect &bounds, std::size_t rows) -> void {
+    if (is_composing()) {
+        return;  // 组合期由 `paint_composition` 的插入点占位：两种光标同帧争同一格会互相盖掉
+    }
     if (!cursor_.visible) {
         return;
     }
@@ -1435,6 +1507,103 @@ auto TerminalView::paint_cursor(aurora::Painter &p, const aurora::Rect &bounds, 
         p.draw_text(to_rect(text_box, bounds.origin), text, font_for(ref_font_, paint), to_color(paint.background),
                     opts);
     }
+}
+
+auto TerminalView::composition_origin() const -> std::optional<aurora::Rect> {
+    if (geometry_.columns == 0U || geometry_.rows == 0U) {
+        return std::nullopt;  // 尚未布局：没有可比对的格
+    }
+    const auto window = window_bounds();
+    if (!window.has_value()) {
+        return std::nullopt;  // 从未绘制过：平台侧按「无有效定位」退系统默认位置
+    }
+    const std::size_t screen_row = cursor_.row + mirror_.back_rows();
+    if (screen_row >= geometry_.rows || cursor_.column >= geometry_.columns) {
+        return std::nullopt;  // 光标被回看滚出可见窗：这一格不在画面上
+    }
+    return to_rect(rect_for(geometry_, screen_row, cursor_.column, cursor_.column + 1U), window->origin);
+}
+
+auto TerminalView::composition_advance(std::size_t index) const -> double {
+    if (!composition_.has_value() || index == 0U) {
+        return 0.0;
+    }
+    // 与绘制同源：按 scale 下的实显推进量取宽，CJK 组合串的落点不靠查宽度表猜。
+    return static_cast<double>(aurora::render::FontEngine::display_caret_x(
+        composition_->preedit, index, ref_font_, layout_opts_, static_cast<float>(geometry_.scale)));
+}
+
+auto TerminalView::composition_caret_bounds() const -> aurora::Rect {
+    const aurora::Rect none{};
+    if (!is_focused()) {
+        return none;
+    }
+    const auto origin = composition_origin();
+    if (!origin.has_value()) {
+        return none;
+    }
+    // 右沿钳到可视网格右沿：组合串比行尾更长时，候选窗不能跟着插入点跑到视口外。
+    const std::size_t column = std::min(cursor_.column, geometry_.columns - 1U);
+    const double grid_right =
+        origin->origin.x + static_cast<double>(geometry_.columns - column) * geometry_.cell_width;
+    const double advance = composition_.has_value() ? composition_advance(composition_->caret) : 0.0;
+    return aurora::Rect{
+        .origin = aurora::Point{.x = static_cast<float>(std::min(origin->origin.x + advance, grid_right)),
+                                .y = origin->origin.y},
+        .size = aurora::Size{.width = 0.0F, .height = origin->size.height},
+    };
+}
+
+auto TerminalView::paint_composition(aurora::Painter &p, const aurora::Rect &bounds, std::size_t rows)
+    -> void {
+    if (!composition_.has_value() || composition_->preedit.empty() || !is_focused()) {
+        return;
+    }
+    if (geometry_.columns == 0U || !(geometry_.cell_width > 0.0)) {
+        return;
+    }
+    const std::size_t screen_row = cursor_.row + mirror_.back_rows();
+    if (screen_row >= rows) {
+        return;  // 光标被滚出可见窗：组合串没有落点
+    }
+    const std::size_t column = std::min(cursor_.column, geometry_.columns - 1U);
+    const double width = static_cast<double>(aurora::render::FontEngine::display_width(
+        composition_->preedit, ref_font_, layout_opts_, static_cast<float>(geometry_.scale)));
+    // 底色带按实测宽度举整格数，至少占住光标所在这一格。
+    const auto span = static_cast<std::size_t>(std::ceil(width / geometry_.cell_width));
+    const std::size_t last_column = std::min(geometry_.columns, column + std::max<std::size_t>(span, 1U));
+    const Rect band = rect_for(geometry_, screen_row, column, last_column);
+    // ① 先擦底：组合串压在这一格的既有字形上，不铺一层就会与旧字形叠影。
+    p.fill_rect(to_rect(band, bounds.origin), to_color(spec_.default_background));
+    // ② preedit 内选区（输入法高亮「待转换片段」，含尾）：与文本控件同一条区间语义。
+    if (composition_->has_selection) {
+        const double from = composition_advance(composition_->sel_start);
+        const double to = composition_advance(std::min(composition_->sel_end + 1U, composition_->length));
+        const double left = std::min(from, band.width);
+        const double right = std::min(to, band.width);
+        if (right > left) {
+            p.fill_rect(to_rect(Rect{band.x + left, band.y, right - left, band.height}, bounds.origin),
+                        to_color(selection_ink()));
+        }
+    }
+    // ③④⑤ 全部裁到本行剩余格宽：长串既不越出网格，也不压进右侧内边距。
+    const Rect clip = rect_for(geometry_, screen_row, column, geometry_.columns);
+    p.push_clip(to_rect(clip, bounds.origin));
+    const Rect text_box{band.x, band.y + glyph_top_dp(), band.width, band.height};
+    p.draw_text(to_rect(text_box, bounds.origin), composition_->preedit, ref_font_,
+                to_color(spec_.default_foreground), layout_opts_);
+    // ④ 整段下划线：1 物理像素、贴基线（与终端自身的单下划线装饰同一落点口径）。
+    const double stroke = 1.0 / geometry_.scale;
+    const double underline_width = std::min(width, band.width);
+    p.fill_rect(to_rect(Rect{band.x, band.y + geometry_.ascent + stroke, underline_width, stroke}, bounds.origin),
+                to_color(spec_.default_foreground));
+    // ⑤ 插入点：2 物理像素竖线，位置与候选窗盒取同一算式（都是 preedit 前缀的实显推进）。
+    const double caret_width = 2.0 * stroke;
+    const double caret_x = std::min(composition_advance(composition_->caret),
+                                    std::max(0.0, underline_width - caret_width));
+    p.fill_rect(to_rect(Rect{band.x + caret_x, band.y, caret_width, band.height}, bounds.origin),
+                to_color(spec_.cursor_color.value_or(spec_.default_foreground)));
+    p.pop_clip();
 }
 
 auto TerminalView::paint_scroll_indicator(aurora::Painter &p, const aurora::Rect &bounds, std::size_t rows)

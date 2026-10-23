@@ -557,6 +557,25 @@ class TerminalView final : public aurora::LeafWidget {
         return stop_reconnect_button_box_;
     }
 
+    /// @brief 无障碍角色报「文本录入」而不是推断表给的通用档（`SPEC.FEAT.INTERACT.06`）。
+    ///
+    /// 这不是语义润色：`WindowHost` 的输入法桥只对 `TextInput` 角色取候选窗定位盒
+    /// （`window_host.cpp` 的 provider 在角色不符时回零盒），报 `Generic` 会让候选窗退回窗口
+    /// 角落或跟随鼠标，正是需求明令排除的那一档。终端本身就是文本录入面，此角色与既有语义一致。
+    [[nodiscard]] auto accessibility_role() const -> aurora::AccessibilityRole override;
+
+    /// @brief 输入法候选窗定位盒（`SPEC.FEAT.INTERACT.06`）：光标格的**窗口逻辑 dp** 零宽竖盒。
+    ///
+    /// 未组合时即终端光标格本身（Win32 的 `WM_IME_STARTCOMPOSITION` 早于首个 preedit 事件就会
+    /// 来问一次）；组合中再沿 preedit 的插入点右移，右沿钳到可视网格右沿。光标被回看滚出可见窗、
+    /// 或尚未布局过时回零盒——平台侧按「无有效定位」退化为系统默认位置。
+    [[nodiscard]] auto composition_caret_bounds() const -> aurora::Rect override;
+
+    /// @brief 是否处于组合态（preedit 非空）：装配层与用例的观测点。
+    [[nodiscard]] auto is_composing() const noexcept -> bool {
+        return composition_.has_value() && !composition_->preedit.empty();
+    }
+
   protected:
     /// @brief 撑满父级，并在此重取整格几何与下发行列尺寸（`SPEC.FEAT.XFER.01` 的 UI 取值腿）。
     [[nodiscard]] auto on_layout(const aurora::Constraints &c, const aurora::BuildContext &ctx)
@@ -587,6 +606,16 @@ class TerminalView final : public aurora::LeafWidget {
 
     /// @brief 文本输入通道：框架给出的真实字符（含布局与大小写）按会话编码写入。
     auto on_text_input(aurora::TextInputEvent &e) -> void override;
+
+    /// @brief 输入法组合通道（`SPEC.FEAT.INTERACT.06`）：`committed` 走上屏腿，preedit 只在本层显示。
+    ///
+    /// 组合中间态**一字不发**：三后端的 IME 桥都把 commit 收口在 `committed`（Win32 在组合期丢弃
+    /// 残余 `WM_CHAR`、X11 的 IM 风格把提交串改投组合事件），故与 `on_text_input` 共用同一条
+    /// 上屏腿即可，不得在这里另发一份。preedit 与插入点只存一份快照，绘制与候选窗定位同源取它。
+    auto on_text_composition(aurora::TextCompositionEvent &e) -> void override;
+
+    /// @brief 失焦撤下组合态：框架 Win32 桥把「控件侧 preedit 由焦点变更清」写成契约。
+    auto on_focus_change(bool focused) -> void override;
 
     /// @brief 指针入口：上报模式开着且未被 Shift 覆盖时先把这一笔交给上报通道
     ///        （`SPEC.FEAT.TERM.06`，裁决 7.77①②）；否则按下/拖动/抬起 → `ui::cell_at_point` →
@@ -641,6 +670,23 @@ class TerminalView final : public aurora::LeafWidget {
         bool blinking = true;
 
         [[nodiscard]] constexpr auto operator==(const CursorState &) const noexcept -> bool = default;
+    };
+
+    /// @brief 组合态快照（`SPEC.FEAT.INTERACT.06`）：preedit 原文与三枚码点下标。
+    ///
+    /// 下标一律是**码点**序（框架契约），绘制与候选窗定位共用这一份，免得「画在一处、盒在另一处」。
+    /// `preedit` 为空即非组合态，故外层 optional 只在有组合串时才存在；选区用显式的 `has_selection`
+    /// 而不是框架的 `AURORA_NO_SELECTION` 哨兵——本层不必为此把框架常量搬进成员。
+    /// 可比是为了让重复到达的同一份帧不白标一次脏。
+    struct CompositionState {
+        std::string preedit;      ///< UTF-8 组合串（未上屏）。
+        std::size_t length = 0;   ///< `preedit` 的码点数：下标夹取与区间含尾都靠它。
+        std::size_t caret = 0;    ///< 插入点：前多少个码点落在它左边。
+        std::size_t sel_start = 0;  ///< 选区起（码点，含）。
+        std::size_t sel_end = 0;    ///< 选区止（码点，含尾）；`has_selection` 为假时两枚都无意义。
+        bool has_selection = false;
+
+        [[nodiscard]] auto operator==(const CompositionState &) const noexcept -> bool = default;
     };
 
     /// @brief quick select 的开模快照（`SPEC.FEAT.INTERACT.02` 延后子项的 D5/D6）。
@@ -774,6 +820,21 @@ class TerminalView final : public aurora::LeafWidget {
 
     /// @brief 画光标（三形态 + 失焦降级 + 闪烁 off 相）。
     auto paint_cursor(aurora::Painter &p, const aurora::Rect &bounds, std::size_t rows) -> void;
+
+    /// @brief 组合串的起点盒（窗口坐标）：终端光标格；光标滚出可见窗或尚未布局时回空。
+    [[nodiscard]] auto composition_origin() const -> std::optional<aurora::Rect>;
+
+    /// @brief preedit 前 `index` 个码点按实际字宽推进的逻辑 dp（绘制与候选窗定位同源取它）。
+    [[nodiscard]] auto composition_advance(std::size_t index) const -> double;
+
+    /// @brief 画组合串（`SPEC.FEAT.INTERACT.06`）：底色带、preedit 选区、字形、整段下划线与插入点。
+    ///
+    /// 底色带先铺一截默认底色再落字：preedit 压在终端既有字形上时，不擦底会与旧字形叠影。插入点画成
+    /// 2 物理像素的竖线而不是终端光标形态——组合期 `paint_cursor` 让位，两种光标不得同帧争同一格。
+    auto paint_composition(aurora::Painter &p, const aurora::Rect &bounds, std::size_t rows) -> void;
+
+    /// @brief 已提交文本的上屏腿（编码 → 会话 → 广播镜像），与直接按键共用同一条。
+    auto send_committed_text(std::string_view text) -> void;
 
     /// @brief 画回看位置的指示条（视觉稿 U1）：贴底时不画。
     auto paint_scroll_indicator(aurora::Painter &p, const aurora::Rect &bounds, std::size_t rows) -> void;
@@ -1053,6 +1114,8 @@ class TerminalView final : public aurora::LeafWidget {
     CursorState cursor_{};
     CursorState painted_cursor_{};  ///< 上次标脏时的光标，用于判断「本帧到底有没有可画的东西」。
     std::size_t total_lines_ = 0;   ///< scrollback + 视口的总行数，指示条与回看窗口都要用。
+    /// @brief 组合态（`SPEC.FEAT.INTERACT.06`）：空即不在组合中。preedit 与插入点只此一份。
+    std::optional<CompositionState> composition_;
 
     bool blink_on_ = true;
     aurora::TimerHandle blink_timer_;
