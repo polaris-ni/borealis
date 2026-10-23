@@ -74,6 +74,9 @@ public:
         std::function<std::optional<conn::SshProfile>()> current_ssh_profile;
         /// @brief CONN.09 凭据链解析（装配层询问/句柄拆包；本件不经手明文存储）。
         std::function<std::optional<std::string>()> resolve_secret;
+        /// @brief 拨号算法覆盖项（`connection.ssh.kex_algorithms`/`host_key_algorithms` 的现取值）。
+        ///        空表＝库缺省；每次 Connect 现取，口径同 `resolve_secret`——设置改了下次重拨即生效。
+        std::function<conn::SshAlgorithmOverrides()> algorithm_overrides;
         /// @brief 活动标签是否仍是 SSH 会话（UI tick 检查；false 即自动 close+disconnect）。
         std::function<bool()> ssh_tab_alive;
     };
@@ -142,6 +145,7 @@ private:
         bool is_directory{false};     ///< RemoveRemote：条目是否目录（remove_directory 腿）。
         conn::SshProfile profile{};   ///< Connect：连接档案。
         std::optional<std::string> secret;  ///< Connect：凭据链解析出的秘密材料。
+        conn::SshAlgorithmOverrides algorithms;  ///< Connect：拨号算法覆盖项（空＝库缺省）。
     };
 
     /// @brief worker → UI 的收件箱消息（UI tick 取走后按需重建行）。

@@ -56,14 +56,37 @@ enum class HostKeyState : std::uint8_t {
 ///
 /// 只回答「卡在哪一步」，不回答「为什么卡」——后者要 libssh 错误文本，留在日志里。
 /// 分档的意义在自动重连的取舍：`Network` 值得按退避重拨；`HostKey` 与 `Auth` 重拨只会
-/// 重复失败（还可能触发远端账号锁定）；`Unallocated` 是本机资源问题。后三者一律不重拨。
+/// 重复失败（还可能触发远端账号锁定）；`Unallocated` 是本机资源问题；`Options` 是用户
+/// 配的算法表被库拒收（配置错误，重拨只会原样再失败）。除 `Network` 外一律不重拨。
 enum class DialOutcome : std::uint8_t {
     Ok,          ///< 连接、核对、认证三步全过。
     Unallocated, ///< 会话句柄未分配（调用方传了空指针）。
+    Options,     ///< 自定义算法表被 libssh 拒绝（名字不认识等），未发起连接。
     Network,     ///< `ssh_connect` 失败：不可达、超时、协议协商不上。
     HostKey,     ///< 主机密钥与记录不符或核对出错，被档案策略拒绝。
     Auth,        ///< 认证被服务器拒绝，或缺该方式必需的秘密材料。
 };
+
+/// @brief 算法协商面的两枚覆盖项（`SPEC.FEAT.CONN.02` 的延后子项）。
+///
+/// 空串＝保留 libssh 缺省；非空即整表替换（不追加）。名字合法性由 libssh 判定，
+/// 本仓不复制库的算法名单（库版本升级会改表）：库会把不认识的单个名字从表里滤掉，
+/// 整表没有一个可用名字才报错。非空即属于「显式启用旧算法」的用户动作——设置页那一行
+/// 上方有安全旁注，拨号侧另记一条 WARN 以便事后追溯。
+struct SshAlgorithmOverrides {
+    std::string kex;       ///< KEX 算法表，逗号分隔。
+    std::string host_key;  ///< 主机密钥算法表，逗号分隔。
+
+    [[nodiscard]] auto empty() const noexcept -> bool { return kex.empty() && host_key.empty(); }
+    [[nodiscard]] auto operator==(const SshAlgorithmOverrides &) const noexcept -> bool = default;
+};
+
+/// @brief 把非空的算法表写进已分配的 libssh 会话（空项跳过，保留库缺省）。
+///
+/// @return false＝库拒收了某一项（整表没有一个它认识的名字）；调用方须放弃这次拨号
+///         （fail-closed，不静默回退库缺省——用户显式配了旧算法就必须知道它没生效）。
+[[nodiscard]] auto apply_ssh_algorithm_overrides(ssh_session_struct *session,
+                                                 const SshAlgorithmOverrides &overrides) -> bool;
 
 /// @brief 在已分配的 libssh 会话上完成「连接 → 主机密钥核对 → 认证」一条龙。
 ///
@@ -76,9 +99,12 @@ enum class DialOutcome : std::uint8_t {
 /// @param secret  已解析的秘密材料：password＝口令，privatekey＝passphrase，
 ///                keyboard-interactive＝首提示答案；agent 认证传 nullopt。
 /// @param session 调用方先 ssh_new() 分配好的会话；本函数不负责 ssh_free()。
+/// @param algorithms 自定义算法表（空＝库缺省）；在 `ssh_connect` 之前生效，拒绝即 `Options`。
 /// @return 认证成功回 `Ok`；其余按失败所在的那一步回对应档位。
 [[nodiscard]] auto ssh_dial_and_authenticate(const SshProfile &profile,
                                              std::optional<std::string> secret,
-                                             ssh_session_struct *session) -> DialOutcome;
+                                             ssh_session_struct *session,
+                                             const SshAlgorithmOverrides &algorithms = {})
+    -> DialOutcome;
 
 }  // namespace borealis::conn

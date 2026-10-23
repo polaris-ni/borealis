@@ -323,6 +323,25 @@ namespace {
                                    600.0,
                                    ConsumerStatus::Absent,
                                    EffectLevel::NextSession));
+    // 协商面两键（`SPEC.FEAT.CONN.02` 的延后子项，裁决 7.144）：非空即整表替换 libssh 缺省，
+    // 名字合法性归库判（本仓不复制算法名单）。装配层在拨号那一刻抄进连接对象，故 NextSession：
+    // 在途会话不换协商面，重拨沿用会话建立时那份快照。第一行上方挂安全旁注。
+    catalog.push_back(row("connection.ssh.kex_algorithms",
+                          SettingsPage::Connection,
+                          ControlKind::TextInput,
+                          ValueDomain::FreeText,
+                          {},
+                          {},
+                          ConsumerStatus::Wired,
+                          EffectLevel::NextSession));
+    catalog.push_back(row("connection.ssh.host_key_algorithms",
+                          SettingsPage::Connection,
+                          ControlKind::TextInput,
+                          ValueDomain::FreeText,
+                          {},
+                          {},
+                          ConsumerStatus::Wired,
+                          EffectLevel::NextSession));
     // 自动重连三键（WS.05，裁决 7.99 D4①）：区间照抄装载侧把守的那三条。消费方是装配层在建会话
     // 那一刻把三键折成 `conn::RetryPolicy` 交进 `SshConnection` 的构造参数（批 3 接线），故生效档取
     // NextSession 而不是 Immediate：在途连接的重拨环读的是那份快照，改档位要等下一格 SSH 会话。

@@ -57,9 +57,12 @@ class SshConnection final : public session::Connection, public session::Reconnec
     ///        resize() 更新后的**最新值**，不是本参数（裁决 7.99 D7①）。
     /// @param reconnect_policy 退避档（装配层把 `settings.connection.ssh` 三键搬进来；
     ///        省略即 `default_reconnect_policy()`，裁决 7.99 D4① 的那份缺省）。
+    /// @param algorithms 自定义 KEX／主机密钥算法表（空＝库缺省；`SPEC.FEAT.CONN.02` 延后子项）。
+    ///        重拨沿用同一份快照——协商面在会话建立那一刻定，不随设置面板改动换血。
     SshConnection(const SshProfile &profile, std::optional<std::string> secret,
                   session::Size initial_size,
-                  RetryPolicy reconnect_policy = default_reconnect_policy());
+                  RetryPolicy reconnect_policy = default_reconnect_policy(),
+                  SshAlgorithmOverrides algorithms = {});
 
     SshConnection(const SshConnection &) = delete;
     SshConnection(SshConnection &&) = delete;
@@ -119,6 +122,7 @@ class SshConnection final : public session::Connection, public session::Reconnec
     std::optional<std::string> secret_;   ///< 驻留到 close()（裁决 7.99 D7②），每次尝试复制一份。
     session::Size size_;
     RetryPolicy reconnect_policy_;        ///< 退避档，来自 settings.connection.ssh 三键。
+    SshAlgorithmOverrides algorithms_;    ///< 算法覆盖项，来自 settings.connection.ssh 两键。
 
     /// 守护 libssh 句柄的建立/销毁，避免 resize 与 close 竞态（forkpty 同款）。
     std::mutex state_mutex_;

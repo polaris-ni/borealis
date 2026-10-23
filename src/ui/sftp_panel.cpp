@@ -160,7 +160,14 @@ auto SftpPanel::open() -> void {
         if (hooks_.resolve_secret != nullptr) {
             secret = hooks_.resolve_secret();
         }
-        Request req{.kind = Request::Kind::Connect, .profile = std::move(*profile), .secret = std::move(secret)};
+        conn::SshAlgorithmOverrides algorithms;
+        if (hooks_.algorithm_overrides != nullptr) {
+            algorithms = hooks_.algorithm_overrides();
+        }
+        Request req{.kind = Request::Kind::Connect,
+                    .profile = std::move(*profile),
+                    .secret = std::move(secret),
+                    .algorithms = std::move(algorithms)};
         post(std::move(req));
     }
 }
@@ -321,7 +328,7 @@ auto SftpPanel::run_worker() -> void {
         switch (req.kind) {
         case Request::Kind::Connect: {
             client_.disconnect();
-            const bool ok = client_.connect(req.profile, std::move(req.secret));
+            const bool ok = client_.connect(req.profile, std::move(req.secret), req.algorithms);
             push_inbox(InboxMessage{.kind = InboxMessage::Kind::ConnectDone,
                                     .ok = ok,
                                     .error = ok ? conn::SftpError::None : client_.last_error()});
@@ -978,7 +985,14 @@ auto SftpPanel::connect_now() -> void {
     if (hooks_.resolve_secret != nullptr) {
         secret = hooks_.resolve_secret();
     }
-    Request req{.kind = Request::Kind::Connect, .profile = std::move(*profile), .secret = std::move(secret)};
+    conn::SshAlgorithmOverrides algorithms;
+    if (hooks_.algorithm_overrides != nullptr) {
+        algorithms = hooks_.algorithm_overrides();
+    }
+    Request req{.kind = Request::Kind::Connect,
+                .profile = std::move(*profile),
+                .secret = std::move(secret),
+                .algorithms = std::move(algorithms)};
     post(std::move(req));
     rebuild_overlay();
 }

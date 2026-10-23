@@ -369,6 +369,9 @@ constexpr GroupNote kGroupNotes[] = {
     {"terminal.link_osc8", "settings.note.link_confirm"},
     {"terminal.link_schemes", "settings.note.link_schemes"},
     {"connection.ssh.port", "settings.note.ssh"},
+    // 协商面旁注挂在第一行（kex）上方：这段话说的是「这两行填了就接管什么、旧算法代价是什么」，
+    // 与刷新/重连那几行无关；挂组顶就会连带解释下面整组（同 `clipboard_read` 的口径）。
+    {"connection.ssh.kex_algorithms", "settings.note.ssh_algorithms"},
     {"connection.serial.baud", "settings.note.serial"},
     {"shortcuts.overrides", "settings.note.shortcuts"},
 };

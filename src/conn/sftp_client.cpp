@@ -74,7 +74,8 @@ SftpClient::~SftpClient() {
     disconnect();
 }
 
-auto SftpClient::connect(const SshProfile &profile, std::optional<std::string> secret) -> bool {
+auto SftpClient::connect(const SshProfile &profile, std::optional<std::string> secret,
+                         const SshAlgorithmOverrides &algorithms) -> bool {
     // 幂等：一个客户端一条会话，重复 connect 不重拨（UI 侧一个面板一个实例）。
     if (connected_.load()) {
         return true;
@@ -87,7 +88,8 @@ auto SftpClient::connect(const SshProfile &profile, std::optional<std::string> s
         return false;
     }
     // 秘密材料移交 dial 腿消费，无论成败返回后即清空；本类不留存（CONN.09）。
-    if (ssh_dial_and_authenticate(profile, std::move(secret), session_) != DialOutcome::Ok) {
+    if (ssh_dial_and_authenticate(profile, std::move(secret), session_, algorithms) !=
+        DialOutcome::Ok) {
         ssh_free(session_);
         session_ = nullptr;
         last_error_ = SftpError::Network;

@@ -52,22 +52,26 @@ constexpr int kBackoffSliceMs = 200;
             return session::CloseReason::AuthFailed;
         case DialOutcome::HostKey:
             return session::CloseReason::HostKeyRejected;
+        case DialOutcome::Options:
         case DialOutcome::Unallocated:
         case DialOutcome::Ok:
             break;
     }
-    // Unallocated＝本机句柄都开不出来，归不进任何一类网络/服务器原因；保守按不可重拨。
+    // Options＝用户配置的算法表被库拒收；Unallocated＝本机句柄都开不出来。两者都归不进任何
+    // 一类网络/服务器原因，保守按不可重拨（配置错误重拨只会原样再失败）。
     return session::CloseReason::Unknown;
 }
 
 }  // namespace
 
 SshConnection::SshConnection(const SshProfile &profile, std::optional<std::string> secret,
-                             session::Size initial_size, RetryPolicy reconnect_policy)
+                             session::Size initial_size, RetryPolicy reconnect_policy,
+                             SshAlgorithmOverrides algorithms)
     : profile_{profile},
       secret_{std::move(secret)},
       size_{initial_size},
-      reconnect_policy_{reconnect_policy} {}
+      reconnect_policy_{reconnect_policy},
+      algorithms_{std::move(algorithms)} {}
 
 SshConnection::~SshConnection() {
     close();
@@ -139,7 +143,7 @@ auto SshConnection::dial_and_serve() -> Attempt {
     // 每次尝试把成员里的明文**复制**一份按值交进去，形参副本随 dial 腿返回消失；
     // 成员副本要到 close() 才清（裁决 7.99 D7②）。
     retry_now_.store(false);  // 残留的「立即重试」不该截断这一次的退避。
-    const auto outcome = ssh_dial_and_authenticate(profile_, secret_, session_);
+    const auto outcome = ssh_dial_and_authenticate(profile_, secret_, session_, algorithms_);
     if (outcome != DialOutcome::Ok) {
         return Attempt{.linked = false, .reason = reason_for(outcome)};
     }

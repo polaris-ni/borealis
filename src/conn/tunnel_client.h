@@ -25,6 +25,7 @@
 #include <thread>
 
 #include "borealis/conn/profile.h"
+#include "conn/ssh_dial.h"
 #include "conn/tunnel_model.h"
 
 namespace borealis::conn {
@@ -56,8 +57,10 @@ class Tunnel final {
     ///                每次重拨在副本上消费，原值留到隧道停止（见头注释）。
     /// @param spec    隧道定义（形态/监听点/目标）。
     /// @param policy  失败重试策略。
+    /// @param algorithms 算法覆盖项（`connection.ssh.kex_algorithms`/`host_key_algorithms` 的
+    ///                拨号期快照）；口径同 ssh_dial_and_authenticate，重拨沿用同一份。
     Tunnel(const SshProfile &profile, std::optional<std::string> secret, TunnelSpec spec,
-           RetryPolicy policy = {});
+           RetryPolicy policy = {}, SshAlgorithmOverrides algorithms = {});
 
     Tunnel(const Tunnel &) = delete;
     auto operator=(const Tunnel &) -> Tunnel & = delete;
@@ -89,6 +92,7 @@ class Tunnel final {
     std::optional<std::string> secret_;
     TunnelSpec spec_;
     RetryPolicy policy_;
+    SshAlgorithmOverrides algorithms_;
     TunnelEvents *events_ = nullptr;
 
     std::thread worker_;

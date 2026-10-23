@@ -527,6 +527,8 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     put(ssh, "reconnect_base_delay_ms", connection.ssh.reconnect_base_delay_ms);
     put(ssh, "reconnect_max_delay_ms", connection.ssh.reconnect_max_delay_ms);
     put(ssh, "reconnect_attempts", connection.ssh.reconnect_attempts);
+    put(ssh, "kex_algorithms", connection.ssh.kex_algorithms);
+    put(ssh, "host_key_algorithms", connection.ssh.host_key_algorithms);
     node.set("ssh", std::move(ssh));
 
     auto serial = Value::object();
@@ -907,6 +909,12 @@ enum class CredentialProjection : std::uint8_t {
                                      600000));
     connection.ssh.reconnect_attempts =
         static_cast<int>(ssh.integer("reconnect_attempts", defaults.connection.ssh.reconnect_attempts, 0, 100));
+    // 两枚算法表只做类型裁决（FreeText 同族）：合法算法名由 libssh 在拨号时判定，写错即建连失败并
+    // 落既有错误分类；面板与装载侧都不猜库支持哪些名字（库版本升级会改名单）。
+    connection.ssh.kex_algorithms =
+        ssh.text("kex_algorithms", defaults.connection.ssh.kex_algorithms);
+    connection.ssh.host_key_algorithms =
+        ssh.text("host_key_algorithms", defaults.connection.ssh.host_key_algorithms);
     ssh.collect_unknown();
 
     auto serial = scope.enter("serial");

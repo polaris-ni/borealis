@@ -2484,7 +2484,9 @@ auto main(int argc, char **argv) -> int {
     auto make_ssh_session = [&](const borealis::conn::SshProfile &ssh, std::optional<std::string> secret)
         -> std::shared_ptr<borealis::session::Session> {
         auto connection = std::make_unique<borealis::conn::SshConnection>(
-            ssh, std::move(secret), kNominalViewport, reconnect_policy());
+            ssh, std::move(secret), kNominalViewport, reconnect_policy(),
+            borealis::conn::SshAlgorithmOverrides{settings.connection.ssh.kex_algorithms,
+                                                  settings.connection.ssh.host_key_algorithms});
         auto width_policy = std::make_shared<borealis::term::UnicodeWidthPolicy>();
         return std::make_shared<borealis::session::Session>(
             std::move(connection), kNominalViewport, settings.terminal.scrollback_limit,
@@ -3099,8 +3101,11 @@ auto main(int argc, char **argv) -> int {
             tunnel_skipped->erase(spec.id);
         }
         // 逐条重试档直接取自定义（D9②），不再吃全局缺省。
-        auto tunnel = std::make_unique<borealis::conn::Tunnel>(ssh_profile, std::move(secret),
-                                                               spec, spec.retry);
+        auto tunnel = std::make_unique<borealis::conn::Tunnel>(
+            ssh_profile, std::move(secret), spec, spec.retry,
+            borealis::conn::SshAlgorithmOverrides{
+                store.settings().connection.ssh.kex_algorithms,
+                store.settings().connection.ssh.host_key_algorithms});
         tunnel->start(*sink);
         tunnel_entries[spec.id] = TunnelEntry{std::move(sink), std::move(tunnel)};
     };
@@ -3231,6 +3236,12 @@ auto main(int argc, char **argv) -> int {
         const auto it = ssh_secret_by_tab.find(target.value());
         return (it != ssh_secret_by_tab.end() && it->second.has_value()) ? it->second : std::nullopt;
     };
+    // 算法覆盖项：设置是全局档，每次 Connect 现取——改完设置后面板的重拨（`connect_now`）
+    // 即用新表，无需重建面板（NextSession 口径：在途会话不换协商面）。
+    sftp_hooks.algorithm_overrides = [&settings]() -> borealis::conn::SshAlgorithmOverrides {
+        return borealis::conn::SshAlgorithmOverrides{settings.connection.ssh.kex_algorithms,
+                                                     settings.connection.ssh.host_key_algorithms};
+    };
     sftp_hooks.ssh_tab_alive = [&ssh_profile_by_tab, &command_tab_id]() -> bool {
         const std::optional<borealis::ui::TabId> target = command_tab_id();
         return target.has_value() && ssh_profile_by_tab.count(target.value()) > 0;
@@ -3286,13 +3297,17 @@ auto main(int argc, char **argv) -> int {
     // 认证材料随 dial 返回即消失（CONN.09 的明文纪律）。
     submit_keys_push = [&](const std::string &path, const borealis::conn::SshProfile &profile,
                            std::optional<std::string> secret, std::string_view line) -> void {
+        // 算法覆盖项在提交这一刻拍快照（UI 线程读配置），随任务进 worker——worker 不直接读 store。
+        const auto algorithms = borealis::conn::SshAlgorithmOverrides{
+            store.settings().connection.ssh.kex_algorithms,
+            store.settings().connection.ssh.host_key_algorithms};
         keys_worker.submit(
             borealis::ui::KeysOpKind::Push, path,
             [path_target = path, profile, secret = std::move(secret),
-             line = std::string{line}, mutex = keys_worker.mutex(),
+             line = std::string{line}, algorithms, mutex = keys_worker.mutex(),
              latest = keys_worker.latest()]() -> void {
-                const auto report =
-                    borealis::conn::push_public_key(profile, std::move(secret), line);
+                const auto report = borealis::conn::push_public_key(profile, std::move(secret),
+                                                                    line, algorithms);
                 const std::lock_guard lock{*mutex};
                 latest->push_step = borealis::conn::push_stage_index(report.stage);
                 latest->notice_key = std::string{borealis::ui::key_push_notice_key(report)};

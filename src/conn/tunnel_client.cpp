@@ -281,8 +281,12 @@ auto sleep_checked(const std::atomic<bool> &closing, int total_ms) -> void {
 }  // namespace
 
 Tunnel::Tunnel(const SshProfile &profile, std::optional<std::string> secret, TunnelSpec spec,
-               RetryPolicy policy)
-    : profile_(profile), secret_(std::move(secret)), spec_(std::move(spec)), policy_(policy) {}
+               RetryPolicy policy, SshAlgorithmOverrides algorithms)
+    : profile_(profile),
+      secret_(std::move(secret)),
+      spec_(std::move(spec)),
+      policy_(policy),
+      algorithms_(std::move(algorithms)) {}
 
 Tunnel::~Tunnel() { stop(); }
 
@@ -345,7 +349,8 @@ auto Tunnel::run_loop() -> void {
         }
         const auto secret_copy = secret_;
         const bool dialed =
-            ssh_dial_and_authenticate(profile_, secret_copy, session) == DialOutcome::Ok;
+            ssh_dial_and_authenticate(profile_, secret_copy, session, algorithms_) ==
+            DialOutcome::Ok;
 
         TunnelError error{TunnelError::None};
         std::unique_ptr<platform::TcpListener> listener;

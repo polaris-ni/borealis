@@ -32,6 +32,7 @@
 #include <string_view>
 
 #include "borealis/conn/profile.h"
+#include "conn/ssh_dial.h"
 
 namespace borealis::conn {
 
@@ -109,7 +110,10 @@ struct PushReport {
 /// @param profile 目标档案（主机/端口/用户/认证方式/known_hosts 策略），来自档案下拉。
 /// @param secret  已解析的秘密材料；agent 认证传 nullopt。随 dial 返回即消失。
 /// @param line    `public_line()` 的产物，或 `.pub` 文件里的那一行。
+/// @param algorithms 算法覆盖项（`connection.ssh.kex_algorithms`/`host_key_algorithms` 的
+///                推送期快照），口径同 `ssh_dial_and_authenticate`；拒收落在拨号格。
 [[nodiscard]] auto push_public_key(const SshProfile &profile, std::optional<std::string> secret,
-                                   std::string_view line) -> PushReport;
+                                   std::string_view line,
+                                   const SshAlgorithmOverrides &algorithms = {}) -> PushReport;
 
 }  // namespace borealis::conn

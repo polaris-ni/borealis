@@ -234,6 +234,12 @@ struct SshDefaults {
     int reconnect_max_delay_ms{30000};  ///< 逐次翻倍后的封顶。
     int reconnect_attempts{3};          ///< 还能再拨几回；0＝不限次（`conn::RetryPolicy::max_attempts` 同口径）。
                                         ///  缺省取 3 而非不限：不限次会把「连不上」变成静默无限重试。
+    /// 自定义 KEX 算法表（逗号分隔，原样交 libssh；空＝库缺省）。`SPEC.FEAT.CONN.02` 的延后子项
+    /// 「密钥交换与主机密钥算法可配、显式启用旧算法」：非空即用户显式接管协商面，面板旁注会警示
+    /// 旧算法降低安全性。生效档 NextSession——拨号那一刻把值抄进连接对象，在途会话不换协商面。
+    std::string kex_algorithms{};
+    /// 自定义主机密钥算法表（同上）。
+    std::string host_key_algorithms{};
 
     /// @brief 逐字段全等比较（配置往返断言用）。
     [[nodiscard]] auto operator==(const SshDefaults &other) const noexcept -> bool = default;

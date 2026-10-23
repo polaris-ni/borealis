@@ -169,7 +169,10 @@ auto run_exec(ssh_session_struct *session, std::string_view command, std::string
     switch (outcome) {
     case DialOutcome::Unallocated:
         return PushFailure::DialUnallocated;
+    case DialOutcome::Options:
     case DialOutcome::Network:
+        // Options（算法表被库拒收）与网络档共用「连不上」这句用户措辞；精确原因在 WARN 日志里，
+        // 不为一处配置错误再开一档阶梯文案（面板那四级阶梯讲的是走到哪一步，不是失败细节）。
         return PushFailure::DialNetwork;
     case DialOutcome::HostKey:
         return PushFailure::DialHostKey;
@@ -206,7 +209,7 @@ auto push_stage_index(PushStage stage) -> int {
 }
 
 auto push_public_key(const SshProfile &profile, std::optional<std::string> secret,
-                     std::string_view line) -> PushReport {
+                     std::string_view line, const SshAlgorithmOverrides &algorithms) -> PushReport {
     auto report = PushReport{};
 
     // ⑴ 纯逻辑闸：拨号之前先问「这行成不成立」。payload 为空即废行，此时既不分配会话
@@ -226,7 +229,8 @@ auto push_public_key(const SshProfile &profile, std::optional<std::string> secre
         AURORA_LOG_ERROR("conn", "ssh: push: cannot allocate ssh session");
         return report;
     }
-    const auto dial = ssh_dial_and_authenticate(profile, std::move(secret), session.get());
+    const auto dial =
+        ssh_dial_and_authenticate(profile, std::move(secret), session.get(), algorithms);
     if (dial != DialOutcome::Ok) {
         // 认证那一格只归认证；其余失败都发生在拨号格（主机键核对也算，dial 腿的口径）。
         report.stage = dial == DialOutcome::Auth ? PushStage::Auth : PushStage::Dial;

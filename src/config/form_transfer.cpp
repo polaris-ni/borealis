@@ -371,6 +371,12 @@ auto assign_shortcuts(Settings &settings, const FormValue &value) -> void {
                     return FormValue::integral(static_cast<std::int64_t>(s.connection.ssh.connect_timeout_sec));
                 },
                 [](Settings &s, const FormValue &v) { assign(s.connection.ssh.connect_timeout_sec, v); }},
+        Binding{"connection.ssh.kex_algorithms",
+                [](const Settings &s) -> FormValue { return FormValue::text(s.connection.ssh.kex_algorithms); },
+                [](Settings &s, const FormValue &v) { assign(s.connection.ssh.kex_algorithms, v); }},
+        Binding{"connection.ssh.host_key_algorithms",
+                [](const Settings &s) -> FormValue { return FormValue::text(s.connection.ssh.host_key_algorithms); },
+                [](Settings &s, const FormValue &v) { assign(s.connection.ssh.host_key_algorithms, v); }},
         Binding{"connection.ssh.reconnect_base_delay_ms",
                 [](const Settings &s) -> FormValue {
                     return FormValue::integral(static_cast<std::int64_t>(s.connection.ssh.reconnect_base_delay_ms));

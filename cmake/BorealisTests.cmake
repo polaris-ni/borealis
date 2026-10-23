@@ -72,6 +72,11 @@ target_link_libraries(borealis_test_runner PRIVATE borealis_core)
 # 私有头单测腿：个别纯逻辑函数住在 src/ 私有头里（如 ssh_connection.h 的裁决矩阵），
 # 用例须能按 "conn/ssh_connection.h" 解析；私有头本身仍是私有头，公共头不因此扩面。
 target_include_directories(borealis_test_runner PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+# 算法表的无网络证人（`SPEC.FEAT.CONN.02` 延后子项，裁决 7.144）：`utest_ssh` 直接 `ssh_new()`
+# → `apply_ssh_algorithm_overrides()` → `ssh_options_get()` 回读，验「真写进会话」与「整表被拒」。
+# core 对 libssh 是 PRIVATE（私有头纪律不清算到测试目标），故测试目标单独取同一份 vcpkg 目标。
+find_package(libssh CONFIG REQUIRED)
+target_link_libraries(borealis_test_runner PRIVATE ssh)
 
 foreach (tst ${BOREALIS_TEST_CASE_SOURCES})
     get_filename_component(tname ${tst} NAME_WE)

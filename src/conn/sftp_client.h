@@ -27,6 +27,7 @@
 
 #include "borealis/conn/profile.h"
 #include "conn/sftp_model.h"
+#include "conn/ssh_dial.h"
 
 // libssh 前向声明：头里只出现指针，实现文件才包含 libssh 头。
 struct ssh_session_struct;
@@ -54,9 +55,11 @@ public:
     /// @param secret 已解析的秘密材料，口径同 ssh_dial_and_authenticate：
     ///               password＝口令、privatekey＝passphrase、其余方式按 dial
     ///               腿口径；本参数无论成败返回后即被清空。
+    /// @param algorithms 算法覆盖项，口径同 ssh_dial_and_authenticate（空＝库缺省）。
     /// @return 成功回 true；已连接时幂等回 true（一个客户端一条会话，不重拨）。
-    ///         失败看 last_error()（建连/认证失败一律 Network，dial 腿已记日志）。
-    auto connect(const SshProfile &profile, std::optional<std::string> secret) -> bool;
+    ///         失败看 last_error()（建连/认证/算法表被拒一律 Network，dial 腿已记日志）。
+    auto connect(const SshProfile &profile, std::optional<std::string> secret,
+                 const SshAlgorithmOverrides &algorithms = {}) -> bool;
 
     /// @brief 断开并释放 SFTP 与 SSH 会话（幂等，可随时调用）。
     auto disconnect() -> void;

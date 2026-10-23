@@ -299,8 +299,9 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // PREF.05 的界面语言 `appearance.language` 随裁决 D1① 进表（键在外观域、消费方是启动路径的装填），
     // WS.11 的会话恢复开关 `connection.restore_sessions` 随稿 D3① 进表（它决定「重启后要不要重连上次的
     // 连接」，与 `connection.local_shell`／`startup_directory` 同域，故归连接页而非外观页），
-    // 故停在 71。
-    AURORA_TEST_CHECK_EQ(keys.size(), 71U);
+    // CONN.02 的两枚算法表（`kex_algorithms` / `host_key_algorithms`）随裁决 7.144 进表，
+    // 故停在 73。
+    AURORA_TEST_CHECK_EQ(keys.size(), 73U);
 }
 
 AURORA_TEST_CASE(restore_sessions_is_a_wired_next_launch_connection_switch) {
@@ -589,12 +590,13 @@ AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
     // 一条无运行期接缝的键挂错档就会在这里转红，而不是静默变成「改了没反应」。
     AURORA_TEST_CHECK_MSG(rows_with_consumer(ConsumerStatus::SeamPending).empty(), "seam-pending set drifted");
 
-    // 判据文 §0 的物理边界②：已接线却「下次会话生效」的键是这二十条——三条会话侧的构造期注入
+    // 判据文 §0 的物理边界②：已接线却「下次会话生效」的键是这二十二条——三条会话侧的构造期注入
     // （裁决 7.76②）加三条本就取用于建会话那一刻的键，再加 WS.05 的自动重连三键（裁决 7.99 D4①：
     // 装配层在建 SSH 会话那一刻把三键折成 `conn::RetryPolicy` 交进构造参数，在途连接读的是那份快照），
     // 再加 TERM.09 的编码两键（`term::SessionEncoding` 是构造期值：解码器与发送策略都在建会话这一刻定），
     // 再加 CONN.11 的日志目录与追加模式两键（裁决 7.116 判据 7：两者都在**开启那一刻**取用，
-    // 改它不回溯在途会话已写的文件与已在打的码；同域的能力闸 `session_logging` **不在**此列，它即时）。
+    // 改它不回溯在途会话已写的文件与已在打的码；同域的能力闸 `session_logging` **不在**此列，它即时），
+    // 再加 CONN.02 的两枚算法表（裁决 7.144：装配层在拨号那一刻抄进连接对象，在途会话不换协商面）。
     // 多一条即面板谎报即时，少一条即运行期入口被判成不存在而白开一条接缝。
     const std::vector<std::string> next_session{"appearance.cursor_blinking",
                                                 "appearance.cursor_shape",
@@ -608,6 +610,8 @@ AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
                                                 "connection.serial.stop_bits",
                                                 "connection.session_log_dir",
                                                 "connection.session_log_pattern",
+                                                "connection.ssh.host_key_algorithms",
+                                                "connection.ssh.kex_algorithms",
                                                 "connection.ssh.reconnect_attempts",
                                                 "connection.ssh.reconnect_base_delay_ms",
                                                 "connection.ssh.reconnect_max_delay_ms",

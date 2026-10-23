@@ -319,6 +319,9 @@ const Tier kStringsZh{
     {"settings.note.ssh", "入口先于消费方落地：SSH 连接族尚未开工，本组改动只落盘"},
     {"settings.note.serial", "入口先于消费方落地：串口连接族尚未开工，本组改动只落盘"},
     {"settings.note.shortcuts", "入口先于消费方落地：键位重绑尚未开工，覆盖表里的组合键不会生效"},
+    {"settings.note.ssh_algorithms",
+     "逗号分隔；非空即整表替换库缺省。列旧算法（如 ssh-rsa、diffie-hellman-group14-sha1）"
+     "会降低安全性，仅连旧设备时启用"},
 
     // ---- 回退链区段（A5-a：顺序可改、逐行可删、末尾追加）----
     // 上限的数字**不写进模板**：它的真值源是框架头里的 `AURORA_TEXT_FALLBACK_CHAIN_MAX`，故经 `{0}`
@@ -637,6 +640,8 @@ const Tier kStringsZh{
     {"connection.ssh.agent_forwarding", "agent 转发"},
     {"connection.ssh.keepalive_interval_sec", "保活间隔"},
     {"connection.ssh.connect_timeout_sec", "连接超时"},
+    {"connection.ssh.kex_algorithms", "密钥交换算法"},
+    {"connection.ssh.host_key_algorithms", "主机密钥算法"},
     {"connection.ssh.reconnect_base_delay_ms", "重连首轮退避"},
     {"connection.ssh.reconnect_max_delay_ms", "重连退避上限"},
     {"connection.ssh.reconnect_attempts", "自动重连次数"},
@@ -975,6 +980,9 @@ const Tier kStringsEn{
     {"settings.note.shortcuts",
      "The entry landed before its consumer: key rebinding is not built yet, "
      "so bindings in the override table do nothing"},
+    {"settings.note.ssh_algorithms",
+     "Comma-separated; a non-empty list replaces the library defaults. Legacy algorithms "
+     "(e.g. ssh-rsa, diffie-hellman-group14-sha1) weaken security; enable only for old devices"},
 
     // ---- 回退链区段（A5-a）----
     // 三枚按钮是**字形**而不是词，两档同字（`SPEC.FEAT.PREF.05` 稿 m1 那条等价变异点名的正是这类条目）；
@@ -1343,6 +1351,8 @@ const Tier kStringsEn{
     {"connection.ssh.agent_forwarding", "Agent forwarding"},
     {"connection.ssh.keepalive_interval_sec", "Keepalive interval"},
     {"connection.ssh.connect_timeout_sec", "Connect timeout"},
+    {"connection.ssh.kex_algorithms", "Key exchange algorithms"},
+    {"connection.ssh.host_key_algorithms", "Host key algorithms"},
     {"connection.ssh.reconnect_base_delay_ms", "Reconnect base backoff"},
     {"connection.ssh.reconnect_max_delay_ms", "Reconnect backoff cap"},
     {"connection.ssh.reconnect_attempts", "Automatic reconnect attempts"},

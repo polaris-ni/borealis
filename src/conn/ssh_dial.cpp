@@ -79,9 +79,31 @@ auto auth_requires_secret(std::string_view method) -> bool {
     return method == "password";
 }
 
+auto apply_ssh_algorithm_overrides(ssh_session_struct *session,
+                                   const SshAlgorithmOverrides &overrides) -> bool {
+    if (session == nullptr) {
+        return false;
+    }
+    const auto apply = [session](ssh_options_e option, const std::string &value,
+                                 std::string_view label) -> bool {
+        if (value.empty()) {
+            return true;
+        }
+        if (ssh_options_set(session, option, value.c_str()) != SSH_OK) {
+            AURORA_LOG_ERROR("conn", "ssh: refused custom ", label, " list: ", ssh_get_error(session));
+            return false;
+        }
+        return true;
+    };
+    // 先 KEX 后主机密钥；任一拒绝就停（另一项是否合法已无意义——这次拨号本来就不该发生）。
+    return apply(SSH_OPTIONS_KEY_EXCHANGE, overrides.kex, "kex") &&
+           apply(SSH_OPTIONS_HOSTKEYS, overrides.host_key, "host key");
+}
+
 auto ssh_dial_and_authenticate(const SshProfile &profile,
                                std::optional<std::string> secret,
-                               ssh_session_struct *session) -> DialOutcome {
+                               ssh_session_struct *session,
+                               const SshAlgorithmOverrides &algorithms) -> DialOutcome {
     if (session == nullptr) {
         AURORA_LOG_ERROR("conn", "ssh: dial: session not allocated");
         return DialOutcome::Unallocated;
@@ -96,6 +118,16 @@ auto ssh_dial_and_authenticate(const SshProfile &profile,
     }
     const auto timeout = static_cast<unsigned int>(kConnectTimeoutSeconds);
     ssh_options_set(session, SSH_OPTIONS_TIMEOUT, &timeout);
+    // 自定义算法表（`SPEC.FEAT.CONN.02` 延后子项）：非空即整表替换，含显式启用旧算法的用户动作，
+    // 留一条 WARN 便于事后追溯。整表没有一个库认识的名字即 fail-closed——静默回落缺省会让用户
+    // 以为旧算法已生效（混在合法表里的生名由库自己滤掉，本仓不复制名单逐名核对）。
+    if (!algorithms.empty()) {
+        AURORA_LOG_WARN("conn", "ssh: custom algorithm list in use for '", profile.host,
+                        "' (kex='", algorithms.kex, "', host_keys='", algorithms.host_key, "')");
+        if (!apply_ssh_algorithm_overrides(session, algorithms)) {
+            return DialOutcome::Options;
+        }
+    }
 
     // ---- 连接 ----
     if (ssh_connect(session) != SSH_OK) {
