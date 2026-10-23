@@ -4,6 +4,22 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.142（2026-10-24）**`SPEC.NF.RELI.01` 崩溃留存腿落地：选型为自写诊断快照，崩溃时只落结构计数与每格身份（裁决 7.142；本地提交 `3942df1` → 文档回写（本笔））**
+
+**动机**：`src/main.cpp` 里那条「崩溃留存腿……待人裁决后再开工」的 `TODO(SPEC.NF.RELI.01)` 挂了整段 M2（裁决 7.82⑥ 即登记为「待人裁决」）。需求原文只要「崩溃时留存会话与诊断信息」，未定形态；三条候选（信号钩子 + 全内存 dump / 自写诊断文件 / 交给系统 core）在隐私面与可移植面上的代价不同，前段一直未自行择一。本次在常存授权下按推荐档收口并回写为裁决。
+
+**落地形态**：
+
+- **选型＝自写诊断快照**：不采用全内存 dump、不写 scrollback。终端输出可能含口令、私钥口令与远端回显，而会话日志默认关闭（裁决 7.9）；一份默认开启且含屏幕内容的崩溃文件等于绕过那条默认。隐私边界写成结构不变量——崩溃文件里没有承载终端文本、标签名、主机名、档案名与凭据的槽。
+- **无锁双缓冲**：`diag::CrashFactsStore` 由 UI 线程把结构快照写进**非当前**缓冲再翻指针，处理函数只读当前那一份；`std::atomic<std::uint32_t>` 以 `static_assert` 钉住 lock-free。写路径只用 `open/write/fsync/close/getpid/time/sigaction/sigprocmask/raise/_exit`，不分配、不取锁、不碰 stdio；64 KiB 备用信号栈覆盖栈溢出型 SIGSEGV。
+- **退出语义不变**：写完诊断后恢复 `SIG_DFL`、解除本线程对该信号的屏蔽、再抛同一枚信号，系统 core dump 与退出码照旧。首轮实测踩过屏蔽未解除的坑（`raise` 只挂起，随后走到 `_exit(128+sig)`，`WIFSIGNALED` 与 core 语义俱失）；`utest_posix_crash_handler` 用 `WIFSIGNALED(status)` 钉死。
+- **落点**：`<配置目录>/crash/crash-<pid>.txt`，0600，仅在崩溃时创建；pid 在处理函数内 `getpid()` 现取，`fork` 后子进程崩溃不记到父名下。快照最多 128 条会话身份，超出只截身份、`panes` 计数照记。会话内容侧的留存仍由拓扑变更当场落盘的 `windows.json`（`SPEC.FEAT.WS.11`）承担，二者互补。
+- **平台腿**：POSIX 注册 SIGSEGV／SIGABRT／SIGBUS／SIGFPE／SIGILL；Win32 走 `SetUnhandledExceptionFilter` + `CreateFileW`，返回 `EXCEPTION_CONTINUE_SEARCH`，不吞 WER。四族计数器（解析降级／非法字节／发送侧不可表示／背压水位）不进崩溃文件：取数要碰会话锁，信号上下文不安全；F12 面板仍是在册唯一读点。
+
+**验收读数**：构建无新警告；`utest_crash_report` 6 案、`utest_posix_crash_handler` 2 案全绿；`ctest --preset linux -E etest_` **115/115 全绿**（基线 113 ⇒ +2 套件）、`borealis_test_runner` **1417/1417 全绿**（+8 案）。三支变异各有指名红案：删会话行循环 ⇒ 2 案红；删发布侧上限夹取 ⇒ 1 案红；`Serial` 折回 `"ssh"` ⇒ 1 案红；还原后逐案复绿。
+
+**边界与不称可用**（`AGENTS.md` §4.4 第 33 条）：`src/main.cpp` 的安装点与每帧发布点不编入 runner（裁决 7.83），两跳只有源码审查与真机走查；**Win32 腿未在 MSVC 上编译验证**（推断/未验证），`abort()` 的 CRT 路径不经过 UEF 那一档留白；`utest_posix_crash_handler` 约 1 s 的耗时来自本机 `core_pattern` 走 apport 管道，属环境读数。故本条只称「无头证据链闭合」，**不称「可用」**。
+
 ## v0.141（2026-10-24）**`SPEC.FEAT.WS.01` 的末位 pane 关闭收口：单格标签上的 `Ctrl+Shift+W` 转交关标签请求（裁决 7.141；本地提交 `90635bc` → 文档回写（本笔））**
 
 **动机**：`WorkspaceView::close_pane` 里挂着一句带 TODO 的早退——树只剩一格时直接返回。分工本身没错（末位 pane 的关闭是「关标签」，判据归装配层，裁决 7.42⑤ / 7.43⑤），但最常见的单格标签状态下 `Ctrl+Shift+W` 因此被认领却什么也不做。这是按键静默落空，不是有意留白；`PaneTree` 与 `TabStrip` 都不会替你接住这一刀。
