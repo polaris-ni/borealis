@@ -99,7 +99,7 @@ EOF 必须先于「通道已关」判：这是裁决 7.146 抓到的 `SSH_EOF` �
 
 ### D6 生命周期：registry 持弱引用，适配器持强引用
 
-- `SshSessionRegistry` 由装配层建一枚（`shared_ptr`），按 D2 的键 + 秘密线性查表；表项是 `weak_ptr<SshSharedSession>`，每次取用顺带剪掉过期项。
+- `SshSessionRegistry` 由装配层建一枚（`shared_ptr`），按 D2 的键 + 秘密线性查表；表项只存键与 `weak_ptr<SshSharedSession>`，秘密比较由仍活着的共享会话回答——表里**不留明文**，每次取用顺带剪掉过期项。
 - `SshConnection` 在 `start()` 时向 registry 取一份 `shared_ptr` 并挂接；之后不再需要 registry。
 - 最后一个租约 `Detach` 后，I/O 线程自行收口（关全部通道 → 断会话 → 释放回调表 → 清秘密材料）并退出；共享会话对象随最后一个 `shared_ptr` 释放。
 - 进入终态（重连用尽／不可重连／用户停止）的共享会话把 `accepting_` 置假；registry 不再借出它，新标签得到一条新 TCP——与「这条链路已经没救了」的事实一致。
@@ -164,9 +164,10 @@ class SshSessionRegistry final {
         -> std::shared_ptr<SshSharedSession>;
 
   private:
+    // 表项**不存秘密**：秘密比较由仍活着的共享会话自己回答（`matches`），
+    // 于是「链路已收口、弱引用还在」的空窗期不会在表里留一份明文。
     struct Entry {
         SshSessionKey key;
-        std::optional<std::string> secret;
         std::weak_ptr<SshSharedSession> session;
     };
     std::mutex mutex_;

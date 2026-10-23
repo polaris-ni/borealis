@@ -28,6 +28,7 @@ add_library(borealis_core STATIC
         conn/snippet.cpp
         conn/ssh_connection.cpp
         conn/ssh_dial.cpp
+        conn/ssh_shared.cpp
         conn/telnet_connection.cpp
         conn/telnet_negotiation.cpp
         conn/tunnel_client.cpp
