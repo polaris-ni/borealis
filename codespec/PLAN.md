@@ -60,7 +60,7 @@
 | `SPEC.FEAT.RENDER.04` | 光标 | P0 | M1 **第一棒**（裁决 7.23④） |
 | `SPEC.FEAT.RENDER.05` | 缩放适配 | P1 | M2；与 `SPEC.FEAT.RENDER.02` 同棒接缩放变更后的度量与字形缓存重建（裁决 7.23④）。**Linux 判据形态（裁决 **7.90**）**：GLFW 与 Wayland 两后端的上报调用点已在（读源结论，待真机读数）；X11 后端无运行期重取与通知，而该仓 `08-tooling.md` §8.2 已把它记为「不适用，非缺口」（per-monitor 需 XRandR 即新特性），故本条在 X11 上按「启动档位 ＋ 改档后重建窗口生效」判，「运行期即时改档」与「跨屏异缩放」两档不判 |
 | `SPEC.FEAT.INTERACT.01` | 键盘映射 | P0 | M1 |
-| `SPEC.FEAT.INTERACT.02` | 文本选择 | P1 | M1（流式拖拽/矩形块基本面，`SPEC.FEAT.INTERACT.03` 选区复制的前置）+ M2（双击/三击等其余）；**quick select 延后子项已落（2026-10-23，裁决 7.135）**：全局命令 `quick_select.open`（`Ctrl+Shift+Space`）落到焦点 pane，视区内 URL／路径／哈希标 `asdfghjkl` 标签，按完整标签在帧边界复制冻结文本；`utest_quick_select` 12 案 + `itest_quick_select` 8 案，四支变异各有指名红案；真机未走查 ⇒ 不称「可用」。智能选择仍留 M4 |
+| `SPEC.FEAT.INTERACT.02` | 文本选择 | P1 | M1（流式拖拽/矩形块基本面，`SPEC.FEAT.INTERACT.03` 选区复制的前置）+ M2（双击/三击等其余）；**quick select 延后子项已落（2026-10-23，裁决 7.135）**：全局命令 `quick_select.open`（`Ctrl+Shift+Space`）落到焦点 pane，视区内 URL／路径／哈希标 `asdfghjkl` 标签，按完整标签在帧边界复制冻结文本；`utest_quick_select` 12 案 + `itest_quick_select` 8 案，四支变异各有指名红案；真机未走查 ⇒ 不称「可用」。**智能选择延后子项亦已落（2026-10-23，裁决 7.136）**：双击严格落在同一行引号／括号对内时扩到最内层整对（含两端定界符），无配对回退既有词粒度；`utest_selection` 4 案 + `itest_render_viewport` 2 案，四支变异各有指名红案；真机未走查 ⇒ 不称「可用」。跨行配对与 `<`/`>` 仍在册 |
 | `SPEC.FEAT.INTERACT.03` | 复制粘贴 | P0 | M1 |
 | `SPEC.FEAT.INTERACT.04` | 终端内搜索 | P1 | M2（**五半全落**（2026-10-07，裁决 7.78 + 7.79 + **7.80** + **7.81**）：匹配表纯逻辑件 + 首次搜索时间门禁 B-8 + 视口侧的扫描接缝与两档节流 + 命中高亮的绘制侧层叠与跳转落位（含程序化滚动写入口）+ 浮层本体与装配层登记（`search.open` + `Ctrl+F`，`src/ui/search_overlay.{h,cpp}`）；画面判据 `codespec/UI_SEARCH.draft.{md,svg,png}` 已自拍 D1~D8；余真机走查（六处，见裁决 7.81⑨）与框架缺口 **G37**（`Popup` 内容的 `window_bounds()` 取不到锚点平移，见 §6）） |
 | `SPEC.FEAT.INTERACT.05` | URL 检测 | P2 | M4（**三批同日全落**（2026-10-12，裁决 **7.119**）：批 1＝`ui::url` 识别与决策纯件（OSC 8 同标识连续游程优先 + 自带字符表的启发式边界 + `parse_link_schemes` + `plan_link_open` + `link_host_of` 的 origin 归一 + `TrustedLinkHosts`）；批 2＝视口侧两层装饰（游程下划线 + 左下目标条）、两条入口（Ctrl+左击仅当这一击归本地、右键菜单第四条按命中出现）、三按钮确认框；批 3＝`platform::open_url` 两腿（POSIX 双 fork + `execv` 不经 shell、Win32 `ShellExecuteW` **未验证**）+ 三枚偏好键与一枚非偏好数据叶的六处同步（65→68、例外通道 4→5）+ 装配 + 文档回写。结项读数 **86 项 / 1101 案**全绿、变异自证八则。**未真机走查 ⇒ 不称「可用」**（§4.4 第 33 条），而「真的开了一扇浏览器」那一档按稿 D11／F15 **永远不进自动化**；仍欠装配三处的自动化证人（7.83）与稿 §7 九条走查） |
@@ -121,7 +121,6 @@
 
 | 父需求 | 延后子项 | 目标阶段 |
 |:---|:---|:---|
-| `SPEC.FEAT.INTERACT.02` | 智能选择（引号/括号配对扩展，iTerm2 语义） | M4 |
 | `SPEC.FEAT.CONN.02` | agent 转发（`ForwardAgent`，按 profile 开关） | M4 |
 | `SPEC.FEAT.CONN.02` | 同一 profile 的连接复用（多标签共享一条 TCP 连接） | M4 |
 | `SPEC.FEAT.CONN.02` | 密钥交换与主机密钥算法可配、显式启用旧算法 | M4 |
