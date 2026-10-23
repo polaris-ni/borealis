@@ -304,6 +304,13 @@ class TerminalView final : public aurora::LeafWidget {
     /// @param text 源格已提交的那段文本（码点）。
     auto send_broadcast_text(std::u32string_view text) -> void;
 
+    /// @brief 程序化发送一段 UTF-8 文本（快捷片段等非键入入口）。
+    ///
+    /// 解码后交 `Session::send_text`，与键入、输入法 commit、粘贴同一条编码与**一处**行尾折算路径
+    /// （`SPEC.FEAT.CONN.07` 稿 F3）；本入口不判焦点、不广播，发往哪一格由调用方决定。
+    /// @param utf8 已渲染好的正文；空串不发送。
+    auto send_text_utf8(std::string_view utf8) -> void;
+
     /// @brief 会话身份：同一 `Session` 的两个 pane 返回相等指针（装配层按它去重，D7）。
     [[nodiscard]] auto session_identity() const noexcept -> const void *;
 

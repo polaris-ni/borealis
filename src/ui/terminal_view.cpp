@@ -446,6 +446,13 @@ auto TerminalView::send_broadcast_text(std::u32string_view text) -> void {
     session_->send_text(text);  // 与键入同一条编码/行尾路径（D6）
 }
 
+auto TerminalView::send_text_utf8(std::string_view utf8) -> void {
+    if (utf8.empty()) {
+        return;
+    }
+    session_->send_text(to_code_points(utf8));
+}
+
 auto TerminalView::session_identity() const noexcept -> const void * { return session_; }
 
 auto TerminalView::set_broadcast_badge(bool shown) -> void {
