@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "borealis/term/charset.h"
@@ -28,6 +29,9 @@ constexpr std::int32_t kChannelMax = 255;
 
 /// @brief xterm 调色板的索引上界。
 constexpr std::int32_t kPaletteMax = 255;
+
+/// @brief DECRQSS 请求串的上限：合法请求是 `m` / `r` / `" q` 这类两三字节，超出即损坏输入。
+constexpr std::size_t kMaxStatusRequestLength = 64;
 
 /// @brief 拼出 0xRRGGBB。
 [[nodiscard]] auto make_rgb(std::int32_t red, std::int32_t green, std::int32_t blue) noexcept -> std::uint32_t {
@@ -150,7 +154,7 @@ auto Terminal::on_sequence(const vt::Sequence &seq) -> void {
         case vt::SequenceKind::DcsHook:
         case vt::SequenceKind::DcsPut:
         case vt::SequenceKind::DcsUnhook:
-            // TODO(SPEC.FEAT.TERM.01): DCS 负载（DECRQPS 一类）尚未消费。
+            do_dcs(seq);
             break;
         case vt::SequenceKind::Ignored:
             break;  // 计数归解析器（架构 §5.5）
@@ -181,8 +185,8 @@ auto Terminal::do_print(const vt::Sequence &seq) -> void {
     if (modes_.insert_mode) {
         shift_cells(width, true);
     }
-    // GL 槽位取 G0：SO/SI 换槽的 GR 指派尚未落地（见 do_execute）。
-    write_cell(map_charset(designated_[0], code_point), width);
+    // GL 槽位由 SO/SI 在 G0/G1 之间切换（`SPEC.FEAT.TERM.01` 的字符集腿）。
+    write_cell(map_charset(designated_[gl_slot_], code_point), width);
     if (cursor_.column + width >= columns()) {
         cursor_.column = columns() - 1;
         pending_wrap_ = modes_.auto_wrap;
@@ -221,9 +225,11 @@ auto Terminal::do_execute(const vt::Sequence &seq) -> void {
             cursor_.column = 0;
             pending_wrap_ = false;
             break;
-        case U'\x0E':  // SO
-        case U'\x0F':  // SI
-            // TODO(SPEC.FEAT.TERM.01): SO/SI 切换 GL 用 G1/G0，本模块只消费 G0 槽位。
+        case U'\x0E':  // SO：GL 切到 G1
+            gl_slot_ = 1;
+            break;
+        case U'\x0F':  // SI：GL 切回 G0
+            gl_slot_ = 0;
             break;
         case U'\x07':  // BEL：响铃（`SPEC.FEAT.WS.04`）
             trigger_bell();
@@ -826,6 +832,155 @@ auto Terminal::do_osc(const vt::Sequence &seq) -> void {
     }
 }
 
+auto Terminal::do_dcs(const vt::Sequence &seq) -> void {
+    switch (seq.kind) {
+        case vt::SequenceKind::DcsHook:
+            dcs_payload_.clear();
+            dcs_payload_overflow_ = false;
+            // 只认 DECRQSS（`DCS $ q Pt ST`）。其余 DCS 负载（sixel 一类）本模块不支持，
+            // 原样丢弃——累积进内存等于替未实现的功能付存储费。
+            dcs_status_request_ = seq.intermediates.size() == 1U &&
+                                  seq.intermediates.front() == U'$' && seq.final_byte == U'q';
+            break;
+        case vt::SequenceKind::DcsPut:
+            if (!dcs_status_request_ || dcs_payload_overflow_) {
+                return;
+            }
+            if (dcs_payload_.size() + seq.data.size() > kMaxStatusRequestLength) {
+                dcs_payload_overflow_ = true;
+                dcs_payload_.clear();
+                return;
+            }
+            dcs_payload_.append(seq.data);
+            break;
+        case vt::SequenceKind::DcsUnhook:
+            if (dcs_status_request_ && !dcs_payload_overflow_) {
+                emit_response(status_string_reply(dcs_payload_));
+            }
+            dcs_status_request_ = false;
+            dcs_payload_.clear();
+            break;
+        default:
+            break;
+    }
+}
+
+auto Terminal::status_string_reply(std::u32string_view request) const -> std::u32string {
+    std::u32string value;
+    if (request == U"m") {
+        value = pen_sgr_text();
+    } else if (request == U"r") {
+        append_decimal(value, region_top_ + 1U);
+        value.push_back(U';');
+        append_decimal(value, region_bottom_ + 1U);
+        value.push_back(U'r');
+    } else if (request == U" q") {
+        const std::size_t base = [this]() noexcept -> std::size_t {
+            switch (modes_.cursor_shape) {
+                case CursorShape::Underline:
+                    return 3;
+                case CursorShape::Bar:
+                    return 5;
+                default:
+                    return 1;
+            }
+        }();
+        append_decimal(value, modes_.cursor_blinking ? base : base + 1U);
+        value.append(U" q");
+    } else {
+        // 未实现的设置项回 `Ps=0`（无效请求）：不猜一个值冒充支持，调用方据此走降级。
+        return U"\x1BP0$r\x1B\\";
+    }
+    std::u32string reply{U"\x1BP1$r"};
+    reply.append(value);
+    reply.append(U"\x1B\\");
+    return reply;
+}
+
+auto Terminal::pen_sgr_text() const -> std::u32string {
+    std::u32string out{U'0'};
+    const auto separator = [&out] { out.push_back(U';'); };
+    const auto number = [&out](std::size_t value) { append_decimal(out, value); };
+    const auto append_color = [&](std::uint32_t value, grid::ColorSource source, bool foreground) {
+        if (source == grid::ColorSource::Palette) {
+            const auto index = static_cast<std::size_t>(value & 0xFFU);
+            if (index < 8U) {
+                separator();
+                number((foreground ? 30U : 40U) + index);
+            } else if (index < 16U) {
+                separator();
+                number((foreground ? 90U : 100U) + index - 8U);
+            } else {
+                separator();
+                number(foreground ? 38U : 48U);
+                separator();
+                number(5U);
+                separator();
+                number(index);
+            }
+        } else if (source == grid::ColorSource::Rgb) {
+            separator();
+            number(foreground ? 38U : 48U);
+            separator();
+            number(2U);
+            separator();
+            number((value >> 16U) & 0xFFU);
+            separator();
+            number((value >> 8U) & 0xFFU);
+            separator();
+            number(value & 0xFFU);
+        }
+    };
+    if ((pen_.flags & grid::kFlagBold) != 0U) {
+        separator();
+        out.push_back(U'1');
+    }
+    if ((pen_.flags & grid::kFlagDim) != 0U) {
+        separator();
+        out.push_back(U'2');
+    }
+    if ((pen_.flags & grid::kFlagItalic) != 0U) {
+        separator();
+        out.push_back(U'3');
+    }
+    switch (pen_.underline) {
+        case grid::UnderlineStyle::Single:
+            separator();
+            out.push_back(U'4');
+            break;
+        case grid::UnderlineStyle::Double:
+            separator();
+            out.append(U"21");
+            break;
+        case grid::UnderlineStyle::Curly:
+            separator();
+            out.append(U"4:3");
+            break;
+        case grid::UnderlineStyle::None:
+            break;
+    }
+    if ((pen_.flags & grid::kFlagBlink) != 0U) {
+        separator();
+        out.push_back(U'5');
+    }
+    if ((pen_.flags & grid::kFlagReverse) != 0U) {
+        separator();
+        out.push_back(U'7');
+    }
+    if ((pen_.flags & grid::kFlagHidden) != 0U) {
+        separator();
+        out.push_back(U'8');
+    }
+    if ((pen_.flags & grid::kFlagStrike) != 0U) {
+        separator();
+        out.push_back(U'9');
+    }
+    append_color(pen_.foreground, pen_.foreground_source, true);
+    append_color(pen_.background, pen_.background_source, false);
+    out.push_back(U'm');
+    return out;
+}
+
 auto Terminal::apply_notification(std::int32_t code, std::u32string_view args) -> void {
     const auto draft = draft_notification(code, args, osc_state_.title);
     if (draft.drop == NotificationDrop::NotNotify) {
@@ -1151,6 +1306,10 @@ auto Terminal::reset_to_default() -> void {
     modes_.cursor_shape = defaults_.cursor_shape;
     modes_.cursor_blinking = defaults_.cursor_blinking;
     designated_.fill(Charset::Ascii);
+    gl_slot_ = 0;
+    dcs_status_request_ = false;
+    dcs_payload_overflow_ = false;
+    dcs_payload_.clear();
     cursor_ = {};
     saved_main_ = {};
     saved_alt_ = {};

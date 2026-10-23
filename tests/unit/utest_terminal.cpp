@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "borealis/grid/cell.h"
 #include "borealis/grid/storage.h"
@@ -98,6 +99,16 @@ auto stub_width = std::make_shared<StubWidthPolicy>();
 auto fill_three_rows(Terminal &term) -> void {
     term.feed(U"AAA\r\nBBB\r\nCCC");
 }
+
+/// @brief 收集查询应答，供 DCS DECRQSS 一类回写断言。
+class CollectingSink final : public borealis::term::ResponseSink {
+  public:
+    auto on_response(std::u32string_view response) -> void override {
+        responses_.push_back(std::u32string{response});
+    }
+
+    std::vector<std::u32string> responses_;
+};
 
 }  // namespace
 
@@ -486,6 +497,73 @@ AURORA_TEST_CASE(dec_special_graphics_paints_box_lines) {
     term.feed(U"\x1B(0lqqk\x1B(Bqq");
     const std::u32string expected{U'\x250C', U'\x2500', U'\x2500', U'\x2510', U'q', U'q'};
     AURORA_TEST_CHECK(row_code_points(term, 0, 6) == expected);
+}
+
+AURORA_TEST_CASE(so_and_si_switch_gl_between_g0_and_g1) {
+    // VT100 的 SO/SI 只换 GL 槽：G1 指派了线条表后，SO 期间才是线条，SI 立刻回 G0 的字母。
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B)0");      // 线条表进 G1，G0 仍是 ASCII
+    term.feed(U"\x0Eq\x0Fq");  // SO → 横线；SI → 字母 q
+    const std::u32string expected{U'\x2500', U'q'};
+    AURORA_TEST_CHECK(row_code_points(term, 0, 2) == expected);
+}
+
+AURORA_TEST_CASE(ris_returns_gl_and_designations_to_ascii) {
+    auto term = make_terminal(narrow_only);
+    term.feed(U"\x1B)0\x0Eq");      // G1 线条表、GL 停在 G1
+    term.feed(U"\u001Bc");          // RIS：两槽归 ASCII、GL 回 G0（`\x1Bc` 会被吃成单个码点 U+01BC）
+    term.feed(U"q");
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(cell_at(term, 0, 0).code_point),
+                         std::uint32_t{U'q'});
+}
+
+AURORA_TEST_CASE(dcs_status_request_answers_region_and_cursor_style) {
+    auto term = make_terminal(narrow_only);
+    CollectingSink sink;
+    term.set_response_sink(&sink);
+
+    term.feed(U"\x1B[2;3r\x1BP$qr\x1B\\");
+    AURORA_TEST_CHECK_EQ(sink.responses_.size(), std::size_t{1});
+    AURORA_TEST_CHECK(sink.responses_[0] == std::u32string{U"\x1BP1$r2;3r\x1B\\"});
+
+    sink.responses_.clear();
+    term.feed(U"\x1B[4 q\x1BP$q q\x1B\\");
+    AURORA_TEST_CHECK_EQ(sink.responses_.size(), std::size_t{1});
+    AURORA_TEST_CHECK(sink.responses_[0] == std::u32string{U"\x1BP1$r4 q\x1B\\"});
+}
+
+AURORA_TEST_CASE(dcs_status_request_answers_sgr_pen) {
+    auto term = make_terminal(narrow_only);
+    CollectingSink sink;
+    term.set_response_sink(&sink);
+
+    term.feed(U"\x1B[1;4;31;44m\x1BP$q");
+    term.feed(U"m\x1B\\");  // 负载跨一次 feed：请求串必须累积到 Unhook 才答
+    AURORA_TEST_CHECK_EQ(sink.responses_.size(), std::size_t{1});
+    AURORA_TEST_CHECK(sink.responses_[0] == std::u32string{U"\x1BP1$r0;1;4;31;44m\x1B\\"});
+
+    sink.responses_.clear();
+    term.feed(U"\x1B[0;38;5;123;48;2;10;20;30m\x1BP$qm\x1B\\");
+    AURORA_TEST_CHECK_EQ(sink.responses_.size(), std::size_t{1});
+    AURORA_TEST_CHECK(sink.responses_[0] ==
+                      std::u32string{U"\x1BP1$r0;38;5;123;48;2;10;20;30m\x1B\\"});
+}
+
+AURORA_TEST_CASE(dcs_unimplemented_or_foreign_requests_stay_silent_or_invalid) {
+    auto term = make_terminal(narrow_only);
+    CollectingSink sink;
+    term.set_response_sink(&sink);
+
+    // 未实现的设置项回 Ps=0，调用方据此走降级，而不是把「不支持」冒充成某个值。
+    term.feed(U"\x1BP$q\"p\x1B\\");
+    AURORA_TEST_CHECK_EQ(sink.responses_.size(), std::size_t{1});
+    AURORA_TEST_CHECK(sink.responses_[0] == std::u32string{U"\x1BP0$r\x1B\\"});
+
+    // 非 DECRQSS 的 DCS（sixel 一类）本模块不支持：整条吞掉，不答也不上屏。
+    sink.responses_.clear();
+    term.feed(U"\x1BP1;2|payload\x1B\\");
+    AURORA_TEST_CHECK(sink.responses_.empty());
+    AURORA_TEST_CHECK_EQ(row_text(term, 0), std::string(""));
 }
 
 AURORA_TEST_CASE(esc_percent_g_records_utf8_and_keeps_line_drawing) {

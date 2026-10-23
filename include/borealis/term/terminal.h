@@ -8,7 +8,7 @@
 // 不触达 UI、不做 IO，故可脱离 UI 单测（AGENTS.md §4.4 第 20 条）。
 //
 // 覆盖面：`SPEC.FEAT.TERM.01`（Print/Execute/ESC/CSI 显示内核 + 私有模式登记 + 字符集指派 +
-// DA1/DSR 查询应答，应答经 `ResponseSink` 交给会话写通道）、
+// DA1/DSR 查询应答与 DECRQSS 状态串，应答经 `ResponseSink` 交给会话写通道）、
 // `SPEC.FEAT.TERM.02`（16/256/真彩色，色值与来源分开存）、`SPEC.FEAT.TERM.03`（主备屏）、
 // `SPEC.FEAT.TERM.05`（滚动区域、光标定位/保存恢复/可见性、擦除与插删、制表位）、
 // `SPEC.FEAT.TERM.07`（OSC 0/2/7/8/52/133 的消费，结果形态见 `term/osc.h`）、
@@ -286,6 +286,11 @@ class Terminal final : public vt::SequenceSink {
     auto set_alternate_screen(std::int32_t mode, bool enable) -> void;
 
     auto do_osc(const vt::Sequence &seq) -> void;
+    auto do_dcs(const vt::Sequence &seq) -> void;
+    /// @brief 为 `DCS $ q Pt ST`（DECRQSS）生成应答；不认识的请求回 `Ps=0`。
+    [[nodiscard]] auto status_string_reply(std::u32string_view request) const -> std::u32string;
+    /// @brief 把当前笔折成 DECRQSS 的 SGR 应答（以 `0` 起头，属性按升序）。
+    [[nodiscard]] auto pen_sgr_text() const -> std::u32string;
     auto apply_hyperlink(std::u32string_view args) -> void;
     auto apply_clipboard(std::u32string_view args) -> void;
     auto apply_prompt_marker(std::u32string_view args) -> void;
@@ -337,6 +342,12 @@ class Terminal final : public vt::SequenceSink {
     auto set_tab_stops_default() noexcept -> void;
 
     std::array<Charset, 4> designated_{Charset::Ascii, Charset::Ascii, Charset::Ascii, Charset::Ascii};
+    /// GL 槽位（0 = G0，1 = G1）：VT100 的 SO/SI 只在这两槽之间切换（`ESC n` / `ESC o` 未实现）。
+    std::size_t gl_slot_ = 0;
+    /// 正在收 DECRQSS 的负载：只有 `DCS $ q` 才累积，其余 DCS（sixel 一类）原样丢弃。
+    bool dcs_status_request_ = false;
+    bool dcs_payload_overflow_ = false;
+    std::u32string dcs_payload_;
     grid::Storage main_;
     grid::Storage alt_;
     grid::Cell pen_{};  ///< SGR 模板：下一次写入携带的属性。
