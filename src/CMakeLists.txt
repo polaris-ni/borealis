@@ -105,6 +105,7 @@ add_library(borealis_core STATIC
 # （裁决 7.11、架构 §2.2）。POSIX 腿于 2026-10-08 落地（SPEC.FEAT.CONN.01）。
 if (WIN32)
     target_sources(borealis_core PRIVATE
+            platform/win/agent_socket.cpp
             platform/win/conpty_connection.cpp
             platform/win/crash_handler.cpp
             platform/win/credential_store.cpp
@@ -119,6 +120,7 @@ if (WIN32)
             platform/win/win_text.cpp)
 elseif (UNIX)
     target_sources(borealis_core PRIVATE
+            platform/posix/agent_socket.cpp
             platform/posix/credential_store.cpp
             platform/posix/crash_handler.cpp
             platform/posix/file_secure.cpp

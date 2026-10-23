@@ -14,8 +14,13 @@
 // （CONN.09，裁决 7.93）。
 //
 // 已知边界（本期不做，见设计稿 §7）：Ask 主机密钥策略按 Yes 保守处理（弹 UI 询问
-// 留给 CONN.09 询问件到货后的独立任务）；agent_forwarding 字段已入模型但传输层
-// 尚未下发该请求；keyboard-interactive 只支持单提示一次作答。
+// 留给 CONN.09 询问件到货后的独立任务）；keyboard-interactive 只支持单提示一次作答。
+//
+// agent 转发（`SPEC.FEAT.CONN.02`，按 profile 开关、默认关）落在本腿：会话通道打开后
+// 向服务器发 `auth-agent-req@openssh.com`，服务器反向打开的每个 auth-agent 通道都由
+// 读循环接到本机 agent 的字节管道（`platform/agent_socket.h`）上。开关只认档案字段
+// `ssh.agent_forwarding`（`~/.ssh/config` 的 `ForwardAgent` 导入可达）；向导里那颗
+// 复选框按 `UI_OVERVIEW.draft.md` 仍是延后项。
 //
 // 自动重连（`SPEC.FEAT.WS.05`，裁决 7.99 D1②）落在**本腿内部**：读线程掉线后不立即报
 // 关闭，自己按退避重跑「dial→通道→PTY→shell→读循环」那一段，只有不可重连的原因、
@@ -24,6 +29,7 @@
 // ============================================================
 
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -118,6 +124,28 @@ class SshConnection final : public session::Connection, public session::Reconnec
     ///        resize() 互斥；write() 靠 `channel_open_` 早退（与既有单腿形态同口径）。
     auto teardown() -> void;
 
+    /// @brief agent 转发的一次尝试状态：回调表必须比会话活得久（libssh 存的是指针，
+    ///        不拷贝），反向通道与其本机 agent 句柄也绑在同一次尝试上。
+    struct AgentForwardState;
+
+    /// @brief 装回调表（仅当档案开关为真）：须在 ssh_connect 之前调，否则连接期内
+    ///        服务器发出的反向通道请求不会被派发到我们。
+    auto setup_agent_forwarding(ssh_session_struct *session) -> void;
+
+    /// @brief 会话通道打开后向服务器请求 agent 转发；本机没有 agent 或服务器拒绝
+    ///        都只记 WARN、不阻断 shell（转发是增强项，不是连接前提）。
+    auto request_agent_forwarding() -> void;
+
+    /// @brief 读循环每拍搬一次反向通道的字节（远端 ↔ 本机 agent）。
+    auto service_agent_forwarding() -> void;
+
+    /// @brief 收掉所有反向通道与本机 agent 句柄（重拨换血与会话收口共用）。
+    auto close_agent_forwarding() -> void;
+
+    /// @brief libssh 反向通道请求回调：连上本机 agent 才接受，通道数有上限。
+    static auto handle_agent_channel_open(ssh_session_struct *session, void *userdata)
+        -> ssh_channel_struct *;
+
     SshProfile profile_;
     std::optional<std::string> secret_;   ///< 驻留到 close()（裁决 7.99 D7②），每次尝试复制一份。
     session::Size size_;
@@ -128,9 +156,15 @@ class SshConnection final : public session::Connection, public session::Reconnec
     std::mutex state_mutex_;
     /// 串行化通道写：用户键入与读线程回显响应两条路径不得撕裂转义序列。
     std::mutex write_mutex_;
+    /// 保护 agent 反向通道表：回调由 libssh 在「处理待收包」的那一刻派发，而 UI 线程的
+    /// write()/resize() 也会触发收包处理，故建表与搬运不能只靠「都在读线程」这条假设。
+    /// 递归是必须的——读线程搬字节时里面的 libssh 调用可能当场派发回调，同一线程要再进一次。
+    std::recursive_mutex agent_mutex_;
 
     ssh_session_struct *session_ = nullptr;
     ssh_channel_struct *channel_ = nullptr;
+    /// agent 转发的回调表与反向通道：只在读线程上建立/搬运，收口发生在 join 之后。
+    std::unique_ptr<AgentForwardState> agent_forward_;
 
     session::ConnectionEvents *events_ = nullptr;
     std::thread reader_;

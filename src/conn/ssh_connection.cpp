@@ -16,14 +16,18 @@
 #include "ssh_connection.h"
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include <libssh/callbacks.h>
 #include <libssh/libssh.h>
 
 #include "aurora/core/log.h"
 #include "conn/ssh_dial.h"
+#include "platform/agent_socket.h"
 
 namespace borealis::conn {
 
@@ -31,6 +35,12 @@ namespace {
 
 /// @brief 读循环单块上限：与 forkpty 腿同款，原样整块投递给会话层。
 constexpr std::size_t kReadChunkBytes = 32768;
+
+/// @brief 反向 agent 通道的搬运块：agent 协议的消息都很小，8 KiB 足够一次装下。
+constexpr std::size_t kAgentChunkBytes = 8192;
+
+/// @brief 同时存在的反向 agent 通道上限：远端可以反复打开，本端不跟它无限扩表。
+constexpr std::size_t kMaxForwardedAgentChannels = 8;
 
 /// @brief 非阻塞读空转的休眠步长：close() 靠 closing 标志叫停循环，步长即关闭延迟上界。
 constexpr useconds_t kReadIdleUs = 30000;
@@ -63,6 +73,21 @@ constexpr int kBackoffSliceMs = 200;
 }
 
 }  // namespace
+
+/// @brief agent 转发的一次尝试状态（定义放这里：`ssh_callbacks_struct` 是 libssh 类型，
+///        私有头只留前向声明）。回调表被 libssh 按指针持有，故必须与状态同寿。
+struct SshConnection::AgentForwardState {
+    /// @brief 一条反向 agent 通道及其本机 agent 句柄。
+    struct Forwarded {
+        ssh_channel_struct *channel{nullptr};
+        std::unique_ptr<platform::AgentSocket> agent;
+        bool remote_eof{false};  ///< 远端半关：不再读通道，但 agent 的应答仍可回送。
+    };
+
+    ssh_callbacks_struct callbacks{};
+    std::vector<Forwarded> channels;
+    bool requested{false};
+};
 
 SshConnection::SshConnection(const SshProfile &profile, std::optional<std::string> secret,
                              session::Size initial_size, RetryPolicy reconnect_policy,
@@ -138,6 +163,8 @@ auto SshConnection::dial_and_serve() -> Attempt {
         AURORA_LOG_ERROR("conn", "ssh: cannot allocate session");
         return Attempt{.linked = false, .reason = session::CloseReason::Unknown};
     }
+    // 回调表要在 connect 之前装好：连接期内服务器随时可能发反向通道请求。
+    setup_agent_forwarding(session_);
 
     // ---- 连接 → 主机密钥核对 → 认证（共用腿 ssh_dial，SFTP 浏览器同款）----
     // 每次尝试把成员里的明文**复制**一份按值交进去，形参副本随 dial 腿返回消失；
@@ -157,6 +184,8 @@ auto SshConnection::dial_and_serve() -> Attempt {
         AURORA_LOG_ERROR("conn", "ssh: cannot open channel: ", ssh_get_error(session_));
         return Attempt{.linked = false, .reason = session::CloseReason::Unknown};
     }
+    // 转发请求要在 shell 之前发：远端 shell 一起来就可能要用 agent。
+    request_agent_forwarding();
     // PTY 取当下的 size_：断线期间用户改过窗口就以新尺寸拨（裁决 7.99 D7①）。
     const auto cols = static_cast<int>(std::clamp(std::max(size_.columns, std::size_t{1}),
                                                   std::size_t{1}, std::size_t{32767}));
@@ -177,6 +206,7 @@ auto SshConnection::dial_and_serve() -> Attempt {
 
     const auto reason = read_loop();
     channel_open_.store(false);
+    close_agent_forwarding();
     return Attempt{.linked = true, .reason = reason};
 }
 
@@ -193,15 +223,157 @@ auto SshConnection::read_loop() -> session::CloseReason {
                                                              0);
         if (bytes_read > 0) {
             events_->on_bytes({buffer.data(), static_cast<std::size_t>(bytes_read)});
-            continue;
-        }
-        if (bytes_read == SSH_ERROR || ssh_channel_is_closed(channel_)) {
+        } else if (bytes_read == SSH_ERROR || ssh_channel_is_closed(channel_)) {
             return session::CloseReason::LinkLost;
-        }
-        if (bytes_read == 0 && ssh_channel_is_eof(channel_)) {
+        } else if (bytes_read == 0 && ssh_channel_is_eof(channel_)) {
             return session::CloseReason::RemoteExit;
         }
-        ::usleep(kReadIdleUs);
+        // 反向 agent 通道与 shell 共用同一条连接：每拍都得搬一次，否则远端的
+        // agent 请求会停在通道缓冲里直到会话结束。
+        service_agent_forwarding();
+        if (bytes_read <= 0) {
+            ::usleep(kReadIdleUs);
+        }
+    }
+}
+
+auto SshConnection::setup_agent_forwarding(ssh_session_struct *session) -> void {
+    if (!profile_.agent_forwarding || session == nullptr) {
+        return;
+    }
+    auto state = std::make_unique<AgentForwardState>();
+    ssh_callbacks_init(&state->callbacks);
+    state->callbacks.userdata = this;
+    state->callbacks.channel_open_request_auth_agent_function =
+        &SshConnection::handle_agent_channel_open;
+    if (ssh_set_callbacks(session, &state->callbacks) != SSH_OK) {
+        AURORA_LOG_WARN("conn", "ssh: cannot install agent-forwarding callbacks: ",
+                        ssh_get_error(session));
+        return;
+    }
+    agent_forward_ = std::move(state);
+}
+
+auto SshConnection::handle_agent_channel_open(ssh_session_struct *session, void *userdata)
+    -> ssh_channel_struct * {
+    auto *self = static_cast<SshConnection *>(userdata);
+    if (self == nullptr || self->agent_forward_ == nullptr) {
+        return nullptr;
+    }
+    auto agent = platform::agent_connect();
+    if (!agent) {
+        // 本机没有 agent（或它已退出）时拒绝这一条就好——远端命令会按它自己的错误路径收场。
+        AURORA_LOG_WARN("conn", "ssh: agent-forwarding channel refused: local agent unreachable");
+        return nullptr;
+    }
+    auto *channel = ssh_channel_new(session);
+    if (channel == nullptr) {
+        return nullptr;
+    }
+    {
+        const std::lock_guard lock{self->agent_mutex_};
+        if (self->agent_forward_ == nullptr ||
+            self->agent_forward_->channels.size() >= kMaxForwardedAgentChannels) {
+            ssh_channel_free(channel);
+            return nullptr;
+        }
+        self->agent_forward_->channels.push_back(
+            AgentForwardState::Forwarded{channel, std::move(agent), false});
+    }
+    return channel;
+}
+
+auto SshConnection::request_agent_forwarding() -> void {
+    if (agent_forward_ == nullptr || agent_forward_->requested || channel_ == nullptr) {
+        return;
+    }
+    // 先探本机 agent：没有 agent 还发请求，只会在远端每次连过来时被拒。
+    auto probe = platform::agent_connect();
+    if (!probe) {
+        AURORA_LOG_WARN("conn", "ssh: agent forwarding requested but no local agent is reachable");
+        return;
+    }
+    probe->close();
+    if (ssh_channel_request_auth_agent(channel_) != SSH_OK) {
+        AURORA_LOG_WARN("conn", "ssh: server refused agent forwarding: ", ssh_get_error(session_));
+        return;
+    }
+    agent_forward_->requested = true;
+}
+
+auto SshConnection::service_agent_forwarding() -> void {
+    if (agent_forward_ == nullptr) {
+        return;
+    }
+    const std::lock_guard lock{agent_mutex_};
+    auto &channels = agent_forward_->channels;
+    auto buffer = std::array<std::uint8_t, kAgentChunkBytes>{};
+    // 按下标走而不是拿迭代器：循环里的 libssh 调用可能当场派发新的通道请求，
+    // 回调会往同一张表 push_back，迭代器与元素引用都可能在半途失效。
+    for (std::size_t index = 0; index < channels.size();) {
+        auto failed = false;
+        // 远端 → 本机 agent：一轮搬空当前可读字节。
+        while (!failed && !channels[index].remote_eof) {
+            const auto got = ssh_channel_read_nonblocking(
+                channels[index].channel, buffer.data(), static_cast<std::uint32_t>(buffer.size()), 0);
+            if (got == SSH_EOF) {
+                channels[index].remote_eof = true;
+                break;
+            }
+            if (got < 0) {
+                failed = true;
+                break;
+            }
+            if (got == 0) {
+                break;
+            }
+            if (!channels[index].agent->write({buffer.data(), static_cast<std::size_t>(got)})) {
+                failed = true;
+            }
+        }
+        // 本机 agent → 远端：应答小，一轮读完。
+        while (!failed) {
+            const auto read = channels[index].agent->read(buffer, 0);
+            if (read.outcome == platform::AgentReadOutcome::Timeout) {
+                break;
+            }
+            if (read.outcome != platform::AgentReadOutcome::Data) {
+                failed = true;  // agent 收摊或出错：这条反向通道失效。
+                break;
+            }
+            if (ssh_channel_write(channels[index].channel, buffer.data(),
+                                  static_cast<std::uint32_t>(read.bytes)) !=
+                static_cast<int>(read.bytes)) {
+                failed = true;
+            }
+        }
+        if (failed && ssh_channel_is_closed(channels[index].channel) == 0) {
+            ssh_channel_send_eof(channels[index].channel);
+        }
+        if (failed || ssh_channel_is_closed(channels[index].channel) != 0) {
+            channels[index].agent->close();
+            ssh_channel_close(channels[index].channel);
+            ssh_channel_free(channels[index].channel);
+            channels.erase(channels.begin() + static_cast<std::ptrdiff_t>(index));
+            continue;
+        }
+        ++index;
+    }
+}
+
+auto SshConnection::close_agent_forwarding() -> void {
+    if (agent_forward_ == nullptr) {
+        return;
+    }
+    const std::lock_guard lock{agent_mutex_};
+    auto &channels = agent_forward_->channels;
+    while (!channels.empty()) {
+        channels.back().agent->close();
+        if (channels.back().channel != nullptr) {
+            ssh_channel_close(channels.back().channel);
+            ssh_channel_free(channels.back().channel);
+        }
+        channels.pop_back();
     }
 }
 
@@ -279,6 +451,8 @@ auto SshConnection::close() -> void {
 }
 
 auto SshConnection::teardown() -> void {
+    // 反向通道先收：它们挂在同一个 session 上，必须在 ssh_free 之前释放。
+    close_agent_forwarding();
     const std::lock_guard lock{state_mutex_};
     if (channel_ != nullptr) {
         ssh_channel_close(channel_);
@@ -290,6 +464,8 @@ auto SshConnection::teardown() -> void {
         ssh_free(session_);
         session_ = nullptr;
     }
+    // 回调表被 libssh 按指针持有，只能在 session 释放之后丢掉这块内存。
+    agent_forward_.reset();
     channel_open_.store(false);
 }
 
