@@ -230,6 +230,22 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     // key_dirs 域的往返等值守卫。刻意不放重复项——落盘侧**不去重**（规范化归
     // conn::normalize_key_dirs），放了重复项这条守卫就判不出「原样往返」与「顺手折过」。
     next.key_dirs = {"~/.ssh", "/home/dev/keys"};
+
+    // 快捷片段域（`SPEC.FEAT.CONN.07` 延后子项）：两条覆盖存储序与全字段差量。第一条带占位符、
+    // 分组与 `enter=true`，第二条全缺省字段——守卫「写侧漏键时读回缺省」与「整域被吞掉」。
+    // CJK-LITERAL: cjk-fixture - 正文按 UTF-8 原样落盘并读回就是本条被测事实
+    conn::Snippet greet;
+    greet.id = "snip-0";
+    greet.name = "greet";
+    greet.group = "ops";
+    greet.body = "echo {{host}} 你好";
+    greet.enter = true;
+    next.snippets.push_back(std::move(greet));
+    conn::Snippet uptime;
+    uptime.id = "snip-1";
+    uptime.name = "uptime";
+    uptime.body = "uptime";
+    next.snippets.push_back(std::move(uptime));
     return next;
 }
 
@@ -670,6 +686,7 @@ AURORA_TEST_CASE(every_value_survives_a_write_read_round_trip) {
     AURORA_TEST_CHECK_TRUE(reader.settings().connection == next.connection);
     AURORA_TEST_CHECK_TRUE(reader.settings().shortcuts == next.shortcuts);
     AURORA_TEST_CHECK_TRUE(reader.settings().key_dirs == next.key_dirs);
+    AURORA_TEST_CHECK_TRUE(reader.settings().snippets == next.snippets);
     AURORA_TEST_CHECK_TRUE(reader.report().rejected_keys.empty());
     AURORA_TEST_CHECK_TRUE(reader.report().unknown_keys.empty());
 }
@@ -932,6 +949,39 @@ AURORA_TEST_CASE(key_dirs_domain_is_verbatim_and_is_not_a_credential_name) {
     }
 }
 
+AURORA_TEST_CASE(snippets_domain_keeps_good_items_and_reports_bad_ones) {
+    // 逐元素容错：一个坏元素不该带走整份片段库；字段类型不对则只回该字段缺省，
+    // 面板里还能就地编辑修正（稿 D5 的落盘方向）。
+    // CJK-LITERAL: cjk-fixture - 正文按 UTF-8 原样读回就是本条被测事实
+    const auto file = make_path("snippets_partial.json");
+    write_file(file, R"({"schema_version": 1, "snippets": {"items": [
+  {"id": "snip-0", "name": "greet", "group": "ops", "body": "echo {{host}} 你好", "enter": true},
+  7,
+  {"id": "snip-1", "name": 5, "body": "uptime", "enter": "yes"}
+]}})");
+
+    const Store store{file};
+    const auto &snippets = store.settings().snippets;
+    AURORA_TEST_REQUIRE(snippets.size() == 2U);
+    AURORA_TEST_CHECK_EQ(snippets[0].id, "snip-0");
+    AURORA_TEST_CHECK_EQ(snippets[0].name, "greet");
+    AURORA_TEST_CHECK_EQ(snippets[0].group, "ops");
+    AURORA_TEST_CHECK_EQ(snippets[0].body, "echo {{host}} 你好");
+    AURORA_TEST_CHECK_TRUE(snippets[0].enter);
+    AURORA_TEST_CHECK_EQ(snippets[1].id, "snip-1");
+    AURORA_TEST_CHECK_EQ(snippets[1].name, "");
+    AURORA_TEST_CHECK_EQ(snippets[1].body, "uptime");
+    AURORA_TEST_CHECK_FALSE(snippets[1].enter);
+    AURORA_TEST_CHECK_TRUE(holds(store.report().rejected_keys, "snippets.items[1]"));
+
+    // 域内形态错（items 不是数组）才整域留痕一次并回落空库。
+    const auto broken_file = make_path("snippets_not_an_array.json");
+    write_file(broken_file, R"({"schema_version": 1, "snippets": {"items": {}}})");
+    const Store broken{broken_file};
+    AURORA_TEST_CHECK_TRUE(broken.settings().snippets.empty());
+    AURORA_TEST_CHECK_TRUE(holds(broken.report().rejected_keys, "snippets"));
+}
+
 AURORA_TEST_CASE(missing_domains_are_reported_once_each) {
     const auto file = make_path("empty_domains.json");
     write_file(file, R"({"schema_version": 1})");
@@ -940,10 +990,10 @@ AURORA_TEST_CASE(missing_domains_are_reported_once_each) {
     AURORA_TEST_CHECK_TRUE(store.report().outcome == LoadOutcome::Loaded);
     AURORA_TEST_CHECK_TRUE(store.settings() == Settings{});
     // 父作用域整体缺失只留痕父键一次：逐子键刷屏会让截断文件报出几十条噪声。
-    // 七域（裁决 7.106 D2③ 起）：缺省文件形态只带 schema_version，七域全落空。
-    AURORA_TEST_CHECK_EQ(store.report().rejected_keys.size(), 7U);
+    // 八域（裁决 7.106 D2③ 起，snippets 域随后加入）：缺省文件形态只带 schema_version，八域全落空。
+    AURORA_TEST_CHECK_EQ(store.report().rejected_keys.size(), 8U);
     for (std::string_view domain :
-         {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels", "key_dirs"}) {
+         {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels", "key_dirs", "snippets"}) {
         AURORA_TEST_CHECK_MSG(holds(store.report().rejected_keys, domain), std::string{domain});
     }
     AURORA_TEST_CHECK_TRUE(store.report().unknown_keys.empty());
@@ -1068,10 +1118,10 @@ AURORA_TEST_CASE(stored_file_is_a_single_json_with_all_schema_domains) {
     std::erase(domains, "__aurora_preference_meta__");
     std::ranges::sort(domains);
     AURORA_TEST_CHECK_TRUE((domains == std::vector<std::string>{"appearance", "connection", "key_dirs", "profiles",
-                                                                "schema_version", "shortcuts", "terminal",
+                                                                "schema_version", "shortcuts", "snippets", "terminal",
                                                                 "tunnels"}));
     for (std::string_view domain :
-         {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels", "key_dirs"}) {
+         {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels", "key_dirs", "snippets"}) {
         const au::json::Value *node = root.at(domain);
         AURORA_TEST_REQUIRE(node != nullptr);
         AURORA_TEST_CHECK_MSG(node->is_object(), std::string{domain});

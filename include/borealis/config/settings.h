@@ -24,6 +24,7 @@
 
 #include "borealis/config/themes.h"
 #include "borealis/conn/profile.h"
+#include "borealis/conn/snippet.h"
 #include "borealis/conn/tunnel.h"
 #include "borealis/grid/storage.h"
 #include "borealis/term/clipboard_read.h"
@@ -326,7 +327,8 @@ struct ShortcutsSettings {
 
 /// @brief 一份完整配置：四分类各一域 + 连接档案域（M3 的 `SPEC.FEAT.CONN.03`）
 ///        + 隧道定义域（M3 的 `SPEC.FEAT.CONN.08`，裁决 7.97 D3①）
-///        + 密钥目录域（M3 的 `SPEC.FEAT.CONN.10`，裁决 7.106 D2③），
+///        + 密钥目录域（M3 的 `SPEC.FEAT.CONN.10`，裁决 7.106 D2③）
+///        + 快捷片段域（`SPEC.FEAT.CONN.07` 的延后子项，稿 `UI_SNIPPETS.draft.md` D2），
 ///        `Settings{}` 即 `SPEC.FEAT.PREF.06` 的首次启动形态。
 struct Settings {
     AppearanceSettings appearance{};
@@ -347,6 +349,12 @@ struct Settings {
     /// `conn::normalize_key_dirs()`（裁决 7.106 D2③ 细则⑶），装载侧与 `font_fallback_chain`
     /// 同一条分工：只判类型、丢空串元素并留痕，不查文件系统（装载接缝不得做同步 IO，第 25 条）。
     std::vector<std::string> key_dirs{};
+    /// @brief 快捷片段（`SPEC.FEAT.CONN.07` 的延后子项，稿 `UI_SNIPPETS.draft.md` D2）。
+    ///
+    /// **结构域，不进设置面板**：片段由片段面板增删改，表里没有对应控件（与 profiles/tunnels
+    /// 同一条例外）。存储序即面板显示序，本期不做排序。正文是用户自由文本，按纯文本落盘；
+    /// 本仓不扫描正文（稿 §6 第 6 条：扫自由文本会制造第二套凭据口径）。
+    std::vector<conn::Snippet> snippets{};
 
     /// @brief 逐域全等比较：配置往返（写盘再读回）的判据就是它。
     [[nodiscard]] auto operator==(const Settings &other) const noexcept -> bool = default;

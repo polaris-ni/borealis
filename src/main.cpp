@@ -3258,7 +3258,7 @@ auto main(int argc, char **argv) -> int {
         submit_keys_scan(store.settings().key_dirs);
     };
     // 目录腿（D2③/D11②）：面板只交回选中的路径；空串＝取消或平台起不来，整条不跑且
-    // 不留痕（稿 §8 判据）。落盘逐字进第七域（去重归 `normalize_key_dirs`，往返逐字
+    // 不留痕（稿 §8 判据）。落盘逐字进 `key_dirs` 域（去重归 `normalize_key_dirs`，往返逐字
     // 有 utest_config 证人），随后重扫让新目录面与可达性留痕同帧可见。
     keys_hooks.pick_key_dir = []() -> std::string {
         aurora::file_dialog::Options opts;

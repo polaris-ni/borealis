@@ -275,8 +275,10 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // 设置页不画它）——面板不画控件，在此登记例外，其余落盘叶子仍须与面板逐一对应。
     // trusted_url_hosts（INTERACT.05 已记住的域，裁决 D9①）同族：它是**运行期数据**而非偏好，
     // 写入方是装配层那份名单的变化闭包，面板既不散画它也没有查看/清空入口（稿 §8 在册一条代价）。
-    static constexpr std::array<std::string_view, 5> kNonPreferenceLeaves{
-        {"connection.recent", "profiles.items", "tunnels.items", "key_dirs.items", "connection.trusted_url_hosts"}};
+    // snippets（CONN.07 延后子项）由快捷片段面板拥有（增删改在面板，非设置页）。
+    static constexpr std::array<std::string_view, 6> kNonPreferenceLeaves{
+        {"connection.recent", "profiles.items", "tunnels.items", "key_dirs.items", "connection.trusted_url_hosts",
+         "snippets.items"}};
 
     auto leaves = written_leaves();
     std::erase_if(leaves, [](const std::string &leaf) {

@@ -56,10 +56,11 @@ using au::json::Value;
 /// @brief 顶层版本键。
 constexpr std::string_view kVersionKey = "schema_version";
 /// @brief 域键名（裁决 7.26① 的四分类 + M3 的连接档案域 `profiles` + 隧道定义域 `tunnels`（后者
-///        形态见裁决 7.97 D3①）+ 密钥目录域 `key_dirs`（裁决 7.106 D2③，形态同前两域：
+///        形态见裁决 7.97 D3①）+ 密钥目录域 `key_dirs`（裁决 7.106 D2③）+ 快捷片段域 `snippets`
+///        （`SPEC.FEAT.CONN.07` 的延后子项，稿 `UI_SNIPPETS.draft.md` D2）——后四域同形态：
 ///        顶层 `{ "items": [...] }`，因为 `read_settings` 的域闸要求域节点必须是对象）。
-constexpr std::array<std::string_view, 7> kDomainKeys{
-    {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels", "key_dirs"}};
+constexpr std::array<std::string_view, 8> kDomainKeys{
+    {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels", "key_dirs", "snippets"}};
 
 constexpr std::array<std::string_view, 4> kSshAuthMethods{"password", "privatekey", "agent", "keyboard-interactive"};
 
@@ -748,6 +749,26 @@ enum class CredentialProjection : std::uint8_t {
     return node;
 }
 
+/// @brief 写快捷片段域：顶层 `{ "items": [...] }`，与 profiles/tunnels 域同形态。
+///
+/// 全字段无条件写（含空分组与 `enter=false`）：存储序即显示序，读侧无需版本分叉。
+/// 正文按纯文本原样写出，不做转义或裁剪——它是用户资产，面板的字节就是这里的字节。
+[[nodiscard]] auto snippets_to_json(const std::vector<conn::Snippet> &snippets) -> Value {
+    auto node = Value::object();
+    auto items = Value::array();
+    for (const auto &snippet : snippets) {
+        auto item = Value::object();
+        put(item, "id", snippet.id);
+        put(item, "name", snippet.name);
+        put(item, "group", snippet.group);
+        put(item, "body", snippet.body);
+        put(item, "enter", snippet.enter);
+        items.push_back(std::move(item));
+    }
+    node.set("items", std::move(items));
+    return node;
+}
+
 /// @brief 读外观域。
 [[nodiscard]] auto read_appearance(ScopeReader &scope, const Settings &defaults) -> AppearanceSettings {
     AppearanceSettings appearance{};
@@ -1263,6 +1284,47 @@ enum class CredentialProjection : std::uint8_t {
     return scope.string_list("items", defaults.key_dirs);
 }
 
+/// @brief 读快捷片段域（`SPEC.FEAT.CONN.07` 的延后子项）：顶层 `{ "items": [...] }`。
+///
+/// 逐元素容错：非对象元素留痕下标后跳过，其余条目照读。字段类型不对回缺省（空串/false）
+/// 而不贴留痕——与 `profiles` 的读法同一条方向：手改文件里的一个坏字段不该让整条片段消失，
+/// 面板里还能就地编辑修正。`items` 缺失或非数组才留痕父键。
+[[nodiscard]] auto read_snippets(const Value *domain, LoadReport &report) -> std::vector<conn::Snippet> {
+    std::vector<conn::Snippet> out;
+    if ((domain == nullptr) || !domain->is_object()) {
+        return out;
+    }
+    const Value *items = domain->at("items");
+    if ((items == nullptr) || !items->is_array()) {
+        report.rejected_keys.push_back("snippets");
+        return out;
+    }
+    const auto text_member = [](const Value *node, std::string_view key) -> std::string {
+        const auto text = text_of(node == nullptr ? nullptr : node->at(key));
+        return text ? std::string{*text} : std::string{};
+    };
+    for (std::size_t index = 0; index < items->size(); ++index) {
+        const Value *item = items->at(index);
+        if ((item == nullptr) || !item->is_object()) {
+            report.rejected_keys.push_back("snippets.items[" + std::to_string(index) + "]");
+            continue;
+        }
+        conn::Snippet snippet;
+        snippet.id = text_member(item, "id");
+        snippet.name = text_member(item, "name");
+        snippet.group = text_member(item, "group");
+        snippet.body = text_member(item, "body");
+        if (const Value *enter = item->at("enter"); enter != nullptr) {
+            const auto flag = enter->as_bool();
+            if (flag) {
+                snippet.enter = *flag;
+            }
+        }
+        out.push_back(std::move(snippet));
+    }
+    return out;
+}
+
 /// @brief 把一份顶层 JSON 对象读成 `Settings`，并把校验留痕写进报告。
 ///
 /// 装载、回滚与导入三条路都走这里（裁决 7.87③）：快照与导出件本来就是同一个 schema 的文档，
@@ -1290,6 +1352,8 @@ enum class CredentialProjection : std::uint8_t {
             settings.tunnels = read_tunnels(is_domain ? node : nullptr, report);
         } else if (domain == "key_dirs") {
             settings.key_dirs = read_key_dirs(scope, defaults);
+        } else if (domain == "snippets") {
+            settings.snippets = read_snippets(is_domain ? node : nullptr, report);
         } else {
             settings.shortcuts = read_shortcuts(scope, defaults);
         }
@@ -1332,6 +1396,7 @@ enum class CredentialProjection : std::uint8_t {
     root.set("profiles", profiles_to_json(settings.profiles, projection));
     root.set("tunnels", tunnels_to_json(settings.tunnels));
     root.set("key_dirs", key_dirs_to_json(settings.key_dirs));
+    root.set("snippets", snippets_to_json(settings.snippets));
     return root;
 }
 
@@ -1691,6 +1756,7 @@ struct Store::Impl {
         prefs.set("profiles", profiles_to_json(next.profiles, CredentialProjection::Stored));
         prefs.set("tunnels", tunnels_to_json(next.tunnels));
         prefs.set("key_dirs", key_dirs_to_json(next.key_dirs));
+        prefs.set("snippets", snippets_to_json(next.snippets));
         if (const auto flushed = prefs.flush(); !flushed.ok()) {
             return flushed.error().message;
         }

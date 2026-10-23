@@ -69,7 +69,7 @@ class KeysPanel {
         /// @brief 平台目录选择器（装配层调 `au::file_dialog::open_folder()`，D11②）。
         ///        空串＝取消**或**平台起不来，两档同途（`settings_panel` 的导出腿口径）。
         std::function<std::string()> pick_key_dir;
-        /// @brief 把选来的目录交回装配层：规范化＋落第七域＋重扫（空串整条不跑，判据 §6）。
+        /// @brief 把选来的目录交回装配层：规范化＋落 `key_dirs` 域＋重扫（空串整条不跑，判据 §6）。
         std::function<void(const std::string &)> add_dir;
         /// @brief 档案表（推送对话框的目标下拉；装配层交全表，本件只挑 SSH 子集）。
         std::function<std::vector<conn::Profile>()> profiles;
