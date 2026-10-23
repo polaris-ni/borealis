@@ -127,6 +127,96 @@ class DelimiterCollector final : public term::CodePointSink {
            std::ranges::find(delimiters, code_point) != delimiters.end();
 }
 
+/// @brief 一对定界符的列号（闭开区间由 `{open, close + 1}` 表达）。
+struct DelimiterPair {
+    std::size_t open = 0;
+    std::size_t close = 0;
+};
+
+/// @brief 该格左侧紧邻连续反斜杠的个数是否为奇数。
+///
+/// 智能选择的「逃逸」只认这一条：`\"` 里的引号不闭合外层。不引入完整转义语法——壳层各有
+/// 自己的引号规则，终端按屏上字形做保守判定，误判面只落在「本可配对的字符没配上」，不会
+/// 选出跨越用户意图的更大区间。
+[[nodiscard]] auto is_escaped(const grid::Row &row, std::size_t column) noexcept -> bool {
+    std::size_t backslashes = 0;
+    while (column > 0U && row.cell(column - 1U).code_point == U'\\') {
+        ++backslashes;
+        --column;
+    }
+    return (backslashes % 2U) == 1U;
+}
+
+/// @brief 开括号对应的闭括号；非开括号回 0。
+[[nodiscard]] auto bracket_closer(char32_t code_point) noexcept -> char32_t {
+    switch (code_point) {
+        case U'(':
+            return U')';
+        case U'[':
+            return U']';
+        case U'{':
+            return U'}';
+        default:
+            return 0;
+    }
+}
+
+/// @brief 括号配对：单一栈做嵌套配对，异类闭符忽略。
+///
+/// `([)]` 这种交叉写法没有唯一读法，猜一侧会选出用户没指的那一段；忽略闭符只会让外层不成立，
+/// 落点仍可由内层命中。
+[[nodiscard]] auto bracket_pairs(const grid::Row &row) -> std::vector<DelimiterPair> {
+    struct OpenBracket {
+        std::size_t column = 0;
+        char32_t closer = 0;
+    };
+    const auto columns = row.columns();
+    std::vector<DelimiterPair> pairs;
+    std::vector<OpenBracket> stack;
+    for (std::size_t column = 0; column < columns; ++column) {
+        if (is_escaped(row, column)) {
+            continue;
+        }
+        const char32_t code_point = row.cell(column).code_point;
+        if (const char32_t closer = bracket_closer(code_point); closer != 0) {
+            stack.push_back(OpenBracket{.column = column, .closer = closer});
+            continue;
+        }
+        if (!stack.empty() && stack.back().closer == code_point) {
+            pairs.push_back(DelimiterPair{.open = stack.back().column, .close = column});
+            stack.pop_back();
+        }
+    }
+    return pairs;
+}
+
+/// @brief 引号配对：每种引号各自顺序配对，未逃逸的同型引号即与最近一个未配对的同型引号成对。
+[[nodiscard]] auto quote_pairs(const grid::Row &row) -> std::vector<DelimiterPair> {
+    constexpr std::array<char32_t, 3> kQuotes{U'"', U'\'', U'`'};
+    const auto columns = row.columns();
+    std::vector<DelimiterPair> pairs;
+    std::array<std::optional<std::size_t>, kQuotes.size()> open{};
+    for (std::size_t column = 0; column < columns; ++column) {
+        if (is_escaped(row, column)) {
+            continue;
+        }
+        const char32_t code_point = row.cell(column).code_point;
+        for (std::size_t quote = 0; quote < kQuotes.size(); ++quote) {
+            if (code_point != kQuotes[quote]) {
+                continue;
+            }
+            if (open[quote].has_value()) {
+                pairs.push_back(DelimiterPair{.open = *open[quote], .close = column});
+                open[quote].reset();
+            } else {
+                open[quote] = column;
+            }
+            break;
+        }
+    }
+    return pairs;
+}
+
 }  // namespace
 
 auto row_spans(const Selection &selection, const std::size_t columns) -> std::vector<RowSpan> {
@@ -206,6 +296,30 @@ auto word_span_at(const grid::Row &row, const GridCellPos point, const std::stri
         ++last;
     }
     return RowSpan{point.row, first, last + 1U};
+}
+
+auto smart_span_at(const grid::Row &row, const GridCellPos point) -> std::optional<RowSpan> {
+    const auto columns = row.columns();
+    if (columns == 0U || point.column >= columns) {
+        return std::nullopt;
+    }
+    std::vector<DelimiterPair> pairs = bracket_pairs(row);
+    const auto quotes = quote_pairs(row);
+    pairs.insert(pairs.end(), quotes.begin(), quotes.end());
+    // 取最内层：宽度最小者。落点必须严格在两端之间，落在一对定界符本身不算「在内」。
+    std::optional<DelimiterPair> best;
+    for (const DelimiterPair &pair : pairs) {
+        if (pair.open >= point.column || point.column >= pair.close) {
+            continue;
+        }
+        if (!best.has_value() || pair.close - pair.open < best->close - best->open) {
+            best = pair;
+        }
+    }
+    if (!best.has_value()) {
+        return std::nullopt;
+    }
+    return RowSpan{point.row, best->open, best->close + 1U};
 }
 
 auto copy_spans(const grid::Storage &storage, const std::span<const RowSpan> spans,

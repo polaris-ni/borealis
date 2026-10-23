@@ -40,6 +40,7 @@ using borealis::ui::row_spans;
 using borealis::ui::RowSpan;
 using borealis::ui::Selection;
 using borealis::ui::SelectionShape;
+using borealis::ui::smart_span_at;
 using borealis::ui::translate_selection_rows;
 using borealis::ui::word_span_at;
 
@@ -351,6 +352,78 @@ AURORA_TEST_CASE(word_span_at_selects_a_whole_wide_glyph_from_either_half) {
     AURORA_TEST_REQUIRE(span.has_value());
     const auto selected = stream(0U, span->first_column, 0U, span->last_column - 1U);
     AURORA_TEST_CHECK_STREQ(copy_text(storage, selected, CopyOptions{}), std::string{"\xE4\xB8\xAD"});
+}
+
+AURORA_TEST_CASE(smart_span_at_expands_quotes_and_all_three_bracket_pairs) {
+    // `say "hello world" now`：双击词内得到带引号的整段，落在引号上不算「在内」。
+    const auto quoted = text_row("say \"hello world\" now", 24U);
+    const auto quoted_pair = RowSpan{0U, 4U, 17U};
+    AURORA_TEST_CHECK(smart_span_at(quoted, GridCellPos{0U, 5U}) == quoted_pair);
+    AURORA_TEST_CHECK(smart_span_at(quoted, GridCellPos{0U, 8U}) == quoted_pair);
+    AURORA_TEST_CHECK_FALSE(smart_span_at(quoted, GridCellPos{0U, 3U}).has_value());
+    AURORA_TEST_CHECK_FALSE(smart_span_at(quoted, GridCellPos{0U, 4U}).has_value());
+    AURORA_TEST_CHECK_FALSE(smart_span_at(quoted, GridCellPos{0U, 16U}).has_value());
+
+    AURORA_TEST_CHECK(smart_span_at(text_row("(alpha beta)", 16U), GridCellPos{0U, 2U}) ==
+                      RowSpan{0U, 0U, 12U});
+    AURORA_TEST_CHECK(smart_span_at(text_row("[alpha beta]", 16U), GridCellPos{0U, 2U}) ==
+                      RowSpan{0U, 0U, 12U});
+    AURORA_TEST_CHECK(smart_span_at(text_row("{alpha beta}", 16U), GridCellPos{0U, 2U}) ==
+                      RowSpan{0U, 0U, 12U});
+    AURORA_TEST_CHECK(smart_span_at(text_row("'alpha beta'", 16U), GridCellPos{0U, 2U}) ==
+                      RowSpan{0U, 0U, 12U});
+    AURORA_TEST_CHECK(smart_span_at(text_row("`alpha beta`", 16U), GridCellPos{0U, 2U}) ==
+                      RowSpan{0U, 0U, 12U});
+
+    // 多对同类引号命中所属的那一对；不同列上的配对不会合并成一大段。
+    const auto two = text_row("\"a\" \"b\"", 12U);
+    AURORA_TEST_CHECK(smart_span_at(two, GridCellPos{0U, 1U}) == RowSpan{0U, 0U, 3U});
+    AURORA_TEST_CHECK(smart_span_at(two, GridCellPos{0U, 5U}) == RowSpan{0U, 4U, 7U});
+    AURORA_TEST_CHECK_FALSE(smart_span_at(two, GridCellPos{0U, 3U}).has_value());
+}
+
+AURORA_TEST_CASE(smart_span_at_picks_the_innermost_pair) {
+    // `f("a(b)c")`：双击 a 取引号，双击 b 取圆括号；嵌套只取最内层。
+    const auto row = text_row("f(\"a(b)c\")", 16U);
+    AURORA_TEST_CHECK(smart_span_at(row, GridCellPos{0U, 3U}) == RowSpan{0U, 2U, 9U});
+    AURORA_TEST_CHECK(smart_span_at(row, GridCellPos{0U, 5U}) == RowSpan{0U, 4U, 7U});
+    // 交叉写法 `([)]` 没有唯一读法：括号栈只让同型闭符出栈，故只成 `[]` 一对。
+    AURORA_TEST_CHECK(smart_span_at(text_row("([)]", 8U), GridCellPos{0U, 2U}) == RowSpan{0U, 1U, 4U});
+}
+
+AURORA_TEST_CASE(smart_span_at_ignores_escaped_delimiters_and_unpaired_ones) {
+    // `echo "a\"b" x`：内层引号被反斜杠逃逸，外层仍是同一对。
+    const auto escaped = text_row("echo \"a\\\"b\" x", 20U);
+    AURORA_TEST_CHECK(smart_span_at(escaped, GridCellPos{0U, 6U}) == RowSpan{0U, 5U, 11U});
+    AURORA_TEST_CHECK(smart_span_at(escaped, GridCellPos{0U, 9U}) == RowSpan{0U, 5U, 11U});
+
+    // 逃逸的括号不参与配对；未闭合的引号与孤立的闭符都不产生区间。
+    AURORA_TEST_CHECK_FALSE(smart_span_at(text_row("\\(a b\\)", 12U), GridCellPos{0U, 2U}).has_value());
+    AURORA_TEST_CHECK_FALSE(smart_span_at(text_row("\"a b", 12U), GridCellPos{0U, 2U}).has_value());
+    AURORA_TEST_CHECK_FALSE(smart_span_at(text_row("a ) b", 12U), GridCellPos{0U, 2U}).has_value());
+    // `<`/`>` 是 shell 运算符，不纳入配对集。
+    AURORA_TEST_CHECK_FALSE(smart_span_at(text_row("<alpha>", 12U), GridCellPos{0U, 3U}).has_value());
+    // 落点越界或空行回空。
+    AURORA_TEST_CHECK_FALSE(smart_span_at(text_row("\"a\"", 4U), GridCellPos{0U, 9U}).has_value());
+    AURORA_TEST_CHECK_FALSE(smart_span_at(Row{0U}, GridCellPos{0U, 0U}).has_value());
+}
+
+AURORA_TEST_CASE(smart_span_at_keeps_a_wide_glyph_inside_the_pair) {
+    auto row = text_row("\"\"", 8U);
+    put_wide_in(row, 1U, char32_t{0x4E2D});  // 基础格 1、延续格 2，闭引号挪到 3
+    set_glyph(row, 3U, U'"');
+    const auto expected = RowSpan{0U, 0U, 4U};
+    AURORA_TEST_CHECK(smart_span_at(row, GridCellPos{0U, 1U}) == expected);
+    AURORA_TEST_CHECK(smart_span_at(row, GridCellPos{0U, 2U}) == expected);
+
+    auto storage = make_storage(8, 1);
+    put_text(storage, 0, 0, "\"");
+    put_wide(storage, 0, 1, char32_t{0x4E2D});
+    put_text(storage, 0, 3, "\"");
+    const auto span = smart_span_at(storage.line(0), GridCellPos{0U, 2U});
+    AURORA_TEST_REQUIRE(span.has_value());
+    const auto selected = stream(0U, span->first_column, 0U, span->last_column - 1U);
+    AURORA_TEST_CHECK_STREQ(copy_text(storage, selected, CopyOptions{}), std::string{"\"\xE4\xB8\xAD\""});
 }
 
 AURORA_TEST_CASE(translate_moves_both_ends_by_the_top_edge_delta) {

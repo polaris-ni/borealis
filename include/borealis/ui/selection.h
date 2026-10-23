@@ -102,6 +102,19 @@ struct RowSpan {
 [[nodiscard]] auto word_span_at(const grid::Row &row, GridCellPos point, std::string_view delimiters)
     -> std::optional<RowSpan>;
 
+/// @brief 双击落在引号/括号内时的智能选区（`SPEC.FEAT.INTERACT.02` 的延后子项，iTerm2 语义）。
+///
+/// 支持的配对：`"`、`'`、反引号、`()`、`[]`、`{}`；`<`/`>` 不纳入（shell 运算符）。落点必须
+/// **严格位于**一对定界符之间；嵌套时取包含落点的**最内层**一对。返回区间含两端定界符。
+///
+/// 定界符前有奇数个反斜杠时视作字面字符：引号按同型顺序配对，括号按单一栈嵌套配对，异类闭符
+/// 忽略而不猜交叉配对。未闭合、类型不匹配或落点在定界符上时回空，由调用方回退到
+/// `word_span_at`。本件只扫一行；跨行配对不在射程（`point.row` 原样带回）。
+/// @param row 落点所在行。
+/// @param point 落点坐标：`row` 是调用方给定的存储行序，`column` 是指针那半格。
+/// @return 含两端定界符的闭开列区间；没有严格包含落点的配对时 `std::nullopt`。
+[[nodiscard]] auto smart_span_at(const grid::Row &row, GridCellPos point) -> std::optional<RowSpan>;
+
 /// @brief 复制文本的三项变换开关（`SPEC.FEAT.INTERACT.03`，**均默认关闭以保留原样**）。
 ///
 /// 生效次序固定为「剥离 tmux 边框字符 → 剥离行尾空白 → 合并续行」：边框字符若在行尾会挡住
