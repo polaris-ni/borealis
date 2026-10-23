@@ -206,9 +206,11 @@ UI 事件 → 键映射（`SPEC.FEAT.INTERACT.01`）→ **文本按会话编码�
 
 回写形态（2026-09-30 落地）：状态机不持有写通道，查询应答经注入的 `term::ResponseSink` 交给会话（§3.4 的锁内登记、锁外回写）。应答取值：`DSR 5` → `\e[0n`、`DSR 6` → `\e[<行>;<列>R`（**整屏**视口坐标 1 基，与 DECOM 无关）、`DA1`（无私有前缀的 `CSI c`）→ `\e[?62c`。能力号只报档位 62（VT220 + 高级视频选项），132 列 / sixel / ReGIS / 打印机一律不报——误报会让 `vim`/`tmux` 走未实现的分支。`CSI > c`（DA2）与 `CSI ? 6 n`（DEC 定位器）不在 `SPEC.FEAT.TERM.01` 覆盖内，按「宁可不答也不答一份错格式」忽略。
 
+**DECRQSS**（裁决 7.140）：`DCS $ q Pt ST` 走同一条回写腿。Hook 只认 `intermediates == {'$'}` 且 final `q` 的请求，负载在 `DcsPut` 累积、64 码点封顶（超限不答），`DcsUnhook` 才应答 `DCS Ps $ r Pt ST`（有效 `Ps=1`、无效 `Ps=0`）。已答三项：`m`（SGR，`0` 起头、属性升序，前景/背景按 30–37／90–97／`38;5;n`／`38;2;r;g;b` 展开，缺省色不写）、`r`（DECSTBM 的 `top;bottom`）、` q`（DECSCUSR 档，steady 为 +1 的偶数档）。其余设置项一律回 `Ps=0`，让调用方走降级而不是拿到一个猜的值。非 DECRQSS 的 DCS（sixel／ReGIS 一类）整条丢弃，不累进内存、不上屏。
+
 ### 5.3 字符集与模式
 
-- 字符集切换：DEC Special Graphics 线条字符集（`ESC(0` / `ESC(B`）、`ESC%G`；
+- 字符集切换：DEC Special Graphics 线条字符集（`ESC(0` / `ESC(B`）、`ESC%G`。2026-10-24（裁决 7.140）接通 GL 换槽：`ESC ) 0` / `ESC ) B` 指派 G1，SO（0x0E）把 GL 切到 G1、SI（0x0F）切回 G0，状态只有 `gl_slot_` 一个槽位；RIS 同时复位两槽与槽位。`ESC n` / `ESC o`（G2/G3）与 GR 区不实现，属显式边界；
 - 模式须生效：`DECAWM`（`?7`）、`DECOM`（`?6`）、`IRM`（`?4`）、`DECCKM`（`?1`）与 keypad 应用模式。
 
 ### 5.4 OSC 处理

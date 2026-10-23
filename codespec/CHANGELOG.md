@@ -4,6 +4,21 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.140（2026-10-24）**`SPEC.FEAT.TERM.01` 边界收口：SO/SI 接通 GL 的 G0/G1 换槽，DCS 补 DECRQSS 状态串应答（裁决 7.140；本地提交 `d9a241b` → 文档回写（本笔））**
+
+**动机**：`Terminal` 里还挂着两处「能力在册但没接完」的旧注释——`do_print` 恒取 G0 而 SO/SI 只登记不动作（`ESC ) 0` 指派到 G1 的线条表永远到不了 GL，等于死存储），DCS 的三个 kind 是裸 `TODO`。`vim`／`tmux` 一类程序会发 `DCS $ q m ST` 取回当前 SGR 以便保存/恢复屏幕，不答并不致命，但会走它们的降级分支；线条表则直接影响需求「边框线条不得显示为乱码字母」的验收。
+
+**落地形态**：
+
+- **GL 换槽**：状态只加一个 `gl_slot_`（0 = G0、1 = G1）。`do_print` 按 `designated_[gl_slot_]` 查表，SO（0x0E）切 G1、SI（0x0F）切 G0；RIS 复位两槽指派与槽位。`ESC n` / `ESC o`（G2/G3）与 GR 区不做，是显式边界而非遗漏。
+- **DCS 只认 DECRQSS**：`DCS $ q Pt ST` 的 Hook 判定 `intermediates == {'$'}` 且 final `q`，DcsPut 把负载累积到 Unhook 再答；请求串 64 码点封顶，超限清空且不答。sixel／ReGIS 等非 DECRQSS 负载整条丢弃——不累进内存、不上屏、不答，不为未实现的能力付存储费。
+- **应答四项**：`m` 回当前 SGR（`0` 起头，属性升序 1/2/3/4/21/4:3/5/7/8/9；前景 30–37、90–97、`38;5;n`、`38;2;r;g;b`，背景同构；缺省色不写）；`r` 回 DECSTBM 的 `top;bottom`；` q` 回 DECSCUSR 档（Block=1、Underline=3、Bar=5，steady 为 +1 的偶数档）；其余设置项一律回 `DCS 0 $ r ST`，不猜值冒充支持。有效应答统一为 `DCS 1 $ r Pt ST`。
+- **回写腿零改动**：应答走既有 `term::ResponseSink`，与 DA1/DSR 同一条「锁内登记、锁外回写」路径，状态机仍不持写通道。
+
+**验收读数**：构建无新警告；`utest_terminal` **44 → 49 案**全绿，`ctest --preset linux -E etest_` **113/113 全绿**。新增五案：SO/SI 换槽（线条表进 G1 后 SO 画横线、SI 立刻回字母）、RIS 复位两槽与槽位、DECSTBM 与 DECSCUSR 应答、SGR 跨 feed 累积与三种颜色形态、未实现项回 `Ps=0` 且非 DECRQSS 静默不上屏。变异两组指名红：`designated_[gl_slot_]` 退回 `designated_[0]` ⇒ SO/SI 案红；`request == U"m"` 改成比 `U"M"` ⇒ SGR 应答案红；还原后逐案复绿。
+
+**边界与不称可用**（`AGENTS.md` §4.4 第 33 条）：DECRQSS 只做 xterm 三常用项，`"p`／`"q` 等设置项回 0；G2/G3、GR 区与 sixel/ReGIS 明确不支持。`vim`／`tmux`／`less` 的真机走查与 Windows／MSVC 腿未做，只有无头读数。用例书写时 `U"\x1Bc"` 的 `c` 会被 C++ 当作十六进制数字吃成 U+01BC（RIS 用例须写 `U"\u001Bc"`），该陷阱已在用例注释在册。故本条只称「无头证据链闭合」，**不称「可用」**。
+
 ## v0.139（2026-10-24）**`SPEC.FEAT.INTERACT.06` 输入法界面腿落地：preedit 就地绘制、候选窗定位盒与 commit 上屏（裁决 7.139；本地提交 `d48474a` → 文档回写（本笔））**
 
 **动机**：需求要求组合中文本就地渲染在光标格、候选窗按光标屏幕坐标定位、组合中间态不发往会话。框架 `TextCompositionEvent`（含 preedit）在 Win32／X11／Wayland 三后端齐备，但终端是自绘网格，框架不会把 cell 内容暴露给输入法，preedit 绘制与「光标 → 屏幕坐标」换算只能在视口实现。`committed` 文本腿此前已随键盘映射接上，本棒补的是组合态本体与候选窗定位。
