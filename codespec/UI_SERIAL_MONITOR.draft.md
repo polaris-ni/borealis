@@ -197,6 +197,40 @@ codespec/{SPECIFICATIONS,CHANGELOG,PLAN,ARCHITECTURE}.md 改 —— 裁决、版
 绕过收口（回到两翼各写一版、其中一翼漏记）⇒ 顺序案／两翼案／双线程案三红；**m4** 武装不幂等（每次换一件、
 旧件连同已采 run 一起丢）⇒ `arming_a_second_time_hands_back_the_same_ring_and_its_history` 转红。
 
+### 4.3 批 3 落地时对稿面的五处改口与读数（2026-10-25，按 AGENTS §4.2 第 12 条以运行时为准回写）
+
+1. **可见行上限落成 24 行，§5 原话那句「最后可见的那几十行（F5：60 行 ≈ 14 µs）」据此更正**。算术是
+   F8 那条换算的另一半：14 pt 的行高约 20 dp，960×640 dp 的缺省窗里扣掉标题行、开关行与两行留痕，行区
+   容得下的就是二十几行——60 行是「全折一遍要花多少时间」的算术（F5 只测折算成本，没测画不画得下），
+   不是「屏面放得下多少」。超出这一档的行不折、不画、也就不进帧预算。
+2. **截尾发生在折算之前，落成一枚面板私有的 `tail_runs(runs, kMonitorTailBytes)`**。稿 §5 那句「其余 run
+   折都不折」据此有了确定形态：先从环尾按**run 边界**取走 `24 × 8 = 192` 字节，再交折算件。不这么做的后果
+   是实测出来的：一条 32 KiB 的突发 run（F3 的读块上界）折成 4096 行，整个 256 KiB 环全折是 32768 行，
+   而屏面只画 24 行——折出去的那几千条字符串既没人看，又把 F5 那 0.239 µs/行原样乘进去。截断只落在 run
+   边界，故半个字节都不会出现；一条设备行可能被截在中间，那是「只显示最近若干行」的必然代价（§7 在册的
+   滚动回溯是同一件事）。折算件因此**不加**「只要尾」的形参：那会把界面量（一屏几行）焊进纯逻辑件的签名，
+   与 §4 那条「行形态是显示期决定」的分工反着走。
+3. **重建只排在 `tick()` 里，三枚动作腿（两枚开关 + 清空）只改状态并置一枚 `repaint_pending_`**。§4.5 第 25
+   条的「事件回调不做长计算」在本件因此不是纪律而是结构：点击腿折不了任何行。代价如实登记——暂停中改档，
+   屏面下一帧才见（观测面 `timestamp_enabled()` 当帧就吃到新档，测试判的是这一枚而不是像素）。
+4. **`MonitorRow` 补了一枚 defaulted `operator==`**，§4 的文件清单没列它。面板的状态泵要「逐字段相等就不重建」，
+   判据得长在值语义上（`TunnelPanel` 那一族把行表 diff 写在面板里，本件的行有三格，逐格比一遍是同样的话
+   说三遍）；三格都是值，故 defaulted 就是要的判据——不比指针、不比绘制态。
+5. **非串口那一腿复用 `serial_baud_dialog` + `show_serial_baud_frame` 那对框**，不另造第三只 `Dialog` 与
+   `MountedOverlay`（「两只框共用一只 `Dialog` 换 content」是 `src/main.cpp` 里的既有形态）。标题取
+   `serial.monitor.title` 而不是波特率那句，措辞不借用。
+
+**批 3 结项读数**：`ctest --preset linux -E etest_` **124 项全绿**（123 ⇒ +1＝新套件 `itest_serial_monitor_panel`），
+`borealis_test_runner` 全跑 **1511 案全绿**（基线 1504 ⇒ +7＝面板 6 案 + `itest_panel_retarget` 第八只 1 案，该套件
+11 ⇒ 12 案）。覆盖闸 `python3 tools/check/check_display_literals.py` **PASS**（表外文件零引号中文——面板与两份
+itest 的可见文案全走 `settings_label(key)`）。词条双档各 +12 枚（**518 ⇒ 530**），`utest_i18n_tiers` 9 案全绿即
+两档 key 集等式仍成立；12 枚的族名是 `serial.monitor.` 下的 `command`／`title`／`binding`／`bytes`／`action.clear`／
+`action.close`／`switch.timestamp`／`switch.pause`／`notice.dropped`／`notice.privacy`／`empty`／`not_serial`。
+另记一条与本稿判据无关但下一棒必踩的构建事实：**`src/CMakeLists.txt` 是显式清单**，新增 `src/ui/*.cpp` 不写进去
+就静默不参与编译（测试侧走 `CONFIG_DEPENDS` GLOB，自动进注册）——两处的不对称没有报错，只有「符号找不到」。
+**真机走查未做**（沙箱无交互桌面、无 `tty`/`dialout` 权限，§0 末段那条环境欠账原样成立）：本批只称「无头判据全绿」，
+「可用」结论留给 §4.4 第 33 条的人工走查。
+
 ---
 
 ## 5 数据流与线程模型
@@ -218,7 +252,9 @@ codespec/{SPECIFICATIONS,CHANGELOG,PLAN,ARCHITECTURE}.md 改 —— 裁决、版
 - **latest-value 而不是事件流水**（§4.5 第 25 条）：面板每帧取「环里现在有什么」，丢帧不影响下一帧正确性；
   不做「本帧新增的 run」那种增量协议——那要引入消费游标，而游标一旦与暂停/清空交错就会说出「少了半屏」。
 - **拷贝量级**：一次 `snapshot()` 至多交出 256 KiB（D4 的环上界就是快照上界，不需要第二个数）；
-  面板只把最后可见的那几十行折成字符串（F5：60 行 ≈ 14 µs），其余 run 折都不折。
+  面板先按 run 边界从环尾截走 `kMonitorTailBytes`（24 行 × 8 字节），只折这一段的行（批 3 改口见 §4.3①／②：
+  稿初那行「几十行 ≈ 14 µs」是 F5 的折算成本算术，不是屏面容量——14 pt 行高约 20 dp，640 dp 的窗扣掉头三行
+  只容得下二十几行），其余 run 折都不折。
 - **武装态的常驻代价**：F4 的 0.604 µs / 32 KiB 加一次 `now()`（F11：11 ns 量级），每批一次；
   落地形态是 `record_raw()` 那把**无争用的短临界区**（锁内只取 `shared_ptr` 副本）＋一次空指针判，
   与今天的 `log_` 那条同形；空批（`ingest({}, true)` 的收尾一轮）在取锁前就返回（§4.2②）。
@@ -231,7 +267,7 @@ codespec/{SPECIFICATIONS,CHANGELOG,PLAN,ARCHITECTURE}.md 改 —— 裁决、版
 |---|---|---|
 | 批 1 | `session::RawTap` + `ui::serial_monitor_format` 两件纯逻辑 + 两份 utest | 环逐出/丢弃/快照上界各有案；行形态按 §2 的算术逐字符断言（54 字符那一条写成用例常量）；F10 的「一行跨两 run」有案。**结项读数**：`ctest --preset linux -E etest_` 项数 +2，runner 全案数报实测数 |
 | 批 2 | `Session` 的 RX／TX 两笔记痕（含 `emit_to_connection` 那一处收口）+ `utest_session` 扩案 | **已结项（2026-10-25）**：未武装零成本、RX 逐字节一致、TX 是折算后字节三档各一案；`emit_to_connection` 收口后**原有行尾折算四案仍全绿**（那条是 7.110 D11① 的既有判据，本棒未改口径）。读数与四处口径改口见 §4.2 |
-| 批 3 | 面板 + 装配 + 词条双档 + `itest_panel_retarget` 第八只 | 无头真派发：开关联动、暂停、清空、时间戳开关、丢弃留痕各一案；`python3 tools/check/check_display_literals.py` 覆盖闸 PASS（表外文件零引号中文）；`utest_i18n_tiers` 两档 key 集等式仍成立 |
+| 批 3 | 面板 + 装配 + 词条双档 + `itest_panel_retarget` 第八只 | **已结项（2026-10-25）**：无头真派发——开关联动、暂停、清空、时间戳开关、丢弃留痕、绑定与免责各一案（面板 6 案）；`itest_panel_retarget` 第八只（该套件 11 ⇒ 12 案）；`python3 tools/check/check_display_literals.py` 覆盖闸 PASS（表外文件零引号中文）；`utest_i18n_tiers` 两档 key 集等式仍成立（各 530 枚）。读数与五处口径改口见 §4.3；**真机走查未做**，「可用」留给 §4.4 第 33 条 |
 | 批 4 | 变异自证 + 文档回写 + 分层提交 | 至少三则变异各转红并还原：ⓐ ~~`record` 挪进 `Session::mutex_` 临界区~~ **实测无断言证人，改由头注硬约束＋走查承担（§4.2③）**、ⓒ 挂起尾段不留（F10 那案转红）、ⓓ 环逐出按条数不按字节（D4 那案转红）——ⓑ 已随批 2 做掉（§4.2 的 m1）；回写 `SPECIFICATIONS.md` §7 裁决 + `CHANGELOG.md` 新版本 + `PLAN.md` §4 该条出账 + `codespec/UI_SERIAL.draft.md` §7 那条「延后」改口 |
 
 **判据逐条对应需求原文**：「可选」＝D7（默认不采、开面板才采，未武装会话零成本）；「十六进制」＝D5 的 8 字节
@@ -246,7 +282,7 @@ D6（每行一个、短档 + 毫秒、可关）。
 
 ## 7 本期不做（延后 / 在册）
 
-- **滚动回溯与历史窗口**：只显示最近若干行；想看更早的内容得先按「暂停」。在册理由：跟尾与手动滚动要在
+- **滚动回溯与历史窗口**：只显示最近 `kMonitorVisibleRowCap`（24）行；想看更早的内容得先按「暂停」。在册理由：跟尾与手动滚动要在
   同一只 `Scroll` 上抢位置，形态需要真机手感才能定，先不猜。
 - **导出／复制到剪贴板**：与 `SPEC.FEAT.CONN.11` 的落盘腿撞口径——那份已经有「文件、上限、打码器、目录」
   四件套；监视卡若要落盘就该复用那条腿而不是新写第二份，属独立一棒。
