@@ -200,6 +200,23 @@ auto plan_credential(const SshProfile &ssh, const CredentialStore &store) -> Cre
     };
 }
 
+auto hop_profile_of(const SshHop &hop) -> SshProfile {
+    auto profile = SshProfile{};
+    profile.host = hop.host;
+    profile.port = hop.port;
+    profile.user = hop.user;
+    profile.auth_method = hop.auth_method;
+    profile.identity_file = hop.identity_file;
+    profile.agent_forwarding = false;
+    profile.known_hosts_policy = hop.known_hosts_policy;
+    profile.credential = hop.credential;
+    return profile;
+}
+
+auto plan_hop_credential(const SshHop &hop, const CredentialStore &store) -> CredentialPlan {
+    return plan_credential(hop_profile_of(hop), store);
+}
+
 auto parse_quick_connect(std::string_view text) -> std::optional<std::pair<std::string, int>> {
     // 剥两端空白。
     while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {

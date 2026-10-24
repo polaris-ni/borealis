@@ -126,6 +126,19 @@ struct CredentialPlan {
 /// 「Reference 但库里取不到」是运行期事实，不改变本计划——装配层把取空按 Ask 处理。
 [[nodiscard]] auto plan_credential(const SshProfile &ssh, const CredentialStore &store) -> CredentialPlan;
 
+/// @brief 一跳折成一份临时 SSH 档案（`SPEC.FEAT.CONN.03` 稿 D2 的射程边界）。
+///
+/// 跳板本身不再套跳板、也不转发 agent，其余字段原样搬。拨号侧（`ssh_hop_chain.cpp`）与装配侧
+/// （逐跳凭据计划）都要这份折算，各写一处就会漂，故它是本域唯一的折算点。
+[[nodiscard]] auto hop_profile_of(const SshHop &hop) -> SshProfile;
+
+/// @brief 一跳该从哪儿取秘密材料：折成档案后走与目标**同一条** `plan_credential` 口径。
+///
+/// 装配层据此决定「这一跳去凭据库取」还是「留空」：本期询问 UI 只覆盖目标口令（稿 D8），
+/// 该问而无材料的那一跳在拨号侧落 `Auth` 并带 `hop_index`。
+[[nodiscard]] auto plan_hop_credential(const SshHop &hop, const CredentialStore &store)
+    -> CredentialPlan;
+
 /// @brief quick connect 输入的解析（CONN.03：`host[:port]` 临时输入即连，不生成档案）。
 ///
 /// 宽容口径：两端空白剥掉；端口段非纯数字视为整体主机名的一部分（不猜）；空串/仅

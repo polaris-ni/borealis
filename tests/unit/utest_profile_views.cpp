@@ -1,7 +1,8 @@
 /// 测试类型: unit
 /// 目标单元: src/conn/profile_views.h（私有头）纯逻辑视图模型
 /// 测试说明: 守住 CONN.07 侧栏三视图的排序/过滤确定性、向导草稿校验矩阵（含 CONN.05 的
-///           串口四档）、三向分派的字段不串台、凭据询问计划映射。UI 只画算好的行
+///           串口四档）、三向分派的字段不串台、凭据询问计划映射，以及 CONN.03 的跳板折算
+///           （一跳折成临时档案）与逐跳凭据计划。UI 只画算好的行
 ///           （设计稿 D7），查询即在此层。
 
 #include "conn/profile_views.h"
@@ -332,6 +333,72 @@ AURORA_TEST_CASE(credential_plan_covers_none_stored_and_ask) {
     ssh.auth_method = "unknown";
     plan = plan_credential(ssh, memory);
     AURORA_TEST_CHECK_TRUE(plan.route == CredentialRoute::None);
+}
+
+AURORA_TEST_CASE(hop_profile_folding_carries_no_chain_and_no_forwarding) {
+    using conn::hop_profile_of;
+    using conn::KnownHostsPolicy;
+    using conn::SecretHandle;
+    using conn::SshHop;
+
+    auto hop = SshHop{};
+    hop.host = "jump.example.com";
+    hop.port = 2222;
+    hop.user = "ops";
+    hop.auth_method = "privatekey";
+    hop.identity_file = "/home/ops/.ssh/id_jump";
+    hop.known_hosts_policy = KnownHostsPolicy::Yes;
+    hop.credential = SecretHandle::reference("libsecret:jump");
+
+    const auto folded = hop_profile_of(hop);
+    AURORA_TEST_CHECK_TRUE(folded.host == hop.host);
+    AURORA_TEST_CHECK_TRUE(folded.port == hop.port);
+    AURORA_TEST_CHECK_TRUE(folded.user == hop.user);
+    AURORA_TEST_CHECK_TRUE(folded.auth_method == hop.auth_method);
+    AURORA_TEST_CHECK_TRUE(folded.identity_file == hop.identity_file);
+    AURORA_TEST_CHECK_TRUE(folded.known_hosts_policy == KnownHostsPolicy::Yes);
+    AURORA_TEST_CHECK_TRUE(folded.credential == hop.credential);
+    // 稿 D2 的射程边界：跳板不套跳板、也不转发 agent——这两项不是「档案里恰好没写」，
+    // 而是折算点强制清零，否则一条 `A→B→C` 会被读成「经 A 到 B，B 再去 D」。
+    AURORA_TEST_CHECK_FALSE(folded.agent_forwarding);
+    AURORA_TEST_CHECK_TRUE(folded.proxy_jumps.empty());
+}
+
+AURORA_TEST_CASE(hop_credential_plan_shares_the_target_discipline) {
+    using conn::CredentialRoute;
+    using conn::plan_hop_credential;
+    using conn::SecretAsk;
+    using conn::SecretHandle;
+    using conn::SshHop;
+
+    conn::InMemoryCredentialStore memory;
+    conn::UnavailableCredentialStore unavailable;
+
+    auto hop = SshHop{};
+    hop.auth_method = "agent";
+    hop.credential = SecretHandle::reference("libsecret:jump");
+    // 认证方式说了算：agent 型跳挂着句柄也不去取（与目标同一条判据）。
+    AURORA_TEST_CHECK_TRUE(plan_hop_credential(hop, memory).route == CredentialRoute::None);
+
+    hop.auth_method = "password";
+    const auto stored = plan_hop_credential(hop, memory);
+    AURORA_TEST_REQUIRE(stored.route == CredentialRoute::Stored);
+    AURORA_TEST_CHECK_TRUE(stored.ask == SecretAsk::Password);
+    // 取的是**这一跳自己的**句柄：拿目标的句柄去开跳板的锁，两个口令就互换了主人。
+    AURORA_TEST_CHECK_TRUE(stored.handle == hop.credential);
+
+    // 库不可用 ⇒ Ask（降级红线同样适用于跳板：绝不假装能取）。
+    AURORA_TEST_CHECK_TRUE(plan_hop_credential(hop, unavailable).route == CredentialRoute::Ask);
+
+    // AskEveryTime 哨兵 ⇒ Ask：本期询问 UI 只覆盖目标，装配层据此把该跳留空。
+    hop.credential = SecretHandle::ask_every_time("profile-1", "jump");
+    const auto asked = plan_hop_credential(hop, memory);
+    AURORA_TEST_CHECK_TRUE(asked.route == CredentialRoute::Ask);
+    AURORA_TEST_CHECK_TRUE(asked.handle == hop.credential);
+
+    // 引用为空 ⇒ Ask（空引用不是可取的句柄）。
+    hop.credential = SecretHandle::reference("");
+    AURORA_TEST_CHECK_TRUE(plan_hop_credential(hop, memory).route == CredentialRoute::Ask);
 }
 
 AURORA_TEST_CASE(quick_connect_parses_host_port_pairs) {

@@ -29,6 +29,7 @@
 
 #include "aurora/core/log.h"
 #include "conn/proxy_jump.h"
+#include "conn/profile_views.h"
 #include "conn/ssh_dial.h"
 #include "platform/hop_pipe.h"
 
@@ -47,19 +48,9 @@ constexpr std::size_t kRelayChunkBytes = 16384;
 constexpr std::string_view kRelayOriginator = "127.0.0.1";
 constexpr int kRelayOriginatorPort = 65535;
 
-/// @brief 一跳折成一份临时档案：跳板本身不再套跳板（稿 D2 的射程边界），也不转发 agent。
-[[nodiscard]] auto hop_profile_of(const SshHop &hop) -> SshProfile {
-    auto profile = SshProfile{};
-    profile.host = hop.host;
-    profile.port = hop.port;
-    profile.user = hop.user;
-    profile.auth_method = hop.auth_method;
-    profile.identity_file = hop.identity_file;
-    profile.agent_forwarding = false;
-    profile.known_hosts_policy = hop.known_hosts_policy;
-    profile.credential = hop.credential;
-    return profile;
-}
+/// @brief 一跳折成一份临时档案：`profile_views.h` 的 `hop_profile_of`（跳板本身不再套跳板、
+///        也不转发 agent）。装配层的逐跳凭据计划走同一处折算，两边对「这一跳是什么」的答案
+///        必须同源，故这里不另写一份。
 
 /// @brief 全量写入 libssh 通道（阻塞模式仍可能部分写；形态同隧道腿的 `write_channel`）。
 [[nodiscard]] auto write_channel(ssh_channel_struct *channel, std::span<const std::uint8_t> bytes)
