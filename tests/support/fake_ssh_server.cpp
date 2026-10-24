@@ -23,6 +23,7 @@
 #include "fake_ssh_server.h"
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -33,10 +34,16 @@
 
 #ifndef _WIN32
 
+#include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include <cerrno>
+#include <cstdint>
 
 #include <libssh/callbacks.h>
 #include <libssh/libssh.h>
@@ -52,6 +59,77 @@ constexpr long kAcceptSliceUs = 100000;
 /// @brief 工作线程的事件轮询分片：决定 `end_shell()`／析构叫停的延迟上界。
 constexpr int kPollSliceMs = 10;
 
+/// @brief 跳板腿：连转发目的地（永远是本机 loopback 上的另一台假服务器）的等待上界。
+constexpr int kForwardConnectTimeoutMs = 2000;
+
+/// @brief 跳板腿：把一段字节全量写进目的地句柄（吞掉部分写与 EINTR）。
+///        @return false＝目的地收摊或出错，这条转发通道到头了。
+[[nodiscard]] auto send_all(int fd, std::string_view bytes) -> bool {
+    std::size_t offset = 0;
+    while (offset < bytes.size()) {
+        const auto sent =
+            ::send(fd, bytes.data() + offset, bytes.size() - offset, MSG_NOSIGNAL);
+        if (sent > 0) {
+            offset += static_cast<std::size_t>(sent);
+            continue;
+        }
+        if (sent < 0 && errno == EINTR) {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
+/// @brief 跳板腿：连到客户端要求的目的地（仅 IPv4 字面量；转发目的在本仓证人里恒为
+///        127.0.0.1 上的另一台假服务器）。失败回 -1。
+[[nodiscard]] auto connect_to(const char *address, int port) -> int {
+    const auto fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return -1;
+    }
+    sockaddr_in target{};
+    target.sin_family = AF_INET;
+    target.sin_port = htons(static_cast<uint16_t>(port));
+    if (::inet_pton(AF_INET, address, &target.sin_addr) != 1) {
+        ::close(fd);
+        return -1;
+    }
+    // 非阻塞 connect + `select` 写就绪：拿得到「连不上」而不是「卡住这台工作线程」。
+    const auto flags = ::fcntl(fd, F_GETFL, 0);
+    static_cast<void>(::fcntl(fd, F_SETFL, flags | O_NONBLOCK));
+    const int rc = ::connect(fd, reinterpret_cast<const sockaddr *>(&target),
+                             static_cast<socklen_t>(sizeof(target)));
+    auto connected = rc == 0;
+    if (!connected && errno != EINPROGRESS) {
+        ::close(fd);
+        return -1;
+    }
+    if (!connected) {
+        fd_set writable;
+        FD_ZERO(&writable);
+        FD_SET(fd, &writable);
+        timeval timeout{};
+        timeout.tv_sec = kForwardConnectTimeoutMs / 1000;
+        timeout.tv_usec = (kForwardConnectTimeoutMs % 1000) * 1000;
+        connected = ::select(fd + 1, nullptr, &writable, nullptr, &timeout) == 1;
+        if (connected) {
+            auto so_error = int{0};
+            auto length = static_cast<socklen_t>(sizeof(so_error));
+            static_cast<void>(
+                ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &length));
+            connected = so_error == 0;
+        }
+    }
+    if (!connected) {
+        ::close(fd);
+        return -1;
+    }
+    // 交回阻塞语义：`service_forwarded()` 用 `poll` 判可读之后才 `recv`。
+    static_cast<void>(::fcntl(fd, F_SETFL, flags));
+    return fd;
+}
+
 }  // namespace
 
 struct FakeSshServer::Impl {
@@ -65,9 +143,11 @@ struct FakeSshServer::Impl {
         ssh_channel channel{nullptr};
         ssh_channel_callbacks_struct callbacks{};
         bool shell_open{false};
-        bool agent{false};  ///< 反向 auth-agent 通道：只记录收到的应答，不回显。
-        bool closed{false}; ///< 已收到关闭（判定「整条连接是否收摊」用）。
-        int index{-1};      ///< session 通道的打开次序（逐通道 PTY 尺寸表的下标）。
+        bool agent{false};   ///< 反向 auth-agent 通道：只记录收到的应答，不回显。
+        bool forward{false}; ///< `direct-tcpip` 通道：字节搬到 peer_fd，不记账、不回显。
+        int peer_fd{-1};     ///< forward 通道对上的真实 TCP 目的地句柄（跳板腿）。
+        bool closed{false};  ///< 已收到关闭（判定「整条连接是否收摊」用）。
+        int index{-1};       ///< session 通道的打开次序（逐通道 PTY 尺寸表的下标）。
     };
 
     /// @brief 一条已受理连接的现场（工作线程独占，故内部字段不加锁）。
@@ -97,6 +177,7 @@ struct FakeSshServer::Impl {
     auto flush_outbox(Worker &worker) -> void;
     auto end_channels(Worker &worker) -> void;
     auto maybe_open_agent(Worker &worker) -> void;
+    auto service_forwarded(Worker &worker) -> void;
 
     // ---- 事实计数（工作线程写、用例线程读）----
     auto note_connection() -> void;
@@ -106,6 +187,7 @@ struct FakeSshServer::Impl {
     auto note_shell() -> void;
     auto note_agent_request() -> void;
     auto note_agent_channel() -> void;
+    auto note_direct_tcpip_request(std::string destination) -> void;
     auto record(std::string_view bytes) -> void;
     auto record_agent(std::string_view bytes) -> void;
 
@@ -126,6 +208,9 @@ struct FakeSshServer::Impl {
     static auto on_auth_agent_request(ssh_session session, ssh_channel channel, void *userdata)
         -> void;
     static auto on_channel_open(ssh_session session, void *userdata) -> ssh_channel;
+    static auto on_direct_tcpip_open(ssh_session session, const char *destination_address,
+                                     int destination_port, const char *originator_address,
+                                     int originator_port, void *userdata) -> ssh_channel;
 
     FakeSshServerOptions options;
 
@@ -148,6 +233,8 @@ struct FakeSshServer::Impl {
     std::size_t shell_count{0};
     std::size_t agent_request_count{0};
     std::size_t agent_channel_count{0};
+    std::size_t direct_tcpip_count{0};
+    std::vector<std::string> forwarded{};
     int last_columns{0};
     int last_rows{0};
     std::vector<std::pair<int, int>> channel_sizes{};
@@ -184,6 +271,14 @@ auto FakeSshServer::Impl::on_data(ssh_session /*session*/, ssh_channel channel, 
     auto &state = *static_cast<ChannelState *>(userdata);
     state.channel = channel;
     const auto text = std::string_view{static_cast<const char *>(data), len};
+    if (state.forward) {
+        // 跳板腿：客户端往转发通道写的字节就是下一跳（或目标）的 SSH 报文，原样送到对面。
+        // 写不进去＝目的地收摊，通道就此到尽头（`service_forwarded()` 那侧对称处理）。
+        if (state.peer_fd >= 0) {
+            static_cast<void>(send_all(state.peer_fd, text));
+        }
+        return static_cast<int>(len);
+    }
     if (state.agent) {
         // 反向 agent 通道上回来的是本机 agent 的应答：只记账，不回显（回显会多出一条
         // 客户端不期待的 agent 消息）。
@@ -236,8 +331,13 @@ auto FakeSshServer::Impl::on_channel_eof(ssh_session /*session*/, ssh_channel /*
 auto FakeSshServer::Impl::on_channel_close(ssh_session /*session*/, ssh_channel /*channel*/,
                                            void *userdata) -> void {
     auto &state = *static_cast<ChannelState *>(userdata);
-    // 反向 agent 通道关掉不代表这条连接的 session 收摊（客户端换拨时会先收火）。
-    if (state.agent) {
+    // 反向 agent 通道与转发通道关掉都不代表这条连接的 session 收摊（客户端换拨时会先收火；
+    // 跳板腿的转发通道更是「一条链路上的一根管子」，收它不等于收连接）。
+    if (state.agent || state.forward) {
+        if (state.peer_fd >= 0) {
+            ::close(state.peer_fd);
+            state.peer_fd = -1;
+        }
         return;
     }
     state.closed = true;
@@ -246,7 +346,7 @@ auto FakeSshServer::Impl::on_channel_close(ssh_session /*session*/, ssh_channel 
     auto all_closed = true;
     auto any_session = false;
     for (auto &other : state.owner->channels) {
-        if (other->agent) {
+        if (other->agent || other->forward) {
             continue;
         }
         any_session = true;
@@ -295,6 +395,49 @@ auto FakeSshServer::Impl::on_channel_open(ssh_session session, void *userdata) -
     return channel;
 }
 
+auto FakeSshServer::Impl::on_direct_tcpip_open(ssh_session session,
+                                               const char *destination_address,
+                                               int destination_port,
+                                               const char * /*originator_address*/,
+                                               int /*originator_port*/, void *userdata)
+    -> ssh_channel {
+    auto &worker = *static_cast<Worker *>(userdata);
+    const auto destination = destination_address == nullptr
+                                 ? std::string{}
+                                 : std::string{destination_address} + ":" +
+                                       std::to_string(destination_port);
+    // 目的地在拒绝之前也记：跳板腿的证人既要看「转发了哪儿」，也要数得到「被拒的请求」。
+    worker.impl->note_direct_tcpip_request(destination);
+    if (!worker.impl->options.allow_direct_tcpip || destination_address == nullptr) {
+        return nullptr;  // 一台普通服务器不该代收转发；libssh 据此回 channel open failed。
+    }
+    const auto peer_fd = connect_to(destination_address, destination_port);
+    if (peer_fd < 0) {
+        return nullptr;  // 目的地连不上＝这台跳板拒绝这条转发（与真 sshd 同形）。
+    }
+    auto *channel = ssh_channel_new(session);
+    if (channel == nullptr) {
+        ::close(peer_fd);
+        return nullptr;
+    }
+
+    auto state = std::make_unique<ChannelState>();
+    state->impl = worker.impl;
+    state->owner = &worker;
+    state->channel = channel;
+    state->forward = true;
+    state->peer_fd = peer_fd;
+    ssh_callbacks_init(&state->callbacks);
+    state->callbacks.userdata = state.get();
+    state->callbacks.channel_data_function = &Impl::on_data;
+    state->callbacks.channel_eof_function = &Impl::on_channel_eof;
+    state->callbacks.channel_close_function = &Impl::on_channel_close;
+    ssh_set_channel_callbacks(channel, &state->callbacks);
+
+    worker.channels.push_back(std::move(state));
+    return channel;
+}
+
 auto FakeSshServer::Impl::maybe_open_agent(Worker &worker) -> void {
     if (!options.open_agent_channel || !worker.agent_requested || worker.agent_opened) {
         return;
@@ -338,6 +481,39 @@ auto FakeSshServer::Impl::maybe_open_agent(Worker &worker) -> void {
     if (!payload.empty()) {
         static_cast<void>(ssh_channel_write(channel, payload.data(),
                                             static_cast<uint32_t>(payload.size())));
+    }
+}
+
+auto FakeSshServer::Impl::service_forwarded(Worker &worker) -> void {
+    // 目的地 → 转发通道这一向。`ssh_event` 只盯 libssh 的 socket，不认识我们替客户端
+    // 连出去的第二条 TCP，故目的地侧的回流只能每拍自己扫一遍（非阻塞 poll，0 超时）。
+    auto scratch = std::array<char, 4096>{};
+    for (auto &state : worker.channels) {
+        if (!state->forward || state->channel == nullptr || state->peer_fd < 0) {
+            continue;
+        }
+        pollfd events{state->peer_fd, static_cast<short>(POLLIN), 0};
+        const auto ready = ::poll(&events, 1, 0);
+        if (ready < 0 && errno == EINTR) {
+            continue;
+        }
+        if (ready <= 0 || (events.revents & (POLLIN | POLLHUP | POLLERR)) == 0) {
+            continue;
+        }
+        const auto got = ::recv(state->peer_fd, scratch.data(), scratch.size(), MSG_DONTWAIT);
+        if (got > 0) {
+            static_cast<void>(ssh_channel_write(state->channel, scratch.data(),
+                                                static_cast<uint32_t>(got)));
+            continue;
+        }
+        if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+            continue;
+        }
+        // 0＝目的地收摊，<0 且非暂态＝连不上或已断：这条管子给客户端回 EOF，
+        // 让对端的 libssh 会话按正常断链收尾（跳板腿的证人也靠这一步收敛）。
+        static_cast<void>(ssh_channel_send_eof(state->channel));
+        ::close(state->peer_fd);
+        state->peer_fd = -1;
     }
 }
 
@@ -406,6 +582,7 @@ auto FakeSshServer::Impl::serve(const std::shared_ptr<Worker> &worker) -> void {
     server_callbacks.auth_password_function = &Impl::on_auth_password;
     server_callbacks.auth_none_function = &Impl::on_auth_none;
     server_callbacks.channel_open_request_session_function = &Impl::on_channel_open;
+    server_callbacks.channel_open_request_direct_tcpip_function = &Impl::on_direct_tcpip_open;
     ssh_callbacks_init(&server_callbacks);
     ssh_set_server_callbacks(worker->session, &server_callbacks);
 
@@ -419,6 +596,7 @@ auto FakeSshServer::Impl::serve(const std::shared_ptr<Worker> &worker) -> void {
                     end_channels(*worker);
                 }
                 flush_outbox(*worker);
+                service_forwarded(*worker);
                 if (ssh_event_dopoll(worker->event, kPollSliceMs) == SSH_ERROR) {
                     break;
                 }
@@ -434,6 +612,10 @@ auto FakeSshServer::Impl::serve(const std::shared_ptr<Worker> &worker) -> void {
 
     // 通道先于回调表释放（libssh 存的是回调表指针），会话最后释放。
     for (auto &state : worker->channels) {
+        if (state->peer_fd >= 0) {
+            ::close(state->peer_fd);  // 替客户端连出去的目的地句柄归本服务器收。
+            state->peer_fd = -1;
+        }
         if (state->channel != nullptr) {
             static_cast<void>(ssh_channel_close(state->channel));
             ssh_channel_free(state->channel);
@@ -449,7 +631,9 @@ auto FakeSshServer::Impl::serve(const std::shared_ptr<Worker> &worker) -> void {
 
 auto FakeSshServer::Impl::end_channels(Worker &worker) -> void {
     for (auto &state : worker.channels) {
-        if (state->channel != nullptr && !state->agent) {
+        // 转发通道不吃 `end_shell()`：它是「跳板替客户端开着的一根管子」，服务器主动收它
+        // 会让正在用的跳链无故断掉，语义上和 session 收摊不是一回事。
+        if (state->channel != nullptr && !state->agent && !state->forward) {
             static_cast<void>(ssh_channel_send_eof(state->channel));
         }
     }
@@ -564,6 +748,12 @@ auto FakeSshServer::Impl::record_agent(std::string_view bytes) -> void {
     agent_received.append(bytes);
 }
 
+auto FakeSshServer::Impl::note_direct_tcpip_request(std::string destination) -> void {
+    const std::lock_guard lock{stats_mutex};
+    ++direct_tcpip_count;
+    forwarded.push_back(std::move(destination));
+}
+
 FakeSshServer::FakeSshServer(FakeSshServerOptions options)
     : impl_{std::make_unique<Impl>(std::move(options))} {
     if (impl_->bind == nullptr) {
@@ -669,6 +859,16 @@ auto FakeSshServer::agent_received_text() const -> std::string {
     return impl_->agent_received;
 }
 
+auto FakeSshServer::direct_tcpip_requests() const -> std::size_t {
+    const std::lock_guard lock{impl_->stats_mutex};
+    return impl_->direct_tcpip_count;
+}
+
+auto FakeSshServer::forwarded_destinations() const -> std::vector<std::string> {
+    const std::lock_guard lock{impl_->stats_mutex};
+    return impl_->forwarded;
+}
+
 auto FakeSshServer::send_more(std::string_view bytes) -> void {
     const std::lock_guard lock{impl_->outbox_mutex};
     impl_->outbox.emplace_back(bytes);
@@ -752,6 +952,10 @@ auto FakeSshServer::agent_forward_requests() const -> std::size_t { return 0; }
 auto FakeSshServer::agent_channels() const -> std::size_t { return 0; }
 
 auto FakeSshServer::agent_received_text() const -> std::string { return {}; }
+
+auto FakeSshServer::direct_tcpip_requests() const -> std::size_t { return 0; }
+
+auto FakeSshServer::forwarded_destinations() const -> std::vector<std::string> { return {}; }
 
 auto FakeSshServer::send_more(std::string_view) -> void {}
 

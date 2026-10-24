@@ -7,8 +7,9 @@
 // 隧道与 agent 转发的「真协议对端」长期没有自动化证人。本文件用 libssh 的 server 腿
 // （本机 vcpkg 构建开了 `WITH_SERVER`，见 SPECIFICATIONS §7.145②）在测试进程内起一台
 // **最小 SSH 服务器**：loopback 临时端口、一次性主机密钥、password 认证、session 通道、
-// PTY/shell 与字节回显，以及按需反向打开的 `auth-agent@openssh.com` 通道（agent 转发腿）。
-// 证人是真协议（含 KEX、加密、通道多路复用），不是桩。
+// PTY/shell 与字节回显，按需反向打开的 `auth-agent@openssh.com` 通道（agent 转发腿），
+// 以及按需接受并真转发的 `direct-tcpip` 通道（`SPEC.FEAT.CONN.03` 的跳板腿——本仓的
+// 一台假服务器就此当得了跳板机）。证人是真协议（含 KEX、加密、通道多路复用），不是桩。
 //
 // 线程模型：
 //   - 一个受理线程：自带监听 socket（端口 0 由内核择定），`select` 分片等连接；
@@ -28,6 +29,7 @@
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "borealis/conn/profile.h"
 
@@ -43,6 +45,10 @@ struct FakeSshServerOptions {
     bool open_agent_channel{false};  ///< 收到 `auth-agent-req` 且 shell 就绪后，反向开一条
                                      ///< auth-agent 通道（`SPEC.FEAT.CONN.02` 的转发腿）。
     std::string agent_payload{};     ///< 反向 agent 通道上发给客户端 agent 的字节（空＝不发）。
+    bool allow_direct_tcpip{false};  ///< 接受 `direct-tcpip` 开通道请求并真转发到目的地
+                                     ///< （`SPEC.FEAT.CONN.03` 的跳板腿：本仓的假服务器就此
+                                     ///< 当得了一台跳板机）。缺省关——一台普通服务器不该代收
+                                     ///< 转发，关掉也是「跳板拒绝转发」那条失败档的证人。
 };
 
 /// @brief 一台进程内 SSH 服务器（每条用例一台，端口随对象一起消失）。
@@ -88,6 +94,17 @@ class FakeSshServer final {
 
     /// @brief 已从客户端收到的全部通道字节（ASCII 原样）。
     [[nodiscard]] auto received_text() const -> std::string;
+
+    // ---- 跳板腿的事实（`SPEC.FEAT.CONN.03`：本仓假服务器当跳板时的线上证人）----
+
+    /// @brief 收到过多少次 `direct-tcpip` 开通道请求（含被拒的：拒拨的证人也要数得到）。
+    [[nodiscard]] auto direct_tcpip_requests() const -> std::size_t;
+
+    /// @brief 逐次 `direct-tcpip` 请求的目的地，形如 `host:port`，按到达次序。
+    ///
+    /// 两跳链路的跳序证人（稿 §5 的 E2）读的就是这一串：第一跳的目的地必须是第二跳的端口，
+    /// 第二跳的目的地必须是目标的端口——写反了就立刻现形。
+    [[nodiscard]] auto forwarded_destinations() const -> std::vector<std::string>;
 
     /// @brief 向所有已开 shell 的连接投一段字节（每条连接各送一份）。
     auto send_more(std::string_view bytes) -> void;
