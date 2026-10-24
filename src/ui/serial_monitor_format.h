@@ -56,6 +56,11 @@ struct MonitorRow {
     std::string timestamp_prefix;  ///< `[HH:MM:SS.mmm] `（含尾随空格）；开关关掉时为空串。
     std::string direction_label;   ///< `"RX"` ／ `"TX"`（恒 2 字符）。
     std::string dump;              ///< 两空格 + 十六进制段 + 两空格 + `|ASCII|`。
+
+    /// @brief 逐字段相等（面板状态泵的 diff 基准：`tick()` 拿它判「这一帧要不要重建行区」）。
+    ///
+    /// 三格都是值语义，故 defaulted 就是要的判据——不比指针、不比绘制态。
+    [[nodiscard]] auto operator==(const MonitorRow &) const -> bool = default;
 };
 
 /// @brief 一行的完整串形：三段顺序拼接（`visible_rows()` 与逐字符断言都读它）。

@@ -132,6 +132,23 @@ const Tier kStringsZh{
     {"serial.set_baud.rejected", "设备侧拒绝：{0}"},
     {"serial.set_baud.not_serial", "当前会话不是串口"},
 
+    // ---- 串口十六进制监视面板（`codespec/UI_SERIAL_MONITOR.draft.md` 稿 D9①：零新增设置项，
+    //      可见文案全走本表）----
+    // `.binding` 那句的分隔符与 `serial_format` 那族同源：档案名与设备路径是两件事，折成一格是为了让
+    // 标题行不因为窗口变窄就把右边的计数与两枚按钮挤出卡宽（隧道面板的实测教训）。
+    {"serial.monitor.command", "串口十六进制监视"},
+    {"serial.monitor.title", "串口监视"},
+    {"serial.monitor.binding", "{0} · {1}"},
+    {"serial.monitor.bytes", "{0, plural, other={0} 字节}"},
+    {"serial.monitor.action.clear", "清空"},
+    {"serial.monitor.action.close", "关闭"},
+    {"serial.monitor.switch.timestamp", "时间戳前缀"},
+    {"serial.monitor.switch.pause", "暂停刷新"},
+    {"serial.monitor.notice.dropped", "已丢弃 {0, plural, other={0} 字节}（环上限 {1} KiB）"},
+    {"serial.monitor.notice.privacy", "本面板不落盘，数据随会话结束消失"},
+    {"serial.monitor.empty", "等待数据"},
+    {"serial.monitor.not_serial", "当前标签不是串口会话"},
+
     // ---- SSH 隧道面板（UI_TUNNEL.draft.md，裁决 7.97；state/error/listen 键由
     //      tunnel_format 唯一产出，面板不 switch 出第二套措辞）----
     {"tunnel.title", "隧道"},
@@ -735,15 +752,15 @@ const Tier kStringsZh{
 /// @brief 英文档（`en`）的 key → 模板：批 3 按域四段推完，**段 1 落 `connections.*` 与 `keys.*` 146 条、
 /// 段 2 落 `settings.*` 77 条、段 3 落终端与会话侧 93 条、段 4 落连接域与其余 150 条（`connection.*`／
 /// `serial.*`／`sftp.*`／`tunnel.*`／`shortcuts.*`／`appearance.*`），批 6 的表外四处再补 4 枚，
-/// **合计 512 条，与中文表逐 key 相等**（2026-10-23 按运行期读数更正：原文停在 470，此后各棒补入
-/// 42 枚，其中快捷片段 38 枚见裁决 7.137、关窗确认 2 枚见裁决 7.138）。
+/// **合计 530 条，与中文表逐 key 相等**（2026-10-24 按运行期读数更正：上一条停在此表的 512，此后各棒
+/// 又补入跳板链 6 枚与串口监视 12 枚——计数只按 `settings_string_keys()` 的读数写，别再按段账推）。
 ///
 /// CJK-LITERAL: locale-output - 本表与中文表同为上屏文案的真值源，换成转写即失去并排对照的价值。表内
-/// 非 ASCII 的字面量只有两类共九枚：三枚字形（`settings.chain.*`，与中文表同字）与六枚 `" · "` 分隔符
+/// 非 ASCII 的字面量只有两类共十枚：三枚字形（`settings.chain.*`，与中文表同字）与七枚 `" · "` 分隔符
 /// （沿 `serial_format.cpp` 与 `settings_panel.cpp` 那两处同类别已标的既定视觉形态）。
 ///
-/// 位置刻意紧跟中文表（该稿 D4），并排校对是这一档存在的唯一理由——512 条 key（批 1 收敛后的 464 条加
-/// 批 2 两枚、批 6 四枚，及此后各棒补入的 42 枚）分在两个文件里，「两档同 key 集」那条判据就要跨文件聚合。段内条目序与中文表逐条一致，
+/// 位置刻意紧跟中文表（该稿 D4），并排校对是这一档存在的唯一理由——530 条 key（批 1 收敛后的 464 条加
+/// 批 2 两枚、批 6 四枚，及此后各棒补入的 60 枚）分在两张表里，「两档同 key 集」那条判据就要跨表聚合。段内条目序与中文表逐条一致，
 /// 中文表里解释「为什么是这个措辞」的那几条注也随条目一起搬过来：改一条时两档同屏可见。
 ///
 /// 两档文本逐字相同的 13 枚不是漏译：`CR`／`CRLF`／`LF`／`SSH`／`Telnet`／`Ed25519`／`RSA`／`SOCKS5 -D`
@@ -1261,6 +1278,22 @@ const Tier kStringsEn{
     {"serial.set_baud.applied", "Switched to {0}"},
     {"serial.set_baud.rejected", "Refused by the device: {0}"},
     {"serial.set_baud.not_serial", "The current session is not a serial port"},
+
+    // ---- 串口十六进制监视面板（`codespec/UI_SERIAL_MONITOR.draft.md` 稿 D9①）----
+    {"serial.monitor.command", "Serial hex traffic monitor"},
+    {"serial.monitor.title", "Serial monitor"},
+    {"serial.monitor.binding", "{0} · {1}"},
+    {"serial.monitor.bytes", "{0, plural, one={0} byte other={0} bytes}"},
+    {"serial.monitor.action.clear", "Clear"},
+    {"serial.monitor.action.close", "Close"},
+    {"serial.monitor.switch.timestamp", "Timestamp prefix"},
+    {"serial.monitor.switch.pause", "Pause refresh"},
+    {"serial.monitor.notice.dropped",
+     "Dropped {0, plural, one={0} byte other={0} bytes} (ring cap {1} KiB)"},
+    {"serial.monitor.notice.privacy",
+     "This panel never writes to disk; the data disappears when the session ends"},
+    {"serial.monitor.empty", "Waiting for data"},
+    {"serial.monitor.not_serial", "The current tab is not a serial session"},
 
     // ---- SSH 隧道面板（UI_TUNNEL.draft.md，裁决 7.97）----
     // state / error / listen 三族由 `tunnel_format` 唯一产出，面板不 switch 出第二套措辞。

@@ -86,6 +86,7 @@ add_library(borealis_core STATIC
         ui/search_overlay.cpp
         ui/serial_format.cpp
         ui/serial_monitor_format.cpp
+        ui/serial_monitor_panel.cpp
         ui/settings_catalog.cpp
         ui/settings_form.cpp
         ui/settings_i18n.cpp

@@ -79,6 +79,7 @@
 #include "ui/keys_format.h"
 #include "ui/keys_panel.h"
 #include "ui/serial_format.h"
+#include "ui/serial_monitor_panel.h"
 #include "ui/settings_i18n.h"
 #include "ui/settings_panel.h"
 #include "ui/sftp_panel.h"
@@ -4029,6 +4030,105 @@ auto main(int argc, char **argv) -> int {
     };
     app.commands().add(std::move(set_serial_baud));
 
+    // ---- 串口十六进制收发监视（`SPEC.FEAT.CONN.05` 的两条延后子项，稿 UI_SERIAL_MONITOR §4 批 3）----
+    //
+    // 绑定在「从关闭态打开」那一刻按当时的落点标签写下（稿 D8①：面板不跟标签跑——看着 A 的时候切到 B，
+    // 屏面不该自己换内容），之后每帧只经这两枚句柄读那条会话的环。
+    // `weak_ptr` 而不是 `shared_ptr`：面板不许为了让已关掉的标签还能「回看历史」而把整条会话（含平台腿与
+    // 读线程）留在内存里——会话散了即取不到环，卡上是空态，标题那格因失去身份而整格不画。
+    std::optional<borealis::ui::TabId> monitor_tab{};
+    std::weak_ptr<borealis::session::Session> monitor_session{};
+    auto monitor_tap = [&monitor_session]() -> std::shared_ptr<borealis::session::RawTap> {
+        const auto session = monitor_session.lock();
+        return session == nullptr ? nullptr : session->raw_tap();
+    };
+
+    borealis::ui::SerialMonitorPanel::Hooks monitor_hooks;
+    monitor_hooks.snapshot = [&monitor_tap]() -> borealis::ui::SerialMonitorPanel::Snapshot {
+        const auto tap = monitor_tap();
+        if (tap == nullptr) {
+            return {};
+        }
+        return borealis::ui::SerialMonitorPanel::Snapshot{
+            .runs = tap->snapshot(),
+            .dropped_bytes = tap->dropped_bytes(),
+        };
+    };
+    monitor_hooks.clear = [&monitor_tap]() -> void {
+        if (const auto tap = monitor_tap(); tap != nullptr) {
+            tap->clear();  // 本期唯一的止血手段（D7①）：关面板与关标签都不清屏
+        }
+    };
+    // 标题那格的绑定＝档案名 · 设备路径，两条都**现读**那两张表（档案改名、重启换设备路径都在里面），
+    // 本层不另存第三份。取不到档案名（quick connect 那类没档案身份的标签）就只留设备路径。
+    monitor_hooks.binding_label = [&monitor_tab, &serial_by_tab, &tab_profile_id,
+                                   &store]() -> std::string {
+        if (!monitor_tab.has_value()) {
+            return {};
+        }
+        const auto bound = serial_by_tab.find(monitor_tab.value());
+        if (bound == serial_by_tab.end()) {
+            return {};  // 标签散了／这一格不是串口：绑定失去身份
+        }
+        const std::string &path = bound->second.profile.device_path;
+        std::string name;
+        if (const auto held = tab_profile_id.find(monitor_tab.value()); held != tab_profile_id.end()) {
+            for (const auto &candidate : store.settings().profiles) {
+                if (candidate.id == held->second) {
+                    name = candidate.name;
+                    break;
+                }
+            }
+        }
+        if (name.empty()) {
+            return path;
+        }
+        return borealis::ui::settings_label("serial.monitor.binding",
+                                           {au::LocalizedString{name}, au::LocalizedString{path}});
+    };
+
+    borealis::ui::SerialMonitorPanel monitor_panel{*host, std::move(monitor_hooks)};
+    // 一句提示沿用波特率那一只框（`serial_baud_dialog` + `show_serial_baud_frame` 那对既有件）：
+    // 「两只框共用一只 Dialog 换 content」在 `close_confirm` 与多行粘贴确认那里已是先例，再开第二只
+    // `Dialog` 与第二枚 `MountedOverlay` 就要多维护一套落点账，而这两句话本来不会同时在场。
+    auto show_monitor_notice = [&serial_baud_dialog, &show_serial_baud_frame](std::string_view key) -> void {
+        const std::string title = borealis::ui::settings_label("serial.monitor.title");
+        const std::string message = borealis::ui::settings_label(key);
+        auto dialog = serial_baud_dialog;
+        show_serial_baud_frame(au::alert(title, message, [dialog]() -> void { dialog->close(); }));
+    };
+
+    // `serial.monitor.toggle` 命令（稿 D8①）：分流判据与重启、热改波特率那两条同源——「当前标签在
+    // `serial_by_tab` 里有没有身份」。非串口只留一句话，**不武装任何采集**（未武装的会话在采集点判一次
+    // 指针就走，这是 §5 那条「非串口会话零成本」的落地）。同一条命令再按一次是关闭：关闭既不停采集
+    // 也不清环，重开看到的就是刚才那一段（D7①）。
+    au::Command toggle_serial_monitor;
+    toggle_serial_monitor.id = "serial.monitor.toggle";
+    toggle_serial_monitor.title = borealis::ui::settings_label("serial.monitor.command");
+    toggle_serial_monitor.category = "terminal";
+    toggle_serial_monitor.action =
+        [&monitor_panel, &monitor_tab, &monitor_session, &retarget_panel, &command_tab_id,
+         &focused_pane_session, &serial_by_tab, &show_monitor_notice]() -> void {
+        retarget_panel(monitor_panel);  // 搬窗（稿 D6，本件是面板族第八只）：先挂到发起命令那一扇
+        if (monitor_panel.is_open()) {
+            monitor_panel.toggle();
+            return;
+        }
+        const std::optional<borealis::ui::TabId> target = command_tab_id();
+        const auto session =
+            target.has_value() ? focused_pane_session(target.value()) : nullptr;
+        if (session == nullptr || !target.has_value() ||
+            serial_by_tab.find(target.value()) == serial_by_tab.end()) {
+            show_monitor_notice("serial.monitor.not_serial");
+            return;
+        }
+        monitor_tab = target;
+        monitor_session = session;
+        static_cast<void>(session->enable_raw_tap());  // 幂等：重开看到的是历史而不是空白
+        monitor_panel.open();
+    };
+    app.commands().add(std::move(toggle_serial_monitor));
+
     // ---- 会话日志（`SPEC.FEAT.CONN.11`，裁决 7.116 的批 2：界面路径自此可达）----
     //
     // 一份闭包两处入口：右键菜单第三条（经 `wire_view` 装进视口那两条钩子）与命令面板那一条命令，
@@ -4404,7 +4504,7 @@ auto main(int argc, char **argv) -> int {
                       &keys_panel, &logging_state_probe, &add_logging_command, &logging_command_shows,
                       &show_log_notice, &startup_mutex, &startup_queue, &apply_startup_request,
                       &frame_bytes, &reply_wire, &credential_prompt, &restore_waiting_for_secret,
-                      &restore_secret_sink, &tab_kind, &crash_facts]() -> void {
+                      &restore_secret_sink, &tab_kind, &crash_facts, &monitor_panel]() -> void {
         // 恢复的凭据挂起兜底（`SPEC.FEAT.WS.11` 批 5-C）：问句被**静默关掉**（Esc、搬窗时
         // `set_overlay_host` 的 close、宿主散了）不会回调 `on_cancel`，而那个缺口会让泵永远停在
         // 「等一个不会来的答案」上。帧边界是唯一能看见「框已经不在了」的地方：认领并中止余下重放，
@@ -4571,6 +4671,7 @@ auto main(int argc, char **argv) -> int {
         sftp_panel.tick();     // SFTP 面板取件与判活（D8①/D9①；面板关着即空操作）
         tunnel_panel.tick();   // 隧道行表随快照刷新（D6①；面板关着即空操作）
         keys_panel.tick();     // 密钥行表随快照刷新（D6① 同族；面板关着即空操作）
+        monitor_panel.tick();  // 串口监视行表随环刷新（稿 D6①；关着即空操作，暂停中不读环）
     });
 
     // 关窗闸门（`SPEC.FEAT.WS.03` 稿 D4，G44 回货的接货腿）：用户点 × 时先问一句，可否决。
@@ -4641,7 +4742,7 @@ auto main(int argc, char **argv) -> int {
                               &startup_wake, &retarget_panel_to, &abandon_destination_to,
                               &remount_overlay, &sidebar, &wizard, &credential_prompt, &panel,
                               &tunnel_panel, &sftp_panel, &keys_panel, &snippet_panel, &debug_panel,
-                              &notice,
+                              &notice, &monitor_panel,
                               &command_palette, &serial_baud_dialog, &log_dialog, &palette_mount,
                               &serial_baud_mount, &log_dialog_mount,
                               &flush_window_geometry,
@@ -4731,6 +4832,7 @@ auto main(int argc, char **argv) -> int {
         retire_panel(&sftp_panel);
         retire_panel(&keys_panel);
         retire_panel(&snippet_panel);
+        retire_panel(&monitor_panel);
         retire_destination(&debug_panel);
         retire_destination(&notice);
         retire_mount(command_palette, palette_mount);
