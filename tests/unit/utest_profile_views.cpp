@@ -2,7 +2,8 @@
 /// 目标单元: src/conn/profile_views.h（私有头）纯逻辑视图模型
 /// 测试说明: 守住 CONN.07 侧栏三视图的排序/过滤确定性、向导草稿校验矩阵（含 CONN.05 的
 ///           串口四档）、三向分派的字段不串台、凭据询问计划映射，以及 CONN.03 的跳板折算
-///           （一跳折成临时档案）与逐跳凭据计划。UI 只画算好的行
+///           （一跳折成临时档案）、逐跳凭据计划与向导那一行的「坏链禁保存／好链折档／回填
+///           规范化串形」。UI 只画算好的行
 ///           （设计稿 D7），查询即在此层。
 
 #include "conn/profile_views.h"
@@ -143,6 +144,92 @@ AURORA_TEST_CASE(draft_round_trips_through_profile_and_back) {
     const auto local_profile = conn::draft_to_profile(local_draft, "p-2");
     AURORA_TEST_CHECK_TRUE(local_profile.local.command_line == "/bin/zsh");
     AURORA_TEST_CHECK_TRUE(local_profile.ssh.host.empty());
+}
+
+AURORA_TEST_CASE(proxy_jump_line_refuses_a_bad_chain_and_folds_a_good_one) {
+    using conn::ConnectionType;
+    using conn::DraftIssue;
+
+    auto draft = conn::ProfileDraft{};
+    draft.name = "prod box";
+    draft.type = ConnectionType::Ssh;
+    draft.host = "gw.example.com";
+    draft.port = 2222;
+    draft.auth_method = "agent";
+
+    // 空串＝直连（用户没写这一行时的既定事实），不是坏值——否则每张既有 SSH 档案都存不下去。
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::None);
+
+    // `none` 是显式关闭写法，同样折成空链路（稿 D3 与 OpenSSH 同口径）。
+    draft.proxy_jumps_text = "none";
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::None);
+    AURORA_TEST_CHECK_TRUE(conn::draft_to_profile(draft, "p-jump").ssh.proxy_jumps.empty());
+
+    // 坏值整串拒（稿 D9）：部分接受＝替用户存下一条他没写过的链路，与 D6「丢了跳板＝绕过它」
+    // 同一条理由，故这里禁止保存而不是留好跳。
+    draft.proxy_jumps_text = "jump1.example.com:99999";
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::BadProxyJump);
+
+    // 顺序即上表：一处坏值不得吃掉前一档的报错——两处都坏时先报认证方式。
+    draft.auth_method = "gssapi";
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::UnknownAuthMethod);
+    draft.auth_method = "agent";
+
+    // 好值折进档案：端口留空折 22、用户名留空跟随缺省（解析只在此处发生一次）。
+    draft.proxy_jumps_text = "ops@jump1.example.com:2222, jump2.example.com ";
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::None);
+    const auto profile = conn::draft_to_profile(draft, "p-jump");
+    AURORA_TEST_REQUIRE(profile.ssh.proxy_jumps.size() == 2U);
+    AURORA_TEST_CHECK_TRUE(profile.ssh.proxy_jumps[0].user == "ops");
+    AURORA_TEST_CHECK_TRUE(profile.ssh.proxy_jumps[0].host == "jump1.example.com");
+    AURORA_TEST_CHECK_TRUE(profile.ssh.proxy_jumps[0].port == 2222);
+    AURORA_TEST_CHECK_TRUE(profile.ssh.proxy_jumps[1].host == "jump2.example.com");
+    AURORA_TEST_CHECK_TRUE(profile.ssh.proxy_jumps[1].port == 22);
+    AURORA_TEST_CHECK_TRUE(profile.ssh.proxy_jumps[1].user.empty());
+
+    // 超上限（稿 D2）：9 跳是坏值而不是「取前 8」——静默截断同样是造了一条别的链路。
+    auto nine = std::string{};
+    for (int i = 1; i <= 9; ++i) {
+        if (i > 1) {
+            nine += ",";
+        }
+        nine += "j" + std::to_string(i) + ".example.com";
+    }
+    draft.proxy_jumps_text = nine;
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == DraftIssue::BadProxyJump);
+
+    // Telnet 型不读这一行（字段集里没有它，串形须保持空）：问题码不越型串台。
+    auto telnet = conn::ProfileDraft{};
+    telnet.name = "telnet box";
+    telnet.type = ConnectionType::Telnet;
+    telnet.host = "tn.example.com";
+    telnet.proxy_jumps_text = "jump1.example.com:99999";
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(telnet) == DraftIssue::None);
+    AURORA_TEST_CHECK_TRUE(conn::draft_to_profile(telnet, "p-tn").ssh.proxy_jumps.empty());
+}
+
+AURORA_TEST_CASE(editing_a_profile_with_jumps_backfills_the_canonical_line) {
+    auto profile = make_profile("p-edit", "via two jumps");
+    auto first = conn::SshHop{};
+    first.host = "jump1.example.com";
+    first.port = 2222;
+    first.user = "ops";
+    auto second = conn::SshHop{};
+    second.host = "jump2.example.com";  // 端口跟随缺省 22
+    profile.ssh.proxy_jumps = {first, second};
+
+    const auto draft = conn::profile_to_draft(profile);
+    // 回填的是规范化串形（总是写端口）：编辑一次不该把档案里的 `:22` 「改没」。
+    AURORA_TEST_CHECK_TRUE(draft.proxy_jumps_text == "ops@jump1.example.com:2222,jump2.example.com:22");
+
+    // 串形再过一次校验与折算回到等价档案（编辑→保存这条腿幂等）。
+    AURORA_TEST_CHECK_TRUE(conn::validate_draft(draft) == conn::DraftIssue::None);
+    AURORA_TEST_CHECK_TRUE(conn::draft_to_profile(draft, profile.id).ssh.proxy_jumps ==
+                           profile.ssh.proxy_jumps);
+
+    // 无跳链的档案回填成空串而不是 "none"：向导那一行留空才是「直连」的既有观感。
+    auto plain = make_profile("p-plain", "direct");
+    AURORA_TEST_CHECK_TRUE(conn::profile_to_draft(plain).proxy_jumps_text.empty());
 }
 
 AURORA_TEST_CASE(serial_draft_reports_the_four_issues_in_order) {

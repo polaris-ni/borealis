@@ -10,6 +10,8 @@
 // 词条文案、Dropdown 的选中位与选项串），浮层树只用于「控件真点得到」这一条派发腿。
 // 下拉选项行内的**置灰色**属绘制判据，按 AGENTS §4.4 第 33 条留真机走查（本沙箱无 USB 口，
 // 见该稿 §0 F3）；这里锁的是「不可达行照列、选中被否决、产值不落进档案」三条机器可判事实。
+// 判据⑪另守 `SPEC.FEAT.CONN.03` 稿 D9 的向导那一行：SSH 字段集画它、坏链那一下保存只出留痕行
+// 且不交出档案、好链折进 `SshProfile::proxy_jumps`、留空＝直连、编辑回填规范化串形。
 // ============================================================
 
 #include <algorithm>
@@ -289,6 +291,46 @@ auto enter_serial_step(Harness &h, ui::ConnectionWizard &wizard) -> void {
     return profile;
 }
 
+/// @brief 一枚跳板（`SPEC.FEAT.CONN.03` 稿 D2 的数组项；逐字段手搭而不用解析件，
+///        否则「回填的串形对不对」就成了拿被测函数自证）。
+[[nodiscard]] auto ssh_hop(std::string host, int port, std::string user = {}) -> conn::SshHop {
+    auto hop = conn::SshHop{};
+    hop.host = std::move(host);
+    hop.port = port;
+    hop.user = std::move(user);
+    return hop;
+}
+
+/// @brief 一条带跳链的 SSH 档案（编辑腿的入口同样只有 `open_edit`）。
+[[nodiscard]] auto ssh_profile(std::vector<conn::SshHop> jumps) -> conn::Profile {
+    auto profile = conn::Profile{};
+    profile.id = "profile:via-jumps";
+    profile.name = "via jumps";
+    profile.type = conn::ConnectionType::Ssh;
+    profile.ssh.host = "target.example.com";
+    profile.ssh.proxy_jumps = std::move(jumps);
+    return profile;
+}
+
+/// @brief 跳板机那一行的输入框位置：全树只有它带占位提示，故按提示串定位——比按行序数定位
+///        稳（多一行少一行都不影响读数），而这条判据本身就要读那枚占位词条。
+[[nodiscard]] auto jump_spot(Harness &h) -> HitSpot {
+    const auto want = ui::settings_label("connections.proxy_jump.placeholder");
+    return h.find("TextInput", 1, [&want](au::Widget *widget) -> bool {
+        const auto *input = dynamic_cast<const au::TextInput *>(widget);
+        return input != nullptr && input->accessibility_label() == want;
+    });
+}
+
+/// @brief 跳板机那一行的当前值。
+[[nodiscard]] auto jump_value(Harness &h) -> std::string {
+    auto spot = jump_spot(h);
+    AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr, "the jump field is missing");
+    const auto *input = dynamic_cast<const au::TextInput *>(spot.widget);
+    AURORA_TEST_REQUIRE(input != nullptr);
+    return input->value();
+}
+
 /// @brief 第 nth 个 TextInput 的当前值（字段行的产值与回填都从这一处取读数）。
 [[nodiscard]] auto text_at(Harness &h, std::size_t nth) -> std::string {
     auto spot = h.find("TextInput", nth);
@@ -327,10 +369,11 @@ AURORA_TEST_CASE(four_type_cards_land_and_serial_opens_the_nine_rows) {
                             "connections.field.encoding"}) {
         AURORA_TEST_REQUIRE_MSG(h.find_text(ui::settings_label(key)).widget != nullptr, key);
     }
-    // SSH 专属四栏不出现（稿 §2 标号 1 的后半句：字段集由类型卡决定）。
+    // SSH 专属栏不出现（稿 §2 标号 1 的后半句：字段集由类型卡决定）。跳板机那一行同属 SSH
+    // 字段集（`SPEC.FEAT.CONN.03` 稿 D9），串口屏画它就是字段集没跟着类型卡走。
     for (const auto *key : {"connections.field.host", "connections.field.port",
                             "connections.field.user", "connections.field.auth",
-                            "connections.field.identity"}) {
+                            "connections.field.identity", "connections.field.proxy_jump"}) {
         AURORA_TEST_CHECK_MSG(h.find_text(ui::settings_label(key)).widget == nullptr, key);
     }
 
@@ -783,6 +826,85 @@ AURORA_TEST_CASE(each_telnet_draft_issue_lands_its_own_notice_line) {
         wizard->close();
         h.render();
     }
+}
+
+// ------------------------------------------------------------
+// 判据⑪（`SPEC.FEAT.CONN.03` 稿 D9）：SSH 字段集多那一行——坏链禁保存、好链进档案、
+// 留空＝直连、编辑回填规范化串形
+// ------------------------------------------------------------
+AURORA_TEST_CASE(the_ssh_jump_line_refuses_a_bad_chain_and_saves_a_good_one) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    Harness h;
+    auto wizard = h.attach(probe);
+
+    auto enter_ssh = [&](std::string_view jumps) -> void {
+        wizard->close();
+        h.open(*wizard);
+        h.click_and_settle(h.find_button(ui::settings_label("connections.type.ssh")));
+        AURORA_TEST_REQUIRE_MSG(
+            h.find_text(ui::settings_label("connections.field.proxy_jump")).widget != nullptr,
+            "the jump row is not drawn");
+        auto name_spot = h.find("TextInput", 1);
+        AURORA_TEST_REQUIRE_MSG(name_spot.widget != nullptr, "the name field is missing");
+        h.click(name_spot);
+        static_cast<void>(h.type("gw-box"));
+        auto host_spot = h.find("TextInput", 2);
+        AURORA_TEST_REQUIRE_MSG(host_spot.widget != nullptr, "the host field is missing");
+        h.click(host_spot);
+        static_cast<void>(h.type("target.example.com"));
+        auto jump = jump_spot(h);
+        AURORA_TEST_REQUIRE_MSG(jump.widget != nullptr, "the jump field is missing");
+        h.click(jump);
+        static_cast<void>(h.type(jumps));
+    };
+
+    auto save = [&]() -> void {
+        auto spot = h.find_button(ui::settings_label("connections.action.save"));
+        AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr, "the save button is missing");
+        h.click_and_settle(spot);
+    };
+
+    // 第一档：端口越界的跳 ⇒ 底部常驻留痕行报「跳板链无效」，档案不交出、框不关（与端口
+    // 那一档同一走法：向导没有逐行错误槽，坏值就地改）。
+    enter_ssh("jump1.example.com:99999");
+    save();
+    AURORA_TEST_CHECK_EQ(probe.saved.size(), 0U);
+    AURORA_TEST_CHECK_TRUE(wizard->is_open());
+    AURORA_TEST_REQUIRE_MSG(
+        h.find_text(ui::settings_label("connections.wizard.issue_proxy_jump")).widget != nullptr,
+        "the notice line is missing");
+    // 校验失败不吃掉已填的值：那串坏值仍显示在原行里，用户改它而不是重填整张表。
+    AURORA_TEST_CHECK_EQ(jump_value(h), std::string{"jump1.example.com:99999"});
+
+    // 第二档：好链 ⇒ 档案带着那一跳交出（串形→`SshProfile::proxy_jumps` 的折算只此一次）。
+    enter_ssh("ops@jump1.example.com:2222");
+    save();
+    AURORA_TEST_REQUIRE_EQ(probe.saved.size(), 1U);
+    AURORA_TEST_REQUIRE(probe.saved[0].ssh.proxy_jumps.size() == 1U);
+    AURORA_TEST_CHECK_TRUE(probe.saved[0].ssh.proxy_jumps[0].host == "jump1.example.com");
+    AURORA_TEST_CHECK_TRUE(probe.saved[0].ssh.proxy_jumps[0].user == "ops");
+    AURORA_TEST_CHECK_EQ(probe.saved[0].ssh.proxy_jumps[0].port, 2222);
+    AURORA_TEST_CHECK_FALSE(wizard->is_open());  // 保存即收框
+
+    // 第三档：那一行留空＝直连（空串是合法值，不是「解析不出来」）。
+    enter_ssh("");
+    save();
+    AURORA_TEST_REQUIRE_EQ(probe.saved.size(), 2U);
+    AURORA_TEST_CHECK_TRUE(probe.saved[1].ssh.proxy_jumps.empty());
+
+    // 第四档（编辑腿）：回填显示规范化串形——第二跳的 22 也写出来，于是「编辑一次不改链」。
+    auto profile = ssh_profile({ssh_hop("jump1.example.com", 2222, "ops"),
+                                ssh_hop("jump2.example.com", 22)});
+    wizard->close();
+    wizard->open_edit(profile);
+    h.render();
+    h.render();
+    AURORA_TEST_CHECK_EQ(jump_value(h),
+                         std::string{"ops@jump1.example.com:2222,jump2.example.com:22"});
+    save();
+    AURORA_TEST_REQUIRE_EQ(probe.saved.size(), 3U);
+    AURORA_TEST_CHECK_TRUE(probe.saved[2].ssh.proxy_jumps == profile.ssh.proxy_jumps);
 }
 
 }  // namespace borealis::test_cases::itest_connection_wizard
