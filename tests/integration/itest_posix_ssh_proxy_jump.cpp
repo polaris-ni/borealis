@@ -1,10 +1,11 @@
 /// 测试类型: integration（POSIX 腿）
 /// 目标单元: src/conn/ssh_hop_chain.{h,cpp} + src/conn/ssh_dial.{h,cpp} 的 seed 腿 +
-///           src/platform/posix/hop_pipe.cpp
+///           src/platform/posix/hop_pipe.cpp + 三条未接线腿的拒拨口径
+///           （sftp_client／tunnel_client／key_push）
 /// 测试说明: `SPEC.FEAT.CONN.03` 跳板机（稿 D1「自建 direct-tcpip 跳链」／D4／D6／D10）的
 ///           **真协议**端到端证人。对端是 2–3 台进程内假 SSH 服务器（跳板那几台开了
 ///           `allow_direct_tcpip`，于是它们真的替客户端把字节搬到下一台），链路两端跑的
-///           是真 libssh 会话。证六件事（稿 §5 的 E1/E2/E3/E4 + D6 + 0 跳边界）：
+///           是真 libssh 会话。证九件事（稿 §5 的 E1/E2/E3/E4 + D6/E6 + 0 跳边界 + E5 两条 + E7）：
 ///           ① E1 一跳：目标经跳链连通并回显；跳板服务器 1 次 `direct-tcpip`，目的地＝
 ///              目标端口；目标服务器收到 1 条连接与 1 条 shell。
 ///           ② E2 两跳：A 的转发目的地＝B 端口、B 的转发目的地＝目标端口（跳序写反立刻现形）。
@@ -12,9 +13,18 @@
 ///              已建好的第 1 跳就地收口，目标服务器**零**连接。
 ///           ④ E4 主机密钥：跳板策略 `Yes` + 陌生密钥 ⇒ 档位 `HostKey`、hop_index 指到那一跳
 ///              （一跳与二跳各证一次），目标服务器零连接。
-///           ⑤ D6 fail-closed：档案带跳链而调用方给不了 seed ⇒ 记 `HopUnwired` 且**不发起**
-///              连接（两侧服务器都是零连接），绝不静默直连。
+///           ⑤ D6/E6 fail-closed：档案带跳链而调用方给不了 seed ⇒ 记 `HopUnwired` 且**不发起**
+///              连接（两侧服务器都是零连接），绝不静默直连。同一判据在**三条还没接线的腿**
+///              （SFTP／隧道／密钥推送）上各证一次——它们的失败档位不同，证人都是「零连接」。
 ///           ⑥ 0 跳链路是合法空操作：`open()` 回 true、`seed_fd()` 回 0。
+///           ⑦ E5 共线：同目标同跳链同秘密的两格只拨一次（跳板与目标各 1 条连接、目标 2 条
+///              通道、跳板 1 次 `direct-tcpip`），回显各归各格不串。
+///           ⑧ E5 分键：registry 只比不拨——空链、跳板口令异、目标口令异、跳板主机异（这一条
+///              只靠 `proxy_jumps` 入键）都借不到那条链路。
+///           ⑨ E7 关一格只收它自己的通道：跳板连接数不变、另一格照常收发（原生实现做不到，F15）。
+///
+///           真协议链路的读环在共享会话里跑（I/O 线程），故 ⑦⑨ 也是「跳链 + 多标签」这条
+///           组合形态唯一的证人。
 ///
 ///           不碰真机的 `~/.ssh/known_hosts`：跳板一律给策略 `No`（不核对、也不写盘），只有
 ///           ④ 的 `Yes` 走「陌生即拒」那条同样不写盘的路径——`AcceptNew` 的写盘腿在测试进程里
@@ -27,7 +37,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -36,10 +49,17 @@
 #include <libssh/libssh.h>
 
 #include "borealis/conn/profile.h"
+#include "borealis/session/connection.h"
 #include "framework/aurora_test.h"
 // 私有头（裁决 D1① 的先例）：跳链与拨号腿都在 src/ 树内。
+#include "conn/key_push.h"
+#include "conn/reconnect.h"
+#include "conn/sftp_client.h"
+#include "conn/ssh_connection.h"
 #include "conn/ssh_dial.h"
 #include "conn/ssh_hop_chain.h"
+#include "conn/ssh_shared.h"
+#include "conn/tunnel_client.h"
 #include "support/fake_ssh_server.h"
 
 namespace borealis::test_cases::itest_posix_ssh_proxy_jump {
@@ -48,10 +68,27 @@ namespace {
 
 using borealis::conn::DialOutcome;
 using borealis::conn::KnownHostsPolicy;
+using borealis::conn::PushStage;
+using borealis::conn::SftpClient;
+using borealis::conn::SftpError;
 using borealis::conn::SshAlgorithmOverrides;
 using borealis::conn::SshHop;
 using borealis::conn::SshHopChain;
+using borealis::conn::RetryPolicy;
+using borealis::conn::SshConnection;
 using borealis::conn::SshProfile;
+using borealis::conn::SshSecretBundle;
+using borealis::conn::SshSessionRegistry;
+using borealis::conn::Tunnel;
+using borealis::conn::TunnelError;
+using borealis::conn::TunnelEvents;
+using borealis::conn::TunnelKind;
+using borealis::conn::TunnelSpec;
+using borealis::conn::TunnelState;
+using borealis::session::CloseReason;
+using borealis::session::ConnectionEvents;
+using borealis::session::ReconnectProgress;
+using borealis::session::Size;
 using borealis::testing::FakeSshServer;
 using borealis::testing::FakeSshServerOptions;
 using borealis::testing::fake_ssh_profile;
@@ -211,6 +248,87 @@ class ChainDial final {
     return profile;
 }
 
+/// @brief 短退避档：掉线到重拨之间只等 50 ms（与共享复用的集成件同口径）。
+constexpr RetryPolicy kFastPolicy{.base_ms = 50, .cap_ms = 100, .max_attempts = 3};
+
+[[nodiscard]] auto bytes_of(std::string_view text) -> std::vector<std::byte> {
+    auto out = std::vector<std::byte>{};
+    out.reserve(text.size());
+    for (const char c : text) {
+        out.push_back(static_cast<std::byte>(static_cast<unsigned char>(c)));
+    }
+    return out;
+}
+
+/// @brief 终端腿的事件记录替身。**声明顺序是硬约束**：必须比连接活得久（I/O 线程在
+///        `close()` 的 ack 之前还会投终态回调，连接持的是这里的裸指针）。
+class TabRecorder final : public ConnectionEvents {
+  public:
+    auto on_bytes(std::span<const std::byte> bytes) -> void override {
+        const std::lock_guard lock{mutex_};
+        for (const auto byte : bytes) {
+            received_.push_back(static_cast<char>(static_cast<unsigned char>(byte)));
+        }
+    }
+
+    auto on_closed() -> void override { record_close(CloseReason::Unknown); }
+
+    auto on_closed(CloseReason reason) -> void override { record_close(reason); }
+
+    auto on_reconnect_progress(const ReconnectProgress &) -> void override {}
+
+    [[nodiscard]] auto text() -> std::string {
+        const std::lock_guard lock{mutex_};
+        return received_;
+    }
+
+    [[nodiscard]] auto closes() -> std::size_t {
+        const std::lock_guard lock{mutex_};
+        return reasons_.size();
+    }
+
+  private:
+    auto record_close(CloseReason reason) -> void {
+        const std::lock_guard lock{mutex_};
+        reasons_.push_back(reason);
+    }
+
+    std::mutex mutex_;
+    std::string received_{};
+    std::vector<CloseReason> reasons_{};
+};
+
+/// @brief 一跳链路的秘密档：目标与跳板都吃同一份口令（假服务器的接受面）。
+[[nodiscard]] auto chain_bundle(const SshProfile &profile) -> SshSecretBundle {
+    auto bundle = SshSecretBundle{std::optional<std::string>{std::string{kSecret}}};
+    bundle.hops = secrets(profile.proxy_jumps.size());
+    return bundle;
+}
+
+/// @brief 建一个走跳链的终端标签：档案带一跳，秘密按 `chain_bundle` 逐跳填齐。
+[[nodiscard]] auto make_chain_tab(const SshProfile &profile, SshSecretBundle bundle,
+                                  const std::shared_ptr<SshSessionRegistry> &registry, Size size)
+    -> std::unique_ptr<SshConnection> {
+    return std::make_unique<SshConnection>(profile, std::move(bundle), size, kFastPolicy,
+                                           SshAlgorithmOverrides{}, registry);
+}
+
+/// @brief 等到目标服务器上真的起了 @p expected 条 shell（跳链通了的终端判据）。
+[[nodiscard]] auto wait_target_shell(FakeSshServer &target, SshConnection &tab,
+                                     std::size_t expected) -> bool {
+    return wait_until(
+        [&] { return target.shell_requests() >= expected && tab.alive(); }, 8000);
+}
+
+/// @brief 隧道事件的黑洞记录器：本件只等 `Tunnel::state()` 的终态，事件序的证人在
+///        `itest_tunnel_failure`。**声明顺序是硬约束**：必须比 `Tunnel` 活得久——
+///        工作线程在 `stop()` 收口之前还会投回调，而回调握的是这里的裸引用。
+class TunnelSink final : public TunnelEvents {
+  public:
+    auto on_tunnel_state(TunnelState /*state*/, TunnelError /*error*/, int /*bound_port*/)
+        -> void override {}
+};
+
 }  // namespace
 
 AURORA_TEST_CASE(one_hop_chain_connects_and_forwards_to_the_target_port) {
@@ -330,6 +448,49 @@ AURORA_TEST_CASE(profile_with_jumps_without_seed_refuses_to_connect_directly) {
     AURORA_TEST_CHECK_EQ(jump.accepted_connections(), std::size_t{0});
 }
 
+AURORA_TEST_CASE(sftp_tunnel_and_key_push_legs_refuse_a_profile_with_jumps) {
+    FakeSshServer jump{jump_options()};
+    FakeSshServer target{target_options()};
+    AURORA_TEST_REQUIRE_MSG(jump.ok() && target.ok(), "fake ssh servers could not listen");
+
+    // 判据 ⑤ 的另一半（稿 E6）：三条**尚未接线**的腿各自现形。这里要的不是「回 false」那句措辞，
+    // 而是「一条都没拨」——静默退回直连正是原生路线的既有行为（稿 F7），本仓不接受，故两台服务器
+    // 都摆成证人；少一台就看不出「绕过了跳板」。
+    const auto profile = target_profile(target, {make_hop(jump)});
+
+    // SFTP 腿：只吃目标秘密，建连失败落 `Network`（档位表里没有跳板一档，精确原因在 dial 腿的日志）。
+    auto sftp = SftpClient{};
+    AURORA_TEST_CHECK_FALSE(sftp.connect(profile, std::optional<std::string>{std::string{kSecret}}));
+    AURORA_TEST_CHECK_MSG(sftp.last_error() == SftpError::Network, "sftp failure bucket");
+    AURORA_TEST_CHECK_FALSE(sftp.connected());
+
+    // 密钥推送腿：终值停在拨号格（纯逻辑闸已过——交出去的是一行合法公钥）。
+    const auto report = borealis::conn::push_public_key(
+        profile, std::optional<std::string>{std::string{kSecret}},
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 tester@example");
+    AURORA_TEST_CHECK_MSG(report.stage == PushStage::Dial, "key push left the dial stage");
+    AURORA_TEST_CHECK_TRUE(report.failure.has_value());
+
+    // 隧道腿自带退避环：重试钳成一次，等它自己走到 `Failed` 终态（不钳就会一直重拨到超时之外）。
+    auto spec = TunnelSpec{};
+    spec.id = "e6-unwired";
+    spec.name = "e6-unwired";
+    spec.kind = TunnelKind::Local;
+    spec.listen_port = 28081;
+    spec.target_host = "127.0.0.1";
+    spec.target_port = 80;
+    auto sink = TunnelSink{};
+    auto tunnel = Tunnel(profile, std::optional<std::string>{std::string{kSecret}}, spec,
+                         RetryPolicy{.base_ms = 10, .cap_ms = 20, .max_attempts = 1});
+    tunnel.start(sink);
+    AURORA_TEST_REQUIRE_MSG(wait_until([&] { return tunnel.state() == TunnelState::Failed; }, 8000),
+                            "the tunnel never reached its terminal failure state");
+    tunnel.stop();
+
+    AURORA_TEST_CHECK_EQ(target.accepted_connections(), std::size_t{0});
+    AURORA_TEST_CHECK_EQ(jump.accepted_connections(), std::size_t{0});
+}
+
 AURORA_TEST_CASE(chain_without_hops_is_a_valid_no_op) {
     FakeSshServer target{target_options()};
     AURORA_TEST_REQUIRE_MSG(target.ok(), "fake ssh server could not listen");
@@ -342,6 +503,128 @@ AURORA_TEST_CASE(chain_without_hops_is_a_valid_no_op) {
     AURORA_TEST_CHECK_MSG(chain.failure().outcome == DialOutcome::Ok, "empty chain reported a bug");
     chain.close();
     chain.close();  // 幂等：重复收口不该碰已经关掉的句柄。
+}
+
+AURORA_TEST_CASE(two_tabs_over_the_same_chain_share_one_jump_connection) {
+    FakeSshServer jump{jump_options()};
+    FakeSshServer target{target_options()};
+    AURORA_TEST_REQUIRE_MSG(jump.ok() && target.ok(), "fake ssh servers could not listen");
+
+    auto registry = std::make_shared<SshSessionRegistry>();
+    const auto profile = target_profile(target, {make_hop(jump)});
+    const auto bundle = chain_bundle(profile);
+
+    // Recorder 必须先于连接声明（I/O 线程会在 ack 前投终态回调，连接持裸指针）。
+    TabRecorder first;
+    TabRecorder second;
+    auto first_tab = make_chain_tab(profile, bundle, registry, Size{.columns = 100, .rows = 30});
+    first_tab->start(first);
+    AURORA_TEST_REQUIRE_MSG(wait_target_shell(target, *first_tab, 1), "first shell never came up");
+    auto second_tab = make_chain_tab(profile, bundle, registry, Size{.columns = 80, .rows = 24});
+    second_tab->start(second);
+    AURORA_TEST_REQUIRE_MSG(wait_target_shell(target, *second_tab, 2), "second shell never came up");
+
+    // 判据 ⑦（稿 E5）：同目标、同跳链、同秘密的两格共线——跳板与目标都只被拨一次。
+    AURORA_TEST_CHECK_EQ(jump.accepted_connections(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(target.accepted_connections(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(target.session_channels(), std::size_t{2});
+    // 跳板那一条连接上只有一条转发通道（链路属于连接，不随标签翻倍）。
+    AURORA_TEST_CHECK_EQ(jump.direct_tcpip_requests(), std::size_t{1});
+
+    // 两条通道各走自己的字节：回显只进各自的记录器，另一格的字节不许串进来。
+    // 目标会先发 banner，故按「含自己的 / 不含对方的」判，不比对全串。
+    first_tab->write(bytes_of("aaa"));
+    second_tab->write(bytes_of("bbb"));
+    AURORA_TEST_REQUIRE_MSG(
+        wait_until([&] { return target.received_text().find("aaa") != std::string::npos; }, 3000),
+        target.received_text());
+    AURORA_TEST_REQUIRE_MSG(wait_until([&] { return first.text().find("aaa") != std::string::npos; },
+                                       3000),
+                            first.text());
+    AURORA_TEST_REQUIRE_MSG(
+        wait_until([&] { return second.text().find("bbb") != std::string::npos; }, 3000),
+        second.text());
+    AURORA_TEST_CHECK(first.text().find("bbb") == std::string::npos);
+    AURORA_TEST_CHECK(second.text().find("aaa") == std::string::npos);
+
+    first_tab->close();
+    second_tab->close();
+}
+
+AURORA_TEST_CASE(chain_shape_and_hop_secret_split_the_link) {
+    FakeSshServer jump{jump_options()};
+    FakeSshServer target{target_options()};
+    AURORA_TEST_REQUIRE_MSG(jump.ok() && target.ok(), "fake ssh servers could not listen");
+
+    auto registry = std::make_shared<SshSessionRegistry>();
+    const auto chained = target_profile(target, {make_hop(jump)});
+    const auto plain = fake_ssh_profile(target.port());  // 同目标，但没有跳板。
+
+    // 判据 ⑧（稿 E5）：分键只看「链路形状 + 逐跳秘密」，且只比不拨（不挂接的 acquire 不拨号）。
+    const auto base = registry->acquire(chained, chain_bundle(chained), {}, kFastPolicy);
+    AURORA_TEST_REQUIRE(base != nullptr);
+    // 同链同秘密 ⇒ 同一条链路对象。
+    AURORA_TEST_CHECK_TRUE(registry->acquire(chained, chain_bundle(chained), {}, kFastPolicy) ==
+                           base);
+    // 跳链为空 ⇒ 另一条链路（合并它们等于把带跳板的标签送进直连，正是 D6 要防的形态）。
+    AURORA_TEST_CHECK_TRUE(
+        registry->acquire(plain, SshSecretBundle{std::string{kSecret}}, {}, kFastPolicy) != base);
+    // 跳板口令不同 ⇒ 也分键：让第二格借用别人认证过的链路就是绕过它自己的材料。
+    auto other_hop_secret = chain_bundle(chained);
+    other_hop_secret.hops = {std::optional<std::string>{std::string{"other-jump-secret"}}};
+    AURORA_TEST_CHECK_TRUE(
+        registry->acquire(chained, other_hop_secret, {}, kFastPolicy) != base);
+    // 只有目标口令不同同样分键（既有的 CONN.02 判据在扩型后仍成立）。
+    auto other_target_secret = chain_bundle(chained);
+    other_target_secret.target = std::optional<std::string>{std::string{"other-target-secret"}};
+    AURORA_TEST_CHECK_TRUE(
+        registry->acquire(chained, other_target_secret, {}, kFastPolicy) != base);
+    // 跳板主机不同、秘密完全相同 ⇒ 只有 `proxy_jumps` 这一列能把它们分开（`same_secret`
+    // 在这里帮不上忙）。少这一列入键，第二格就会挂进别人那条经另一台跳板认证好的链路。
+    FakeSshServer other_jump{jump_options()};
+    AURORA_TEST_REQUIRE_MSG(other_jump.ok(), "the second jump server could not listen");
+    const auto other_chain = target_profile(target, {make_hop(other_jump)});
+    AURORA_TEST_CHECK_TRUE(
+        registry->acquire(other_chain, chain_bundle(other_chain), {}, kFastPolicy) != base);
+    // 逐跳向量按跳数对齐（稿 D5）：同一条链，`hops=[口令]` 与 `hops=[]` 是两份不同的料——
+    // 合并它们等于让「没取到跳板材料」的那一格挂进别人认证好的链路。
+    auto unaligned = SshSecretBundle{std::optional<std::string>{std::string{kSecret}}};
+    AURORA_TEST_CHECK_TRUE(registry->acquire(chained, unaligned, {}, kFastPolicy) != base);
+}
+
+AURORA_TEST_CASE(closing_one_tab_does_not_stop_the_chain_of_the_others) {
+    FakeSshServer jump{jump_options()};
+    FakeSshServer target{target_options()};
+    AURORA_TEST_REQUIRE_MSG(jump.ok() && target.ok(), "fake ssh servers could not listen");
+
+    auto registry = std::make_shared<SshSessionRegistry>();
+    const auto profile = target_profile(target, {make_hop(jump)});
+    const auto bundle = chain_bundle(profile);
+
+    TabRecorder first;
+    TabRecorder second;
+    auto first_tab = make_chain_tab(profile, bundle, registry, Size{.columns = 80, .rows = 24});
+    first_tab->start(first);
+    AURORA_TEST_REQUIRE_MSG(wait_target_shell(target, *first_tab, 1), "first shell never came up");
+    auto second_tab = make_chain_tab(profile, bundle, registry, Size{.columns = 80, .rows = 24});
+    second_tab->start(second);
+    AURORA_TEST_REQUIRE_MSG(wait_target_shell(target, *second_tab, 2), "second shell never came up");
+
+    // 判据 ⑨（稿 E7）：关一格只收它自己的通道，跳板链路与另一格继续——
+    // 这正是原生实现做不到的那条（F15：文件级 `proxy_disconnect` 会叫停别的标签）。
+    first_tab->close();
+    AURORA_TEST_REQUIRE_MSG(wait_until([&] { return first.closes() >= 1; }, 3000),
+                            "first close was not reported");
+    AURORA_TEST_CHECK_TRUE(second_tab->alive());
+    AURORA_TEST_CHECK_EQ(jump.accepted_connections(), std::size_t{1});
+
+    second_tab->write(bytes_of("still-here"));
+    // 目标带 banner，故只判「这一格收到了自己那行」。
+    AURORA_TEST_REQUIRE_MSG(
+        wait_until([&] { return second.text().find("still-here") != std::string::npos; }, 3000),
+        second.text());
+
+    second_tab->close();
 }
 
 }  // namespace borealis::test_cases::itest_posix_ssh_proxy_jump
