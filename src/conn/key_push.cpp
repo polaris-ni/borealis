@@ -178,6 +178,10 @@ auto run_exec(ssh_session_struct *session, std::string_view command, std::string
         return PushFailure::DialHostKey;
     case DialOutcome::Auth:
         return PushFailure::DialAuth;
+    // 跳板两档（`SPEC.FEAT.CONN.03` 稿 D6）：本腿不建链，带跳档案一律拒拨。面板那四级阶梯
+    // 讲的是「走到哪一步」，不为一条尚未接线的腿再开一档文案；精确原因在 ERROR 日志里。
+    case DialOutcome::Hop:
+    case DialOutcome::HopUnwired:
     case DialOutcome::Ok:
         break;
     }

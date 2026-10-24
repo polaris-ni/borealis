@@ -13,6 +13,7 @@
 // 可无头单测（utest_ssh）。
 // ============================================================
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -65,6 +66,18 @@ enum class DialOutcome : std::uint8_t {
     Network,     ///< `ssh_connect` 失败：不可达、超时、协议协商不上。
     HostKey,     ///< 主机密钥与记录不符或核对出错，被档案策略拒绝。
     Auth,        ///< 认证被服务器拒绝，或缺该方式必需的秘密材料。
+    Hop,         ///< 跳板侧失败（`SPEC.FEAT.CONN.03`）：卡在链路里的某一跳，档位见 `DialFailure`。
+    HopUnwired,  ///< 档案带跳链但本条腿不会建链：fail-closed 拒拨，绝不静默直连（稿 D6）。
+};
+
+/// @brief 带跳链拨号的失败归因：卡在哪一档 + 第几跳（`SPEC.FEAT.CONN.03` 稿 D4）。
+///
+/// `hop_index` 的口径与 `SshProfile::proxy_jumps` 同向：0＝最靠近本机的第一跳，
+/// 等于 `proxy_jumps.size()` 表示跳链全通、失败发生在目标本身。
+struct DialFailure {
+    DialOutcome outcome{DialOutcome::Ok};
+    std::size_t hop_index{0};
+    [[nodiscard]] auto operator==(const DialFailure &) const noexcept -> bool = default;
 };
 
 /// @brief 算法协商面的两枚覆盖项（`SPEC.FEAT.CONN.02` 的延后子项）。
@@ -100,15 +113,20 @@ struct SshAlgorithmOverrides {
 ///                keyboard-interactive＝首提示答案；agent 认证传 nullopt。
 /// @param session 调用方先 ssh_new() 分配好的会话；本函数不负责 ssh_free()。
 /// @param algorithms 自定义算法表（空＝库缺省）；在 `ssh_connect` 之前生效，拒绝即 `Options`。
+/// @param seed_fd 已连上的本地句柄（`SPEC.FEAT.CONN.03` 的跳链出口）：非 0 即写进
+///                `SSH_OPTIONS_FD`，本次拨号在该句柄上跑协议而**不**发起 TCP 连接；
+///                0＝走真 TCP。句柄的关闭责任在调用方（libssh 0.10 起 `ssh_disconnect()`
+///                不关它，见稿 D4）。档案带跳链而未交 seed ⇒ `HopUnwired`（稿 D6）。
 /// @return 认证成功回 `Ok`；其余按失败所在的那一步回对应档位。
 ///
-/// TODO(SPEC.FEAT.CONN.03): 跳链腿未接线——`profile.proxy_jumps` 非空时本函数照旧直连目标
-///         （§7 批 3 的 `SshHopChain` + 本函数末位的 seed 形参落地、批 4 的稿 D6 fail-closed
-///         口径生效后回填；接线前这条窗口期在稿 §6 登记）。
+/// TODO(SPEC.FEAT.CONN.03): 本函数已能按 seed 拨号、也能对带链档案 fail-closed，但除集成证人
+///         （`itest_posix_ssh_proxy_jump`）外还没有消费方建链：终端腿接进 `SshHopChain` 在
+///         §7 批 4（届时 `src/main.cpp` 的 `make_ssh_session` 交 bundle 与链），SFTP／隧道／
+///         密钥推送三条腿在批 6。期间带跳档案在全部产品腿上都是**拒拨**而非直连。
 [[nodiscard]] auto ssh_dial_and_authenticate(const SshProfile &profile,
                                              std::optional<std::string> secret,
                                              ssh_session_struct *session,
-                                             const SshAlgorithmOverrides &algorithms = {})
-    -> DialOutcome;
+                                             const SshAlgorithmOverrides &algorithms = {},
+                                             std::uintptr_t seed_fd = 0) -> DialOutcome;
 
 }  // namespace borealis::conn

@@ -50,8 +50,10 @@ enum class PushStage : std::uint8_t {
 
 /// @brief 推送的失败归因（稿 §2 判据 6 的措辞档位；词条 key 映射随批 3 进 `keys_format`）。
 ///
-/// 前四档由 `conn::DialOutcome` 的四个失败值**一比一翻译**而来（该枚举实测五值含 `Ok`，
-/// 其 `Ok` 不映射进本枚举——本枚举压根没有「无失败」值，成功与否由 `PushReport::failure`
+/// 前四档由 `conn::DialOutcome` 的失败值翻译而来（该枚举实测七档失败含 `Options` 与
+/// `SPEC.FEAT.CONN.03` 的跳板两档；`Options`/`Hop`/`HopUnwired` 都并入「连不上」那句措辞，
+/// 精确原因在日志里——本腿不建跳链，带跳档案按稿 D6 拒拨。枚举的 `Ok` 不映射进本枚举——
+/// 本枚举压根没有「无失败」值，成功与否由 `PushReport::failure`
 /// 是否为空表达，省掉一个能被摆错的档位）。稿原写「四档失败＋推送腿两档＝六档措辞」，
 /// 落地期按代码订正为下表七档：多出的 `InvalidLine` 是**拨号之前**的闸（见该档注释），
 /// 它不属于 DialOutcome 也不属于 exec 腿，但它是失败归因的必读项，藏进 `ExecRefused`

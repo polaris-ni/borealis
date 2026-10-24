@@ -103,10 +103,20 @@ auto apply_ssh_algorithm_overrides(ssh_session_struct *session,
 auto ssh_dial_and_authenticate(const SshProfile &profile,
                                std::optional<std::string> secret,
                                ssh_session_struct *session,
-                               const SshAlgorithmOverrides &algorithms) -> DialOutcome {
+                               const SshAlgorithmOverrides &algorithms,
+                               std::uintptr_t seed_fd) -> DialOutcome {
     if (session == nullptr) {
         AURORA_LOG_ERROR("conn", "ssh: dial: session not allocated");
         return DialOutcome::Unallocated;
+    }
+    // 未接线腿的 fail-closed（稿 D6）：档案要求跳板、这次拨号却没拿到链路出口的句柄。
+    // 静默直连等于绕过用户显式配置的跳板——Windows 上库的原生路线正是这个既有行为（F7），
+    // 本仓不接受；宁可拒拨，也不连一条用户没要求连接的链路。
+    if (!profile.proxy_jumps.empty() && seed_fd == 0U) {
+        AURORA_LOG_ERROR("conn", "ssh: dial: profile '", profile.host, "' requires ",
+                         profile.proxy_jumps.size(), " proxy hop(s) but this leg cannot build a "
+                         "proxy chain; refusing to connect directly");
+        return DialOutcome::HopUnwired;
     }
 
     // ---- 会话选项 ----
@@ -118,6 +128,14 @@ auto ssh_dial_and_authenticate(const SshProfile &profile,
     }
     const auto timeout = static_cast<unsigned int>(kConnectTimeoutSeconds);
     ssh_options_set(session, SSH_OPTIONS_TIMEOUT, &timeout);
+    if (seed_fd != 0U) {
+        // 跳链出口：协议跑在已连上的句柄上，`ssh_connect()` 因此跳过 TCP 与 DNS
+        // （库侧 `SSH_OPTIONS_FD` 分支不在平台守卫内，稿 F14）。`SSH_OPTIONS_HOST`
+        // 与端口照旧设——主机密钥核对按「host:port」查 known_hosts，跳板那一跳的策略
+        // 判据要靠它。句柄关闭责任留在调用方：libssh 0.10 起 `ssh_disconnect()` 不关它。
+        const auto fd = static_cast<socket_t>(seed_fd);
+        ssh_options_set(session, SSH_OPTIONS_FD, &fd);
+    }
     // 自定义算法表（`SPEC.FEAT.CONN.02` 延后子项）：非空即整表替换，含显式启用旧算法的用户动作，
     // 留一条 WARN 便于事后追溯。整表没有一个库认识的名字即 fail-closed——静默回落缺省会让用户
     // 以为旧算法已生效（混在合法表里的生名由库自己滤掉，本仓不复制名单逐名核对）。

@@ -68,6 +68,11 @@ constexpr std::string_view kPtyTerm = "xterm-256color";
             return session::CloseReason::HostKeyRejected;
         case DialOutcome::Options:
         case DialOutcome::Unallocated:
+        // Hop＝某一跳失败（子档在 `DialFailure` 里）、HopUnwired＝这条腿不建链就拒拨（稿 D6）。
+        // 本腿还不消费跳链（`SPEC.FEAT.CONN.03` 批 4 接线），两档现在都到不了这里；归不进
+        // 任何一类网络/服务器原因，保守按不可重拨。
+        case DialOutcome::Hop:
+        case DialOutcome::HopUnwired:
         case DialOutcome::Ok:
             break;
     }

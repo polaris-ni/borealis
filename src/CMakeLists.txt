@@ -29,6 +29,7 @@ add_library(borealis_core STATIC
         conn/snippet.cpp
         conn/ssh_connection.cpp
         conn/ssh_dial.cpp
+        conn/ssh_hop_chain.cpp
         conn/ssh_shared.cpp
         conn/telnet_connection.cpp
         conn/telnet_negotiation.cpp
@@ -112,6 +113,7 @@ if (WIN32)
             platform/win/crash_handler.cpp
             platform/win/credential_store.cpp
             platform/win/file_secure.cpp
+            platform/win/hop_pipe.cpp
             platform/win/instance_channel.cpp
             platform/win/local_terminal.cpp
             platform/win/open_url.cpp
@@ -126,6 +128,7 @@ elseif (UNIX)
             platform/posix/credential_store.cpp
             platform/posix/crash_handler.cpp
             platform/posix/file_secure.cpp
+            platform/posix/hop_pipe.cpp
             platform/posix/forkpty_connection.cpp
             platform/posix/instance_channel.cpp
             platform/posix/local_terminal.cpp
