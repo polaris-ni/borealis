@@ -15,6 +15,10 @@
 // 主线程不会自己想起要排帧：提交入队、或 `OSC 133` 块表变化后，由装配层注入的帧唤醒句柄叫它
 // 一次（架构 §3.2），该句柄同样在锁外调用——它是跨线程 post，属 IO。块表单列一条的理由：
 // `D` 标记只改块表、不动网格，若只按脏行唤醒，刚执行完的命令块要等到下一次输出才显形。
+//
+// 本会话另有两把不相交的锁：日志落盘件与原始字节采集环（`SPEC.FEAT.CONN.05` 的十六进制视图腿）
+// 各护各的。两者的记痕点都在**出锁之后**，与网格提交同一世代——把它们的锁套进 `mutex_` 就是把
+// 采集成本算进渲染路径（架构 §3.4）。
 // ============================================================
 
 #include <cstddef>
@@ -29,6 +33,7 @@
 
 #include "borealis/session/connection.h"
 #include "borealis/session/damage_queue.h"
+#include "borealis/session/raw_tap.h"
 #include "borealis/session/session_log.h"
 #include "borealis/term/codec.h"
 #include "borealis/term/paste.h"
@@ -275,6 +280,21 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// @return 自上次调用以来是否触发过 BEL。
     auto take_bell_triggered() -> bool;
 
+    /// @brief 武装本会话的原始字节采集环（`SPEC.FEAT.CONN.05` 的十六进制收发视图，稿 D2①／D7①）。
+    ///
+    /// 与 `enable_logging` 同为**运行期显式动作**而不是构造入参：会话构造点有八处，而采集由「打开
+    /// 监视卡」这一个用户动作武装（需求原文那句「可选」的落点）。**幂等**——已武装时返回既有的那一份
+    /// （同一个指针）且不清空已采的 run：面板关了又开，看到的应当是历史而不是空白。
+    /// 只在 UI 线程调用；本函数零 IO，代价是一次 `make_shared`。
+    /// @return 本会话的采集环；此后与会话同生死，面板与装配层各持它的 `shared_ptr` 副本。
+    [[nodiscard]] auto enable_raw_tap() -> std::shared_ptr<RawTap>;
+
+    /// @brief 取本会话的采集环：未武装回 `nullptr`（稿 §5 那句「未武装零成本」的唯一可观测形态）。
+    ///
+    /// 交出 `shared_ptr` 副本而不是引用：面板每帧现读，而会话可能在两帧之间析构——引用撑不到那次解引用。
+    /// 「这一会话此刻是否在采」也只读这一处，面板侧不再另存第二份旗标（与 `logging_enabled` 同一条理由）。
+    [[nodiscard]] auto raw_tap() const -> std::shared_ptr<RawTap>;
+
   private:
     /// @brief 连接读线程回调：解码 → 喂状态机 → 产出脏行提交。
     auto on_bytes(std::span<const std::byte> bytes) -> void override;
@@ -302,6 +322,22 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// 两条发送通道（`flush` 的编码产物与 `send_bytes` 的原样转义字节）都收到这里，故「一处折算」
     /// 在代码上也确实只有一处（裁决 7.110 D11①）。调用方不得持锁。
     auto write_out(std::span<const std::byte> bytes) -> void;
+
+    /// @brief 折算产物离开会话的**唯一**一格：先记一笔出向采集，再写连接。
+    ///
+    /// 收成一处而不是在两翼各记一次，为的是「采集到的 TX 字节 == 线上真跑过的字节」这条判据在结构上
+    /// 成立：早退那一翼（未给行尾档／CR 档）与折算那一翼共用同一个采样点，将来加第三条发送腿也不会
+    /// 漏记。采样的是**折算后**那一份（稿 D2①：视图要说的是设备真收到的字节，不是键表产的那一份）。
+    /// 调用方不得持锁，本函数自己只在取指针副本那一瞬持锁（架构 §3.4）。
+    auto emit_to_connection(std::span<const std::byte> bytes) -> void;
+
+    /// @brief 往采集环记一笔：**未武装即空转**，武装时锁内只取 `shared_ptr` 副本、出锁才 `record`。
+    ///
+    /// 与 `log_` 那条同形（裁决 7.116 D5①）：环自有 `mutex_`，把它套进本会话的临界区就是嵌套两把锁，
+    /// 采集成本随之进渲染路径（架构 §3.4、稿 §5 第一条硬约束）。
+    /// @param direction 入向还是出向。
+    /// @param bytes 那一批原始字节；空批直接返回（`ingest` 的收尾一轮走这条）。
+    auto record_raw(RawDirection direction, std::span<const std::byte> bytes) -> void;
 
     /// @brief 唤醒主线程排帧：句柄在锁内取出、锁外调用（架构 §3.4 的「锁内不做 IO」）。
     auto wake_frame() -> void;
@@ -340,6 +376,10 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     std::shared_ptr<SessionLog> log_;
     /// 「是否处于记录态」只由 `log_->is_logging()` 一处回答，会话侧不再存第二份旗标：写失败那次
     /// 自我禁用发生在落盘件内部，另存一份就会说出「菜单显示记录中、文件里没有新字节」的谎话。
+    /// 原始字节采集环（`SPEC.FEAT.CONN.05` 的十六进制视图腿，稿 D2①）：`enable_raw_tap()` 造，
+    /// 此后不销毁（「清空」是面板对环本身的动作，不换件）。与 `log_` 同一条交接形态——读线程与主线程
+    /// 都在锁内取副本、出锁才用，故这里同样是 `shared_ptr` 而不是 `unique_ptr`。
+    std::shared_ptr<RawTap> raw_tap_;
     DamageQueue damage_queue_;
     std::u32string pending_responses_;
     std::u32string decode_buffer_;  ///< 解码产物缓冲：只由读线程触达，留容量免得逐块重新分配。

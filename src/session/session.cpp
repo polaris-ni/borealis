@@ -4,10 +4,15 @@
 // 跨线程协调的唯一落点：读线程在这里把字节变成网格内容与脏行提交，主线程按帧取用。
 // 锁的纪律有两条（架构 §3.4）——临界区内不做 IO，出锁后才推队列（主线程的取用顺序是
 // 「先取队列、再读网格」，反过来即成反向锁序）。
+//
+// 原始字节的两个采集点（`SPEC.FEAT.CONN.05` 的十六进制视图腿，稿 D2①）同样走这条纪律：RX 在
+// `ingest` 出锁后、应答回写前，TX 在 `emit_to_connection` 那一格、写连接前。两处都不持锁——
+// 采集环自带一把锁，套进本文件的临界区就是把采集成本算进渲染路径。
 // ============================================================
 
 #include "borealis/session/session.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -18,6 +23,17 @@
 namespace borealis::session {
 
 namespace {
+
+/// @brief 一轮记痕取一次的时刻（Unix epoch 毫秒，稿 D6① 的 run 级单点）。
+///
+/// 取 `system_clock` 而不是 `steady_clock`：面板要把它折成 `[HH:MM:SS.mmm]` 这种人类读的墙上钟点，
+/// 单调钟没有历法含义。本地时区的换算留给显示期那一条腿（`ui::monitor_timestamp_prefix`），采集侧
+/// 只交一个与时区无关的整数。稿 §0 的 F11 实测相邻两次 `now()` 差 11 ns 量级，每批一次不构成代价。
+[[nodiscard]] auto now_ms() -> std::int64_t {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
 
 /// @brief 把解码器的逐码点回调收拢成一段码点缓冲：状态机按批喂入（`Terminal::feed` 的口径）。
 class BufferSink final : public term::CodePointSink {
@@ -245,6 +261,20 @@ auto Session::take_bell_triggered() -> bool {
     return terminal_.take_bell_triggered();
 }
 
+auto Session::enable_raw_tap() -> std::shared_ptr<RawTap> {
+    std::lock_guard lock{mutex_};
+    if (raw_tap_) {
+        return raw_tap_;  // 幂等：不换件也不清空——面板重开看到的是历史，不是空白
+    }
+    raw_tap_ = std::make_shared<RawTap>();
+    return raw_tap_;
+}
+
+auto Session::raw_tap() const -> std::shared_ptr<RawTap> {
+    const std::lock_guard lock{mutex_};
+    return raw_tap_;
+}
+
 auto Session::on_bytes(std::span<const std::byte> bytes) -> void { ingest(bytes, false); }
 
 auto Session::on_closed() -> void {
@@ -288,6 +318,12 @@ auto Session::ingest(std::span<const std::byte> bytes, bool end_of_stream) -> vo
         blocks_changed = terminal_.take_command_blocks_changed();
         responses.swap(pending_responses_);
     }
+    // RX 记痕排在**出锁之后、应答回写之前**（`SPEC.FEAT.CONN.05` 的十六进制视图腿，稿 D2①）：
+    // 环里唯一的顺序承诺是「到达序」，而本批若触发了状态机应答，`flush(responses)` 会先一步把 TX
+    // 记进环——顺序反过来就成了「我方先答、设备后问」，一条排障用的收发视图就自相矛盾了。
+    // 落盘那条仍留在最后（下面 `log_target->append` 那格）：它排在唤醒之后是因为一次写盘的耗时
+    // 不该压在帧调度前面，而记一笔只是内存拷贝，没有理由为它让环的顺序让步。
+    record_raw(RawDirection::Received, bytes);
     if (!responses.empty()) {
         flush(responses);
     }
@@ -366,7 +402,7 @@ auto Session::write_out(std::span<const std::byte> bytes) -> void {
     // 未给行尾档（本地/SSH 两腿的全部既有构造点）与 CR 档都是原样下发：键表产的本来就是一个 CR
     // （裁决 7.110 D11①「`term::encode_key` 的字节表逐字节不动」的另一半）。
     if (!line_ending_.has_value() || *line_ending_ == term::LineEnding::Cr) {
-        connection_->write(bytes);
+        emit_to_connection(bytes);
         return;
     }
     const auto target = conn::line_ending_bytes(*line_ending_);
@@ -391,7 +427,29 @@ auto Session::write_out(std::span<const std::byte> bytes) -> void {
         }
     }
     // 一批里没有可折的 CR 就不换缓冲：绝大多数按键（含全部 CSI/SS3 转义序列）走这条零分配路。
-    connection_->write(folded ? std::span<const std::byte>{out.data(), out.size()} : bytes);
+    emit_to_connection(folded ? std::span<const std::byte>{out.data(), out.size()} : bytes);
+}
+
+auto Session::emit_to_connection(std::span<const std::byte> bytes) -> void {
+    // 采集点在写连接**之前**：视图要回答的是「我方打算发出去什么」，一条写失败的连接同样值得留下
+    // 痕迹；而 TX 记的就是这一格收到的字节，故折算的两翼（原样早退与折过那一份）共用同一个采样点，
+    // 「环里的 TX == 线上真跑过的字节」这条判据在结构上成立（稿 D2①）。
+    record_raw(RawDirection::Transmitted, bytes);
+    connection_->write(bytes);
+}
+
+auto Session::record_raw(RawDirection direction, std::span<const std::byte> bytes) -> void {
+    if (bytes.empty()) {
+        return;  // 收尾那一轮（`ingest({}, true)`）不占一格环；未武装时这条也是最常见的出口
+    }
+    std::shared_ptr<RawTap> tap;
+    {
+        const std::lock_guard lock{mutex_};
+        tap = raw_tap_;  // 锁内只取副本：环的 `record` 要拿它自己的锁，不能套在本会话的临界区里
+    }
+    if (tap) {
+        tap->record(direction, now_ms(), bytes);  // 未武装即空指针判一次就走（稿 §5 的零成本档）
+    }
 }
 
 }  // namespace borealis::session
