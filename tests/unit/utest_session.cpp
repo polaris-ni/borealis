@@ -1,15 +1,19 @@
 /// 测试类型: unit
 /// 目标单元: include/borealis/session/session.h
 /// 测试说明: 会话层的读侧接线（字节 → 解码 → 状态机 → 网格 → 脏行提交）与写侧通道
-///           （文本编码下发、**行尾折算**、尺寸下发、DSR/DA1 应答回写、OSC 52 读方向应答）、OSC 消费产物
+///           （文本编码下发、**行尾折算**、尺寸下发、DSR/DA1 应答回写、OSC 52 读方向应答）、
+///           **原始字节采集的两笔记痕**（RX 取解码前的原始批、TX 取折算后的那一份、两条线程共一环、
+///           未武装即没有环）、OSC 消费产物
 ///           的会话侧取值（标题 / 工作目录 / 超链接 / 剪贴板待写合并 / 命令块快照）、帧唤醒句柄的
 ///           注入与唤醒时机（含「连接生死那一次唤醒独立于批量输入有没有产出提交」这一条
 ///           `SPEC.FEAT.WS.05` 的例外，与「块表变化也唤醒」），以及对端退出时的解码收尾与非法字节替换
 ///           （SPEC.FEAT.TERM.01 查询响应、SPEC.FEAT.TERM.07 OSC 消费、
 ///           SPEC.FEAT.INTEG.01 命令块来源、
-///           SPEC.FEAT.TERM.09 双向编码、SPEC.FEAT.CONN.05 发送行尾折算、SPEC.FEAT.XFER.01 尺寸同步、
-///           SPEC.FEAT.WS.01 存活判定、架构 §3.2/§3.3/§7.2）。
+///           SPEC.FEAT.TERM.09 双向编码、SPEC.FEAT.CONN.05 发送行尾折算与十六进制视图采集、
+///           SPEC.FEAT.XFER.01 尺寸同步、
+///           SPEC.FEAT.WS.01 存活判定、架构 §3.2/§3.3/§3.4/§7.2）。
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -17,6 +21,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -39,6 +44,7 @@ using borealis::session::Connection;
 using borealis::session::ConnectionEvents;
 using borealis::session::CloseReason;
 using borealis::session::Damage;
+using borealis::session::RawDirection;
 using borealis::session::ReconnectControl;
 using borealis::session::ReconnectProgress;
 using borealis::session::ReconnectStop;
@@ -136,6 +142,13 @@ struct Fixture {
         out.push_back(static_cast<char>(static_cast<unsigned char>(b)));
     }
     return out;
+}
+
+/// @brief 此刻的 Unix epoch 毫秒（采集时刻的那条上下界证人，与会话侧 `now_ms()` 同一把钟）。
+[[nodiscard]] auto epoch_ms_now() -> std::int64_t {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
 }
 
 /// @brief 起一个 scrollback 5 行、已 start 的会话。
@@ -332,6 +345,153 @@ AURORA_TEST_CASE(keymap_enter_still_produces_cr_while_the_fold_lands_crlf) {
     auto fixture = make_line_ending_session(borealis::term::LineEnding::Crlf);
     fixture.session->send_bytes(as_bytes(encoded));
     AURORA_TEST_CHECK_EQ(text_of(fixture.connection->written), std::string("\r\n"));
+}
+
+AURORA_TEST_CASE(an_unarmed_session_has_no_ring_and_records_nothing) {
+    // 稿 D7①／§5 那句「未武装零成本」的唯一可观测形态：连环对象都不存在，记痕点只判一次空指针。
+    auto armed = make_session();
+    auto other = make_session();
+    other.connection->deliver("abc");
+    other.session->send_bytes(as_bytes("\r"));
+    AURORA_TEST_CHECK_TRUE(other.session->raw_tap() == nullptr);  // 记痕不会自己长出环
+
+    // 逐会话武装：给 A 开监视卡不动 B 的采集（面板挂在哪个标签上就采哪一个）。
+    const auto tap = armed.session->enable_raw_tap();
+    AURORA_TEST_REQUIRE_TRUE(tap != nullptr);
+    AURORA_TEST_CHECK_TRUE(armed.session->raw_tap() != nullptr);
+    AURORA_TEST_CHECK_TRUE(other.session->raw_tap() == nullptr);
+}
+
+AURORA_TEST_CASE(arming_a_second_time_hands_back_the_same_ring_and_its_history) {
+    auto fixture = make_session();
+    const auto first = fixture.session->enable_raw_tap();
+    AURORA_TEST_REQUIRE_TRUE(first != nullptr);
+    AURORA_TEST_CHECK_EQ(first.get(), fixture.session->raw_tap().get());
+
+    fixture.connection->deliver("ab");
+    AURORA_TEST_CHECK_EQ(first->run_count(), 1U);
+
+    // 幂等的两条判据：同一份件、且不清空。面板关了又开看到的应当是历史，「清空」是面板那枚按钮的
+    // 动作（稿 D7①），与会话重开＝新 `Session` 对象＝从零采集分得清。
+    const auto second = fixture.session->enable_raw_tap();
+    AURORA_TEST_CHECK_EQ(first.get(), second.get());
+    AURORA_TEST_CHECK_EQ(second->run_count(), 1U);
+}
+
+AURORA_TEST_CASE(received_runs_carry_the_raw_bytes_and_one_moment) {
+    auto fixture = make_session();
+    const auto tap = fixture.session->enable_raw_tap();
+    AURORA_TEST_REQUIRE_TRUE(tap != nullptr);
+    const std::string payload = "\x1B[2J\xE4\xB8\xAD";  // 转义族 + 一枚三字节 UTF-8 字符一起投
+    const auto before = epoch_ms_now();
+    fixture.connection->deliver(payload);
+    const auto after = epoch_ms_now();
+
+    const auto runs = tap->snapshot();
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 1U);
+    AURORA_TEST_CHECK_TRUE(runs[0].direction == RawDirection::Received);
+    // 采的是**解码前**那一份：转义族没被吞、CJK 仍是它在线上的三字节形态（稿 D2①，与日志吃码点相反）。
+    AURORA_TEST_CHECK_EQ(text_of(runs[0].bytes), payload);
+    AURORA_TEST_CHECK_TRUE(runs[0].timestamp_ms >= before && runs[0].timestamp_ms <= after);
+    AURORA_TEST_CHECK_EQ(tap->total_bytes(), payload.size());
+}
+
+AURORA_TEST_CASE(the_query_answer_is_recorded_after_the_batch_that_asked_for_it) {
+    // 环只承诺一条顺序：到达序（稿 D3①）。RX 记痕点一旦挪到应答回写之后——甚至挪进临界区之前那些
+    // 位置，本例就成了「我方先答、设备后问」，一条排障用的收发视图自相矛盾。
+    auto fixture = make_session();
+    const auto tap = fixture.session->enable_raw_tap();
+    AURORA_TEST_REQUIRE_TRUE(tap != nullptr);
+    fixture.connection->deliver("\x1B[5n");  // DSR：状态机当场产应答，且在同一次 ingest 里回写
+
+    const auto runs = tap->snapshot();
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 2U);
+    AURORA_TEST_CHECK_TRUE(runs[0].direction == RawDirection::Received);
+    AURORA_TEST_CHECK_EQ(text_of(runs[0].bytes), std::string("\x1B[5n"));
+    AURORA_TEST_CHECK_TRUE(runs[1].direction == RawDirection::Transmitted);
+    AURORA_TEST_CHECK_EQ(text_of(runs[1].bytes), std::string("\x1B[0n"));
+}
+
+AURORA_TEST_CASE(the_closing_round_records_no_empty_run) {
+    auto fixture = make_session();
+    const auto tap = fixture.session->enable_raw_tap();
+    AURORA_TEST_REQUIRE_TRUE(tap != nullptr);
+    fixture.connection->deliver("ab");
+    fixture.connection->deliver_closed();  // 收尾一轮喂的是空批（挂起序列按替换字符收尾）
+    AURORA_TEST_CHECK_EQ(tap->run_count(), 1U);
+}
+
+AURORA_TEST_CASE(the_lf_leg_records_the_folded_bytes_not_the_keytable_ones) {
+    auto fixture = make_line_ending_session(borealis::term::LineEnding::Lf);
+    const auto tap = fixture.session->enable_raw_tap();
+    AURORA_TEST_REQUIRE_TRUE(tap != nullptr);
+    fixture.session->send_text(U"a\rb\nc");
+
+    const auto runs = tap->snapshot();
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 1U);
+    AURORA_TEST_CHECK_TRUE(runs[0].direction == RawDirection::Transmitted);
+    // 视图要说的是设备真收到的字节：单个 CR 折成 LF，本来就是 LF 的那一枚不动（裁决 7.110 D11①）。
+    AURORA_TEST_CHECK_EQ(text_of(runs[0].bytes), std::string("a\nb\nc"));
+    AURORA_TEST_CHECK_EQ(text_of(runs[0].bytes), text_of(fixture.connection->written));
+}
+
+AURORA_TEST_CASE(the_crlf_leg_records_a_lone_cr_as_the_pair) {
+    auto fixture = make_line_ending_session(borealis::term::LineEnding::Crlf);
+    const auto tap = fixture.session->enable_raw_tap();
+    AURORA_TEST_REQUIRE_TRUE(tap != nullptr);
+    fixture.session->send_text(U"a\rb\nc");  // 已成对的那一枚不双折：它的 CR 属于一对 CRLF
+
+    const auto runs = tap->snapshot();
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 1U);
+    AURORA_TEST_CHECK_EQ(text_of(runs[0].bytes), std::string("a\r\nb\nc"));
+    AURORA_TEST_CHECK_EQ(text_of(runs[0].bytes), text_of(fixture.connection->written));
+}
+
+AURORA_TEST_CASE(both_write_out_wings_record_their_own_folded_batch) {
+    // CR 档走 `write_out` 的早退那一翼，「一批里没有可折的 CR」走折算那一翼的零分配尾巴。两翼合到
+    // `emit_to_connection` 一处，采样点才不需要各写一遍——只记其中一翼时，另一翼那案即红。
+    auto cr = make_line_ending_session(borealis::term::LineEnding::Cr);
+    const auto cr_tap = cr.session->enable_raw_tap();
+    AURORA_TEST_REQUIRE_TRUE(cr_tap != nullptr);
+    cr.session->send_bytes(as_bytes("\r\n\r"));
+    auto runs = cr_tap->snapshot();
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 1U);
+    AURORA_TEST_CHECK_EQ(text_of(runs[0].bytes), std::string("\r\n\r"));  // CR 档即原样
+    AURORA_TEST_CHECK_EQ(text_of(runs[0].bytes), text_of(cr.connection->written));
+
+    auto crlf = make_line_ending_session(borealis::term::LineEnding::Crlf);
+    const auto crlf_tap = crlf.session->enable_raw_tap();
+    AURORA_TEST_REQUIRE_TRUE(crlf_tap != nullptr);
+    crlf.session->send_bytes(as_bytes("\x1B[A"));  // 方向键：CSI 里没有 CR，一份字节不改
+    runs = crlf_tap->snapshot();
+    AURORA_TEST_REQUIRE_EQ(runs.size(), 1U);
+    AURORA_TEST_CHECK_EQ(text_of(runs[0].bytes), std::string("\x1B[A"));
+    AURORA_TEST_CHECK_EQ(text_of(runs[0].bytes), text_of(crlf.connection->written));
+}
+
+AURORA_TEST_CASE(both_threads_record_into_one_ring) {
+    AURORA_TEST_REQUIRE_THREADS();
+    // 读线程在 `ingest` 出锁后记 RX，主线程在 `emit_to_connection` 里记 TX；环自有 mutex_，与
+    // `Session::mutex_` 不相交（稿 §5 第一条）。两方向交错的条数与字节数都必须精确，否则面板上的
+    // 「已丢弃」那句留痕与行表计数都会说谎。
+    auto fixture = make_session();
+    const auto tap = fixture.session->enable_raw_tap();
+    AURORA_TEST_REQUIRE_TRUE(tap != nullptr);
+    constexpr std::uint64_t kBatches = 200U;
+    const auto incoming = std::string{"ab"};
+    const auto reader = [&fixture, &incoming]() -> void {
+        for (std::uint64_t index = 0; index < kBatches; ++index) {
+            fixture.connection->deliver(incoming);
+        }
+    };
+    auto thread = std::thread{reader};
+    for (std::uint64_t index = 0; index < kBatches; ++index) {
+        fixture.session->send_bytes(as_bytes("cd"));
+    }
+    thread.join();
+    AURORA_TEST_CHECK_EQ(tap->run_count(), 2U * kBatches);
+    AURORA_TEST_CHECK_EQ(tap->total_bytes(), 4U * kBatches);
+    AURORA_TEST_CHECK_EQ(tap->dropped_bytes(), 0U);
 }
 
 AURORA_TEST_CASE(resize_forwards_size_and_rebuilds_viewport) {
