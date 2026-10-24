@@ -41,6 +41,7 @@ namespace {
 using borealis::conn::RetryPolicy;
 using borealis::conn::SshAlgorithmOverrides;
 using borealis::conn::SshConnection;
+using borealis::conn::SshSecretBundle;
 using borealis::conn::SshSessionRegistry;
 using borealis::session::CloseReason;
 using borealis::session::ConnectionEvents;
@@ -134,12 +135,13 @@ class Recorder final : public ConnectionEvents {
 /// @brief 建一个挂在共享表上的标签（尺寸与秘密可按用例给）。
 [[nodiscard]] auto make_tab(const FakeSshServer &server,
                             const std::shared_ptr<SshSessionRegistry> &registry, Size size,
-                            std::string secret = std::string{"secret"},
+                            std::optional<std::string> secret = std::string{"secret"},
                             const RetryPolicy &policy = kFastPolicy,
                             bool agent_forwarding = false) -> std::unique_ptr<SshConnection> {
     auto profile = fake_ssh_profile(server.port());
     profile.agent_forwarding = agent_forwarding;
-    return std::make_unique<SshConnection>(profile, std::move(secret), size, policy,
+    return std::make_unique<SshConnection>(profile, SshSecretBundle{std::move(secret)}, size,
+                                           policy,
                                            SshAlgorithmOverrides{}, registry);
 }
 

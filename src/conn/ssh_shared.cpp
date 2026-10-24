@@ -29,7 +29,9 @@
 #include <libssh/libssh.h>
 
 #include "aurora/core/log.h"
+#include "conn/proxy_jump.h"
 #include "conn/ssh_dial.h"
+#include "conn/ssh_hop_chain.h"
 #include "platform/agent_socket.h"
 
 namespace borealis::conn {
@@ -101,18 +103,17 @@ auto SshSessionKey::of(const SshProfile &profile, const SshAlgorithmOverrides &a
     key.known_hosts_policy = profile.known_hosts_policy;
     key.kex_algorithms = algorithms.kex;
     key.host_key_algorithms = algorithms.host_key;
+    // 跳链按 D3 的归一串形入键：留空端口与 `:22` 折成同一串，空链路即空串（直连）。
+    // 「同目标、一跳与两跳之差」因此必然分键——合并它们等于把一格标签送进另一条链路。
+    key.proxy_jumps = render_proxy_jump_list(profile.proxy_jumps);
     return key;
 }
 
-auto same_secret(const std::optional<std::string> &lhs, const std::optional<std::string> &rhs)
-    -> bool {
-    if (!lhs.has_value() || !rhs.has_value()) {
-        return lhs.has_value() == rhs.has_value();
-    }
-    return *lhs == *rhs;
+auto same_secret(const SshSecretBundle &lhs, const SshSecretBundle &rhs) -> bool {
+    return lhs.target == rhs.target && lhs.hops == rhs.hops;
 }
 
-auto SshSessionRegistry::acquire(const SshProfile &profile, std::optional<std::string> secret,
+auto SshSessionRegistry::acquire(const SshProfile &profile, SshSecretBundle secret,
                                  const SshAlgorithmOverrides &algorithms, RetryPolicy policy)
     -> std::shared_ptr<SshSharedSession> {
     const auto key = SshSessionKey::of(profile, algorithms);
@@ -193,7 +194,7 @@ struct SshSharedSession::Impl {
 
     enum class Pump : std::uint8_t { Alive, LinkLost, RemoteExit };
 
-    Impl(const SshProfile &source_profile, std::optional<std::string> source_secret,
+    Impl(const SshProfile &source_profile, SshSecretBundle source_secret,
          RetryPolicy source_policy, SshAlgorithmOverrides source_algorithms)
         : profile{source_profile},
           secret{std::move(source_secret)},
@@ -218,11 +219,11 @@ struct SshSharedSession::Impl {
 
     // ---- 构造后不再改的共享判据 ----
     SshProfile profile;
-    std::optional<std::string> secret;
+    SshSecretBundle secret;
     RetryPolicy policy;
     SshAlgorithmOverrides algorithms;
     SshSessionKey key;
-    mutable std::mutex secret_mutex;  ///< 只护 `secret`：收口时清、registry 比对时读。
+    mutable std::mutex secret_mutex;  ///< 只护 `secret`（目标 + 逐跳）：registry 比对时读、拨号时取副本。
 
     // ---- 跨线程：队列与入口状态 ----
     std::mutex queue_mutex;
@@ -240,6 +241,9 @@ struct SshSharedSession::Impl {
     std::thread io;
     std::vector<std::unique_ptr<Lease>> leases;
     ssh_session_struct *session{nullptr};
+    /// @brief 本链路自己的跳板链（`SPEC.FEAT.CONN.03` 稿 D5：跳链属于「链路」，不随标签）。
+    ///        重拨＝整链重开（`SshHopChain::open()` 自己先收旧链），不新造「跳板级」的退避环。
+    std::optional<SshHopChain> hop_chain{};
     AgentForward agent;
     bool linked{false};
     session::ReconnectProgress latest_progress{};
@@ -400,13 +404,31 @@ struct SshSharedSession::Impl {
         // 回调表要在 connect 之前装好：连接期内服务器随时可能发反向通道请求。
         setup_agent_forwarding();
 
-        auto secret_copy = std::optional<std::string>{};
+        // 跳链先于目标拨号：稿 §5 的建立序（第 0 跳走真 TCP，其后各跳经上一跳的转发通道）。
+        // 逐跳秘密在锁下取一次副本——`secret` 本体留在 Impl 里供往后每一轮重拨复用。
+        auto secret_copy = SshSecretBundle{};
         {
             const std::lock_guard lock{secret_mutex};
             secret_copy = secret;
         }
-        const auto outcome =
-            ssh_dial_and_authenticate(profile, std::move(secret_copy), session, algorithms);
+        auto seed_fd = std::uintptr_t{0};
+        if (!profile.proxy_jumps.empty()) {
+            if (!hop_chain.has_value()) {
+                hop_chain.emplace();
+            }
+            if (!hop_chain->open(profile, secret_copy.hops, algorithms)) {
+                AURORA_LOG_ERROR("conn", "ssh: hop chain failed for target '", profile.host,
+                                 "': outcome ", static_cast<int>(hop_chain->failure().outcome),
+                                 " at hop ", std::to_string(hop_chain->failure().hop_index));
+                teardown_attempt();
+                return Attempt{.linked = false,
+                               .reason = reason_for(hop_chain->failure().outcome)};
+            }
+            seed_fd = hop_chain->seed_fd();
+        }
+
+        const auto outcome = ssh_dial_and_authenticate(profile, std::move(secret_copy.target),
+                                                       session, algorithms, seed_fd);
         if (outcome != DialOutcome::Ok) {
             teardown_attempt();
             return Attempt{.linked = false, .reason = reason_for(outcome)};
@@ -937,6 +959,9 @@ struct SshSharedSession::Impl {
             ssh_free(session);
             session = nullptr;
         }
+        // 跳链在目标会话**之后**收（稿 §5 的关闭序）：`SshHopChain::close()` 会关掉正被这枚
+        // 会话使用的 seed 句柄，顺序颠倒就是取用已关的句柄。
+        hop_chain.reset();
         // 回调表被 libssh 按指针持有，只能在 session 释放之后丢掉它的「已装」标记。
         agent.installed = false;
         agent.available = false;
@@ -944,14 +969,14 @@ struct SshSharedSession::Impl {
     }
 };
 
-SshSharedSession::SshSharedSession(const SshProfile &profile, std::optional<std::string> secret,
+SshSharedSession::SshSharedSession(const SshProfile &profile, SshSecretBundle secret,
                                    RetryPolicy policy, SshAlgorithmOverrides algorithms)
     : impl_{std::make_unique<Impl>(profile, std::move(secret), policy, std::move(algorithms))} {}
 
 SshSharedSession::~SshSharedSession() = default;
 
-auto SshSharedSession::matches(const SshSessionKey &key,
-                               const std::optional<std::string> &secret) const -> bool {
+auto SshSharedSession::matches(const SshSessionKey &key, const SshSecretBundle &secret) const
+    -> bool {
     if (!(impl_->key == key)) {
         return false;
     }

@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -265,7 +266,7 @@ AURORA_TEST_CASE(connect_lands_pty_shell_banner_and_the_echo_round_trip) {
     AURORA_TEST_REQUIRE_MSG(server.ok(), "fake ssh server could not listen");
 
     Recorder recorder;
-    SshConnection connection{fake_ssh_profile(server.port()), std::string{"secret"},
+    SshConnection connection{fake_ssh_profile(server.port()), std::optional<std::string>{"secret"},
                              Size{.columns = 100, .rows = 30}, kFastPolicy};
     connection.start(recorder);
 
@@ -311,7 +312,7 @@ AURORA_TEST_CASE(a_wrong_password_lands_auth_failed_and_does_not_redial) {
     AURORA_TEST_REQUIRE_MSG(server.ok(), "fake ssh server could not listen");
 
     Recorder recorder;
-    SshConnection connection{fake_ssh_profile(server.port()), std::string{"wrong"},
+    SshConnection connection{fake_ssh_profile(server.port()), std::optional<std::string>{"wrong"},
                              Size{.columns = 80, .rows = 24}, kFastPolicy};
     connection.start(recorder);
 
@@ -332,7 +333,7 @@ AURORA_TEST_CASE(channel_eof_is_remote_exit_and_not_redialed) {
     AURORA_TEST_REQUIRE_MSG(server.ok(), "fake ssh server could not listen");
 
     Recorder recorder;
-    SshConnection connection{fake_ssh_profile(server.port()), std::string{"secret"},
+    SshConnection connection{fake_ssh_profile(server.port()), std::optional<std::string>{"secret"},
                              Size{.columns = 80, .rows = 24}, kFastPolicy};
     connection.start(recorder);
     AURORA_TEST_REQUIRE_MSG(wait_shell(server, connection), "shell never came up");
@@ -353,7 +354,7 @@ AURORA_TEST_CASE(link_loss_redials_the_same_endpoint_and_gets_a_new_shell) {
     AURORA_TEST_REQUIRE_MSG(server.ok(), "fake ssh server could not listen");
 
     Recorder recorder;
-    SshConnection connection{fake_ssh_profile(server.port()), std::string{"secret"},
+    SshConnection connection{fake_ssh_profile(server.port()), std::optional<std::string>{"secret"},
                              Size{.columns = 80, .rows = 24}, kFastPolicy};
     connection.start(recorder);
     AURORA_TEST_REQUIRE_MSG(wait_shell(server, connection), "shell never came up");
@@ -404,8 +405,8 @@ AURORA_TEST_CASE(agent_forwarding_relays_a_reverse_channel_to_the_local_agent) {
     profile.agent_forwarding = true;
 
     Recorder recorder;
-    SshConnection connection{profile, std::string{"secret"}, Size{.columns = 80, .rows = 24},
-                             kFastPolicy};
+    SshConnection connection{profile, std::optional<std::string>{"secret"},
+                             Size{.columns = 80, .rows = 24}, kFastPolicy};
     connection.start(recorder);
     AURORA_TEST_REQUIRE_MSG(wait_shell(server, connection), "shell never came up");
 

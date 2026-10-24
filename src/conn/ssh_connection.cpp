@@ -19,7 +19,7 @@
 
 namespace borealis::conn {
 
-SshConnection::SshConnection(const SshProfile &profile, std::optional<std::string> secret,
+SshConnection::SshConnection(const SshProfile &profile, SshSecretBundle secret,
                              session::Size initial_size, RetryPolicy reconnect_policy,
                              SshAlgorithmOverrides algorithms,
                              std::shared_ptr<SshSessionRegistry> registry)
@@ -50,7 +50,7 @@ auto SshConnection::start(session::ConnectionEvents &events) -> void {
         auto on_open = [this] { channel_open_.store(true); };
         auto on_finished = [this] { channel_open_.store(false); };
         if (shared_->attach(this, events, size_, std::move(on_open), std::move(on_finished))) {
-            secret_.reset();  // 材料已移交给共享会话；本对象不再留明文。
+            secret_ = SshSecretBundle{};  // 材料（含逐跳）已移交给共享会话；本对象不再留明文。
             return;
         }
         shared_.reset();
@@ -81,7 +81,7 @@ auto SshConnection::close() -> void {
             shared_->detach(this);  // 等 ack：返回后 I/O 线程不再碰本对象的事件接收端。
             shared_.reset();
         }
-        secret_.reset();
+        secret_ = SshSecretBundle{};
     });
 }
 

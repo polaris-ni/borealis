@@ -7,9 +7,9 @@
 // TCP 连接）」的私有基座（设计稿 `codespec/CONN02_REUSE.draft.md`，D1–D12）：
 //
 //   * `SshSessionKey`：共享判据——生效连接参数全等（端口/认证方式已归一、
-//     算法表逐项比较），再叠一层「秘密材料全等」。档案 id **不入键**：键回答
-//     「连到哪里、以谁的身份、用什么协商面」，不回答「哪条档案记录」；档案
-//     被编辑后旧标签的快照天然分键。
+//     算法表逐项比较、跳链按归一串形比较），再叠一层「秘密材料全等」（目标一份
+//     + 逐跳各一份）。档案 id **不入键**：键回答「连到哪里、以谁的身份、用什么协商面、
+//     经哪条跳链」，不回答「哪条档案记录」；档案被编辑后旧标签的快照天然分键。
 //   * `SshSessionRegistry`：一张线性表，持弱引用；表项不存秘密（秘密比较问
 //     仍活着的会话），末位租约收口后自动剪枝。
 //   * `SshSharedSession`：一条 libssh 会话、一条 I/O 线程、N 条 shell 通道。
@@ -49,6 +49,23 @@ namespace borealis::conn {
 class SshConnection;
 class SshSharedSession;
 
+/// @brief 一次拨号要用到的全部秘密材料：目标一份 + 逐跳各一份（`SPEC.FEAT.CONN.03` 稿 D8）。
+///
+/// `hops` 与 `SshProfile::proxy_jumps` 同序（第 0 枚＝最靠近本机的第一跳）；短于跳链时缺的
+/// 那几枚按「没有材料」处理——agent 认证本就无需材料，password 缺材料由拨号侧落 `Auth` 档。
+///
+/// 可以从一枚 `std::optional<std::string>` 隐式折成（只有目标材料的旧形态），六条装配腿与
+/// 既有测试因此不必改写形参；这份转换是刻意的窄口径：只填 `target`，跳链留空。
+struct SshSecretBundle {
+    std::optional<std::string> target{};
+    std::vector<std::optional<std::string>> hops{};
+
+    SshSecretBundle() = default;
+    SshSecretBundle(std::optional<std::string> target_secret) : target{std::move(target_secret)} {}
+
+    [[nodiscard]] auto operator==(const SshSecretBundle &) const noexcept -> bool = default;
+};
+
 /// @brief 共享判据：一条 SSH 传输的全部「生效连接参数」。
 ///
 /// 取值一律走归一口径（`effective_port` / `normalized_auth_method`），于是
@@ -63,6 +80,7 @@ struct SshSessionKey {
     KnownHostsPolicy known_hosts_policy{KnownHostsPolicy::AcceptNew};
     std::string kex_algorithms;      ///< `SshAlgorithmOverrides::kex` 的原串（空＝库缺省）。
     std::string host_key_algorithms; ///< `SshAlgorithmOverrides::host_key` 的原串。
+    std::string proxy_jumps;         ///< `render_proxy_jump_list()` 的归一串形（空＝直连）。
 
     /// @brief 从档案与算法覆盖项折出键（纯逻辑，无 libssh 类型）。
     [[nodiscard]] static auto of(const SshProfile &profile,
@@ -74,9 +92,9 @@ struct SshSessionKey {
 /// @brief 两份秘密材料是否可共用同一条已认证连接（逐字节比较，含「都没有」一档）。
 ///
 /// 材料不同就绝不共享：把两个口令不同的标签接到同一条已认证链路上，等于让
-/// 第二个标签绕过它自己的认证材料。
-[[nodiscard]] auto same_secret(const std::optional<std::string> &lhs,
-                               const std::optional<std::string> &rhs) -> bool;
+/// 第二个标签绕过它自己的认证材料。跳链的秘密同样逐项参与比较（`SPEC.FEAT.CONN.03` 稿
+/// D5）——同目标同跳链但跳板口令不同，就是两条不该合并的链路。
+[[nodiscard]] auto same_secret(const SshSecretBundle &lhs, const SshSecretBundle &rhs) -> bool;
 
 /// @brief 共享会话表：同键同秘密的标签借同一条传输（设计稿 D2/D6）。
 ///
@@ -91,7 +109,7 @@ class SshSessionRegistry final {
 
     /// @brief 找一条键与秘密都相符、且仍接纳新租约的会话；找不到就新建一条。
     /// @param secret 秘密材料；只在比较期间使用，表与新建的会话各留自己那份。
-    [[nodiscard]] auto acquire(const SshProfile &profile, std::optional<std::string> secret,
+    [[nodiscard]] auto acquire(const SshProfile &profile, SshSecretBundle secret,
                                const SshAlgorithmOverrides &algorithms, RetryPolicy policy)
         -> std::shared_ptr<SshSharedSession>;
 
@@ -112,7 +130,7 @@ class SshSessionRegistry final {
 /// registry 的临时强引用持有，析构会 join I/O 线程。
 class SshSharedSession final {
   public:
-    SshSharedSession(const SshProfile &profile, std::optional<std::string> secret,
+    SshSharedSession(const SshProfile &profile, SshSecretBundle secret,
                      RetryPolicy policy, SshAlgorithmOverrides algorithms);
     ~SshSharedSession();
 
@@ -122,8 +140,8 @@ class SshSharedSession final {
     auto operator=(SshSharedSession &&) -> SshSharedSession & = delete;
 
     /// @brief 键与秘密是否与本会话一致（registry 用；秘密比较不落表）。
-    [[nodiscard]] auto matches(const SshSessionKey &key,
-                               const std::optional<std::string> &secret) const -> bool;
+    [[nodiscard]] auto matches(const SshSessionKey &key, const SshSecretBundle &secret) const
+        -> bool;
 
     /// @brief 是否仍接纳新租约（进入重连终态后为假，registry 不再借出）。
     [[nodiscard]] auto accepting() const noexcept -> bool;

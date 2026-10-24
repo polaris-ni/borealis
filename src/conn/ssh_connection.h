@@ -45,14 +45,16 @@ namespace borealis::conn {
 /// 共享会话驻留到它自己收口（重拨要重新认证，裁决 7.99 D7② 的共享版）。
 class SshConnection final : public session::Connection, public session::ReconnectControl {
   public:
-    /// @param profile 档案（主机/端口/用户/认证方式/known_hosts 策略）。
+    /// @param profile 档案（主机/端口/用户/认证方式/known_hosts 策略/跳链）。
     /// @param secret  已解析的秘密材料：password 认证＝口令，privatekey＝passphrase，
     ///                keyboard-interactive＝首提示答案；agent 认证传 nullopt。
+    ///                带跳链的档案在此一并交**逐跳**材料（`SPEC.FEAT.CONN.03` 稿 D8）；
+    ///                只有目标材料的旧形态经隐式转换进来，六条装配腿的形参不用改。
     /// @param initial_size 本标签首次 PTY 尺寸；重拨取 resize() 更新后的最新值。
     /// @param reconnect_policy 退避档（共享会话取首份租约交来的这一份）。
     /// @param algorithms 自定义 KEX／主机密钥算法表（空＝库缺省）。
     /// @param registry 共享表；空＝本连接自建一条不共享的会话。
-    SshConnection(const SshProfile &profile, std::optional<std::string> secret,
+    SshConnection(const SshProfile &profile, SshSecretBundle secret,
                   session::Size initial_size,
                   RetryPolicy reconnect_policy = default_reconnect_policy(),
                   SshAlgorithmOverrides algorithms = {},
@@ -83,7 +85,7 @@ class SshConnection final : public session::Connection, public session::Reconnec
 
   private:
     SshProfile profile_;
-    std::optional<std::string> secret_;   ///< 挂接成功即移交共享会话并清空。
+    SshSecretBundle secret_;        ///< 目标 + 逐跳材料；挂接成功即移交共享会话并清空。
     session::Size size_;
     RetryPolicy reconnect_policy_;
     SshAlgorithmOverrides algorithms_;
