@@ -19,6 +19,8 @@
 #include <string_view>
 #include <vector>
 
+#include "proxy_jump.h"
+
 namespace borealis::conn {
 namespace {
 
@@ -200,10 +202,26 @@ auto ProfileStore::update(Profile profile) -> bool {
         std::string identity;
         bool forward_agent{false};
         KnownHostsPolicy policy{KnownHostsPolicy::AcceptNew};
+        // `ProxyJump` 的值原样留到 emit 再解析：同块的 `StrictHostKeyChecking` 可能写在它
+        // 之后，而逐跳的默认策略要跟随本块折算结果（稿 D7）——先解析就只会用到缺省值。
+        // 同一块里重复出现按本件其余键的既有口径「后值覆盖」；OpenSSH 多行 ProxyJump 的
+        // 取舍次序未实测，登记在稿 §6 的未验证面。
+        std::string proxy_jump;
     };
 
     // 把当前块按每个具体 pattern 折成一条 SSH 档案；含通配符（`*`/`?`）的模板不导入。
     const auto emit = [&out](const Block &block) {
+        // 跳链语法不合（含 `%h` 一类宏不展开、端口越界、超 `kMaxProxyHops`）即**整块不导入**：
+        // 只丢这一键会产出一条「用户以为走跳板、实际直连」的档案，正是稿 D6 要防的 fail-open。
+        // 本件是无日志的纯逻辑件，少导入一条会如实反映在导入条数上。
+        std::vector<SshHop> hops;
+        if (!block.proxy_jump.empty()) {
+            const auto parsed = parse_proxy_jump_list(block.proxy_jump, block.policy);
+            if (!parsed) {
+                return;
+            }
+            hops = *parsed;
+        }
         for (const auto &pattern : block.patterns) {
             if (pattern.find('*') != std::string::npos || pattern.find('?') != std::string::npos) {
                 continue;
@@ -220,6 +238,7 @@ auto ProfileStore::update(Profile profile) -> bool {
             profile.ssh.identity_file = block.identity;
             profile.ssh.agent_forwarding = block.forward_agent;
             profile.ssh.known_hosts_policy = block.policy;
+            profile.ssh.proxy_jumps = hops;
             out.push_back(std::move(profile));
         }
     };
@@ -294,8 +313,10 @@ auto ProfileStore::update(Profile profile) -> bool {
             } else {
                 block->policy = KnownHostsPolicy::AcceptNew;
             }
+        } else if (key == "proxyjump") {
+            block->proxy_jump = unquote(value);
         }
-        // ProxyJump 等其余键本切片延后（CONN.03），忽略不导入。
+        // ProxyCommand 等其余键本切片延后（CONN.03 在册：只导 ProxyJump 这一式），忽略不导入。
     }
     if (block) {
         emit(*block);

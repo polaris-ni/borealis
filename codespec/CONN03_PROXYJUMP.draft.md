@@ -127,10 +127,10 @@ class SshHopChain final {
 
 ### D7 序列化与导入
 
-- `src/config/store.cpp` 的 ssh 段新增 `proxy_jumps` 数组（逐元素写 D2 的七个字段，`credential` 仍只写句柄）。**旧档无该键＝空链路**，读侧缺省即空，不产生迁移。
-- 明文凭据审计（`kBannedKeyNames` + `find_credential_key`）必须覆盖新数组的每一元素——新增一条审计用例专门把跳板里的 `secret` 摆进配置树里抓红。
-- `parse_ssh_config` 加 `proxyjump` 一臂：逗号拆串后逐 token 走 D3 的语法（`%h` 之类的 OpenSSH 宏本期不展开，遇到含 `%` 的 token 整键丢弃并记一条 WARN——导入是单向只读，宁可少导入也不导错目的地）；hop 的 `auth_method` 取 `agent`、`known_hosts_policy` 跟随同块的 `StrictHostKeyChecking` 折算结果；`ProxyCommand` 继续不导入（在册）。
-- **快照与撤销两处都要跟着走（实测点）**：`SPEC.FEAT.WS.11` 的会话快照把 SSH 身份**逐字段抄进 JSON**（`src/ui/workspace_snapshot.cpp` 的 `host`/`port`/`user`/`auth_method`/`identity_file`/`agent_forwarding`/`known_hosts_policy`/`credential` 八个键），所以 `proxy_jumps` 必须同批加进那对编解码——否则「重启恢复」会拿着丢了跳板的快照**直连**，正是 D6 要防的那一形态；缺该键＝空链路（旧快照兼容）。撤销栈的 `ClosedTabSpec` 存的是 `std::optional<conn::SshProfile>` 内存态快照（`include/borealis/ui/closed_tab_stack.h`），随模型自动携带跳链，不需要新增序列化面。
+- `src/config/store.cpp` 的 ssh 段新增 `proxy_jumps` 数组（逐元素写 D2 的七个字段，`credential` 仍只写句柄；总写，空链路写空数组）。**旧档无该键＝空链路**，读侧缺省即空，不产生迁移。读侧坏值口径与 `read_ssh` 其余各键一致：**逐项留痕 + 回落结构初值**，绝不「丢这一键」——元素坏就留一枚空元素占位（`rejected_keys` 里指着那一格），超上限也只留痕不截断，合法性闸在拨号侧（D3 的 `validate_proxy_hops`）。理由同 D6：丢了跳板就等于直连。
+- 明文凭据审计（`kBannedKeyNames` + `find_credential_key`）必须覆盖新数组的每一元素——新增一条审计用例专门把跳板里的 `secret` 摆进配置树里抓红。导出件的句柄剥离同批扩到逐跳（`SPEC.FEAT.PREF.07` 那条哨兵形态）：跳板凭据同样换成「每次询问」，`profile_id` 回指**所属档案**（跳板自己没有档案条目）。
+- `parse_ssh_config` 加 `proxyjump` 一臂：逗号拆串后逐 token 走 D3 的语法；`%h` 之类的 OpenSSH 宏本期不展开，含 `%` 的 token 即语法坏。**坏链的取舍是「整块不导入」而不是「丢这一键」**（比稿面原写的「整键丢弃并记 WARN」更保守一档，且本件是无日志的纯逻辑件——少导入一条如实反映在导入条数上，而留下一条「以为走跳板、实则直连」的档案无人能看见）。hop 的 `auth_method` 取 `agent`、`known_hosts_policy` 跟随同块的 `StrictHostKeyChecking` 折算结果（值原样留到成块时才解析，故两种书写次序同判）；`ProxyCommand` 继续不导入（在册）。
+- **快照与撤销两处都要跟着走（实测点）**：`SPEC.FEAT.WS.11` 的会话快照把 SSH 身份**逐字段抄进 JSON**（`src/ui/workspace_snapshot.cpp` 的 `host`/`port`/`user`/`auth_method`/`identity_file`/`agent_forwarding`/`known_hosts_policy`/`credential` 八个键），所以 `proxy_jumps` 必须同批加进那对编解码——否则「重启恢复」会拿着丢了跳板的快照**直连**，正是 D6 要防的那一形态；缺该键＝空链路（旧快照兼容，这一键是模型追加而非文档形态改版，是本件唯一允许缺键的一格），键在则整段严格、坏元素整份拒绝。键的**位置**也要与 `store.cpp` 同（`credential` 之后）：判据 ⑦ 的字节等式案比的是两边 `dump` 的原文，键序漂了就红。撤销栈的 `ClosedTabSpec` 存的是 `std::optional<conn::SshProfile>` 内存态快照（`include/borealis/ui/closed_tab_stack.h`），随模型自动携带跳链，不需要新增序列化面。
 
 ### D8 装配与凭据解析
 
@@ -215,7 +215,9 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 - **Win32 全链未编译**：`hop_pipe` 的 Win32 腿、`SSH_OPTIONS_FD` 在 Winsock 句柄上的行为、以及 F7 那条守卫结论都只有读码依据；MSVC 档落地前本条不称「可用」。
 - **对端是 libssh 假服务器而非真 sshd**：真 sshd 的 `AllowTcpForwarding`／`permit-open` 与 `direct-tcpip` 权限模型不在射程内（真机 sshd 的 etest 是 CONN.08 的既有欠账，同批补）。
 - **中继无字节上界**：目标卡死时 connector 的缓冲会随跳板通道窗口涨；本期依赖库的窗口机制兜底，不另加限流。
-- **`%h`/`%p` 宏与 `ProxyCommand` 不导入**：导入是单向只读，遇到就整键丢弃并记 WARN。
+- **`%h`/`%p` 宏与 `ProxyCommand` 不导入**：导入是单向只读，宏未展开即语法坏，按上一条口径整块不导入（本件无日志面，代价是坏链那条档案在导入结果里少一条，用户看得见条数、看不见原因）。
+- **同一块里多行 `ProxyJump` 的取舍次序未实测**：OpenSSH 是「后一行覆盖前一行」还是「逐行累加成一条链」没有本机依据；本件沿用自家解析器的既有口径**后值覆盖**（`src/conn/profile.cpp` 的逐键赋值），真机 sshd/OpenSSH 行为留待 CONN.08 那批真 sshd 端到端一并核。
+- **批 2 到批 4 之间的窗口期**：档案与快照已经能携带跳链（`~/.ssh/config` 导入那一条腿已经现形），但拨号腿仍把 `proxy_jumps` 原样放过、直连目标。这一段在 `src/conn/ssh_dial.h` 的 `ssh_dial_and_authenticate` 上以 `TODO(SPEC.FEAT.CONN.03)` 挂账，批 3 接线＋批 4 的 D6 生效后消除；期间向导没有跳板输入框（D9 在批 5），用户唯一能造出链路的途径是导入。
 - **跳板上的 `keyboard-interactive` 多提示**：与目标腿同一条既有边界（单提示一次作答），不因本条改变。
 
 ## 7 分批

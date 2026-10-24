@@ -186,6 +186,101 @@ Match all
     AURORA_TEST_CHECK_TRUE(find("ssh-import:*") == nullptr);  // 通配符模板不导入
 }
 
+AURORA_TEST_CASE(parse_ssh_config_imports_a_proxy_jump_chain) {
+    // `SPEC.FEAT.CONN.03` 延后子项的导入腿（稿 D7）：跳序＝串形次序，且逐跳的默认策略跟随
+    // **本块**的 `StrictHostKeyChecking`——写在 `ProxyJump` 之前或之后同判（值留到 emit 才解析）。
+    constexpr std::string_view config = R"(
+Host via-bastion
+    HostName target.internal
+    User dev
+    ProxyJump ops@bastion1.example.com:2222,bastion2.example.com
+    StrictHostKeyChecking ask
+
+Host late-policy
+    ProxyJump b.example.com
+    StrictHostKeyChecking no
+
+Host explicit-none
+    HostName direct.internal
+    ProxyJump none
+)";
+    const auto profiles = parse_ssh_config(config);
+    AURORA_TEST_CHECK_EQ(profiles.size(), 3u);
+
+    const auto find = [&profiles](std::string_view id) -> const Profile * {
+        for (const auto &profile : profiles) {
+            if (profile.id == id) {
+                return &profile;
+            }
+        }
+        return nullptr;
+    };
+
+    const auto *via = find("ssh-import:via-bastion");
+    AURORA_TEST_REQUIRE(via != nullptr);
+    AURORA_TEST_REQUIRE_EQ(via->ssh.proxy_jumps.size(), 2u);
+    const auto &first = via->ssh.proxy_jumps[0];
+    AURORA_TEST_CHECK_EQ(first.host, std::string{"bastion1.example.com"});
+    AURORA_TEST_CHECK_EQ(first.user, std::string{"ops"});
+    AURORA_TEST_CHECK_EQ(first.port, 2222);
+    // 串形只带主机／用户／端口：认证方式与私钥留待装配侧，句柄恒空引用（CONN.09）。
+    AURORA_TEST_CHECK_EQ(first.auth_method, std::string{"agent"});
+    AURORA_TEST_CHECK_EQ(first.identity_file, std::string{});
+    AURORA_TEST_CHECK_EQ(first.credential.kind, SecretKind::Reference);
+    AURORA_TEST_CHECK_EQ(first.known_hosts_policy, KnownHostsPolicy::Ask);
+    const auto &second = via->ssh.proxy_jumps[1];
+    AURORA_TEST_CHECK_EQ(second.host, std::string{"bastion2.example.com"});
+    AURORA_TEST_CHECK_TRUE(second.user.empty());
+    AURORA_TEST_CHECK_EQ(second.port, 22);  // 串形没写端口即折 22
+
+    const auto *late = find("ssh-import:late-policy");
+    AURORA_TEST_REQUIRE(late != nullptr);
+    AURORA_TEST_REQUIRE_EQ(late->ssh.proxy_jumps.size(), 1u);
+    AURORA_TEST_CHECK_EQ(late->ssh.proxy_jumps[0].known_hosts_policy, KnownHostsPolicy::No);
+
+    // `none` 是显式关闭、不是坏值：档案照常导入，只是链路为空。
+    const auto *direct = find("ssh-import:explicit-none");
+    AURORA_TEST_REQUIRE(direct != nullptr);
+    AURORA_TEST_CHECK_TRUE(direct->ssh.proxy_jumps.empty());
+}
+
+AURORA_TEST_CASE(parse_ssh_config_drops_the_whole_block_on_a_bad_proxy_jump) {
+    // 坏链「只丢这一键」会产出一条「用户以为走跳板、实则直连」的档案——正是稿 D6 要防的
+    // fail-open。本件是无日志的纯逻辑件，于是取更保守的那一档：整块不导入，少一条档案
+    // 如实反映在导入条数上（用户看得见「这条没进来」，看不见「这条偷偷不跳板」）。
+    constexpr std::string_view config = R"(
+Host good-first
+    HostName a.example.com
+
+Host bad-macro
+    HostName b.example.com
+    ProxyJump %h.jump.example.com
+
+Host good-last
+    HostName c.example.com
+    ProxyJump ok.example.com
+)";
+    const auto profiles = parse_ssh_config(config);
+    AURORA_TEST_CHECK_EQ(profiles.size(), 2u);
+
+    const auto find = [&profiles](std::string_view id) -> const Profile * {
+        for (const auto &profile : profiles) {
+            if (profile.id == id) {
+                return &profile;
+            }
+        }
+        return nullptr;
+    };
+    AURORA_TEST_CHECK_TRUE(find("ssh-import:bad-macro") == nullptr);
+
+    // 反空转：坏块前后的好块都在，且最后那条的链真折出来了——只数条数看不出「跳过没断」。
+    const auto *last = find("ssh-import:good-last");
+    AURORA_TEST_REQUIRE(last != nullptr);
+    AURORA_TEST_REQUIRE_EQ(last->ssh.proxy_jumps.size(), 1u);
+    AURORA_TEST_CHECK_EQ(last->ssh.proxy_jumps[0].host, std::string{"ok.example.com"});
+    AURORA_TEST_CHECK_TRUE(find("ssh-import:good-first") != nullptr);
+}
+
 AURORA_TEST_CASE(parse_ssh_config_empty_yields_nothing) {
     AURORA_TEST_CHECK_TRUE(parse_ssh_config("").empty());
     AURORA_TEST_CHECK_TRUE(parse_ssh_config("# only comments\n\n").empty());

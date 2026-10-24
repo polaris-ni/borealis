@@ -39,6 +39,7 @@
 #include "borealis/ui/workspace_snapshot.h"
 
 #include "config/workspace_store.h"
+#include "conn/proxy_jump.h"
 
 #include "framework/aurora_test.h"
 
@@ -62,6 +63,7 @@ using borealis::conn::Profile;
 using borealis::conn::SecretHandle;
 using borealis::conn::SecretKind;
 using borealis::conn::SerialProfile;
+using borealis::conn::SshHop;
 using borealis::conn::SshProfile;
 using borealis::conn::TelnetProfile;
 using borealis::ui::kMaxSnapshotPanesPerTab;
@@ -192,11 +194,25 @@ constexpr std::string_view kPanesField =
     R"("panes":[{"command_line":"","working_directory":"","environment":{}}])";
 constexpr std::string_view kShapeField = R"("shape":{"leaf":true,"order":0})";
 constexpr std::string_view kFocusedField = R"("focused":0)";
-constexpr std::string_view kSshBlock =
+/// @brief 跳链那一字段的全文（含键名，`SPEC.FEAT.CONN.03` 延后子项，稿 D7 与实测点 E9）。
+///
+/// 整块与「删掉这一键」「整段换成别的形状」三种改法共用这一份料：拼 `kSshBlock` 用它，
+/// 坏例的变异点也用它，于是手抄的三处不会各自漂。
+constexpr std::string_view kProxyJumpsField =
+    R"("proxy_jumps":[{"host":"bastion1.example.com","port":2222,"user":"ops","auth_method":"privatekey",)"
+    R"("identity_file":"/home/dev/.ssh/bastion1","known_hosts_policy":"yes",)"
+    R"("credential":{"kind":"reference","vault_id":"vault://borealis/bastion1","profile_id":"","label":""}},)"
+    R"({"host":"bastion2.example.com","port":22,"user":"","auth_method":"agent","identity_file":"",)"
+    R"("known_hosts_policy":"accept-new",)"
+    R"("credential":{"kind":"reference","vault_id":"","profile_id":"","label":""}}])";
+/// @brief 文档里那一槽的完整文本（含前导逗号）：置空它＝「这份文档没写这一键」。
+const std::string kProxyJumpsSlot = "," + std::string{kProxyJumpsField};
+constexpr std::string_view kSshBlockHead =
     R"({"host":"gw.example.com","port":2222,"user":"operator","auth_method":"privatekey",)"
     R"("identity_file":"/home/dev/.ssh/id_ed25519","agent_forwarding":true,)"
     R"("known_hosts_policy":"ask",)"
-    R"("credential":{"kind":"reference","vault_id":"vault://borealis/gw","profile_id":"","label":""}})";
+    R"("credential":{"kind":"reference","vault_id":"vault://borealis/gw","profile_id":"","label":""})";
+const std::string kSshBlock = std::string{kSshBlockHead} + kProxyJumpsSlot + "}";
 constexpr std::string_view kSerialBlock =
     R"({"device_path":"/dev/ttyUSB7","baud":57600,"data_bits":7,"stop_bits":2,)"
     R"("parity":"even","flow":"hardware","line_ending":"CRLF","encoding":"UTF-8"})";
@@ -308,6 +324,19 @@ const std::string kTabPath = "windows[0].tabs[0]";
     ssh.agent_forwarding = true;
     ssh.known_hosts_policy = KnownHostsPolicy::Ask;
     ssh.credential = SecretHandle::reference("vault://borealis/gw");
+    // 跳链（`SPEC.FEAT.CONN.03` 延后子项）：两枚字段各异的跳——第一枚把七个字段填满、第二枚
+    // 只给主机。判据 ⑦ 的字节等式靠这份料覆盖到数组元素内部，而不只是数组本身。
+    auto first_hop = SshHop{};
+    first_hop.host = "bastion1.example.com";
+    first_hop.port = 2222;
+    first_hop.user = "ops";
+    first_hop.auth_method = "privatekey";
+    first_hop.identity_file = "/home/dev/.ssh/bastion1";
+    first_hop.known_hosts_policy = KnownHostsPolicy::Yes;
+    first_hop.credential = SecretHandle::reference("vault://borealis/bastion1");
+    auto second_hop = SshHop{};
+    second_hop.host = "bastion2.example.com";
+    ssh.proxy_jumps = {std::move(first_hop), std::move(second_hop)};
     return ssh;
 }
 
@@ -695,17 +724,22 @@ AURORA_TEST_CASE(out_of_domain_names_in_the_profile_blocks_are_rejected) {
     const std::vector<Case> cases = {
         Case{"ssh host missing", ssh, R"("host":"gw.example.com",)", std::string{},
              rejected(in_tab(".ssh.host"))},
-        Case{"ssh port is text", ssh, R"("port":2222)", R"("port":"2222")", rejected(in_tab(".ssh.port"))},
-        Case{"ssh port exceeds int", ssh, R"("port":2222)",
-             R"("port":2147483648)", rejected(in_tab(".ssh.port"))},
-        Case{"ssh auth method out of table", ssh, R"("auth_method":"privatekey")", R"("auth_method":"keyboard")",
+        Case{"ssh port is text", ssh, R"("port":2222,"user":"operator")", R"("port":"2222","user":"operator")",
+             rejected(in_tab(".ssh.port"))},
+        Case{"ssh port exceeds int", ssh, R"("port":2222,"user":"operator")",
+             R"("port":2147483648,"user":"operator")", rejected(in_tab(".ssh.port"))},
+        Case{"ssh auth method out of table", ssh,
+             R"("auth_method":"privatekey","identity_file":"/home/dev/.ssh/id_ed25519")",
+             R"("auth_method":"keyboard","identity_file":"/home/dev/.ssh/id_ed25519")",
              rejected(in_tab(".ssh.auth_method"))},
         Case{"ssh agent forwarding is text", ssh, R"("agent_forwarding":true)", R"("agent_forwarding":"true")",
              rejected(in_tab(".ssh.agent_forwarding"))},
         Case{"known hosts policy out of table", ssh, R"("known_hosts_policy":"ask")",
              R"("known_hosts_policy":"maybe")", rejected(in_tab(".ssh.known_hosts_policy"))},
-        Case{"credential kind out of table", ssh, R"("kind":"reference")", R"("kind":"raw")",
-             rejected(in_tab(".ssh.credential.kind"))},
+        // 变异点带上后随的那一枚键值对：跳链元素与顶层块同字段名，光写一枚键名就会两处命中，
+        // 而 `substituted` 对「改的不是那一槽」当场终止——歧义不是宽松通过，是用例失效。
+        Case{"credential kind out of table", ssh, R"({"kind":"reference","vault_id":"vault://borealis/gw")",
+             R"({"kind":"raw","vault_id":"vault://borealis/gw")", rejected(in_tab(".ssh.credential.kind"))},
         Case{"credential vault id missing", ssh, R"("vault_id":"vault://borealis/gw",)", std::string{},
              rejected(in_tab(".ssh.credential.vault_id"))},
         Case{"credential block missing", ssh,
@@ -750,6 +784,76 @@ AURORA_TEST_CASE(out_of_domain_names_in_the_profile_blocks_are_rejected) {
     AURORA_TEST_REQUIRE(telnet_back.snapshot.has_value());
     AURORA_TEST_CHECK_TRUE(telnet_back.snapshot->windows[0].tabs[0] ==
                            SnapshotTab{.kind = ConnectionType::Telnet, .telnet = telnet_profile()});
+}
+
+AURORA_TEST_CASE(a_proxy_chain_absent_is_an_empty_chain_and_a_bad_one_rejects_the_whole_document) {
+    // 跳链那一键的两条腿（稿 D7 与实测点 E9）：
+    // ① 键不存在＝空链路——这一键是模型追加而非文档形态改版，旧快照必须还能起来；
+    // ② 键在而内容坏＝整份拒绝。这里绝不能退成「丢了好的那几跳照样恢复」：恢复去直连
+    //    正是稿 D6 要防的 fail-open，故坏元素一个也不留。
+    const auto ssh = document_of(block_tab(R"("kind":"ssh")", R"("ssh":)" + std::string{kSshBlock}));
+
+    struct Case {
+        std::string_view name;
+        std::string from;
+        std::string to;
+        std::string reason;
+    };
+    const std::vector<Case> cases = {
+        Case{"chain is an object", kProxyJumpsSlot, R"(,"proxy_jumps":{})", rejected(in_tab(".ssh.proxy_jumps"))},
+        Case{"element is not an object", kProxyJumpsSlot, R"(,"proxy_jumps":[0])",
+             rejected(in_tab(".ssh.proxy_jumps[0]"))},
+        Case{"hop host is a number", R"("host":"bastion1.example.com")", R"("host":7)",
+             rejected(in_tab(".ssh.proxy_jumps[0].host"))},
+        Case{"hop port is text", R"("port":2222,"user":"ops")", R"("port":"2222","user":"ops")",
+             rejected(in_tab(".ssh.proxy_jumps[0].port"))},
+        Case{"hop auth method out of table", R"("auth_method":"privatekey","identity_file":"/home/dev/.ssh/bastion1")",
+             R"("auth_method":"keyboard","identity_file":"/home/dev/.ssh/bastion1")",
+             rejected(in_tab(".ssh.proxy_jumps[0].auth_method"))},
+        Case{"hop known hosts policy out of table", R"("known_hosts_policy":"yes")",
+             R"("known_hosts_policy":"maybe")", rejected(in_tab(".ssh.proxy_jumps[0].known_hosts_policy"))},
+        Case{"hop field missing", R"("identity_file":"/home/dev/.ssh/bastion1",)", std::string{},
+             rejected(in_tab(".ssh.proxy_jumps[0].identity_file"))},
+        Case{"hop credential missing",
+             R"(,"credential":{"kind":"reference","vault_id":"vault://borealis/bastion1","profile_id":"","label":""})",
+             std::string{}, rejected(in_tab(".ssh.proxy_jumps[0].credential"))},
+    };
+    for (const Case &one : cases) {
+        const auto decoded = WorkspaceSnapshot::from_json(substituted(ssh, one.from, one.to));
+        AURORA_TEST_CHECK_MSG(!decoded.snapshot.has_value(), std::string{one.name});
+        AURORA_TEST_CHECK_MSG(decoded.reason == one.reason, std::string{one.name} + " -> " + decoded.reason);
+    }
+
+    // 超上限那一格走真文档：写侧不设限（稿 D9① 那条分工），界外那份由自家写侧产出再交读侧判。
+    auto over_bound = sample_snapshot();
+    auto over_chain = ssh_profile();
+    for (std::size_t index = over_chain.proxy_jumps.size(); index <= borealis::conn::kMaxProxyHops; ++index) {
+        over_chain.proxy_jumps.push_back(SshHop{});
+    }
+    over_bound.windows[0].tabs[0] = SnapshotTab{.kind = ConnectionType::Ssh, .ssh = std::move(over_chain)};
+    const auto over = reparse(over_bound);
+    AURORA_TEST_CHECK_FALSE(over.snapshot.has_value());
+    AURORA_TEST_CHECK_EQ(over.reason, rejected(in_tab(".ssh.proxy_jumps")));
+
+    // 旧快照那份「根本没有这一键」的文档：读得回来，且除了链路为空之外逐字段仍是同一份料。
+    const auto legacy = WorkspaceSnapshot::from_json(substituted(ssh, kProxyJumpsSlot, std::string{}));
+    AURORA_TEST_CHECK_MSG(legacy.snapshot.has_value(), legacy.reason);
+    AURORA_TEST_REQUIRE(legacy.snapshot.has_value());
+    auto without_chain = ssh_profile();
+    without_chain.proxy_jumps.clear();
+    AURORA_TEST_CHECK_TRUE(legacy.snapshot->windows[0].tabs[0] ==
+                           SnapshotTab{.kind = ConnectionType::Ssh, .ssh = without_chain});
+
+    // 反空转：原样那份读得回来、两枚按原次序回来——写侧漏键／读侧丢链／跳序颠倒任一处漂了，
+    // 上面那条「除链路外全等」就变成「两枚也全等」的假绿。
+    const auto intact = WorkspaceSnapshot::from_json(ssh);
+    AURORA_TEST_CHECK_MSG(intact.snapshot.has_value(), intact.reason);
+    AURORA_TEST_REQUIRE(intact.snapshot.has_value());
+    const auto &hops = intact.snapshot->windows[0].tabs[0].ssh;
+    AURORA_TEST_REQUIRE(hops.has_value());
+    AURORA_TEST_REQUIRE_EQ(hops->proxy_jumps.size(), 2U);
+    AURORA_TEST_CHECK_EQ(hops->proxy_jumps[0].host, "bastion1.example.com");
+    AURORA_TEST_CHECK_EQ(hops->proxy_jumps[1].host, "bastion2.example.com");
 }
 
 AURORA_TEST_CASE(kind_and_payload_must_agree_in_a_tab) {

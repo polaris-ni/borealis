@@ -136,6 +136,13 @@ struct SshProfile {
     bool agent_forwarding{false};     ///< Agent 转发开关（按 profile，默认关，CONN.02）。
     KnownHostsPolicy known_hosts_policy{KnownHostsPolicy::AcceptNew};
     SecretHandle credential{};        ///< 该连接的口令/私钥 passphrase 引用或询问哨兵（CONN.09）。
+    /// 跳板链（`SPEC.FEAT.CONN.03` 延后子项，稿 D2）：空＝直连目标。
+    ///
+    /// 末位追加：既有字段的顺序与可见性都不动（AGENTS.md §4.1 第 4 条）。`operator==` 是
+    /// `= default` 的逐字段比较，新字段于是自动进入「两条档案是否相同」的判定——配置往返
+    /// 用例（`utest_config`）据此就能看见跳链丢没丢。
+    /// 跳序＝数组序，第 0 项是最靠近本机的第一跳（稿 F10 的实测口径）。
+    std::vector<SshHop> proxy_jumps{};
 
     [[nodiscard]] auto operator==(const SshProfile &) const noexcept -> bool = default;
 };
@@ -282,6 +289,10 @@ class ProfileStore {
 /// 单向、带变更检测由调用方负责（仅「导入」不「回写」，避免与用户手改的 config 冲突）。
 /// 生成的 id 确定性地由输入推出（`ssh-import:<pattern>`），重复导入同一文件得到同 id，
 /// 便于调用方做「已存在则跳过/更新」的去重。
+/// `ProxyJump` 的值经 `conn/proxy_jump.h` 折成 `SshProfile::proxy_jumps`（逐跳策略跟随同块
+/// 的 `StrictHostKeyChecking`）；值不合语法（含 `%h` 一类宏、端口越界、跳数超上限）即
+/// **整块不导入**——只丢这一键会留下一条「用户以为走跳板、实则直连」的档案。`ProxyCommand`
+/// 仍不导入（在册延后）。
 /// @param content 文件全文。
 /// @return 按文件出现次序的 SSH 档案列表；解析不出任何 `Host` 时为空的合法结果。
 [[nodiscard]] auto parse_ssh_config(std::string_view content) -> std::vector<Profile>;

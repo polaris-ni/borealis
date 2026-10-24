@@ -38,6 +38,7 @@
 #include "borealis/conn/profile.h"
 #include "borealis/ui/pane_tree.h"
 
+#include "conn/proxy_jump.h"
 #include "conn/serial_model.h"
 
 namespace borealis::ui {
@@ -71,6 +72,7 @@ constexpr std::string_view kIdentityFileKey = "identity_file";
 constexpr std::string_view kAgentForwardingKey = "agent_forwarding";
 constexpr std::string_view kKnownHostsPolicyKey = "known_hosts_policy";
 constexpr std::string_view kCredentialKey = "credential";
+constexpr std::string_view kProxyJumpsKey = "proxy_jumps";
 constexpr std::string_view kVaultIdKey = "vault_id";
 constexpr std::string_view kLabelKey = "label";
 constexpr std::string_view kDevicePathKey = "device_path";
@@ -165,6 +167,19 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumText> names
     return node;
 }
 
+[[nodiscard]] auto ssh_hop_to_value(const conn::SshHop &hop) -> Value {
+    auto node = Value::object();
+    put(node, kHostKey, hop.host);
+    put(node, kPortKey, static_cast<std::int64_t>(hop.port));
+    put(node, kUserKey, hop.user);
+    put(node, kAuthMethodKey, hop.auth_method);
+    put(node, kIdentityFileKey, hop.identity_file);
+    put_enum(node, kKnownHostsPolicyKey, kKnownHostsPolicyNames,
+             static_cast<std::int64_t>(hop.known_hosts_policy));
+    node.set(kCredentialKey, credential_to_value(hop.credential));
+    return node;
+}
+
 [[nodiscard]] auto ssh_to_value(const conn::SshProfile &ssh) -> Value {
     auto node = Value::object();
     put(node, kHostKey, ssh.host);
@@ -176,6 +191,13 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumText> names
     put_enum(node, kKnownHostsPolicyKey, kKnownHostsPolicyNames,
              static_cast<std::int64_t>(ssh.known_hosts_policy));
     node.set(kCredentialKey, credential_to_value(ssh.credential));
+    // 总写（空链路＝空数组），且键位在 credential 之后——判据 ⑦ 比的是两边 `dump` 的字节，
+    // 键序漂了同样红（`store.cpp` 的 `ssh_profile_to_json` 写的是同一位置）。
+    auto jumps = Value::array();
+    for (const auto &hop : ssh.proxy_jumps) {
+        jumps.push_back(ssh_hop_to_value(hop));
+    }
+    node.set(kProxyJumpsKey, std::move(jumps));
     return node;
 }
 
@@ -437,6 +459,40 @@ template <typename E>
     return true;
 }
 
+[[nodiscard]] auto read_ssh_hop(const Value &node, std::string_view path, Reject &reject, conn::SshHop &out)
+    -> bool {
+    auto hop = conn::SshHop{};
+    if (!read_text(node, kHostKey, qualified(path, kHostKey), reject, hop.host)) {
+        return false;
+    }
+    if (!read_int(node, kPortKey, qualified(path, kPortKey), reject, hop.port)) {
+        return false;
+    }
+    if (!read_text(node, kUserKey, qualified(path, kUserKey), reject, hop.user)) {
+        return false;
+    }
+    if (!read_text(node, kAuthMethodKey, qualified(path, kAuthMethodKey), reject, hop.auth_method)) {
+        return false;
+    }
+    if (std::ranges::find(kSshAuthMethods, hop.auth_method) == kSshAuthMethods.end()) {
+        return reject.at(qualified(path, kAuthMethodKey));
+    }
+    if (!read_text(node, kIdentityFileKey, qualified(path, kIdentityFileKey), reject, hop.identity_file)) {
+        return false;
+    }
+    if (!read_enum_as(node, kKnownHostsPolicyKey, qualified(path, kKnownHostsPolicyKey), reject,
+                      kKnownHostsPolicyNames, hop.known_hosts_policy)) {
+        return false;
+    }
+    const Value *credential = read_object(node, kCredentialKey, qualified(path, kCredentialKey), reject);
+    if (credential == nullptr ||
+        !read_credential(*credential, qualified(path, kCredentialKey), reject, hop.credential)) {
+        return false;
+    }
+    out = std::move(hop);
+    return true;
+}
+
 [[nodiscard]] auto read_ssh(const Value &node, std::string_view path, Reject &reject, conn::SshProfile &out)
     -> bool {
     auto ssh = conn::SshProfile{};
@@ -472,6 +528,28 @@ template <typename E>
     if (credential == nullptr || !read_credential(*credential, qualified(path, kCredentialKey), reject,
                                                   ssh.credential)) {
         return false;
+    }
+    // 跳链那一键（稿 D7 与实测点 E9）：**缺键＝空链路**，让旧快照仍能起来——本件其余各键
+    // 一律必需，独这一键例外，因为它是模型追加而非文档形态改版；键在则整段严格，坏元素
+    // 整份拒绝。这里绝不能「丢了跳板照样恢复」：那等于让恢复去直连，正是稿 D6 要防的形态。
+    const Value *jumps = node.at(kProxyJumpsKey);
+    if (jumps != nullptr) {
+        const std::string jumps_path{qualified(path, kProxyJumpsKey)};
+        if (!jumps->is_array() || jumps->size() > conn::kMaxProxyHops) {
+            return reject.at(jumps_path);
+        }
+        for (std::size_t index = 0; index < jumps->size(); ++index) {
+            const auto item_path = indexed(jumps_path, index);
+            const Value *item = jumps->at(index);
+            if (item == nullptr || !item->is_object()) {
+                return reject.at(item_path);
+            }
+            auto hop = conn::SshHop{};
+            if (!read_ssh_hop(*item, item_path, reject, hop)) {
+                return false;
+            }
+            ssh.proxy_jumps.push_back(std::move(hop));
+        }
     }
     out = ssh;
     return true;

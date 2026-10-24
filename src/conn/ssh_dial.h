@@ -101,6 +101,10 @@ struct SshAlgorithmOverrides {
 /// @param session 调用方先 ssh_new() 分配好的会话；本函数不负责 ssh_free()。
 /// @param algorithms 自定义算法表（空＝库缺省）；在 `ssh_connect` 之前生效，拒绝即 `Options`。
 /// @return 认证成功回 `Ok`；其余按失败所在的那一步回对应档位。
+///
+/// TODO(SPEC.FEAT.CONN.03): 跳链腿未接线——`profile.proxy_jumps` 非空时本函数照旧直连目标
+///         （§7 批 3 的 `SshHopChain` + 本函数末位的 seed 形参落地、批 4 的稿 D6 fail-closed
+///         口径生效后回填；接线前这条窗口期在稿 §6 登记）。
 [[nodiscard]] auto ssh_dial_and_authenticate(const SshProfile &profile,
                                              std::optional<std::string> secret,
                                              ssh_session_struct *session,

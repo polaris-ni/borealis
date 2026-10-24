@@ -623,6 +623,23 @@ enum class CredentialProjection : std::uint8_t {
     return node;
 }
 
+[[nodiscard]] auto ssh_hop_to_json(const conn::SshHop &hop,
+                                   std::string_view profile_id,
+                                   CredentialProjection projection) -> Value {
+    auto node = Value::object();
+    put(node, "host", hop.host);
+    put(node, "port", static_cast<std::int64_t>(hop.port));
+    put(node, "user", hop.user);
+    put(node, "auth_method", hop.auth_method);
+    put(node, "identity_file", hop.identity_file);
+    put_enum(node, "known_hosts_policy", kKnownHostsPolicyNames,
+             static_cast<std::int64_t>(hop.known_hosts_policy));
+    node.set("credential", projection == CredentialProjection::Portable
+                               ? portable_credential_to_json(profile_id, hop.credential)
+                               : credential_to_json(hop.credential));
+    return node;
+}
+
 [[nodiscard]] auto ssh_profile_to_json(const conn::SshProfile &ssh,
                                        std::string_view profile_id,
                                        CredentialProjection projection) -> Value {
@@ -637,6 +654,13 @@ enum class CredentialProjection : std::uint8_t {
     node.set("credential", projection == CredentialProjection::Portable
                                ? portable_credential_to_json(profile_id, ssh.credential)
                                : credential_to_json(ssh.credential));
+    // 跳链总写（空链路写空数组）：与 serial/telnet 块同一条「全字段无条件写，读侧无需版本
+    // 分叉」的口径；缺该键的旧档在 `read_ssh` 里折成空链路，不算错。
+    auto jumps = Value::array();
+    for (const auto &hop : ssh.proxy_jumps) {
+        jumps.push_back(ssh_hop_to_json(hop, profile_id, projection));
+    }
+    node.set("proxy_jumps", std::move(jumps));
     return node;
 }
 
@@ -1008,6 +1032,59 @@ enum class CredentialProjection : std::uint8_t {
     return local;
 }
 
+/// @brief 读一跳跳板（`SPEC.FEAT.CONN.03` 延后子项，稿 D7）。
+///
+/// 与 `read_ssh` 同一条宽容口径：表外的名记进 `rejected_keys` 并保留初值。这里**不**做
+/// 「坏元素即丢整条链」——丢掉跳板等于把直连交回用户，正是稿 D6 要防的 fail-open；
+/// 整条链的合法性闸在拨号侧（`validate_proxy_hops` 不过即拒绝起会话），落盘侧只留痕。
+/// 超 `kMaxProxyHops` 同样只留痕、不截断，理由相同。
+[[nodiscard]] auto read_ssh_hop(const Value *node, LoadReport &report, std::string_view path)
+    -> conn::SshHop {
+    conn::SshHop hop{};
+    if ((node == nullptr) || !node->is_object()) {
+        report.rejected_keys.push_back(std::string{path});
+        return hop;
+    }
+    const auto host = text_of(node->at("host"));
+    if (host) {
+        hop.host = std::string{*host};
+    }
+    const Value *port = node->at("port");
+    if (port != nullptr) {
+        const auto parsed = port->as_int();
+        if (parsed) {
+            hop.port = static_cast<int>(*parsed);
+        }
+    }
+    const auto user = text_of(node->at("user"));
+    if (user) {
+        hop.user = std::string{*user};
+    }
+    const auto auth_method = text_of(node->at("auth_method"));
+    if (auth_method) {
+        if (std::ranges::find(kSshAuthMethods, *auth_method) == kSshAuthMethods.end()) {
+            report.rejected_keys.push_back(std::string{path} + ".auth_method");
+        } else {
+            hop.auth_method = std::string{*auth_method};
+        }
+    }
+    const auto identity_file = text_of(node->at("identity_file"));
+    if (identity_file) {
+        hop.identity_file = std::string{*identity_file};
+    }
+    const auto policy = text_of(node->at("known_hosts_policy"));
+    if (policy) {
+        const auto value = value_of(kKnownHostsPolicyNames, *policy);
+        if (value) {
+            hop.known_hosts_policy = static_cast<conn::KnownHostsPolicy>(*value);
+        } else {
+            report.rejected_keys.push_back(std::string{path} + ".known_hosts_policy");
+        }
+    }
+    hop.credential = read_credential(node->at("credential"));
+    return hop;
+}
+
 /// @brief 读 SSH 档案块（凭据按 CONN.09 只还原句柄）。
 [[nodiscard]] auto read_ssh(const Value *node, LoadReport &report, std::string_view path) -> conn::SshProfile {
     conn::SshProfile ssh{};
@@ -1058,6 +1135,19 @@ enum class CredentialProjection : std::uint8_t {
         }
     }
     ssh.credential = read_credential(node->at("credential"));
+    // 跳链：缺该键＝空链路（旧档无迁移，稿 D7）；不是数组即整键留痕并留空。
+    const Value *jumps = node->at("proxy_jumps");
+    if (jumps != nullptr) {
+        if (!jumps->is_array()) {
+            report.rejected_keys.push_back(std::string{path} + ".proxy_jumps");
+        } else {
+            for (std::size_t index = 0; index < jumps->size(); ++index) {
+                const std::string hop_path{
+                    std::string{path} + ".proxy_jumps[" + std::to_string(index) + "]"};
+                ssh.proxy_jumps.push_back(read_ssh_hop(jumps->at(index), report, hop_path));
+            }
+        }
+    }
     return ssh;
 }
 

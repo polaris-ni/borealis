@@ -195,6 +195,19 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     gateway.ssh.agent_forwarding = true;
     gateway.ssh.known_hosts_policy = conn::KnownHostsPolicy::Ask;
     gateway.ssh.credential = conn::SecretHandle::reference("vault://demo-gateway");
+    // 跳板链（`SPEC.FEAT.CONN.03` 延后子项，稿 D7）：两枚互异的跳——第一枚带用户/端口/自己的
+    // 句柄，第二枚全缺省字段。顺序是这一域的语义，往返后必须按原次序回来。
+    conn::SshHop first_hop;
+    first_hop.host = "bastion1.example.com";
+    first_hop.port = 2222;
+    first_hop.user = "ops";
+    first_hop.auth_method = "privatekey";
+    first_hop.identity_file = "~/.ssh/bastion1";
+    first_hop.known_hosts_policy = conn::KnownHostsPolicy::Yes;
+    first_hop.credential = conn::SecretHandle::reference("vault://demo-hop-one");
+    conn::SshHop second_hop;
+    second_hop.host = "bastion2.example.com";
+    gateway.ssh.proxy_jumps = {std::move(first_hop), std::move(second_hop)};
     next.profiles.push_back(std::move(gateway));
 
     // M3 隧道定义域（裁决 7.97 D3①）：一条非缺省 -R 隧道 + 改判字段（autostart/逐条重试），
@@ -461,6 +474,28 @@ AURORA_TEST_CASE(an_exported_document_has_the_same_shape_as_the_config_file) {
     AURORA_TEST_REQUIRE(profile_id != nullptr);
     AURORA_TEST_CHECK_TRUE(profile_id->as_string() == std::optional<std::string_view>{"demo-gateway"});
 
+    // 跳板链不是凭据面的豁免区（稿 E8）：每一跳的句柄同样只留哨兵，换机后逐跳走询问腿。
+    AURORA_TEST_CHECK_MSG(stored_text.find("vault://demo-hop-one") != std::string::npos, stored_text);
+    AURORA_TEST_CHECK_MSG(export_text.find("vault://demo-hop-one") == std::string::npos, export_text);
+    const au::json::Value *jumps = ssh_node->at("proxy_jumps");
+    AURORA_TEST_REQUIRE(jumps != nullptr);
+    AURORA_TEST_REQUIRE_EQ(jumps->size(), 2U);
+    const au::json::Value *hop_node = jumps->at(0);
+    AURORA_TEST_REQUIRE(hop_node != nullptr);
+    const au::json::Value *hop_credential = hop_node->at("credential");
+    AURORA_TEST_REQUIRE(hop_credential != nullptr);
+    const au::json::Value *hop_kind = hop_credential->at("kind");
+    AURORA_TEST_REQUIRE(hop_kind != nullptr);
+    AURORA_TEST_CHECK_TRUE(hop_kind->as_string() == std::optional<std::string_view>{"ask"});
+    // 回指仍是**所属档案**的 id：跳板自己没有档案条目，问口令时的上下文是这条 SSH 档案。
+    const au::json::Value *hop_profile_id = hop_credential->at("profile_id");
+    AURORA_TEST_REQUIRE(hop_profile_id != nullptr);
+    AURORA_TEST_CHECK_TRUE(hop_profile_id->as_string() == std::optional<std::string_view>{"demo-gateway"});
+    // 跳链其余字段是明文设置，导出件照留——剥离只针对凭据，不许顺手把链路也抹了。
+    const au::json::Value *hop_host = hop_node->at("host");
+    AURORA_TEST_REQUIRE(hop_host != nullptr);
+    AURORA_TEST_CHECK_TRUE(hop_host->as_string() == std::optional<std::string_view>{"bastion1.example.com"});
+
     // 临时文件不留残段（导出件是换机迁移的唯一素材，写一半的文件比不写更糟）。
     AURORA_TEST_CHECK_FALSE(std::filesystem::exists(std::filesystem::path{target.string() + ".tmp"}));
 }
@@ -486,10 +521,14 @@ AURORA_TEST_CASE(an_exported_document_imports_back_the_same_settings) {
     }
 
     // 导入件里那条凭据只能落成「每次询问」：句柄跨机必悬空，标成 Reference 会让连接腿
-    // 去一个不存在的库里取秘密。除这一枚句柄外，其余设置逐字段原样回来。
+    // 去一个不存在的库里取秘密。跳链的每一跳同一条规则（稿 E8）——除这几枚句柄外，
+    // 其余设置逐字段原样回来。
     auto portable = wanted;
     portable.profiles.front().ssh.credential =
         conn::SecretHandle::ask_every_time("demo-gateway", "gateway password");
+    for (auto &hop : portable.profiles.front().ssh.proxy_jumps) {
+        hop.credential = conn::SecretHandle::ask_every_time("demo-gateway", "");
+    }
 
     Store other{target};
     AURORA_TEST_CHECK_TRUE(other.settings() == Settings{});
@@ -523,6 +562,11 @@ AURORA_TEST_CASE(an_unsafe_document_is_refused_whole_and_changes_nothing) {
              Case{"credential", R"({"schema_version":1,"appearance":{"password":"hunter2"}})", "credential-like key"},
              Case{"nested credential",
                   R"({"schema_version":1,"shortcuts":{"overrides":[{"command":"a.b","private_key":"x"}]}})",
+                  "credential-like key"},
+             // 跳板链里的一跳同样是凭据面：审计走的是递归键名遍历，新增的数组不该成为盲区（稿 E8）。
+             Case{"hop credential",
+                  R"({"schema_version":1,"profiles":{"items":[{"id":"gw","name":"GW","type":"ssh",
+                      "ssh":{"host":"t","proxy_jumps":[{"host":"b","passphrase":"hunter2"}]}}]}})",
                   "credential-like key"},
              Case{"unreadable", std::string_view{"never written"}, "cannot read"},
          }) {
@@ -845,6 +889,80 @@ AURORA_TEST_CASE(a_serial_profile_round_trips_and_bad_fields_drop_individually) 
     }
     const Store reloaded{other};
     AURORA_TEST_CHECK_TRUE(reloaded.settings() == wanted);
+}
+
+AURORA_TEST_CASE(an_ssh_proxy_chain_round_trips_and_a_legacy_file_carries_none) {
+    // `SPEC.FEAT.CONN.03` 延后子项的 profiles 子结构（稿 D7）：三枚跳各代表一类输入——
+    // 全字段合范的一枚、字段坏但元素合范的一枚、连元素都不是对象的一枚。
+    // 判据的方向是「坏一项留痕一项，整条链不吞」：丢掉一跳等于把直连交回用户，
+    // 而那正是稿 D6 要防的 fail-open；合法性闸在拨号侧（`validate_proxy_hops`）。
+    const auto file = make_path("proxy_chain.json");
+    write_file(file, R"({
+  "schema_version": 1,
+  "profiles": {"items": [
+    {"id":"gw","name":"GW","type":"ssh","ssh":{
+      "host":"target.internal","port":22,"user":"dev","auth_method":"agent","identity_file":"",
+      "agent_forwarding":false,"known_hosts_policy":"accept-new",
+      "credential":{"kind":"reference","vault_id":"vault://gw","profile_id":"","label":""},
+      "proxy_jumps":[
+        {"host":"bastion1","port":2222,"user":"ops","auth_method":"privatekey",
+         "identity_file":"~/.ssh/b1","known_hosts_policy":"yes",
+         "credential":{"kind":"reference","vault_id":"vault://b1","profile_id":"gw","label":"b1"}},
+        {"host":"bastion2","auth_method":"telepathy","known_hosts_policy":"maybe"},
+        "not-an-object"]}}
+  ]}
+})");
+    const Store store{file};
+    AURORA_TEST_REQUIRE_EQ(store.settings().profiles.size(), 1U);
+    const auto &hops = store.settings().profiles.front().ssh.proxy_jumps;
+    AURORA_TEST_REQUIRE_EQ(hops.size(), 3U);
+
+    AURORA_TEST_CHECK_EQ(hops[0].host, "bastion1");
+    AURORA_TEST_CHECK_EQ(hops[0].port, 2222);
+    AURORA_TEST_CHECK_EQ(hops[0].user, "ops");
+    AURORA_TEST_CHECK_EQ(hops[0].auth_method, "privatekey");
+    AURORA_TEST_CHECK_EQ(hops[0].identity_file, "~/.ssh/b1");
+    AURORA_TEST_CHECK_TRUE(hops[0].known_hosts_policy == conn::KnownHostsPolicy::Yes);
+    // 跳板自己的凭据同样只以句柄回来（CONN.09 不变量对每一跳都成立）。
+    AURORA_TEST_CHECK_TRUE(hops[0].credential.kind == conn::SecretKind::Reference);
+    AURORA_TEST_CHECK_EQ(hops[0].credential.vault_id, "vault://b1");
+    AURORA_TEST_CHECK_EQ(hops[0].credential.label, "b1");
+
+    AURORA_TEST_CHECK_EQ(hops[1].host, "bastion2");
+    AURORA_TEST_CHECK_EQ(hops[1].port, 22);                                    // 没写端口＝结构初值
+    AURORA_TEST_CHECK_EQ(hops[1].auth_method, "agent");                       // 表外名回落初值
+    AURORA_TEST_CHECK_TRUE(hops[1].known_hosts_policy == conn::KnownHostsPolicy::AcceptNew);
+    AURORA_TEST_CHECK_EQ(hops[2].host, "");                                   // 坏元素留空元素，不吞链
+
+    const auto &rejected = store.report().rejected_keys;
+    AURORA_TEST_CHECK_TRUE(holds(rejected, "profiles.items[0].proxy_jumps[1].auth_method"));
+    AURORA_TEST_CHECK_TRUE(holds(rejected, "profiles.items[0].proxy_jumps[1].known_hosts_policy"));
+    AURORA_TEST_CHECK_TRUE(holds(rejected, "profiles.items[0].proxy_jumps[2]"));
+
+    // 旧档没这一键：空链路，合法结果，不许留痕。
+    const auto legacy_file = make_path("proxy_legacy.json");
+    write_file(legacy_file, R"({
+  "schema_version": 1,
+  "profiles": {"items": [
+    {"id":"gw","name":"GW","type":"ssh","ssh":{"host":"target.internal","port":22}}
+  ]}
+})");
+    const Store legacy{legacy_file};
+    AURORA_TEST_CHECK_TRUE(legacy.settings().profiles.front().ssh.proxy_jumps.empty());
+    AURORA_TEST_CHECK_FALSE(holds(legacy.report().rejected_keys, "profiles.items[0].proxy_jumps"));
+
+    // 整键类型不符（写成对象）才整键留痕并留空：这时每一跳都无从判断。
+    const auto not_array = make_path("proxy_not_array.json");
+    write_file(not_array, R"({
+  "schema_version": 1,
+  "profiles": {"items": [
+    {"id":"gw","name":"GW","type":"ssh",
+     "ssh":{"host":"target.internal","proxy_jumps":{"host":"bastion1"}}}
+  ]}
+})");
+    const Store wrong{not_array};
+    AURORA_TEST_CHECK_TRUE(wrong.settings().profiles.front().ssh.proxy_jumps.empty());
+    AURORA_TEST_CHECK_TRUE(holds(wrong.report().rejected_keys, "profiles.items[0].proxy_jumps"));
 }
 
 AURORA_TEST_CASE(a_telnet_profile_round_trips_and_bad_port_drops_to_default) {
