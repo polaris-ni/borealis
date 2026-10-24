@@ -123,7 +123,7 @@
 |:---|:---|:---|
 | `SPEC.FEAT.CONN.03` | 跳板接进 SFTP／隧道／密钥推送三条腿（ProxyJump 本体已于 2026-10-24 随裁决 7.148 落地，现三条腿按各自失败档 fail-closed；稿 `CONN03_PROXYJUMP.draft.md` §7 批 6，另起裁决） | M4 之后 |
 | `SPEC.FEAT.CONN.03` | 逐跳凭据的询问 UI（`AskEveryTime` 的那一跳）与 quick connect 的 `-J` 语法（稿 §9 的两条去向） | M4 之后，前者随 `SPEC.FEAT.CONN.09` 的询问件 |
-| `SPEC.FEAT.CONN.05` | 十六进制收发视图与行首时间戳前缀 | M4 之后 |
+| `SPEC.FEAT.CONN.05` | 十六进制收发视图与行首时间戳前缀（设计稿已出：`codespec/UI_SERIAL_MONITOR.draft.md`，2026-10-25 的地基实测 F1–F14 与 D1–D9 均已落稿；实现按稿 §4 分四批，**尚未开工**） | M4 之后 |
 | `SPEC.FEAT.WS.04` | 可听铃声（beep；框架音频后端已具备，须开 `AURORA_ENABLE_AUDIO`） | M5 观察池 |
 
 ---
