@@ -166,7 +166,15 @@ class SshHopChain final {
 - `collect_draft()` 里经 D3 解析；解析失败就在该行给红字并禁止保存——沿用向导既有的端口校验形态，不新增控件类型。
 - 侧栏档案行不显示跳链（一行放不下，且「连到哪里」的判据仍以目标主机为准）；quick connect 不接 `-J` 语法。
 - **不新增设置键**：跳链是档案属性，不是全局档（与 `kex_algorithms` 那类全局档的区别：后者是「算法面」，前者是「目的地拓扑」）。
-- 延后角标：`codespec/UI_OVERVIEW.draft.md` §7 与 `UI_CONNECTIONS.draft.md` 把 ProxyJump 标在「延后能力一律灰置不画成可用态」的清单里，落地后同批改口。
+- 延后角标：`codespec/UI_OVERVIEW.draft.md` §2.3（延后能力清单）与 §3（树行的禁用态注记）、`UI_CONNECTIONS.draft.md` §1／§7 把 ProxyJump 标在「延后能力一律灰置不画成可用态」的清单里，落地后同批改口。
+
+落地形态（批 5 实测，三处与稿面不同）：
+
+- **草稿存串形而不是存解析好的跳链**：`ProfileDraft::proxy_jumps_text`（`src/conn/profile_views.h`）。理由不是省一次转换，而是坏值得有地方待着——解析放在纯逻辑层（`validate_draft` 判定、`draft_to_profile` 折算各一次调用同一枚 `parse_proxy_jump_list`），向导不碰语法，于是「坏链禁保存」这条判据可无头断言（`utest_profile_views`），而 UI 侧只需证「值收进了草稿、留痕行上了屏」。
+- **红字位置改口**：稿面写「在该行给红字」，向导实际**没有逐行错误槽**这一形态——端口那一档、串口四档、Telnet 三档都走底部那条常驻留痕行（`notice_`），本行沿用同一条走法，新增问题码 `DraftIssue::BadProxyJump` 与词条 `connections.wizard.issue_proxy_jump`。按 AGENTS.md §4.2 第 12 条以代码运行时为准回填，不为此再造一个控件形态。
+- **词条是三枚而不是一枚**：`connections.field.proxy_jump`（行标签）、`connections.proxy_jump.placeholder`（占位串形）、`connections.wizard.issue_proxy_jump`（留痕文案）。占位符也进表是因为本仓所有 placeholder 都经 `settings_label()` 取（覆盖闸 `tools/check/check_display_literals.py` 的口径：表外中文在英文档里不可见）。
+- 编辑回填用 `render_proxy_jump_list` 的**规范化串形**（总是写端口）：留空与 `:22` 折成同一个值，串形也收敛成同一个串，「编辑一次把 `:22` 改没」因此不可能。
+- 稿面另外三条照旧未动：侧栏档案行不显示跳链、quick connect 不接 `-J`、不新增设置键（跳链是档案属性而非全局档）。
 
 ### D10 平台接缝
 
@@ -248,6 +256,7 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 | E7 | 关一格标签不叫停其它标签的跳板链路（对 F15 那条原生缺陷的反向证成：我们自己的停止位只作用于本链）。**批 4 已落**：`closing_one_tab_does_not_stop_the_chain_of_the_others`——关掉第一格后第二格的 shell 仍在回显、跳板服务器仍只有 1 枚连接。 |
 | E8 | 配置审计：跳板元素里塞 `secret` 明文被 `find_credential_key` 抓住；正常落盘只含句柄。**批 2 已落**：`utest_config.an_unsafe_document_is_refused_whole_and_changes_nothing`（跳板元素里的 `passphrase` 撞禁列名单那一案）与 `an_ssh_proxy_chain_round_trips_and_a_legacy_file_carries_none`（往返只带句柄、旧档无该键＝空链路）。 |
 | E9 | 快照往返：带跳档案的采集→落盘→重放**保住跳链**（八键之外的第九键）；无该键的旧快照折成空链路而非报错。**批 2 已落**：`utest_workspace_snapshot.a_proxy_chain_absent_is_an_empty_chain_and_a_bad_one_rejects_the_whole_document`（缺键＝空链、坏元素整份拒绝，含 `kProxyJumpsSlot` 那一组坏值表）；带链采集→重放的等值断言在 `the_profile_blocks_are_the_same_json_the_config_store_writes` 与四型往返案里。 |
+| E10 | 向导那一行（D9）：SSH 字段集画它、坏链那一下保存**只出留痕行且不交出档案**、好链折进 `SshProfile::proxy_jumps`、留空＝直连、编辑回填规范化串形且保存幂等。**批 5 已落**：`itest_connection_wizard.the_ssh_jump_line_refuses_a_bad_chain_and_saves_a_good_one`（四档）＋同套件判据①把 `connections.field.proxy_jump` 纳入「串口屏不出现的 SSH 栏」；纯逻辑侧 `utest_profile_views.proxy_jump_line_refuses_a_bad_chain_and_folds_a_good_one`（含顺序档与 9 跳上限）与 `editing_a_profile_with_jumps_backfills_the_canonical_line`。 |
 
 ## 6 风险与未验证（如实登记）
 
@@ -259,7 +268,7 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 - **收口期有一条正常的写失败日志**：目标会话先断、该跳中继线程尚未退出时，方向二仍可能往已关的 seed 端写一次，实测读到的是一条 `[WRN] hop pipe write failed: Broken pipe`。这是 F12 关闭序允许竞态（不是越序），保留 WARN 而不静默——真机走查若见这一条，属预期。
 - **`%h`/`%p` 宏与 `ProxyCommand` 不导入**：导入是单向只读，宏未展开即语法坏，按上一条口径整块不导入（本件无日志面，代价是坏链那条档案在导入结果里少一条，用户看得见条数、看不见原因）。
 - **同一块里多行 `ProxyJump` 的取舍次序未实测**：OpenSSH 是「后一行覆盖前一行」还是「逐行累加成一条链」没有本机依据；本件沿用自家解析器的既有口径**后值覆盖**（`src/conn/profile.cpp` 的逐键赋值），真机 sshd/OpenSSH 行为留待 CONN.08 那批真 sshd 端到端一并核。
-- **窗口期已从「静默直连」收到「只剩三条腿没接线」**：批 4 之后终端腿已把 `SshHopChain` 接进装配（`src/conn/ssh_shared.cpp` 的 `dial_then_open_all()` 在 I/O 线程上开链，见 D5 的落地形态），产品六条 SSH 腿都不会再拿带跳的档案静默直连。**剩下的缺口只有 SFTP／隧道／密钥推送三条腿**（§7 批 6），它们的现形行为是「拒拨 + 一条 ERROR／各自的失败档」而不是「连错链路」，并有 `itest_posix_ssh_proxy_jump` 的 E6 一案逐腿盯着。向导仍无跳板输入框（D9 在批 5），用户唯一能造出链路的途径是 `~/.ssh/config` 导入与配置文件直读。
+- **窗口期已从「静默直连」收到「只剩三条腿没接线」**：批 4 之后终端腿已把 `SshHopChain` 接进装配（`src/conn/ssh_shared.cpp` 的 `dial_then_open_all()` 在 I/O 线程上开链，见 D5 的落地形态），产品六条 SSH 腿都不会再拿带跳的档案静默直连。**剩下的缺口只有 SFTP／隧道／密钥推送三条腿**（§7 批 6），它们的现形行为是「拒拨 + 一条 ERROR／各自的失败档」而不是「连错链路」，并有 `itest_posix_ssh_proxy_jump` 的 E6 一案逐腿盯着。**批 5 之后向导那一行也上了**（D9／E10）：用户现在能从 UI 造出链路，而这三腿吃带跳档案时仍按各自的失败档现形。真机走查前，那一行的观感（占位串形是否够用、坏链文案是否指得回那一行）仍未证。
 - **装配闭包没有自动化证人**（批 4 登记）：`src/main.cpp` 的 `with_hop_secrets`、恢复泵的第二个挂起点、以及「留档 bundle 按跳数对齐」都在 UI 装配闭包里，本仓无头测试打不到 `main.cpp`。为此做的补偿是两处：`profile_views` 的折叠与计划在 `utest_profile_views` 有无头证人；「hops 未按跳数对齐 ⇒ 不能共线」这一条补进了 `chain_shape_and_hop_secret_split_the_link`（`SshSecretBundle{target}` 的 `hops == {}` 与 `hops == [nullopt, nullopt]` 判为不同键）。真机走查前，装配层的逐跳取料顺序与恢复泵的续跑仍属**未验证**。
 - **`with_hop_secrets` 的迟到结果没有 `expired()` 闸**：既有房屋里凭据询问的 continuation 持 `std::weak_ptr<CredentialPrompt>` 并以 `prompt.expired()` 挡迟到结果；跳板取料的 continuation 只捕获 store 副本与句柄表，收尾闸门用的是「恢复泵自己的 `restore_done`/`restore_aborted`」。**在册依据**：Aurora `state/async.h` 注明主线程投递器缺失时 `then` 会在 worker 线程同步执行，本仓 `src/main.cpp` 的 `fetch_ports` 注释同述——取料闭包不持 UI 对象正是为了在这两种执行序下都安全。窗口销毁后 `ssh_secret_by_tab` 那一层的留档语义未证，随真机走查一并核。
 - **重启那一腿沿用留档 hops**：`restart_ssh_tab()` 只重解析目标口令，逐跳材料从留档 bundle 原样带过来（不重新问凭据库）。代价是跳板口令在运行期被外部改掉时，重启仍用旧副本；好处是不新增第二次异步。批 5 之后若询问 UI 扩到逐跳，这一条要一起改口。
@@ -273,7 +282,7 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 | 批 2 | D2 的档案末位追加 `proxy_jumps` + `config/store.cpp` 序列化与缺档兼容 + 快照那一键（D7 与 E9）+ D7 导入 `proxyjump` + E8 审计扩案 | 档案往返、快照往返与导入用例 |
 | 批 3 | D10 `hop_pipe` + D4 `SshHopChain` + `ssh_dial` 的 seed 参数与两档新增 + 假服务器 `direct-tcpip` 扩口（F13） | **已交付**：E1/E2/E3/E4（含改口径的 E4b）共 6 案 `itest_posix_ssh_proxy_jump` 全绿、5 轮无 flaky；四条变异自证各自打红（seed 腿失效→2 案、D6 闸取反→1 案、跳序写反→2 案、hop_index 抹平→2 案）；全量 ctest 121/121、无头 runner 1463/1463 |
 | 批 4 | D5 共享键与秘密判据扩容 + D8 bundle 与装配 + D6 三条腿的 fail-closed 现形 | **已交付**：E5/E6/E7 共 4 案新落，`itest_posix_ssh_proxy_jump` 10 案全绿；`utest_ssh_session_key` 6 案、`utest_profile_views` 13 案全绿；全量 ctest 121/121。三条变异自证各自打红（`key.proxy_jumps` 不入键→单测 1 案 + 集成 1 案、`same_secret` 去 hops→单测 1 案 + 分线一案、D6 闸取反→E4b 与 E6 两案）；第四条变异（去掉 bundle 的 `hops.resize`）**无自动化证人**，缺口已登记 §6 |
-| 批 5 | D9 向导那一行 + 词条双档 + 覆盖闸与体积闸；变异自证；文档回写与分层提交 | 判据逐条回写 `SPECIFICATIONS.md` §7 与 `CHANGELOG.md` |
+| 批 5 | D9 向导那一行 + 词条双档 + 覆盖闸与体积闸；变异自证；文档回写与分层提交 | **已交付**：E10 落（`itest_connection_wizard` 11 案、`utest_profile_views` 15 案全绿，全量 ctest 121/121、无头 runner 1474/1474（本批新增 3 案）；覆盖闸 `tools/check/check_display_literals.py` PASS（表外 240 文件无引号内中文），两档 key 集等式与体积闸（`utest_i18n_tiers` 9 案）自动吃下新增的三枚键。六条变异自证各自打红：去掉 `validate_draft` 的 `BadProxyJump` 闸→单测 1 案 + 集成 1 案（且那一下保存会交出**空链路档案**，即稿 D9 要防的静默直连）、去掉 `profile_to_draft` 的回填→单测 1 案 + 集成 1 案、去掉 `collect_draft` 的收值→集成 1 案、那一行不挂进字段集→集成 1 案、`draft_to_profile` 不折链→单测 2 案 + 集成 1 案、问题码折错文案档→集成 1 案 |
 | 批 6（延后，另起裁决） | 跳板接进 SFTP／隧道／密钥推送三条腿 | 不在本稿射程 |
 
 ## 8 与本仓既有裁决的接缝

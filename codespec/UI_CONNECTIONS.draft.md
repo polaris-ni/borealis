@@ -12,6 +12,8 @@
 
 **不本期交付**（详见 §7，均为独立任务或延后子项）：真实 SSH 传输（CONN.02）、真实 OS 凭据后端（CONN.09 libsecret/Keychain/CredMan）、SFTP（CONN.04）、隧道（CONN.08）、串口 / Telnet（CONN.05/06）、快捷片段 snippets（CONN.07 明确延后）、ProxyJump（CONN.03 延后）。
 
+> **2026-10-24 订正（只改口径，本稿正文不动）**：上面那句是 2026-10-09 收口时的原话。此后 ProxyJump 已随裁决 **7.148** 落到终端腿（本稿 §7 第二条同批改口），snippets 随 **7.137**、真实 OS 凭据后端随 **7.132** 到货；CONN.02／04／08／05／06 亦已各自收口。仍在册的只有 ProxyJump 的三条腿接线与逐跳询问 UI。
+
 **关键前提**：真实 SSH 传输未建，故本期「连接」走**临时通道**（见 D3），UI 形态与查询逻辑与真传输到货后一致，仅 connect handler 在 CONN.02 落地时替换。
 
 ## 2 草图与判据对应
@@ -90,10 +92,10 @@ Session（本地终端腿，forkpty/ConPTY；真 SSH 传输待 CONN.02）
 ## 7 本期不做（延后）
 
 - snippets（快捷片段，CONN.07 明确 M4）
-- ProxyJump（CONN.03 延后）
+- ProxyJump（CONN.03 延后）——**终端腿已于 2026-10-24 落地（裁决 7.148）**：语法件 `conn::parse_proxy_jump_list`、档案第九键 `ssh.proxy_jumps`、快照与 `~/.ssh/config` 导入、`SshHopChain` 拨号与连接复用、向导那一行与词条双档。本稿在册余项＝SFTP／隧道／密钥推送三条腿接线（拒拨中）、逐跳凭据的询问 UI（随 CONN.09）、quick connect 的 `-J` 语法。
 - 真实 OS 凭据后端 libsecret/Keychain/CredMan（CONN.09，独立任务；libssh 认证所需的取值路径已就绪，仅存储后端延后）
 - SFTP（CONN.04）、隧道（CONN.08）、串口/Telnet（CONN.05/06）
-- SSH 会话级重连与跳板语义（WS.05 到货时基于 SshConnection 扩展）
+- SSH 会话级重连与跳板语义（WS.05 到货时基于 SshConnection 扩展）——两条均已在 `SshConnection` 上落地：重连见裁决 7.100，跳板语义的终端腿见裁决 7.148（本条从「本期不做」清单里出账，去向仍可追溯）。
 
 ## 8 裁决记录（2026-10-09 收口，原「评审待决」）
 

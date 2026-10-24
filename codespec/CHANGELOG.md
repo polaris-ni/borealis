@@ -4,6 +4,23 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.148（2026-10-24）**`SPEC.FEAT.CONN.03` 的跳板机（ProxyJump 语义）延后子项结项：五批落地终端腿——语法层唯一主人、档案四面、`SSH_OPTIONS_FD` 跳链拨号、共享键与逐跳秘密、向导那一行（裁决 7.148；本地提交 `4d50b38` → 批 1 `1712a9f` → 批 2 `7f4cafa` → 批 3 `4693654`+`e9c2747`+`d4039e8`+`58c48be` → 批 4 `21dc161`+`617b86c`+`bf1d7a5`+`2939303`+`7c9a601` → 批 5 `8a8b64b`+`5555568`+`9601040` → 文档回写（本笔））**
+
+**动机**：CONN.03 原文把「跳板机（ProxyJump 语义）」列为延后子项——嵌入式与内网运维的常见形态是目标机只有跳板机能达，而本仓的六条 SSH 腿只会直连 host:port；用户此前唯一的出路是自备 `~/.ssh/config` 再靠导进来，而导入即便读到 `ProxyJump` 也不消费。本棒按 `codespec/CONN03_PROXYJUMP.draft.md` 的五批口径把这条延后子项整体结项，射程＝**终端腿**：SFTP／隧道／密钥推送三条腿本轮只做到 fail-closed，接进跳链另起批 6。
+
+**落地形态**：
+
+- **语法只有一处答案**：`conn::parse_proxy_jump_list`／`render_proxy_jump_list`／`validate_proxy_hops`（`src/conn/proxy_jump.{h,cpp}`，无 libssh、无平台、无 UI）是「跳链怎么表达」的唯一主人——向导那一行、`~/.ssh/config` 导入、档案 JSON、连接复用的共享键串形四处都经它折算。取 OpenSSH 的 `[user@]host[:port]` 逗号串：端口留空折 22、`none`＝显式空链路、上限 `kMaxProxyHops = 8`、含 `%` 或空白即坏、**任一枚坏 token 整串拒绝**——部分接受等于替用户存了一条他没写过的链路。
+- **模型末位追加，不动既有字段序与可见性**：`SshProfile::proxy_jumps`（`std::vector<SshHop>`，跳序＝数组序、第 0 项最靠近本机）与逐跳一枚 `SecretHandle` 进配置第五域、快照第九键与导入面；`SshHop::operator==` 是 default，跳链因此自动进入「两条档案是否相同」与各处往返断言。明文凭据审计（`find_credential_key`）覆盖面扩到跳板元素（E8）。
+- **拨号形态是 seed，不是协议细节**：`platform::hop_pipe` 交一对可对等读写的句柄（POSIX＝`socketpair(AF_UNIX, SOCK_STREAM)`；Win32＝回环 TCP 一对，**未编译**），`conn::SshHopChain`（私有头）逐跳建 `ssh_session`、开 `direct-tcpip` 到下一跳，把 seed 端经 libssh 的 `SSH_OPTIONS_FD` 交给目标会话；中继是手写双向泵（每跳一份 16 KiB 缓冲，本期不设每跳字节上界）。失败归因两档：`DialOutcome::Hop` + `hop_index` 指到具体那一跳；`HopUnwired` 专指「档案有跳但 seed 没接」——**此时不发起目标连接**。
+- **与 7.147 的接缝是追加判据而非改判**：跳链的规范化串形进 `SshSessionKey`（故 `jump:22` 与 `jump` 不分键）、逐跳秘密进 `SshSecretBundle{target, hops}` 并由 `same_secret` 逐项全等（hops 未按跳数对齐 ⇒ 不同键）；开链在共享会话 I/O 线程的 `dial_then_open_all()` 内、目标 `ssh_new()` 之后认证之前，收链在目标 `ssh_free` **之后**，重拨复用同一枚 `hop_chain`。六条 SSH 腿经 `with_hop_secrets` 取逐跳材料，跳链为空 ⇒ 同步回调，时序与批 4 之前一致。
+- **三条腿现形而不静默**：SFTP ⇒ `connect()` 假 + `last_error() == SftpError::Network`；隧道 ⇒ `TunnelState::Failed`（按各自重试档，`max_attempts=1` 时零 Backoff）；密钥推送 ⇒ `PushStage::Dial` 且 `failure` 有值；三腿两侧服务器 `accepted_connections() == 0` 收口。
+- **向导那一行的三处改口径**（稿 D9 落地形态）：草稿存**串形原文** `ProfileDraft::proxy_jumps_text`（坏值得有地方待着，解析只在纯逻辑层发生，于是「坏链禁保存」可无头断言）；稿面「在该行给红字」按向导既有形态改口为**底部常驻留痕行** + 新问题码 `DraftIssue::BadProxyJump`（向导没有逐行错误槽，端口/串口/Telnet 三族判据同一条走法，AGENTS §4.2 第 12 条以运行时为准回填）；词条实际**三枚**双档进表（行标签、占位串形、留痕文案——placeholder 也进表是本仓占位串全经 `settings_label()` 的既有纪律）。编辑回填用规范化串形，故「编辑一次把 `:22` 改没」不可能。**不新增设置键**（跳链是档案属性而非全局档）、侧栏不显示跳链、quick connect 不接 `-J`。
+
+**验收读数**：构建通过；`ctest --preset linux -E etest_` **121/121**、无头 runner **1474/1474**（本棒新增 3 案）。证人＝`utest_proxy_jump` 10 案（语法、端口折叠、`none`、整串拒绝、上限、render/parse 往返）＋ `itest_posix_ssh_proxy_jump` 10 案（E1–E7：一跳与两跳的转发目的逐项比对、次跳认证归因、跳板主机密钥策略、共享与分线、关一格不停链、三条腿 fail-closed）＋ `utest_ssh_session_key` 6 案＋ `utest_profile_views` 15 案＋ `itest_connection_wizard` 11 案（E10 四档）＋ E8/E9 的配置、快照与审计案；覆盖闸 `tools/check/check_display_literals.py` PASS（表外 240 文件无引号内中文）、两档 key 集等式与体积闸（`utest_i18n_tiers` 9 案）自动吃下新增三枚键。批 5 六支变异各有指名红案：M1 去掉 `validate_draft` 的 `BadProxyJump` 闸 → 单测 1 案 + 向导案红，且那一下保存交出**空链路档案**（正是要防的静默直连）；M2 去掉 `profile_to_draft` 的回填 → 回填案 + 向导案红；M3 去掉 `collect_draft` 的收值 → 仅向导案红（纯逻辑层无感，反证分层成立）；M4 那一行不挂进字段集 → 仅向导案红；M5 校验过了却不折链 → 折算 2 案 + 向导案红；M6 问题码折错文案档 → 仅向导案红；还原后全量复绿。批 3／批 4 各自的变异（seed 腿失效、跳序写反、`hop_index` 抹平、`key.proxy_jumps` 不入键、`same_secret` 去 hops、D6 闸取反）同批在册，唯一无自动化证人的一支（去掉 bundle 的 `hops.resize`）已登记稿 §6。
+
+**边界与不称可用**（`AGENTS.md` §4.4 第 33 条）：**Win32 全链未编译**（`hop_pipe` 的 Win32 腿、F17 的 `SSH_OPTIONS_FD` 句柄 `& 0xffff` 截断风险、F7 那条守卫结论都只有读码依据）；对端是进程内 libssh 假服务器而非真 sshd（`AllowTcpForwarding`／`permit-open` 权限面归 CONN.08 的 etest 欠账）；`AcceptNew` 的 known_hosts 写盘不可被 `$HOME` 重定向（F16 实测 `pw_dir`），故 E4 后半句只留在无头策略判定层；同块多行 `ProxyJump` 的取舍次序未实测，沿用自家解析器的**后值覆盖**；`%h`/`%p` 宏与 `ProxyCommand` 不导入；`src/main.cpp` 的 `with_hop_secrets`、恢复泵第二个挂起点与留档 bundle 对齐**无自动化证人**，且该取料闭包没有 `expired()` 闸；`restart_ssh_tab()` 沿用留档 hops（跳板口令运行期被外部改掉时仍用旧副本）；逐跳凭据的询问 UI 未扩（`AskEveryTime` 的那一跳留空，随 CONN.09）；SFTP／隧道／密钥推送三条腿仍拒拨（批 6）；**向导那一行的观感未真机走查**（占位串形是否够用、坏链文案是否指得回那一行）⇒ 本条**不称「可用」**。
+
 ## v0.147（2026-10-24）**`SPEC.FEAT.CONN.02` 的连接复用延后子项落地：同参数同秘密的多标签共享一条 TCP、各持一条 shell 通道（裁决 7.147；本地提交 `4a0260e` → `7c5321f` → `0391ae8` → 文档回写（本笔））**
 
 **动机**：CONN.02 的「同一 profile 的连接复用（多标签共享一条 TCP 连接）」此前只列为延后子项——每开一个 SSH 标签／分屏 pane 就新拨一条 TCP，服务器上因此多出一条登录记录，`MaxSessions` 也更早见顶。需求点名的是终端多标签，本次只做终端腿的传输复用，SFTP／隧道／密钥推送不改。
