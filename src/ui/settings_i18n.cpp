@@ -67,6 +67,10 @@ const Tier kStringsZh{
     {"connections.field.user", "用户"},
     {"connections.field.auth", "认证方式"},
     {"connections.field.identity", "私钥路径"},
+    // 跳板机那一行（`SPEC.FEAT.CONN.03` 稿 D9）：占位符按本仓纪律也进表（可见串一律走词条，
+    // 见 `main.cpp` 那处「置位即不再走 i18n」的反例注释），两档只差「形如 / e.g.」引导语。
+    {"connections.field.proxy_jump", "跳板机（ProxyJump）"},
+    {"connections.proxy_jump.placeholder", "形如 jump1.example.com,jump2:2222"},
     {"connections.field.command", "命令"},
     {"connections.field.workdir", "工作目录"},
     {"connections.auth.agent", "Agent 密钥"},
@@ -88,6 +92,9 @@ const Tier kStringsZh{
     {"connections.wizard.issue_empty_host", "主机不能为空"},
     {"connections.wizard.issue_port", "端口须在 1..65535"},
     {"connections.wizard.issue_auth", "认证方式无效"},
+    // 跳板链坏值的措辞说清「整串不收」而不是「这一跳不收」：部分接受会让用户以为跳板生效了
+    //（稿 D3/D9 同一条理由）。
+    {"connections.wizard.issue_proxy_jump", "跳板链无效：须为 user@host:port 逗号分隔，最多 8 跳"},
     // ---- 串口向导与热改波特率（UI_SERIAL.draft.md，裁决 7.110；`connections.serial.*` 的
     //      参数档与可达性归因由 `serial_format` 唯一产出，装配与向导不 switch 第二套措辞）----
     {"connections.type.serial", "串口终端"},
@@ -778,6 +785,9 @@ const Tier kStringsEn{
     {"connections.field.user", "User"},
     {"connections.field.auth", "Auth method"},
     {"connections.field.identity", "Private key path"},
+    // 跳板机那一行（`SPEC.FEAT.CONN.03` 稿 D9）：占位符按本仓纪律也进表（可见串一律走词条）。
+    {"connections.field.proxy_jump", "Jump host (ProxyJump)"},
+    {"connections.proxy_jump.placeholder", "like jump1.example.com,jump2:2222"},
     {"connections.field.command", "Command"},
     {"connections.field.workdir", "Working directory"},
     {"connections.auth.agent", "Agent key"},
@@ -799,6 +809,9 @@ const Tier kStringsEn{
     {"connections.wizard.issue_empty_host", "Host cannot be empty"},
     {"connections.wizard.issue_port", "Port must be 1..65535"},
     {"connections.wizard.issue_auth", "The auth method is invalid"},
+    // 跳板链坏值的措辞说清「整串不收」而不是「这一跳不收」（稿 D3/D9 同一条理由）。
+    {"connections.wizard.issue_proxy_jump",
+     "The jump chain is invalid: use user@host:port, comma separated, up to 8 hops"},
     // ---- 串口向导与热改波特率（UI_SERIAL.draft.md，裁决 7.110；`connections.serial.*` 的
     //      参数档与可达性归因由 `serial_format` 唯一产出，装配与向导不 switch 第二套措辞）----
     {"connections.type.serial", "Serial terminal"},

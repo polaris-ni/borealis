@@ -124,6 +124,7 @@ private:
     std::shared_ptr<aurora::TextInput> port_input_{};
     std::shared_ptr<aurora::TextInput> user_input_{};
     std::shared_ptr<aurora::TextInput> identity_input_{};
+    std::shared_ptr<aurora::TextInput> jump_input_{};  ///< 跳板链那一行（串形原文，稿 D9）。
     std::shared_ptr<aurora::TextInput> command_input_{};
     std::shared_ptr<aurora::TextInput> workdir_input_{};
     std::shared_ptr<aurora::TextInput> device_input_{};      ///< 「自定义…」档的手输框。

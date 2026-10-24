@@ -5,7 +5,9 @@
 // `UI_TELNET.draft.md` D1①/D2①），步骤 1＝
 // 该类型的字段集（串口九行见该稿 §2 标号 2：展示名是输入框、设备行是「下拉 + 刷新 +
 // 自定义」三件套、其余七行一律循环按钮；Telnet 只有展示名/主机/端口三行，见
-// `UI_TELNET.draft.md` §2 判据 1）。参数与主机密钥策略用循环按钮（行内不用覆盖
+// `UI_TELNET.draft.md` §2 判据 1；SSH 在私钥路径之后多一行跳板机——填的是串形原文，
+// 坏值不就地画红而是走下面那条留痕行，见 `CONN03_PROXYJUMP.draft.md` D9）。
+// 参数与主机密钥策略用循环按钮（行内不用覆盖
 // 绘制不占布局的控件，settings_panel 文件头那条形态约束同源；向导里的设备下拉是
 // D2① 明裁的行外控件，同 `itest_settings_panel` 的行内下拉先例）。校验失败只在 notice
 // 行给文案，不弹二级对话框。
@@ -151,6 +153,8 @@ class DeviceDropdown final : public aurora::Dropdown {
             return "connections.wizard.issue_port";
         case conn::DraftIssue::UnknownAuthMethod:
             return "connections.wizard.issue_auth";
+        case conn::DraftIssue::BadProxyJump:
+            return "connections.wizard.issue_proxy_jump";
         case conn::DraftIssue::EmptyDevice:
             return "connections.wizard.issue_device";
         case conn::DraftIssue::BaudNotInTable:
@@ -254,6 +258,8 @@ auto ConnectionWizard::collect_draft() -> void {
         draft_.user = user_input_ != nullptr ? user_input_->value() : draft_.user;
         draft_.identity_file = identity_input_ != nullptr ? identity_input_->value()
                                                           : draft_.identity_file;
+        draft_.proxy_jumps_text = jump_input_ != nullptr ? jump_input_->value()
+                                                         : draft_.proxy_jumps_text;
         if (const auto port = port_from_input(port_input_, kDefaultSshPort)) {
             draft_.port = *port;
         }
@@ -413,6 +419,15 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
             identity_input_->set_value(draft_.identity_file);
             children.push_back(
                 make_field_row(settings_label("connections.field.identity"), aurora::Node{std::static_pointer_cast<aurora::Widget>(identity_input_)}));
+
+            // 跳板机那一行（`SPEC.FEAT.CONN.03` 稿 D9）：单行输入、串形原文，形态与上面几行同
+            // 一件控件（不新增控件类型）。坏值不就地画红而是落到下面那条常驻留痕行——向导没有
+            // 「逐行错误槽」这一形态，端口那一行也是同一走法。
+            jump_input_ = make_input(240.0F);
+            jump_input_->set_value(draft_.proxy_jumps_text);
+            jump_input_->set_placeholder(settings_label("connections.proxy_jump.placeholder"));
+            children.push_back(
+                make_field_row(settings_label("connections.field.proxy_jump"), aurora::Node{std::static_pointer_cast<aurora::Widget>(jump_input_)}));
         } else if (draft_.type == conn::ConnectionType::Serial) {
             // 串口字段集（稿 §2 标号 2）：设备行是「下拉 + 刷新 + 自定义」三件套，其余六行
             // 循环按钮；展示名那行两型共用，已在上面。
@@ -684,6 +699,7 @@ auto ConnectionWizard::clear_state() -> void {
     port_input_.reset();
     user_input_.reset();
     identity_input_.reset();
+    jump_input_.reset();
     command_input_.reset();
     workdir_input_.reset();
     device_input_.reset();
