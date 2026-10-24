@@ -58,6 +58,12 @@ struct ProfileDraft {
     std::string identity_file{};
     bool agent_forwarding{false};
     KnownHostsPolicy known_hosts_policy{KnownHostsPolicy::AcceptNew};
+    /// @brief 跳板链的串形原文（OpenSSH `-J` 那一套 `[user@]host[:port]`，逗号分隔）。
+    ///
+    /// 草稿存**串**而不是存解析好的跳链，为的是让坏值有地方待着：`validate_draft` 解析它并据此
+    /// 决定「禁止保存」，`draft_to_profile` 在校验通过后解析一次折进 `SshProfile::proxy_jumps`
+    /// （`SPEC.FEAT.CONN.03` 稿 D9）。空串＝直连（`parse_proxy_jump_list` 认 `none` 为空链路）。
+    std::string proxy_jumps_text{};
     // 串口型字段（`SPEC.FEAT.CONN.05`，裁决 7.110 D4①）：直接复用 `SerialProfile` 的形态而不是
     // 在草稿里重列一遍八个字段——那里的成员初值就是「新建串口档案的字段初值」，而设置域那份
     // `config::SerialDefaults` 由装配层在建草稿那一刻灌进来（D4①）。草稿与档案同形，
@@ -77,6 +83,7 @@ enum class DraftIssue : std::uint8_t {
     EmptyHost,           ///< SSH / Telnet 型主机必填（Telnet 复用同一档，零新增问题码）。
     PortOutOfRange,      ///< 端口须在 1..65535。
     UnknownAuthMethod,   ///< 认证方式必须是四档之一。
+    BadProxyJump,        ///< 跳板链那一行解析不出合法跳链（稿 D9：坏链不得存成「看似有跳板」的档案）。
     EmptyDevice,         ///< 串口型必填设备节点名（稿 §2 标号 4）。
     BaudNotInTable,      ///< 波特率须在本仓档位表内（`conn::is_supported_baud`）。
     DataBitsOutOfRange,  ///< 数据位须在 5..8。

@@ -13,6 +13,7 @@
 #include <optional>
 #include <utility>
 
+#include "proxy_jump.h"      // parse/render_proxy_jump_list：向导那一行的唯一解析点
 #include "serial_model.h"  // is_supported_baud：向导的速率判据取那一份唯一档位表
 #include "ssh_dial.h"      // normalized_auth_method：与拨号腿同一份认证方式归一
 
@@ -94,6 +95,11 @@ auto validate_draft(const ProfileDraft &draft) -> DraftIssue {
             method != "keyboard-interactive") {
             return DraftIssue::UnknownAuthMethod;
         }
+        // 跳板链那一行坏值就禁止保存（稿 D9）：**部分接受等于替用户造了一条他不知道的直连**，
+        // 与 D6 那条「丢了跳板就等于绕过它」同一条理由，故整串拒绝而不是留好跳。
+        if (!parse_proxy_jump_list(draft.proxy_jumps_text).has_value()) {
+            return DraftIssue::BadProxyJump;
+        }
     }
     if (draft.type == ConnectionType::Telnet) {
         // Telnet 型**零新增问题码**（裁决 7.112 D2①）：主机必填与端口区间都复用 SSH 那两档，
@@ -145,6 +151,12 @@ auto draft_to_profile(const ProfileDraft &draft, std::string id) -> Profile {
         profile.ssh.identity_file = draft.identity_file;
         profile.ssh.agent_forwarding = draft.agent_forwarding;
         profile.ssh.known_hosts_policy = draft.known_hosts_policy;
+        // 串形 → 跳链：只在校验通过后到这里（`validate_draft` 已保证解析得出来）。解不出来是
+        // 调用方漏了校验，那种情况下**留空链路**——它比半截链路更接近事实，但要紧的是本仓唯一
+        // 的调用点 `ConnectionWizard::save()` 先校验、不过校验就不落档案。
+        if (const auto hops = parse_proxy_jump_list(draft.proxy_jumps_text)) {
+            profile.ssh.proxy_jumps = *hops;
+        }
     }
     return profile;
 }
@@ -169,6 +181,8 @@ auto profile_to_draft(const Profile &profile) -> ProfileDraft {
         draft.identity_file = profile.ssh.identity_file;
         draft.agent_forwarding = profile.ssh.agent_forwarding;
         draft.known_hosts_policy = profile.ssh.known_hosts_policy;
+        // 回填走规范化串形（总是带端口）：编辑一次不该把 `:22` 从档案里「改没」。
+        draft.proxy_jumps_text = render_proxy_jump_list(profile.ssh.proxy_jumps);
     }
     return draft;
 }
