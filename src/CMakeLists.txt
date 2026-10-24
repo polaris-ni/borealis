@@ -60,6 +60,7 @@ add_library(borealis_core STATIC
         session/clipboard_outbox.cpp
         session/damage_queue.cpp
         session/notification_outbox.cpp
+        session/raw_tap.cpp
         session/screen_mirror.cpp
         session/session.cpp
         session/session_log.cpp
@@ -84,6 +85,7 @@ add_library(borealis_core STATIC
         ui/search.cpp
         ui/search_overlay.cpp
         ui/serial_format.cpp
+        ui/serial_monitor_format.cpp
         ui/settings_catalog.cpp
         ui/settings_form.cpp
         ui/settings_i18n.cpp
