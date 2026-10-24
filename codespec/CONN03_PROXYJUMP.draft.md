@@ -222,8 +222,8 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 
 | 批 | 内容 | 交付判据 |
 |:---|:---|:---|
-| 批 1 | D3 纯逻辑件 + `utest_proxy_jump`（语法、端口折叠、`none`、整串拒绝、上限、render/parse 往返） | 无头单测全绿，不碰 libssh |
-| 批 2 | D2 模型追加 + `config/store.cpp` 序列化与缺档兼容 + 快照那一键（D7 与 E9）+ D7 导入 `proxyjump` + E8 审计扩案 | 档案往返、快照往返与导入用例 |
+| 批 1 | D3 纯逻辑件 + **D2 的 `SshHop` 类型本体**（解析件的返回类型即它，只能与它同批落公共头）+ `utest_proxy_jump`（语法、端口折叠、`none`、整串拒绝、上限、render/parse 往返） | 无头单测全绿，不碰 libssh |
+| 批 2 | D2 的档案末位追加 `proxy_jumps` + `config/store.cpp` 序列化与缺档兼容 + 快照那一键（D7 与 E9）+ D7 导入 `proxyjump` + E8 审计扩案 | 档案往返、快照往返与导入用例 |
 | 批 3 | D10 `hop_pipe` + D4 `SshHopChain` + `ssh_dial` 的 seed 参数与两档新增 + 假服务器 `direct-tcpip` 扩口（F13） | E1/E2/E3/E4 的 `itest_posix_` 用例 |
 | 批 4 | D5 共享键与秘密判据扩容 + D8 bundle 与装配 + D6 三条腿的 fail-closed 现形 | E5/E6/E7 + 全量回归 |
 | 批 5 | D9 向导那一行 + 词条双档 + 覆盖闸与体积闸；变异自证；文档回写与分层提交 | 判据逐条回写 `SPECIFICATIONS.md` §7 与 `CHANGELOG.md` |

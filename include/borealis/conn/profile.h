@@ -103,6 +103,29 @@ enum class KnownHostsPolicy : std::uint8_t {
     Ask,        ///< 未知时询问用户。
 };
 
+/// @brief 跳板机上的一跳（`SPEC.FEAT.CONN.03` 延后子项 ProxyJump，设计稿
+///        `codespec/CONN03_PROXYJUMP.draft.md` D2）。
+///
+/// 字段与 `SshProfile` 的连接面同形但**语义不同**：本结构描述的是「先到哪儿」，
+/// 目标主机不在其中（它是下一跳或最终 `SshProfile::host`）。平铺而非复用
+/// `SshProfile` 的理由：跳没有 agent_forwarding 这一说（转发只在最终会话上开），
+/// 也让「档案被误当跳板粘进链里」这种形态在类型上不存在。
+///
+/// 串形（`[user@]host[:port]` 逗号串）的解析／规范化／校验一律走
+/// `conn/proxy_jump.h`，本结构只承载结果字段；`port` 存**生效值**（留空已折 22），
+/// 不在这里再留一份「是否显式写过端口」。
+struct SshHop {
+    std::string host;                       ///< 主机名或 IP（IPv6 存裸写形式，方括号只是串形）。
+    int port{22};                           ///< 生效端口。
+    std::string user;                       ///< 登录用户名；空＝跟随 SSH 缺省。
+    std::string auth_method{"agent"};       ///< password / privatekey / agent / keyboard-interactive。
+    std::string identity_file;              ///< 私钥路径；空＝SSH 默认（`~/.ssh/id_*`）。
+    KnownHostsPolicy known_hosts_policy{KnownHostsPolicy::AcceptNew};
+    SecretHandle credential{};              ///< 该跳的口令/passphrase 句柄（CONN.09 同口径）。
+
+    [[nodiscard]] auto operator==(const SshHop &) const noexcept -> bool = default;
+};
+
 /// @brief SSH 档案（CONN.03）。
 struct SshProfile {
     std::string host;                 ///< 主机名或 IP。

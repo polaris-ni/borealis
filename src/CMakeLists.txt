@@ -20,6 +20,7 @@ add_library(borealis_core STATIC
         conn/key_store.cpp
         conn/profile.cpp
         conn/profile_views.cpp
+        conn/proxy_jump.cpp
         conn/reconnect.cpp
         conn/serial_connection.cpp
         conn/serial_model.cpp
