@@ -119,7 +119,8 @@ src/session/raw_tap.cpp              新增 —— 环的实现：逐出最旧 r
 include/borealis/session/session.h   改 —— 尾追加三枚接缝：enable_raw_tap()（幂等，返回 shared_ptr）、
                                         raw_tap()（观测/装配取数）、以及 ingest/write_out 用到的私有记痕点。
                                         缺省未武装＝空指针＝零成本，既有八个构造点不改一字。
-src/session/session.cpp              改 —— RX：`ingest` 出锁后、与 `log_target->append` 同一世代记一笔；
+src/session/session.cpp              改 —— RX：`ingest` **出锁后第一格**记一笔（须排在应答回写之前，
+                                        落地改口的理由见 §4.2①）；
                                         TX：`write_out` 的两个 `connection_->write` 出口收成一处私有
                                         `emit_to_connection()`，折算后的字节在那里记一次
                                         （代价登记：多一枚私有函数，换来「一处采样」这条判据可断言）。
@@ -149,7 +150,7 @@ codespec/{SPECIFICATIONS,CHANGELOG,PLAN,ARCHITECTURE}.md 改 —— 裁决、版
 放进 session 层就是让公共头认识「一行几个字节」这种界面量；纯逻辑性由「无 Aurora 类型」保证，与
 `ui::serial_format` / `ui::tunnel_format` 完全同族，可无头单测（§4.4 第 20 条）。
 
-### 4.1 批 1 落地时对稿面的三处改口（2026-10-25，按 §4.2 第 12 条以运行时为准回写）
+### 4.1 批 1 落地时对稿面的三处改口（2026-10-25，按 AGENTS §4.2 第 12 条以运行时为准回写）
 
 1. **`snapshot()` 不带上界形参**。稿 §4 那句写的是 `snapshot(max_bytes)`，与 §5 那条「D4 的环上界就是
    快照上界，不需要第二个数」本来就是矛盾的；落地取后者——第二个数只会造出「环里还有，但你只取了
@@ -165,9 +166,36 @@ codespec/{SPECIFICATIONS,CHANGELOG,PLAN,ARCHITECTURE}.md 改 —— 裁决、版
 **批 1 结项读数**：`ctest --preset linux -E etest_` **123 项全绿**（+2＝`utest_raw_tap`／
 `utest_serial_monitor_format`），`borealis_test_runner` 全跑 **1495 案全绿**（+21＝环 9 案 + 折算 12 案）。
 非空转按 §4.4 第 22 条以三则变异自证，各转红、还原后 `cmp` 逐字节相同（这三则就是 §6 批 4 清单里的
-ⓓ／ⓒ 两则加上折算件的那条行尾变体，本批先把它们做掉，批 4 只做 ⓐ／ⓑ 两则 `Session` 侧的）：
+ⓓ／ⓒ 两则加上折算件的那条行尾变体，本批先把它们做掉；`Session` 侧的 ⓐ／ⓑ 两则去向见 §4.2：ⓑ 随批 2
+做掉、ⓐ 判下无断言证人）：
 ⓐ 环逐出改按条数（`runs_.size() > 4`）⇒ 环 5 案转红；ⓑ 快照末尾的挂起尾段整条丢掉 ⇒ 折算 7 案转红；
 ⓒ 挂起尾段在每个 run 边界就落笔成行（F10 那条判据）⇒ 折算 3 案转红。
+
+### 4.2 批 2 落地时对稿面的三处改口与读数（2026-10-25，按 AGENTS §4.2 第 12 条以运行时为准回写）
+
+1. **RX 记痕点从「与 `log_target->append` 同一世代」改为「出锁后第一格、应答回写之前」**。稿 §4 与 §5
+   原话把这一笔排在落盘旁边（唤醒之后），批 2 写完判下：同一轮 `ingest` 里这批字节本身就可能触发状态机
+   应答（DSR／DA1），`flush(responses)` 紧跟出锁就跑——TX 先一步进环就成了「我方先答、设备后问」，
+   而环唯一的顺序承诺是**到达序**（D3①）。落盘那条仍留在唤醒之后（它靠后是因为一次写盘的耗时不该压在
+   帧调度前面，与环的顺序无关）。指名证人 `the_query_answer_is_recorded_after_the_batch_that_asked_for_it`。
+2. **私有记痕收口落成一枚 `record_raw()`，RX／TX 两处都用它**，稿面只提了 TX 侧的 `emit_to_connection()`。
+   代价如实登记：未武装时的成本是一把**无争用的短临界区**（取 `shared_ptr` 副本）＋一次空指针判，
+   与稿 §5 那句「判一次」同量级；空批（`ingest({}, true)` 那一轮）在取锁之前就返回，不占环格。
+3. **ⓐ（记痕嵌进 `Session::mutex_`）实测没有断言证人**——批 4 的变异清单据此更正。理由有两条：本仓没有
+   能观测「两把锁是否嵌套」的接缝（环的锁在 `RawTap` 内部，会话侧只在非持锁上下文取用）；且它不构成锁序环
+   ——另一条线程只碰环自己的锁，不回头取会话锁，故既不死锁也不改语义。ⓐ 因此由 `raw_tap.h` 头注与
+   `session.h` 尾注那两条**硬约束**加代码走查承担，批 4 不再列为「必红」。将来若面板侧出现「在环的锁里
+   回调会话」的形态，这条才升级为真死锁，届时再补证人。
+
+**批 2 结项读数**：`ctest --preset linux -E etest_` **123 项全绿**（本批不新增套件，只扩 `utest_session`），
+`borealis_test_runner` 全跑 **1504 案全绿**（基线 1495 ⇒ +9）。原有行尾折算四案（裁决 7.110 D11① 的既有判据）
+在 `emit_to_connection` 收口后**仍全绿**，口径未动。非空转按 §4.4 第 22 条以四则变异自证，各转红、还原后
+`cmp` 逐字节相同（本批的 m1 就是 §6 批 4 清单里的那则 ⓑ，随本批先做掉）：
+**m1** TX 采样改在折算前 ⇒ `the_lf_leg_records_the_folded_bytes_not_the_keytable_ones` 与
+`the_crlf_leg_records_a_lone_cr_as_the_pair` 两案转红（`both_write_out_wings_…` **不红**：那里两翼的字节
+本来就没折过，红的是真发生折算的那两案）；**m2** RX 记痕挪到应答回写之后 ⇒ 顺序那案转红；**m3** 早退那一翼
+绕过收口（回到两翼各写一版、其中一翼漏记）⇒ 顺序案／两翼案／双线程案三红；**m4** 武装不幂等（每次换一件、
+旧件连同已采 run 一起丢）⇒ `arming_a_second_time_hands_back_the_same_ring_and_its_history` 转红。
 
 ---
 
@@ -175,9 +203,12 @@ codespec/{SPECIFICATIONS,CHANGELOG,PLAN,ARCHITECTURE}.md 改 —— 裁决、版
 
 ```
 读线程 ── on_bytes ──► ingest ──┬── 锁内：decoder_->feed → terminal_.feed → collect_damage
-                               └── 出锁：raw_tap->record(Received, now_ms(), bytes)   ← 与 log append 同世代
+                               └── 出锁第一格：record_raw(Received, bytes)  ← 应答回写之前（§4.2①）
+                                   └── 之后才是 flush(应答) → 推队列 → 唤醒 → log append
 主线程 ── 键入/粘贴/片段 ──► send_text / send_bytes ──► flush ──► write_out（行尾折算）
-                                                                  └── raw_tap->record(Transmitted, now_ms(), 折算后)
+                                                                  └── emit_to_connection()：
+                                                                      record_raw(Transmitted, 折算后)
+                                                                      再 connection_->write(同一份)
 主线程 ── on_frame ──► SerialMonitorPanel::tick() ──► snapshot Hook ──► RawTap::snapshot(≤ 环上限)
                                                         └── monitor_rows(...) ──► 行表 diff ──► 有变才重建行区
 ```
@@ -189,7 +220,8 @@ codespec/{SPECIFICATIONS,CHANGELOG,PLAN,ARCHITECTURE}.md 改 —— 裁决、版
 - **拷贝量级**：一次 `snapshot()` 至多交出 256 KiB（D4 的环上界就是快照上界，不需要第二个数）；
   面板只把最后可见的那几十行折成字符串（F5：60 行 ≈ 14 µs），其余 run 折都不折。
 - **武装态的常驻代价**：F4 的 0.604 µs / 32 KiB 加一次 `now()`（F11：11 ns 量级），每批一次；
-  `record` 只在指针非空时发生，未武装即 `nullptr` 判一次——与今天的 `log_` 那条同形。
+  落地形态是 `record_raw()` 那把**无争用的短临界区**（锁内只取 `shared_ptr` 副本）＋一次空指针判，
+  与今天的 `log_` 那条同形；空批（`ingest({}, true)` 的收尾一轮）在取锁前就返回（§4.2②）。
 
 ---
 
@@ -198,9 +230,9 @@ codespec/{SPECIFICATIONS,CHANGELOG,PLAN,ARCHITECTURE}.md 改 —— 裁决、版
 | 批 | 交付 | 判据与读数口径 |
 |---|---|---|
 | 批 1 | `session::RawTap` + `ui::serial_monitor_format` 两件纯逻辑 + 两份 utest | 环逐出/丢弃/快照上界各有案；行形态按 §2 的算术逐字符断言（54 字符那一条写成用例常量）；F10 的「一行跨两 run」有案。**结项读数**：`ctest --preset linux -E etest_` 项数 +2，runner 全案数报实测数 |
-| 批 2 | `Session` 的 RX／TX 两笔记痕（含 `emit_to_connection` 那一处收口）+ `utest_session` 扩案 | 未武装零成本、RX 逐字节一致、TX 是折算后字节三档各一案；`emit_to_connection` 收口后**原有行尾折算四案必须仍全绿**（那条是 7.110 D11① 的既有判据，不能被本棒改口径） |
+| 批 2 | `Session` 的 RX／TX 两笔记痕（含 `emit_to_connection` 那一处收口）+ `utest_session` 扩案 | **已结项（2026-10-25）**：未武装零成本、RX 逐字节一致、TX 是折算后字节三档各一案；`emit_to_connection` 收口后**原有行尾折算四案仍全绿**（那条是 7.110 D11① 的既有判据，本棒未改口径）。读数与四处口径改口见 §4.2 |
 | 批 3 | 面板 + 装配 + 词条双档 + `itest_panel_retarget` 第八只 | 无头真派发：开关联动、暂停、清空、时间戳开关、丢弃留痕各一案；`python3 tools/check/check_display_literals.py` 覆盖闸 PASS（表外文件零引号中文）；`utest_i18n_tiers` 两档 key 集等式仍成立 |
-| 批 4 | 变异自证 + 文档回写 + 分层提交 | 至少四则变异各转红并还原：ⓐ `record` 挪进 `Session::mutex_` 临界区（并发/成本类断言）、ⓑ TX 采样改在折算前（行尾那案转红）、ⓒ 挂起尾段不留（F10 那案转红）、ⓓ 环逐出按条数不按字节（D4 那案转红）；回写 `SPECIFICATIONS.md` §7 裁决 + `CHANGELOG.md` 新版本 + `PLAN.md` §4 该条出账 + `codespec/UI_SERIAL.draft.md` §7 那条「延后」改口 |
+| 批 4 | 变异自证 + 文档回写 + 分层提交 | 至少三则变异各转红并还原：ⓐ ~~`record` 挪进 `Session::mutex_` 临界区~~ **实测无断言证人，改由头注硬约束＋走查承担（§4.2③）**、ⓒ 挂起尾段不留（F10 那案转红）、ⓓ 环逐出按条数不按字节（D4 那案转红）——ⓑ 已随批 2 做掉（§4.2 的 m1）；回写 `SPECIFICATIONS.md` §7 裁决 + `CHANGELOG.md` 新版本 + `PLAN.md` §4 该条出账 + `codespec/UI_SERIAL.draft.md` §7 那条「延后」改口 |
 
 **判据逐条对应需求原文**：「可选」＝D7（默认不采、开面板才采，未武装会话零成本）；「十六进制」＝D5 的 8 字节
 转储行 + 尾栏；「收发」＝D2 两条腿（RX／TX 同屏、方向显式）；「视图」＝D1 的停靠卡片；「行首时间戳前缀」＝
