@@ -1,11 +1,12 @@
 /// 测试类型: integration
 /// 目标单元: src/ui/{connection_sidebar,connection_wizard,credential_prompt,keys_panel,sftp_panel,
-///                    tunnel_panel,settings_panel,debug_panel,startup_notice}.cpp 的搬窗接缝
+///                    serial_monitor_panel,tunnel_panel,settings_panel,debug_panel,startup_notice}.cpp
+///           的搬窗接缝
 ///           （`SPEC.FEAT.WS.03` 稿 D6「面板搬窗而非各一份」＋稿 §0 的 F3「焦点权威按窗取」）
 /// 测试说明: `src/main.cpp` 不进测试运行器（裁决 7.83），装配层那条「散掉的窗把浮层搬到落点」的腿因此
-///           没有自动化证人——本文件判的是它所依赖的**九件接缝**，也就是搬窗这件事唯一可能被写错的四处
+///           没有自动化证人——本文件判的是它所依赖的**十件接缝**，也就是搬窗这件事唯一可能被写错的四处
 ///           算子：摘自谁、挂给谁、换完之后本件处于什么态、焦点作用域归谁。
-///           ① **七只瞬态面板同一条判据**：开在 A 上 → `set_overlay_host(B)` ⇒ A 的浮层回到基线（摘的是
+///           ① **八只瞬态面板同一条判据**：开在 A 上 → `set_overlay_host(B)` ⇒ A 的浮层回到基线（摘的是
 ///              **旧**宿主上自己记的那枚序号，不是「当前宿主」的）、B 一层也不增（换完即关闭态，不存在
 ///              「两份面板」）、`is_open()` 为假、`overlay_host()` 易主；随后在新宿主重开一次，那一层落在
 ///              B 而 A 恒空——「各一份」与「留在散掉的窗上」两种错法都被这两行判掉。
@@ -27,6 +28,10 @@
 ///           与 `itest_debug_panel` / `itest_startup_notice` 同一条宿主构造事实：`overlay_count()` 按
 ///           `children_.size() - 1` 回（**基础内容不计入**），故每只宿主都带一个基础子节点，「挂了一层」
 ///           的读数是 1。中文一律经词条表在运行期交出，本文件不写中文字面量（§4.3 第 14 条）。
+///           第八只（`serial_monitor_panel`，`SPEC.FEAT.CONN.05` 稿 D6 那条「搬窗不停采集」）判据与其余
+///           七只逐字相同，只多一层含义：留痕活在那条会话的 `Session` 里，本件是它的一份投影，故摘挂
+///           浮层这一跳既不动环也不清屏——它走的仍是 `set_overlay_host` 这一支，而不是两只常驻框那条
+///           `set_overlay_destination`（本件是瞬态浮层：关闭即摘，重开即挂）。
 
 #include <cstddef>
 #include <memory>
@@ -46,6 +51,7 @@
 #include "../../src/ui/credential_prompt.h"
 #include "../../src/ui/debug_panel.h"
 #include "../../src/ui/keys_panel.h"
+#include "../../src/ui/serial_monitor_panel.h"
 #include "../../src/ui/settings_i18n.h"
 #include "../../src/ui/settings_panel.h"
 #include "../../src/ui/sftp_panel.h"
@@ -67,6 +73,7 @@ using borealis::ui::DebugSessionSnapshot;
 using borealis::ui::KeysPanel;
 using borealis::ui::SettingsPanel;
 using borealis::ui::SftpPanel;
+using borealis::ui::SerialMonitorPanel;
 using borealis::ui::StartupNotice;
 using borealis::ui::TunnelPanel;
 
@@ -201,6 +208,20 @@ AURORA_TEST_CASE(the_sftp_panel_moves_without_leaving_a_copy_behind) {
     SftpPanel sftp{a, {}};
     // D6 那句代价的本体：两扇窗不能同时各开一块 SFTP——搬过来那一瞬旧窗必须先空着。
     check_transient_retarget(sftp, a, b, "sftp", [](SftpPanel &panel) -> void { panel.open(); });
+}
+
+AURORA_TEST_CASE(the_serial_monitor_moves_without_disturbing_the_tap) {
+    borealis::ui::install_settings_strings();
+    std::shared_ptr<au::Text> base_a;
+    std::shared_ptr<au::Text> base_b;
+    const std::shared_ptr<au::OverlayHost> host_a = make_host(base_a);
+    const std::shared_ptr<au::OverlayHost> host_b = make_host(base_b);
+    au::OverlayHost &a = *host_a;
+    au::OverlayHost &b = *host_b;
+    // 空 Hooks：本件的搬窗判据与其余七只逐字相同，不需要一条真会话在场——留痕环归 `Session`，
+    // 浮层这一跳碰不到它（稿 D6 那句「搬窗不停采集」的结构根据就在这条判据里）。
+    SerialMonitorPanel monitor{a, {}};
+    check_transient_retarget(monitor, a, b, "monitor", [](SerialMonitorPanel &panel) -> void { panel.open(); });
 }
 
 AURORA_TEST_CASE(the_tunnel_panel_moves_as_one_list) {
