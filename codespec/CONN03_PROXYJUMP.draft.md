@@ -30,9 +30,11 @@
 | F10 | 原生多跳的**次序与回调对应关系已实测**：`ProxyJump="A,B"` 时 A 是最靠近本机的第一跳——A 的服务器收到 1 次 `direct-tcpip` 且转发目的＝B 的端口，B 的转发目的＝目标端口（与 OpenSSH 语义一致）。回调表按**跳序 append** 即正确：两跳各用自己的口令认证并整链成功（库对 jumps 与 cbs 两张表都用 `ssh_list_prepend`，方向因此天然对齐）。 | 探针 P4；库侧 `src/config.c` 的 `ssh_config_parse_proxy_jump`（prepend 注释「因为我们要递归 proxy jump」）与 `src/socket.c` 的两次 `ssh_list_pop_head` |
 | F11 | **自建路线端到端跑通**（探针 P1，同一台机器、同一份 vcpkg 静态库）：跳板会话正常「连接→认证」→ `ssh_channel_open_forward(ch,"127.0.0.1",目标端口,"127.0.0.1",65535)` → `socketpair(AF_UNIX,SOCK_STREAM)` → 自建中继线程（一枚 `ssh_event` 挂两枚 connector：`in_fd/out_channel` 与 `in_channel/out_fd`）→ 目标会话 `SSH_OPTIONS_FD = pair[0]` 后 `ssh_connect` + password 认证 + PTY/shell 全通，回显往返 OK。跳板服务器侧用 server 回调 `channel_open_request_direct_tcpip_function` 接受并中继即可，libssh 的 server 腿原生支持该回调。 | 探针 P1 输出；本机 vcpkg 档 `libssh/callbacks.h` 的 `ssh_channel_open_request_direct_tcpip_callback`、`libssh/server.h` |
 | F12 | 自建路线有一条**硬次序约束**（探针踩过）：中继线程持有跳板会话与通道指针，必须**先 join 中继线程**再 `ssh_channel_free`／`ssh_free`，否则进程段错误。探针首版按「先拆会话后停线程」写即崩。 | 探针 P1 首版崩溃与修正后的通过读数 |
-| F13 | 进程内假服务器（`SPEC.FEAT.CONN.02` 落下的见证地基）有 session 通道、PTY/shell、agent 反向通道与 `drop_connections`/`end_shell`，但**没有 `direct-tcpip` 回调**，因此现在还当不了跳板；证人需要先扩这一口径。 | `tests/support/fake_ssh_server.{h,cpp}` 的 `FakeSshServerOptions` 与 `serve` 的 server 回调装配段 |
+| F13 | ~~假服务器没有 `direct-tcpip` 回调，当不了跳板~~ **批 3 已扩口**：`FakeSshServerOptions::allow_direct_tcpip`（缺省关——普通服务器不该代收转发，关掉即「跳板拒绝转发」那条失败档的证人），开则按回调真 `connect()` 到目的地并双向搬字节；事实面新增 `direct_tcpip_requests()`（含被拒的请求：拒拨也要数得到）与 `forwarded_destinations()`（`host:port` 按到达次序，E2 的跳序证人）。 | 落地件 `tests/support/fake_ssh_server.{h,cpp}`；证人 `itest_posix_ssh_proxy_jump` |
 | F14 | `SSH_OPTIONS_FD` 那条分支**不在平台守卫内**（`ssh_connect()` 里 `opts.fd != SSH_INVALID_SOCKET` 独立成一支）⇒ 自建路线的客户端侧是平台中立的；平台相关部分只剩「造一对可对等读写的 socket」这一件事（`socketpair` 是 POSIX 专有）。 | 库侧 `src/client.c` 的 `ssh_connect` 分支次序；POSIX 语义按 `socketpair(2)` |
 | F15 | 原生实现还有一条对本仓致命的形态：跳板中继循环检查一个**文件级全局** `int proxy_disconnect`，而 `ssh_disconnect()` 在根会话上会把它置 1、下一次根拨号又把它清 0。⇒ 任一标签断开会叫停**其它标签**仍在跑的跳板中继，多标签正是本仓的核心形态，行为不可预期且无法从外部封堵。 | 库侧 `src/socket.c` 的 `int proxy_disconnect = 0` 与循环内检查、`src/client.c` 的 `if (session->proxy_root) proxy_disconnect = 1;` |
+| F16 | libssh 0.12 的 POSIX `ssh_get_user_home_dir_internal()` **先** `getpwuid_r(getuid())`，只有失败才回退 `getenv("HOME")` ⇒ 「临时 `$HOME`」隔离不了 known_hosts；`ssh_session_update_known_hosts()` 会写进真机 `~/.ssh/known_hosts`（`ssh_mkdirs` 连 `.ssh` 目录一起建）。 | 库侧 `src/misc.c` 的 `ssh_get_user_home_dir_internal()` 与 `src/knownhosts.c` 的写盘路径 |
+| F17 | `SSH_OPTIONS_FD` 的写入处是 `session->opts.fd = *x & 0xffff;`——**句柄被截成 16 位**；且 `ssh_disconnect()` **不关**递进去的 fd。⇒ POSIX 的小整数 fd 侥幸安全（本仓集成件实测通过），Win32 的 `SOCKET` 是 64 位核句，截断风险真实存在；seed 句柄的关闭责任**落在本仓**（`SshHopChain::close()` 逆序关两端）。 | 库侧 `src/options.c` 的 `SSH_OPTIONS_FD` 分支、`src/ssh.c` 的 `ssh_disconnect()` |
 
 ## 2 目标与非目标
 
@@ -60,7 +62,7 @@
 
 自建路线的结构性收益：逐跳复用 `ssh_dial_and_authenticate()`，于是**每一跳都吃本仓自己的主机密钥策略、认证方式、算法覆盖项与日志口径**，失败归因也与单腿同型；跳链与中继线程的所有权落在我们自己的 I/O 线程上，可 join、可清空文（CONN.09 的「明文不比认证活得久」在原生路线里无法兑现——回调 `userdata` 的存活期由库的分离线程决定，我们既看不到也管不住）。
 
-代价（如实登记）：我们自己拥有中继线程与其关闭次序（F12），以及一枚新的平台接缝（D10）；`socketpair`＋connector 的中继每跳多一根线程与两次拷贝。
+代价（如实登记）：我们自己拥有中继线程与其关闭次序（F12），以及一枚新的平台接缝（D10）；`socketpair`＋中继线程的形态每跳多一根线程与两次拷贝。
 
 ### D2 数据模型：平铺一跳 `SshHop`，档案持 `std::vector<SshHop> proxy_jumps`
 
@@ -98,20 +100,31 @@ struct SshHop {
 ```cpp
 class SshHopChain final {
   public:
-    /// 逐跳建立链路；成功后 fd() 交给目标会话。
-    auto open(const std::vector<SshHop> &hops,
+    SshHopChain();                    // 构造与析构都只在实现文件里定义（见下）
+    ~SshHopChain();
+    /// 逐跳建立链路；成功后 seed_fd() 交给目标会话。
+    auto open(const SshProfile &target,
               const std::vector<std::optional<std::string>> &hop_secrets,
               const SshAlgorithmOverrides &algorithms) -> bool;
     [[nodiscard]] auto failure() const noexcept -> DialFailure;  ///< 档位 + 第几跳。
     [[nodiscard]] auto seed_fd() const noexcept -> std::uintptr_t;
-    auto close() -> void;   ///< 逆序收口：join 中继 → 关通道 → 断会话 → 清明文
+    auto close() -> void;   ///< 逆序收口：join 中继 → 关通道 → 断会话 → 关句柄对
 };
 ```
+
+落地时对稿面签名做了两处修正，都是「签名表达不出被调方要做的决定」那一类：
+
+- **`open()` 的形参是目标档案，不是裸跳链**。最后一跳的转发目的地＝目标的 host 与生效端口，而这份信息只存在于 `SshProfile` 上；`proxy_jumps` 是它的成员，所以形参换成档案本身，跳链从里读。副带收益：目标的 `effective_port()` 折叠（22／0）只有一处口径。
+- **构造与析构都不在头里 `= default`**。pimpl 的 `unique_ptr<Impl>` 要等 `Impl` 是完全类型才能生成析构；头里默认会让第一个包含本头的用例直接撞上「不完整类型」。已实测（用例侧的编译错误就是这条的证人）。
 
 - 逐跳的「连接→核对→认证」全部交给 `ssh_dial_and_authenticate()`：跳板 hop 折成一份临时 `SshProfile`（`agent_forwarding` 恒 false，跳板不需要转发 agent——本期不为跳板开这条腿），第一跳不交 seed，其后各跳交上一跳的 fd。
 - `ssh_dial.h` 的签名只追加一枚末位缺省参数：`std::uintptr_t seed_fd = 0`（0＝无 seed，走真 TCP）。选 `uintptr_t` 而不是 `socket_t`／`ssh_session_struct*`，是为了让公共面不吃 libssh 与平台类型；`ssh_dial.cpp` 内部再折成 `socket_t` 写进 `SSH_OPTIONS_FD`。
 - 失败归因：`DialOutcome` 增两档——`HopUnwired`（消费腿没接线，见 D6）与 `Hop`（跳板侧失败）；`Hop` 具体卡在跳板的哪一档由 `DialFailure{outcome, hop_index}` 携带，hop_index 等于 `hops.size()` 表示目标本身。WS.05 的关闭归因与日志只多一个「第几跳」的数，公共语义不变。
-- 中继：每跳一根线程，形态同探针（`ssh_event` + 两枚 connector + `ssh_connector_set_in_fd/out_channel`），线程循环每 10 ms 一拍并检查停止位；`close()` 先置停止位再 join（F12）。
+- 中继（落地形态与稿面原写不同，偏差已实测确认）：每跳一根线程，**不采用探针里的 `ssh_event` + 两枚 `ssh_connector`**，而是一个手写的双向泵——方向一 `seed_side.read(…, 10 ms)`（这一读即一拍），方向二 `ssh_channel_poll_timeout` + `ssh_channel_read_nonblocking` 后写回 seed；任一方向到尽头即退，线程退出前关掉本地这一端。理由三条，逐条都有证人：
+  1. `ssh_event` 只盯 libssh 自己认识的 socket，**不认识本仓替客户端连出去的第二条 TCP**（假服务器的转发腿正是这条），方向二必须自己每拍自扫；
+  2. 库的 `ssh_connector` 族在隧道腿里已按弃用处理，且一对 connector 只能服务一条通道，与「停止位 + join」的关闭序（F12）配合不起来；
+  3. 同一形态在仓内已有先例并已过真协议证人——`src/conn/tunnel_client.cpp` 的 `pump_channel()`（按拍轮询、双向搬运、任一方向收摊即退）。
+  线程循环仍每 10 ms 一拍并检查停止位；`close()` 先置停止位再 join（F12）。
 
 ### D5 与连接复用（CONN.02）的关系：跳链属于「链路」，不随标签
 
@@ -176,8 +189,19 @@ auto ssh_dial_and_authenticate(const SshProfile &, std::optional<std::string> se
                                ssh_session_struct *, const SshAlgorithmOverrides & = {},
                                std::uintptr_t seed_fd = 0) -> DialOutcome;
 
-// src/conn/ssh_hop_chain.h（私有头）
-class SshHopChain final { open(...) / seed_fd() / failure() / close(); };
+// src/conn/ssh_hop_chain.h（私有头；构造/析构只在实现文件里定义）
+class SshHopChain final {
+    auto open(const SshProfile &target,
+              const std::vector<std::optional<std::string>> &hop_secrets,
+              const SshAlgorithmOverrides &algorithms) -> bool;
+    [[nodiscard]] auto failure() const noexcept -> DialFailure;
+    [[nodiscard]] auto seed_fd() const noexcept -> std::uintptr_t;
+    auto close() -> void;
+};
+
+// src/platform/hop_pipe.h（私有头，POSIX 腿已实测，Win32 腿未编译）
+class HopPipeEnd final { read(span, timeout_ms) / write(span) / handle() / close(); };
+[[nodiscard]] auto make_hop_pair() -> std::optional<HopPair>;  // {session_end, relay_end}
 
 // src/conn/ssh_shared.h（追加）
 struct SshSessionKey { ...; std::string proxy_jumps; };
@@ -192,18 +216,24 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 
 **关闭序**（F12 是硬约束）：目标 `ssh_disconnect` + `ssh_free` → **逆序**对每一跳：置停止位 → join 该跳的中继线程 → `ssh_channel_close`/`free` 转发通道 → `ssh_disconnect`/`ssh_free` 该跳会话 → 关闭 pipe 两端 → 清该跳的秘密副本。任何一步不得越过「先 join 后释放」。
 
+**两条落地补注**（批 3 实测）：
+
+- **seed 句柄的所有权不随递出而转移**（F17）：`ssh_disconnect()` 不关 `SSH_OPTIONS_FD` 吃进去的 fd，所以 `close()` 里「关 pipe 两端」这一步是必需的而不是冗余的；相应地，**吃 seed 的会话必须先断开**，`close()` 才关句柄——集成件里的 `ChainDial` 夹具靠成员声明次序（目标会话在链路之后）把这条序变成析构序，属结构性保证而非人工纪律。
+- **转发通道不吃 `end_shell()`**：假服务器的 `end_shell()` 是对「所有 session 通道」发 EOF 的收场旋钮，跳板链路的转发通道也是它遍历到的通道；若一并收掉，用例里正在使用的链路会被无故终止。落地口径是 `end_channels()` 排除 `agent` 与 `forward` 两类通道——`end_shell()` 只收终端腿，转发腿的终结另有形态（`drop_connections()`）。
+
 **线程数账**：一条带 N 跳的链路＝1 根 I/O 线程 + N 根中继线程（中继只搬字节、不跑协议状态机之外的活）。0 跳链路保持现状（1 根），本条不改变已落用例的线程形态。
 
-**背压**：中继缓冲在 libssh 的 connector/通道窗口内，本期不设每跳字节上限；在册风险见 §6。
+**背压**：中继（D4 落地形态＝手写双向泵）每跳一份 16 KiB 工作缓冲，通道侧的堆积上限仍是 libssh 的通道窗口；本期不设每跳字节上限，在册风险见 §6。
 
 **新增实测点（证人要打的桩）**：
 
 | 编号 | 判据 |
 |:---|:---|
-| E1 | 带一跳的档案能连通并回显；跳板服务器看到 1 次 `direct-tcpip`，其转发目的＝目标端口。 |
-| E2 | 带两跳的档案连通；A 服务器看到转发目的＝B 端口、B 服务器看到转发目的＝目标端口（次序与 F10 同型，自证跳序语义没写反）。 |
-| E3 | 跳板认证失败归因：第 2 跳口令错 ⇒ 目标服务器**零**连接、失败档位 `Auth` 且 hop_index=1。 |
-| E4 | 跳板主机密钥策略：`Yes` + 陌生跳板 ⇒ `HostKey` 档、hop_index 指到该跳、不发起目标连接；`AcceptNew` ⇒ 首跳成功写入 known_hosts（临时 HOME）。 |
+| E1 | 带一跳的档案能连通并回显；跳板服务器看到 1 次 `direct-tcpip`，其转发目的＝目标端口。**批 3 已落**：`itest_posix_ssh_proxy_jump.one_hop_chain_connects_and_forwards_to_the_target_port`。 |
+| E2 | 带两跳的档案连通；A 服务器看到转发目的＝B 端口、B 服务器看到转发目的＝目标端口（次序与 F10 同型，自证跳序语义没写反）。**批 3 已落**：`two_hop_chain_forwards_in_profile_order`（逐项比对 `forwarded_destinations()`；变异「跳序写反」打红两案）。 |
+| E3 | 跳板认证失败归因：第 2 跳口令错 ⇒ 目标服务器**零**连接、失败档位 `Auth` 且 hop_index=1。**批 3 已落**：`second_hop_auth_failure_is_attributed_to_that_hop`（变异「hop_index 抹平成 0」打红）。 |
+| E4 | 跳板主机密钥策略：`Yes` + 陌生跳板 ⇒ `HostKey` 档、hop_index 指到该跳、不发起目标连接。**批 3 已落**：`jump_host_key_policy_refuses_unknown_key_before_target`（首跳与次跳两式归因）。**后半句改口径**：「`AcceptNew` ⇒ 首跳写入 known_hosts（临时 HOME）」**不入集成件**——F16 实测 libssh 的主目录取 `getpwuid(2)` 的 `pw_dir`，临时 `$HOME` 拦不住，写盘会污染真机的 `~/.ssh/known_hosts`；策略判定本身由 `utest_ssh` 的 `policy_accepts` 无头见证，真机写盘腿归 CONN.08 的 etest 欠账。 |
+| E4b | 拨号侧两条补充边界（批 3 顺带落）：`profile.proxy_jumps` 非空而 seed 未接 ⇒ `HopUnwired` 且**不发起连接**（D6 的 dial 级证人 `profile_with_jumps_without_seed_refuses_to_connect_directly`）；0 跳链路是合法空操作且 `close()` 幂等（`chain_without_hops_is_a_valid_no_op`）。 |
 | E5 | 共享与分线：同目标同跳链同秘密的两格共线（跳板服务器 `accepted_connections` 仍为 1）；同目标但跳链为空/非空、或跳板秘密不同 ⇒ 两条独立链路。 |
 | E6 | fail-closed：SFTP／隧道／密钥推送任一条腿吃带跳档案 ⇒ `HopUnwired`，目标服务器零连接、跳板服务器零连接。 |
 | E7 | 关一格标签不叫停其它标签的跳板链路（对 F15 那条原生缺陷的反向证成：我们自己的停止位只作用于本链）。 |
@@ -214,10 +244,13 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 
 - **Win32 全链未编译**：`hop_pipe` 的 Win32 腿、`SSH_OPTIONS_FD` 在 Winsock 句柄上的行为、以及 F7 那条守卫结论都只有读码依据；MSVC 档落地前本条不称「可用」。
 - **对端是 libssh 假服务器而非真 sshd**：真 sshd 的 `AllowTcpForwarding`／`permit-open` 与 `direct-tcpip` 权限模型不在射程内（真机 sshd 的 etest 是 CONN.08 的既有欠账，同批补）。
-- **中继无字节上界**：目标卡死时 connector 的缓冲会随跳板通道窗口涨；本期依赖库的窗口机制兜底，不另加限流。
+- **中继的缓冲形态**：手写双向泵（D4 落地改口）每跳一份 16 KiB 工作缓冲，通道侧的堆积上限仍是 libssh 的通道窗口；目标卡死时跳板通道的窗口会涨满并反压到 seed 侧（`ssh_channel_write` 阻塞）。本期不设每跳字节上限，依赖库的窗口机制兜底。
+- **Win32 的 seed 句柄截断是真实风险**（F17）：`SSH_OPTIONS_FD` 把传入句柄 `& 0xffff`，POSIX 的小整数 fd 侥幸无损，Winsock 的 64 位 `SOCKET` 核句不保证——`hop_pipe` 的 Win32 腿（回环 TCP 一对）拿到的正是这种核句。本仓无法在库外封堵，只能在 MSVC 档实测时把它列为第一条要打的桩（`SSH_OPTIONS_FD` 之后 `ssh_connect` 是否报 `Network`）。
+- **known_hosts 的写盘位置不可被 `$HOME` 重定向**（F16）：测试夹具因此不能拿「临时 HOME」当隔离手段，`AcceptNew` 那一条腿只留在无头策略判定层（见 E4 的改口径），真机写盘与首连提示归 CONN.08 的 sshd etest。
+- **收口期有一条正常的写失败日志**：目标会话先断、该跳中继线程尚未退出时，方向二仍可能往已关的 seed 端写一次，实测读到的是一条 `[WRN] hop pipe write failed: Broken pipe`。这是 F12 关闭序允许竞态（不是越序），保留 WARN 而不静默——真机走查若见这一条，属预期。
 - **`%h`/`%p` 宏与 `ProxyCommand` 不导入**：导入是单向只读，宏未展开即语法坏，按上一条口径整块不导入（本件无日志面，代价是坏链那条档案在导入结果里少一条，用户看得见条数、看不见原因）。
 - **同一块里多行 `ProxyJump` 的取舍次序未实测**：OpenSSH 是「后一行覆盖前一行」还是「逐行累加成一条链」没有本机依据；本件沿用自家解析器的既有口径**后值覆盖**（`src/conn/profile.cpp` 的逐键赋值），真机 sshd/OpenSSH 行为留待 CONN.08 那批真 sshd 端到端一并核。
-- **批 2 到批 4 之间的窗口期**：档案与快照已经能携带跳链（`~/.ssh/config` 导入那一条腿已经现形），但拨号腿仍把 `proxy_jumps` 原样放过、直连目标。这一段在 `src/conn/ssh_dial.h` 的 `ssh_dial_and_authenticate` 上以 `TODO(SPEC.FEAT.CONN.03)` 挂账，批 3 接线＋批 4 的 D6 生效后消除；期间向导没有跳板输入框（D9 在批 5），用户唯一能造出链路的途径是导入。
+- **窗口期已从「静默直连」收到「只剩装配」**：批 3 之后 `ssh_dial_and_authenticate()` 既能吃 seed、也对带链档案 fail-closed（D6 在 dial 级现形并有 `itest_posix_ssh_proxy_jump` 的证人），所以**产品六条腿不会再拿着带跳的档案静默直连**；剩下的缺口是终端腿尚未把 `SshHopChain` 接进装配（`src/conn/ssh_dial.h` 的 `TODO(SPEC.FEAT.CONN.03)` 挂账，批 4 消）。这一段的现形行为是「拒拨 + 一条 ERROR」而不是「连错链路」——SFTP／隧道／密钥推送三条腿同理，批 4 的 D6 覆盖面扩到装配层。向导仍无跳板输入框（D9 在批 5），用户唯一能造出链路的途径是 `~/.ssh/config` 导入。
 - **跳板上的 `keyboard-interactive` 多提示**：与目标腿同一条既有边界（单提示一次作答），不因本条改变。
 
 ## 7 分批
@@ -226,7 +259,7 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 |:---|:---|:---|
 | 批 1 | D3 纯逻辑件 + **D2 的 `SshHop` 类型本体**（解析件的返回类型即它，只能与它同批落公共头）+ `utest_proxy_jump`（语法、端口折叠、`none`、整串拒绝、上限、render/parse 往返） | 无头单测全绿，不碰 libssh |
 | 批 2 | D2 的档案末位追加 `proxy_jumps` + `config/store.cpp` 序列化与缺档兼容 + 快照那一键（D7 与 E9）+ D7 导入 `proxyjump` + E8 审计扩案 | 档案往返、快照往返与导入用例 |
-| 批 3 | D10 `hop_pipe` + D4 `SshHopChain` + `ssh_dial` 的 seed 参数与两档新增 + 假服务器 `direct-tcpip` 扩口（F13） | E1/E2/E3/E4 的 `itest_posix_` 用例 |
+| 批 3 | D10 `hop_pipe` + D4 `SshHopChain` + `ssh_dial` 的 seed 参数与两档新增 + 假服务器 `direct-tcpip` 扩口（F13） | **已交付**：E1/E2/E3/E4（含改口径的 E4b）共 6 案 `itest_posix_ssh_proxy_jump` 全绿、5 轮无 flaky；四条变异自证各自打红（seed 腿失效→2 案、D6 闸取反→1 案、跳序写反→2 案、hop_index 抹平→2 案）；全量 ctest 121/121、无头 runner 1463/1463 |
 | 批 4 | D5 共享键与秘密判据扩容 + D8 bundle 与装配 + D6 三条腿的 fail-closed 现形 | E5/E6/E7 + 全量回归 |
 | 批 5 | D9 向导那一行 + 词条双档 + 覆盖闸与体积闸；变异自证；文档回写与分层提交 | 判据逐条回写 `SPECIFICATIONS.md` §7 与 `CHANGELOG.md` |
 | 批 6（延后，另起裁决） | 跳板接进 SFTP／隧道／密钥推送三条腿 | 不在本稿射程 |
