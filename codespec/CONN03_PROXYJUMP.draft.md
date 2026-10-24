@@ -131,12 +131,15 @@ class SshHopChain final {
 - `SshSessionKey` 追加一枚 `std::string proxy_jumps`，取值＝`render_proxy_jump_list(profile.proxy_jumps)`（归一口径与端口折叠都在 D3 里做完，于是「留空端口」与「:22」不会各拨一条链）。
 - `same_secret` 的判据从「一份目标秘密」扩为「目标秘密 + 逐跳秘密」逐项全等；`SshSharedSession::matches()` 同步。跳板秘密仍**不进表**（`SshSessionRegistry` 的表项只有键与弱引用，比较时问活着的会话）。
 - 跳链与中继线程由**共享会话的 I/O 线程**拥有：拨号时在 I/O 线程上 `open`，链路终态或末位租约收口时 `close`。重拨＝整链重开（跳板也重连）——这与 7.147 已落的「一条退避环在链路级」一致，不新造「跳板级」的环。
+- **落地形态（批 4 实测）**：`SshSessionKey::proxy_jumps` 与 `same_secret(bundle, bundle)` 按原文逐字落；逐跳秘密存在 `SshSharedSession::Impl` 内、与目标秘密同受一枚 `secret_mutex` 管，表项仍只有键与弱引用（稿面「跳板秘密不进表」成立）。`open` 在 `dial_then_open_all()` 里、目标 `ssh_new()` 之后且在 `ssh_dial_and_authenticate()` 之前——建立序即 §5 那一条；`close` 落在 `teardown_attempt()` 末段，**在目标会话 `ssh_free` 之后**（否则就是取用已关的 seed 句柄，F17 那条所有权在代码里以注释固化）。重拨复用同一枚 `hop_chain`（`open()` 自己先收旧链），每轮重拨从锁下取一份秘密副本，`secret` 本体留着给下一轮。
 
 ### D6 未接线腿的 fail-closed 口径
 
 `sftp_client`／`tunnel_client`／`key_push` 本批不改一行代码，但 `ssh_dial_and_authenticate()` 一旦看到 `profile.proxy_jumps` 非空而 `seed_fd` 未交、链也未建（这三条腿根本不会建链），就记一条 ERROR 并回 `HopUnwired`，**不发起连接**。
 
 理由：静默直连等于绕过用户显式配置的跳板——在 Windows 上这正是原生路线的既有行为（F7），本仓不接受。接线留后续批（§9 批 6），届时三条腿各自持有一份 `SshHopChain`。
+
+**落地形态（批 4 实测）**：三条腿仍不改一行代码——`HopUnwired` 从 `ssh_dial_and_authenticate()` 的返回值现形为各腿自己的失败档：SFTP ⇒ `connect()` 回 `false` 且 `last_error() == SftpError::Network`；隧道 ⇒ 首轮拨号即失败，经退避环收在 `TunnelState::Failed`（`max_attempts=1` 时零 Backoff）；密钥推送 ⇒ `PushStage::Dial` 且 `failure` 有值。三腿各证一次落在 `itest_posix_ssh_proxy_jump.sftp_tunnel_and_key_push_legs_refuse_a_profile_with_jumps`，末尾以两侧假服务器 `accepted_connections() == 0` 收口（拒拨＝不发起连接，而不是连上再断）。
 
 ### D7 序列化与导入
 
@@ -150,6 +153,12 @@ class SshHopChain final {
 - 目标与逐跳的秘密在**开标签时一次性解析**，折成 `SshSecretBundle{ std::optional<std::string> target; std::vector<std::optional<std::string>> hops; }`；`src/main.cpp` 的 `ssh_secret_by_tab` 的 value 由 `std::optional<std::string>` 换成该 bundle（「留档副本先取、最后一份 move 走」的既有语义原样保留，重拨／切分／恢复都用同一 bundle）。
 - 询问 UI 本期仍只覆盖目标口令。某跳是 `AskEveryTime` 且没有材料 ⇒ 该跳按 `Auth` 失败并记明第几跳（不新造询问链，见 §9）。
 - 六条 SSH 腿（新开／分屏／重启／撤销／恢复／CLI 转交）都经 `make_ssh_session` 一处装配，bundle 只需在这一处进 `SshConnection` 的形参（末位缺省参数追加，编译面不变）。
+
+**落地形态（批 4 实测，两处与稿面不同）**：
+
+- 形参不是「末位缺省追加」而是**换型**：`make_ssh_session(const SshProfile &, SshSecretBundle)`。走通的理由是 `SshSecretBundle` 有一枚从 `std::optional<std::string>` 出发的隐式构造，所以只吃目标口令的既有调用点（CLI 转交、SFTP 面板）不必改写；`ssh_secret_by_tab` 的 value 确实换成了 bundle，「留档副本先取、最后一份 move 走」原样保留（`build_restored_tab` 里 `retained_bundle` 与逐叶 `material` 那一对）。
+- 逐跳取料新增一处接缝 `with_hop_secrets(profile, target_secret, done)`：六条腿的装配点都早于 `credential_store` 的声明，故沿用本仓既有的「先声明槽、后写实现」形态（同 `restore_secret_sink`／`launch_tunnel`）。跳链为空或无可取句柄 ⇒ **同步回调**，不带跳板的档案时序与批 4 之前完全一致；有句柄才走 `au::async` 后台取料，取料闭包只捕获 store 副本与句柄表（不持 UI 对象）。恢复泵因此多出**第二个挂起点**（逐跳补齐），与既有的询问挂起共用「游标 + 放行口」那一套；放行口是一次性的（move-and-clear），且不能在 `pump_restore` 自身调用栈里被赋成 `pump_restore`——那等于销毁正在执行的闭包。
+- `hop → SshProfile` 的折叠与「这一跳该取哪个凭据句柄」的计划收在 `src/conn/profile_views.{h,cpp}` 一处主人（`hop_profile_of`／`plan_hop_credential`）：链侧（`ssh_hop_chain.cpp`）与装配侧（`main.cpp`）共用同一份折算，避免「凭据计划」在两处各写一遍而漂移。
 
 ### D9 向导与设置
 
@@ -208,7 +217,7 @@ struct SshSessionKey { ...; std::string proxy_jumps; };
 auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 ```
 
-`SshConnection` 与 `session::Connection`／`ConnectionEvents`／`ReconnectControl` 三个公共面**一行不改**：跳板是传输腿内部的事，会话层与 UI 层不需要知道有几跳（同 7.147 的口径）。
+`SshConnection` 与 `session::Connection`／`ConnectionEvents`／`ReconnectControl` 三个公共面**一行不改**：跳板是传输腿内部的事，会话层与 UI 层不需要知道有几跳（同 7.147 的口径）。批 4 实测：`session::Connection` 等三个公共面确实未动；`src/conn/ssh_connection.h` 与 `src/conn/ssh_shared.h` 都是私有头，前者构造形参由 `std::optional<std::string>` 换成 `SshSecretBundle`（见 D8 的落地改口）。
 
 ## 5 线程、关闭序与新增实测点
 
@@ -234,11 +243,11 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 | E3 | 跳板认证失败归因：第 2 跳口令错 ⇒ 目标服务器**零**连接、失败档位 `Auth` 且 hop_index=1。**批 3 已落**：`second_hop_auth_failure_is_attributed_to_that_hop`（变异「hop_index 抹平成 0」打红）。 |
 | E4 | 跳板主机密钥策略：`Yes` + 陌生跳板 ⇒ `HostKey` 档、hop_index 指到该跳、不发起目标连接。**批 3 已落**：`jump_host_key_policy_refuses_unknown_key_before_target`（首跳与次跳两式归因）。**后半句改口径**：「`AcceptNew` ⇒ 首跳写入 known_hosts（临时 HOME）」**不入集成件**——F16 实测 libssh 的主目录取 `getpwuid(2)` 的 `pw_dir`，临时 `$HOME` 拦不住，写盘会污染真机的 `~/.ssh/known_hosts`；策略判定本身由 `utest_ssh` 的 `policy_accepts` 无头见证，真机写盘腿归 CONN.08 的 etest 欠账。 |
 | E4b | 拨号侧两条补充边界（批 3 顺带落）：`profile.proxy_jumps` 非空而 seed 未接 ⇒ `HopUnwired` 且**不发起连接**（D6 的 dial 级证人 `profile_with_jumps_without_seed_refuses_to_connect_directly`）；0 跳链路是合法空操作且 `close()` 幂等（`chain_without_hops_is_a_valid_no_op`）。 |
-| E5 | 共享与分线：同目标同跳链同秘密的两格共线（跳板服务器 `accepted_connections` 仍为 1）；同目标但跳链为空/非空、或跳板秘密不同 ⇒ 两条独立链路。 |
-| E6 | fail-closed：SFTP／隧道／密钥推送任一条腿吃带跳档案 ⇒ `HopUnwired`，目标服务器零连接、跳板服务器零连接。 |
-| E7 | 关一格标签不叫停其它标签的跳板链路（对 F15 那条原生缺陷的反向证成：我们自己的停止位只作用于本链）。 |
-| E8 | 配置审计：跳板元素里塞 `secret` 明文被 `find_credential_key` 抓住；正常落盘只含句柄。 |
-| E9 | 快照往返：带跳档案的采集→落盘→重放**保住跳链**（八键之外的第九键）；无该键的旧快照折成空链路而非报错。 |
+| E5 | 共享与分线：同目标同跳链同秘密的两格共线（跳板服务器 `accepted_connections` 仍为 1）；同目标但跳链为空/非空、或跳板秘密不同 ⇒ 两条独立链路。**批 4 已落**：`itest_posix_ssh_proxy_jump.chain_shape_and_hop_secret_split_the_link` 与 `two_tabs_over_the_same_chain_share_one_jump_connection`。变异「`key.proxy_jumps` 不入键」→ 单测与集成件各打红一案；变异「`same_secret` 去掉 hops」→ 各打红一案。 |
+| E6 | fail-closed：SFTP／隧道／密钥推送任一条腿吃带跳档案 ⇒ `HopUnwired`，目标服务器零连接、跳板服务器零连接。**批 4 已落**：`sftp_tunnel_and_key_push_legs_refuse_a_profile_with_jumps`（三腿各按自己的失败档现形，见 D6 的落地形态）；变异「D6 闸取反」与 E4b 那一案同时打红。 |
+| E7 | 关一格标签不叫停其它标签的跳板链路（对 F15 那条原生缺陷的反向证成：我们自己的停止位只作用于本链）。**批 4 已落**：`closing_one_tab_does_not_stop_the_chain_of_the_others`——关掉第一格后第二格的 shell 仍在回显、跳板服务器仍只有 1 枚连接。 |
+| E8 | 配置审计：跳板元素里塞 `secret` 明文被 `find_credential_key` 抓住；正常落盘只含句柄。**批 2 已落**：`utest_config.an_unsafe_document_is_refused_whole_and_changes_nothing`（跳板元素里的 `passphrase` 撞禁列名单那一案）与 `an_ssh_proxy_chain_round_trips_and_a_legacy_file_carries_none`（往返只带句柄、旧档无该键＝空链路）。 |
+| E9 | 快照往返：带跳档案的采集→落盘→重放**保住跳链**（八键之外的第九键）；无该键的旧快照折成空链路而非报错。**批 2 已落**：`utest_workspace_snapshot.a_proxy_chain_absent_is_an_empty_chain_and_a_bad_one_rejects_the_whole_document`（缺键＝空链、坏元素整份拒绝，含 `kProxyJumpsSlot` 那一组坏值表）；带链采集→重放的等值断言在 `the_profile_blocks_are_the_same_json_the_config_store_writes` 与四型往返案里。 |
 
 ## 6 风险与未验证（如实登记）
 
@@ -250,7 +259,10 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 - **收口期有一条正常的写失败日志**：目标会话先断、该跳中继线程尚未退出时，方向二仍可能往已关的 seed 端写一次，实测读到的是一条 `[WRN] hop pipe write failed: Broken pipe`。这是 F12 关闭序允许竞态（不是越序），保留 WARN 而不静默——真机走查若见这一条，属预期。
 - **`%h`/`%p` 宏与 `ProxyCommand` 不导入**：导入是单向只读，宏未展开即语法坏，按上一条口径整块不导入（本件无日志面，代价是坏链那条档案在导入结果里少一条，用户看得见条数、看不见原因）。
 - **同一块里多行 `ProxyJump` 的取舍次序未实测**：OpenSSH 是「后一行覆盖前一行」还是「逐行累加成一条链」没有本机依据；本件沿用自家解析器的既有口径**后值覆盖**（`src/conn/profile.cpp` 的逐键赋值），真机 sshd/OpenSSH 行为留待 CONN.08 那批真 sshd 端到端一并核。
-- **窗口期已从「静默直连」收到「只剩装配」**：批 3 之后 `ssh_dial_and_authenticate()` 既能吃 seed、也对带链档案 fail-closed（D6 在 dial 级现形并有 `itest_posix_ssh_proxy_jump` 的证人），所以**产品六条腿不会再拿着带跳的档案静默直连**；剩下的缺口是终端腿尚未把 `SshHopChain` 接进装配（`src/conn/ssh_dial.h` 的 `TODO(SPEC.FEAT.CONN.03)` 挂账，批 4 消）。这一段的现形行为是「拒拨 + 一条 ERROR」而不是「连错链路」——SFTP／隧道／密钥推送三条腿同理，批 4 的 D6 覆盖面扩到装配层。向导仍无跳板输入框（D9 在批 5），用户唯一能造出链路的途径是 `~/.ssh/config` 导入。
+- **窗口期已从「静默直连」收到「只剩三条腿没接线」**：批 4 之后终端腿已把 `SshHopChain` 接进装配（`src/conn/ssh_shared.cpp` 的 `dial_then_open_all()` 在 I/O 线程上开链，见 D5 的落地形态），产品六条 SSH 腿都不会再拿带跳的档案静默直连。**剩下的缺口只有 SFTP／隧道／密钥推送三条腿**（§7 批 6），它们的现形行为是「拒拨 + 一条 ERROR／各自的失败档」而不是「连错链路」，并有 `itest_posix_ssh_proxy_jump` 的 E6 一案逐腿盯着。向导仍无跳板输入框（D9 在批 5），用户唯一能造出链路的途径是 `~/.ssh/config` 导入与配置文件直读。
+- **装配闭包没有自动化证人**（批 4 登记）：`src/main.cpp` 的 `with_hop_secrets`、恢复泵的第二个挂起点、以及「留档 bundle 按跳数对齐」都在 UI 装配闭包里，本仓无头测试打不到 `main.cpp`。为此做的补偿是两处：`profile_views` 的折叠与计划在 `utest_profile_views` 有无头证人；「hops 未按跳数对齐 ⇒ 不能共线」这一条补进了 `chain_shape_and_hop_secret_split_the_link`（`SshSecretBundle{target}` 的 `hops == {}` 与 `hops == [nullopt, nullopt]` 判为不同键）。真机走查前，装配层的逐跳取料顺序与恢复泵的续跑仍属**未验证**。
+- **`with_hop_secrets` 的迟到结果没有 `expired()` 闸**：既有房屋里凭据询问的 continuation 持 `std::weak_ptr<CredentialPrompt>` 并以 `prompt.expired()` 挡迟到结果；跳板取料的 continuation 只捕获 store 副本与句柄表，收尾闸门用的是「恢复泵自己的 `restore_done`/`restore_aborted`」。**在册依据**：Aurora `state/async.h` 注明主线程投递器缺失时 `then` 会在 worker 线程同步执行，本仓 `src/main.cpp` 的 `fetch_ports` 注释同述——取料闭包不持 UI 对象正是为了在这两种执行序下都安全。窗口销毁后 `ssh_secret_by_tab` 那一层的留档语义未证，随真机走查一并核。
+- **重启那一腿沿用留档 hops**：`restart_ssh_tab()` 只重解析目标口令，逐跳材料从留档 bundle 原样带过来（不重新问凭据库）。代价是跳板口令在运行期被外部改掉时，重启仍用旧副本；好处是不新增第二次异步。批 5 之后若询问 UI 扩到逐跳，这一条要一起改口。
 - **跳板上的 `keyboard-interactive` 多提示**：与目标腿同一条既有边界（单提示一次作答），不因本条改变。
 
 ## 7 分批
@@ -260,7 +272,7 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 | 批 1 | D3 纯逻辑件 + **D2 的 `SshHop` 类型本体**（解析件的返回类型即它，只能与它同批落公共头）+ `utest_proxy_jump`（语法、端口折叠、`none`、整串拒绝、上限、render/parse 往返） | 无头单测全绿，不碰 libssh |
 | 批 2 | D2 的档案末位追加 `proxy_jumps` + `config/store.cpp` 序列化与缺档兼容 + 快照那一键（D7 与 E9）+ D7 导入 `proxyjump` + E8 审计扩案 | 档案往返、快照往返与导入用例 |
 | 批 3 | D10 `hop_pipe` + D4 `SshHopChain` + `ssh_dial` 的 seed 参数与两档新增 + 假服务器 `direct-tcpip` 扩口（F13） | **已交付**：E1/E2/E3/E4（含改口径的 E4b）共 6 案 `itest_posix_ssh_proxy_jump` 全绿、5 轮无 flaky；四条变异自证各自打红（seed 腿失效→2 案、D6 闸取反→1 案、跳序写反→2 案、hop_index 抹平→2 案）；全量 ctest 121/121、无头 runner 1463/1463 |
-| 批 4 | D5 共享键与秘密判据扩容 + D8 bundle 与装配 + D6 三条腿的 fail-closed 现形 | E5/E6/E7 + 全量回归 |
+| 批 4 | D5 共享键与秘密判据扩容 + D8 bundle 与装配 + D6 三条腿的 fail-closed 现形 | **已交付**：E5/E6/E7 共 4 案新落，`itest_posix_ssh_proxy_jump` 10 案全绿；`utest_ssh_session_key` 6 案、`utest_profile_views` 13 案全绿；全量 ctest 121/121。三条变异自证各自打红（`key.proxy_jumps` 不入键→单测 1 案 + 集成 1 案、`same_secret` 去 hops→单测 1 案 + 分线一案、D6 闸取反→E4b 与 E6 两案）；第四条变异（去掉 bundle 的 `hops.resize`）**无自动化证人**，缺口已登记 §6 |
 | 批 5 | D9 向导那一行 + 词条双档 + 覆盖闸与体积闸；变异自证；文档回写与分层提交 | 判据逐条回写 `SPECIFICATIONS.md` §7 与 `CHANGELOG.md` |
 | 批 6（延后，另起裁决） | 跳板接进 SFTP／隧道／密钥推送三条腿 | 不在本稿射程 |
 
