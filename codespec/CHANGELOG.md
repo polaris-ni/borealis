@@ -4,6 +4,23 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.150（2026-10-25）**Aurora i18n v2 破坏性变更的适配：`SPEC.FEAT.PREF.05` 双语词表迁到构建期 `gen_i18n` 管线（裁决 7.150；本地提交按意图切笔：词表与管线接线 + 接缝改形 → 用例改形 → 门禁改口径 → 文档回写）**
+
+**动机**：Aurora 主仓的 i18n 使用方式发生破坏性变化——`StringTable` 与 `i18n/string_table.h` 退役，位置占位 `{0}` 与 `one={0} other=` 旧复数语法作废，新形态是**构建期管线**：ARB 形态 JSON 交 `tools/gen/gen_i18n`，产出强类型 `MessageId` 常量与具名形参构造函数的生成头，加一份**全语言合一**的 `AUM1` 二进制词表，运行期整读喂 `MessageCatalog::load_binary`。本仓的 530 条两档词条与 `settings_i18n.{h,cpp}` 装填腿整个坐在这套旧 API 上，不迁即断。经人拍板取「迁到构建期 gen_i18n 管线」口径，验证范围「构建 + 受影响用例全绿」（本轮不新增真机走查）。
+
+**落地形态**：
+
+- **真值源搬家**：两档词条从 `src/ui/settings_i18n.cpp` 的 `kStringsZh`／`kStringsEn` 搬进 `assets/i18n/messages_{zh,en}.json`（各 **530** 条、零增删），占位改具名、复数改 CLDR 块；`settings_i18n.cpp` 自此不含任何译语文案，只剩装填与接缝。
+- **改名清册 39 枚**：`gen_i18n` 按 key 逐段生成标识符，四类段名必须改形——C++ 关键字段（`new`→`create`、`delete`→`remove`、`export`→`export_file`、`switch`→`toggle`）、前缀撞叶段（`keys.delete.action`、`keys.push.action.close`、`snippets.empty`、`terminal.clipboard_read.*`）、框架保留名（`command_palette.placeholder`／`.no_results` → `field_placeholder`／`empty_message`，经 `set_placeholder_key`／`set_empty_message_key` 接回）、连字符（`keyboard-interactive`）。全仓消费点随改名同步；逐条清册见稿 §9 与裁决 7.150③。
+- **接线**：`aurora_i18n_generate(... ID_BASE 1024)` 挂 `borealis_core`（生成头目录 PUBLIC，应用与 runner 同一份 Id；`ID_BASE 1024` 把应用词条整体抬过框架 builtin 预注册区），bin 绝对路径经 `AURORA_I18N_BIN_PATH` 编译定义注入——runner 链 core 继承同一份，无 cwd 依赖。
+- **新实测事实（本轮最重要）**：bin 两档齐装 ⇒ `Locale{}`（＝`en`）第一级**命中英文档**；旧「只装选定那一档」靠 miss 回落把不经 ctx 的解析口带正的通路**结构性消失**。`au::LocaleProvider` 注入自此是**硬要求**（生产场景根 + 中文文案用例驱动台各一枚）；`install_settings_strings` 的语义改为装填整份 bin、选定档定 `set_default_locale` 与 `settings_locale()`。稿 §5 第 2／3／6／7 条就地更正。
+- **用例改形三态**：`utest_i18n_tiers` 按 v2 契约重写 **8 案**（文件头登记两条故意不测）；`itest_debug_panel`／`itest_startup_notice` 不注入 provider、期望改按 `Locale{}` 现读英文档（`shown()` helper）；`itest_url_link` 注入 provider（与生产装配同形）、19 案原期望不动即绿。另修迁移脚本时期残留：三处宏调用掉括号、`utest_keys_format` 族前缀随改名更新、en 档 **10 条**复数 `one` 分支的抽取期截断腐蚀逐条修复并以金样钉住。
+- **门禁改口径**：`tools/check/check_display_literals.py` 重写——C++ 白名单文件概念删除（表外引号内 CJK 对 `src/**`＋`include/**` 全域硬错误），新增 ARB 段（两枚 JSON 存在／可解析／非空／**跨档 key 集逐字相等**）。
+
+**验收读数**：构建通过（linux preset，无新警告）；`ctest --test-dir build -E etest_` **124/124**（套件数持平 v0.149）；无头 runner **1510/1510**（基线 1511，−1 即 `utest_i18n_tiers` 9→8 案）；门禁现读数 `PASS: 247 source file(s) … and the two ARB tiers cover the same 530 key(s)`，变异两腿现做现还原各有指名红案（表外注入一枚中文短语 ⇒ CJK 腿 1 条红；en 档删一枚 key ⇒ ARB 段红）。
+
+**边界与不称可用**（`AGENTS.md` §4.4 第 33 条）：本轮口径止于「构建 + 受影响用例全绿」——稿 §6 的八条真机走查仍一条未做；**Win32／MSVC 整棒未验证**（含 `gen_i18n` 在 MSVC 通道的构建形态，标推断／未验证）；`src/main.cpp` 不进 runner（裁决 7.83）⇒ provider 装配那两行只剩编译＋链接＋走查担保。
+
 ## v0.149（2026-10-25）**`SPEC.FEAT.CONN.05` 的两条延后子项结项：可选十六进制收发视图 + 行首时间戳前缀——采集环、两笔记痕、折算件、面板族第八只与命令入口四批同日落地（裁决 7.149；本地提交 `b1e9d18` → 批 1 `69d60ac`+`9015d07`+`85fafc7` → 批 2 `e38f8e3`+`8262b8d`+`9d07f9a` → 批 3 `c70044c`+`ca09021`+`66c93d3` → 文档回写（本笔））**
 
 **动机**：CONN.05 原文末句把「可选十六进制收发视图与行首时间戳前缀」列为延后子项，在册去向是「M4 之后」。嵌入式调试的真实场景是设备回的是二进制帧或没有换行的裸字节，终端格上看不到字节值也看不到时序，排障只能靠自写脚本。本棒按 `codespec/UI_SERIAL_MONITOR.draft.md` 的四批口径把它整体结项：D1–D9 在常存授权下全按推荐档自决，形态复用面板族那张停靠卡，采集与显示严格分层。

@@ -43,7 +43,7 @@
 | 键 | 控件 | 取值域 | 消费方现状 | 生效档位 |
 |:---|:---|:---|:---|:---|
 | `theme` | 主题卡（8 张 + 自定义） | 取值见 `config/themes.h` | 派生 palette 的回落基色 | 即时（语义见 S6） |
-| `language` | 下拉两档（`中文` / `English`） | 白名单名 `zh`／`en`——落盘名与 i18n 区域标签**同源**，唯一读点是 `config::language_tag()`（裁决 **7.130**）；域外值整枚回落 `zh` 并在 `rejected_keys` 留痕 | 装配阶段读一次并交 `ui::install_settings_strings(Language)` 装填**选定那一档**（同时把 `StringTable` 的缺省档随同一枚参数） | **重启后生效**（随本条扩出的 `EffectLevel::NextLaunch`，裁决 7.130 的 D2①／D5①；外观页上与 `cursor_shape`／`cursor_blinking` 同属「改了而本进程界面不变」那一档，区别只在生效点是重启而不是下次会话） |
+| `language` | 下拉两档（`中文` / `English`） | 白名单名 `zh`／`en`——落盘名与 i18n 区域标签**同源**，唯一读点是 `config::language_tag()`（裁决 **7.130**）；域外值整枚回落 `zh` 并在 `rejected_keys` 留痕 | 装配阶段读一次并交 `ui::install_settings_strings(Language)` 装填——v2 改口径（裁决 **7.150**）：装填的是全语言合一的构建期词表 bin（`assets/i18n/messages_{zh,en}.json` 经 `gen_i18n` 产出），选定那一档只随 `set_default_locale` 与 `settings_locale()`；原「只装选定那一档 + `StringTable` 缺省档随参数」形态作废 | **重启后生效**（随本条扩出的 `EffectLevel::NextLaunch`，裁决 7.130 的 D2①／D5①；外观页上与 `cursor_shape`／`cursor_blinking` 同属「改了而本进程界面不变」那一档，区别只在生效点是重启而不是下次会话） |
 | `palette.basic[0..15]` | 16 格色板 + HEX 输入 | `#RRGGBB`（大小写不敏感；**alpha 不经配置往返**） | `ui::resolve` | 即时 |
 | `palette.default_foreground` / `default_background` | HEX 输入 ×2 | 同上 | `ui::resolve` | 即时 |
 | `palette.cursor_color` | HEX 输入 + 「未配」档 | `optional`（缺键与显式 null 两态，裁决 7.27③）；色值形态同上 | 视口层取用（不参与 `resolve`） | 即时 |

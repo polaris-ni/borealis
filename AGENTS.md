@@ -11,7 +11,7 @@
 
 ## 2 目录布局
 
-`codespec/` 项目文档；`CMakeLists.txt` `CMakePresets.json` `cmake/` 构建（测试与门禁在 BorealisTests.cmake）；`include/borealis/` 公共头（不含 Aurora 类型）；`src/` 实现（平台腿 `src/platform/{win,posix}/`）；`tests/`（framework/ support/、unit/ integration/ e2e/ fixtures/）；`tools/`（msvc_env.bat、bench/、check/）；`assets/` **计划 / 待建**。
+`codespec/` 项目文档；`CMakeLists.txt` `CMakePresets.json` `cmake/` 构建（测试与门禁在 BorealisTests.cmake）；`include/borealis/` 公共头（不含 Aurora 类型）；`src/` 实现（平台腿 `src/platform/{win,posix}/`）；`tests/`（framework/ support/、unit/ integration/ e2e/ fixtures/）；`tools/`（msvc_env.bat、bench/、check/）；`assets/i18n/` 双语构建期词表（ARB JSON，经 `gen_i18n` 进构建，裁决 7.150）。
 
 分层细则见 `ARCHITECTURE.md` §2；绘制侧控件类声明含框架类型，留私有头 `src/ui/`（裁决 D1①）；标「计划/待建」者落地后回填。
 

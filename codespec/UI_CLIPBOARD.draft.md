@@ -184,7 +184,7 @@ src/ui/settings_catalog.cpp                 修改 —— `dropdown("terminal.cl
                                                   交互三态两条挨着，终端页其余行序不动
 src/ui/settings_i18n.cpp                    修改 —— 该行标签、该行上方的旁注一句、询问框两句（标题 + 正文）、
                                                   超限那一档的回报句；`UI_SETTINGS` 稿脚注那句「随该条落期入 schema」
-                                                  自此改口为既成事实。**批 2 只落了询问框那两句**（`terminal.clipboard_read.title`
+                                                  自此改口为既成事实。**批 2 只落了询问框那两句**（`terminal.clipboard_read_confirm.title`
                                                   / `.body`，正文带 `{0}` 占位填 Pc）——没有词条视口就没有默认问框可弹，
                                                   而设置页那一行的标签与旁注留批 3 与键同步入表（同一意图一处落）。
                                                   **实现后改口（批 3 实测）**：稿面初判那句「三档候选的中文」不成立——
