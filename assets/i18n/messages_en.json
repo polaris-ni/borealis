@@ -96,6 +96,7 @@
     "connections.field.user": "User",
     "connections.field.workdir": "Working directory",
     "connections.notice.imported": "Imported {count, plural, one {{count} profile} other {{count} profiles}}",
+    "connections.notice.quick_jump_bad": "Not connected: the -J jump list is invalid",
     "connections.policy.accept_new": "Accept on first use",
     "connections.policy.ask": "Ask",
     "connections.policy.no": "No check",

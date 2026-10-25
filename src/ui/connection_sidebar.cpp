@@ -161,11 +161,19 @@ auto ConnectionSidebar::connect_profile(const std::string &id) -> void {
 }
 
 auto ConnectionSidebar::connect_quick(const std::string &text) -> void {
-    const auto parsed = conn::parse_quick_connect(text);
+    // `-J` 尾段与坏跳表留痕（`SPEC.FEAT.CONN.03` 批 7 D5/D6）：文法只在纯逻辑层有一份答案，
+    // 本件只搬「不连 + 一句话」这条反馈——留痕行重开页即清，机制同导入条数那一支。
+    const auto [parsed, issue] = conn::parse_quick_connect_line(text);
+    if (issue == conn::QuickJumpIssue::BadJumpList) {
+        notice_ = settings_label("connections.notice.quick_jump_bad");
+        refresh_rows();  // 留痕随整块重建上屏（行序未变，改的是留痕行）。
+        return;
+    }
     if (!parsed.has_value() || hooks_.connect == nullptr) {
         return;
     }
-    hooks_.connect(conn::quick_connect_profile(parsed->first, parsed->second));
+    hooks_.connect(
+        conn::quick_connect_profile(parsed->host, parsed->port, parsed->jumps));
 }
 
 auto ConnectionSidebar::run_import() -> void {

@@ -141,8 +141,10 @@ struct CredentialPlan {
 
 /// @brief 一跳该从哪儿取秘密材料：折成档案后走与目标**同一条** `plan_credential` 口径。
 ///
-/// 装配层据此决定「这一跳去凭据库取」还是「留空」：本期询问 UI 只覆盖目标口令（稿 D8），
-/// 该问而无材料的那一跳在拨号侧落 `Auth` 并带 `hop_index`。
+/// 装配层的串问泵据此决定这一跳怎么办：`Stored` 去凭据库后台取、`Ask` 按档案序逐跳弹问句
+/// （`SPEC.FEAT.CONN.03` 批 7 D1/D2），取消任一跳整次作罢。`Stored` 取回空**不再二次询问**——
+/// 句柄在档说明用户选过「不回存问」那一档，兜底询问是目标那条腿的语义；该跳在拨号侧落 `Auth`
+/// 并带 `hop_index`。本期**不回存**跳板答案（稿 D4：逐跳 vault 键另起一棒）。
 [[nodiscard]] auto plan_hop_credential(const SshHop &hop, const CredentialStore &store)
     -> CredentialPlan;
 

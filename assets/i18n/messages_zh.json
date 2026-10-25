@@ -126,6 +126,7 @@
         }
       }
     },
+    "connections.notice.quick_jump_bad": "未连接：-J 跳表不合法",
     "connections.policy.accept_new": "首次接受",
     "connections.policy.ask": "询问",
     "connections.policy.no": "不核对",
