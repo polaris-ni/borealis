@@ -213,3 +213,26 @@ auto with_hop_secrets = std::function<void(
 - i18n（7.150）：新键只加 `connections.notice.quick_jump_bad` 一枚（D3 选 A 则询问措辞零新增），
   ARB 单一真值源由门禁守。
 - 7.83：main 装配腿无证人的担保句式沿用。
+
+## 9 交付后记（2026-10-26，裁决 7.154；代码两笔 `5b2bd6f` → `1951082`）
+
+- **D1 落地形态**：泵为 `main` 里的单槽 `HopAskSession`（queue/kinds/subjects/bundle/done），
+  声明先于 `prompt_hooks`；`on_secret` 最先认领泵（与目标腿各 pending 互斥成立——泵在途时
+  不可能同时挂着别的问句），`on_cancel` 先 `done(nullopt)` 再清其余 pending。新串问覆盖旧串问
+  的形态与 `pending_profile` 覆盖先例同纪律：旧那次连接静默作罢（单实例漏斗下没有第二个现场）。
+- **§7 第 3 条风险复核结论**：两出口未合并——「Stored 取料失败」仍交回 `value(bundle)`
+  （hops 留空、拨号侧现形），只有「任一询问跳取消」才交 `nullopt`；恢复泵把 `nullopt` 收敛到
+  abort 支、把空 hops 的 value 照常放行建格，与现档语义一致。
+- **在册偏差（登记为语义而非缺陷）**：`Stored` 取回空**不再二次询问**——兜底询问是目标腿的语义
+  （句柄在档＝用户选过「不回存问」那一档），该跳落 `Auth` 带 `hop_index`。
+- **泵与搬窗**：每一问都过 `ask_secret` 唯一漏斗 ⇒ retarget 自带；恢复泵的目标腿按窗
+  `retarget_panel_to` 那支不变，跳问发生在重放中时落当前窗（开机重放单窗形态下无观察歧义，
+  走查 ①跨窗看一眼即可证伪）。
+- **变异台账（第 22 条）**：批 A 三刃（切分段序颠倒／marker 识别改子串／跳链不折进档案）各有
+  指名红；批 B 三刃 V1（撤 `notice_` 赋值）⇒ `bad_jump_list_refuses_and_paints_notice_line` 红、
+  V2（坏值照连）⇒ 同案红、V3（跳链丢件）⇒ `quick_line_with_jump_tail_connects_as_temporary_profile`
+  红；逐字节还原（md5 核验）后复绿。**泵本体与自启闸在 `src/main.cpp`，无自动化证人**（7.83
+  句式：源码审查＋真机走查担保），`done` 换型由编译器钉死四调用点。
+- **判据对照（§6）**：①–⑤ 机器侧全落（ctest **127/127**、runner **1538/1538**、ARB **541** 键
+  门禁 PASS）；①带跳串问、③`-J` 即连、④自启闸三条真机走查**一条未做** ⇒ 本条**不称「可用」**
+  （走查欠账并入父稿 `CONN03_PROXYJUMP.draft.md` 的走查清册）。

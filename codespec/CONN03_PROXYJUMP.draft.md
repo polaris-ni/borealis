@@ -151,7 +151,7 @@ class SshHopChain final {
 ### D8 装配与凭据解析
 
 - 目标与逐跳的秘密在**开标签时一次性解析**，折成 `SshSecretBundle{ std::optional<std::string> target; std::vector<std::optional<std::string>> hops; }`；`src/main.cpp` 的 `ssh_secret_by_tab` 的 value 由 `std::optional<std::string>` 换成该 bundle（「留档副本先取、最后一份 move 走」的既有语义原样保留，重拨／切分／恢复都用同一 bundle）。
-- 询问 UI 本期仍只覆盖目标口令。某跳是 `AskEveryTime` 且没有材料 ⇒ 该跳按 `Auth` 失败并记明第几跳（不新造询问链，见 §9）。
+- 询问 UI 本期仍只覆盖目标口令（批 7 已扩到逐跳串问，见 `CONN03_ASKHOP_QUICKJ.draft.md` 与裁决 7.154；本句为批 4 时的口径原文）。某跳是 `AskEveryTime` 且没有材料 ⇒ 该跳按 `Auth` 失败并记明第几跳（不新造询问链，见 §9）。
 - 六条 SSH 腿（新开／分屏／重启／撤销／恢复／CLI 转交）都经 `make_ssh_session` 一处装配，bundle 只需在这一处进 `SshConnection` 的形参（末位缺省参数追加，编译面不变）。
 
 **落地形态（批 4 实测，两处与稿面不同）**：
@@ -164,7 +164,7 @@ class SshHopChain final {
 
 - SSH 字段集追加一行「跳板机（ProxyJump）」单行输入，占位串形 `jump1.example.com,jump2:2222`；词条 `connections.field.proxy_jump` 中英双档进表（`SPEC.FEAT.PREF.05` 的覆盖闸会盯表外中文）。
 - `collect_draft()` 里经 D3 解析；解析失败就在该行给红字并禁止保存——沿用向导既有的端口校验形态，不新增控件类型。
-- 侧栏档案行不显示跳链（一行放不下，且「连到哪里」的判据仍以目标主机为准）；quick connect 不接 `-J` 语法。
+- 侧栏档案行不显示跳链（一行放不下，且「连到哪里」的判据仍以目标主机为准）；quick connect 不接 `-J` 语法（批 7 已接，见 `CONN03_ASKHOP_QUICKJ.draft.md`）。
 - **不新增设置键**：跳链是档案属性，不是全局档（与 `kex_algorithms` 那类全局档的区别：后者是「算法面」，前者是「目的地拓扑」）。
 - 延后角标：`codespec/UI_OVERVIEW.draft.md` §2.3（延后能力清单）与 §3（树行的禁用态注记）、`UI_CONNECTIONS.draft.md` §1／§7 把 ProxyJump 标在「延后能力一律灰置不画成可用态」的清单里，落地后同批改口。
 
@@ -174,7 +174,7 @@ class SshHopChain final {
 - **红字位置改口**：稿面写「在该行给红字」，向导实际**没有逐行错误槽**这一形态——端口那一档、串口四档、Telnet 三档都走底部那条常驻留痕行（`notice_`），本行沿用同一条走法，新增问题码 `DraftIssue::BadProxyJump` 与词条 `connections.wizard.issue_proxy_jump`。按 AGENTS.md §4.2 第 12 条以代码运行时为准回填，不为此再造一个控件形态。
 - **词条是三枚而不是一枚**：`connections.field.proxy_jump`（行标签）、`connections.proxy_jump.placeholder`（占位串形）、`connections.wizard.issue_proxy_jump`（留痕文案）。占位符也进表是因为本仓所有 placeholder 都经 `settings_label()` 取（覆盖闸 `tools/check/check_display_literals.py` 的口径：表外中文在英文档里不可见）。
 - 编辑回填用 `render_proxy_jump_list` 的**规范化串形**（总是写端口）：留空与 `:22` 折成同一个值，串形也收敛成同一个串，「编辑一次把 `:22` 改没」因此不可能。
-- 稿面另外三条照旧未动：侧栏档案行不显示跳链、quick connect 不接 `-J`、不新增设置键（跳链是档案属性而非全局档）。
+- 稿面另外三条照旧未动：侧栏档案行不显示跳链、quick connect 不接 `-J`（批 7 已接，裁决 7.154）、不新增设置键（跳链是档案属性而非全局档）。
 
 ### D10 平台接缝
 
@@ -297,8 +297,19 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 | 项 | 去向 |
 |:---|:---|
 | `ProxyCommand`（外部命令） | 不进本条需求原文；如未来要，走 `SPEC.FEAT.CONN.02` 的新延后项，另起标识 |
-| 逐跳凭据的询问 UI（`AskEveryTime` 的跳） | `SPECIFICATIONS.md` §4.5 的 CONN.03 延后句追加一项，随 CONN.09 的询问件一起排 |
+| 逐跳凭据的询问 UI（`AskEveryTime` 的跳） | **已结项（2026-10-26，裁决 7.154，子稿 `CONN03_ASKHOP_QUICKJ.draft.md`）**：串问泵进 `with_hop_secrets`，取消任一跳整次作罢；跳板答案的回存另起一棒在册 |
 | 跳板接进 SFTP／隧道／密钥推送 | 本稿 §7 批 6 |
-| quick connect 的 `-J` 语法 | 随 `SPEC.FEAT.CONN.03` 的 quick connect 后续扩展 |
+| quick connect 的 `-J` 语法 | **已结项（2026-10-26，裁决 7.154）**：`parse_quick_connect_line` 尾段切分，坏值整行拒且侧栏留痕 |
 | 真机 sshd 的 `direct-tcpip` 许可面 | 随 CONN.08 的 etest 欠账 |
 | 每跳字节背压上界 | 观察池（与 `SPEC.NF.PERF.06` 的输出口径一并评估） |
+
+## 10 批 7 后记（2026-10-26，裁决 7.154）
+
+- §9 表内「逐跳凭据的询问 UI」与「quick connect 的 `-J` 语法」两行同日结项（子稿
+  `CONN03_ASKHOP_QUICKJ.draft.md` 及其 §9 后记）：泵在缝内、四调用点各走自家取消支，
+  `-J` 段零新解析全交语法层唯一主人；本稿 D8/D9 里「询问 UI 只覆盖目标」「quick connect
+  不接 `-J`」两处口径原文按在册历史对待、括注改口。
+- 那条「重启那一腿沿用留档 hops」（§8 风险页）在批 7 后**语义不变**：重启仍不另起取料链
+  与问句，留档缺料的那一跳照落 `Auth`——泵只服务「新发起的这一次」的取料。
+- 走查欠账合并计数：父稿三条（批 6）+ 批 7 三条（带跳串问、`-J` 即连、自启闸）＝带跳面
+  六条真机走查未做 ⇒ CONN.03 整条不称「可用」。

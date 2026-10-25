@@ -4,6 +4,22 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.154（2026-10-26）**`SPEC.FEAT.CONN.03` §4 清册次行两条延后子项同棒结项：逐跳凭据询问串问泵 + quick connect 的 `-J` 尾段（裁决 7.154；本地提交 `e55163f`（子稿收口）→ `5b2bd6f`（批 A 纯逻辑两片）→ `1951082`（批 B 泵与侧栏接线）→ 文档回写（本笔）**
+
+**动机**：裁决 7.148／7.153 收口跳链时，「装配层跳板询问 UI 未扩（`AskEveryTime` 的跳留空）」与「quick connect 不接 `-J`」两条挂在 §4 清册次行；且批 6 的自启放行只审了目标静默（F10：目标 agent、跳 Ask 的档案会在开机时由新泵弹第一框）。本棒按子稿 `codespec/CONN03_ASKHOP_QUICKJ.draft.md`（D1–D8 逐条经人裁「全部按推荐档」，D3 取 A、D8 顺手修 F10）一次收掉两条并补全那道闸。
+
+**落地形态**：
+
+- **串问泵进缝**（D1/D2）：`with_hop_secrets` 实现体内装单槽会话（队列／问型／subject 预折算），`done` 换 `std::optional<SshSecretBundle>`——`nullopt`＝任一询问跳取消⇒整次取料作罢；Stored 先后台取、Ask 后按档案序一题一题（每次弹问在上一拍回调栈外，先例＝恢复泵）。四调用点各走自家取消支：开标签静默返回、隧道丢弃、密钥不投、恢复泵中止余下重放（同 `restore_secret_sink(nullopt)` 形态）。目标询问型仍先问目标再进缝，不合并同框。
+- **文案与回存边界**（D3 A／D4）：复用三枚 `connections.credential.*_title`，`{subject}`＝装配层拼的 `user@host:port`，询问词条零新增；跳板答案只在内存槽位走完这一次连接，逐跳 vault 键（回存＋审计扩形）另起一棒新入 §4 清册。
+- **`-J` 文法**（D5/D6）：新纯逻辑件 `parse_quick_connect_line` 以最后一个空白分隔裸 `-J`／`--jump` token 切段，前段整交 `parse_quick_connect`、后段整交 `parse_proxy_jump_list`（上限/坏 token/`none` 全随语法层唯一主人）；坏跳表整行拒且先于空主机，侧栏 `connect_quick` 落新留痕行 `connections.notice.quick_jump_bad`（ARB 540→541）且不连；无 `-J` 输入时序逐帧不变。
+- **自启闸补全**（D8）：启动扫描判据改「autostart ∧ 目标静默 ∧ `hop_secrets_silent`（新纯逻辑快查，`Stored` 算静默）」，任一跳 Ask ⇒ `tunnel_skipped` 行内提示、零模态；手动启动不受影响。
+- **证人**（D7）：`utest_profile_views` 15→**19 案**（退化等价／好尾段折链／坏尾段整拒且优先于空主机／逐跳静默口径）、新建 `itest_connection_sidebar` **2 案**（真指针派发：`-J` 好值⇒ `hooks_.connect` 收带两跳的 `quick:` 临时档案；坏值⇒不连且留痕上屏）。
+
+**验收读数**：构建通过（linux preset）；`ctest --test-dir build -E etest_` **127/127**（注册 130→131）；无头 runner **1538/1538**（批 A +4、批 B 侧栏 +2）；门禁 `check_display_literals` PASS（249 文件／541 键）、`check_agents_size` PASS。变异台账：批 A 三刃与批 B 三刃（撤留痕赋值／坏值照连／跳链丢件）各有指名红，逐字节还原复绿；**串问泵与自启闸在 `src/main.cpp` 无自动化证人**（裁决 7.83 句式：源码审查＋真机走查担保），`done` 换型由编译器钉死四调用点；一处**在册偏差**如实登记——`Stored` 取回空不再二次询问（兜底询问是目标腿语义），该跳在拨号侧落 `Auth` 带 `hop_index`。
+
+**边界与不称可用**：带跳串问、`-J` 即连、自启闸三条真机走查未做 ⇒ 不称「可用」（AGENTS.md §4.4 第 33 条）；Win32／MSVC 未复核（批 4／5／6 同欠）；跳板答案回存新入清册挂 CONN.09；在册代码 `TODO(SPEC.*)` 持平一处（`tests/support/fake_ssh_server.cpp`）。
+
 ## v0.153（2026-10-25）**`SPEC.FEAT.CONN.03` 延后子项「跳板接进 SFTP／隧道／密钥推送三条腿」结项：三腿无条件建链交 seed，`ssh_dial.h` 的 TODO 撤账（裁决 7.153；本地提交 `5a47938`（子稿收口）→ `2c72dfb`（三条腿接线与证人）→ 文档回写（本笔））**
 
 **动机**：裁决 7.148 把跳板机终端腿五批落地时，SFTP／隧道／密钥推送三条腿按「吃带跳档案即拒拨」的 fail-closed 口径挂账（稿 §7 批 6）。本棒按子稿 `codespec/CONN03_PROXYJUMP_LEGS.draft.md`（D1–D7 经人逐条裁「全部按推荐档」，D4 选 A 自启放行）把 `conn::SshHopChain` 接进这三条腿，跳板机就此覆盖全部四腿，在册代码挂账随之撤账。
