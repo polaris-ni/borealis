@@ -204,7 +204,6 @@ namespace {
 struct BatchFoldState {
     BatchPlan plan{};
     BatchLimits limits{};
-    bool list_failed{false};  ///< 某层枚举失败——顶层据此出 ListFailed 档。
 };
 
 /// @brief 相对前缀的尾斜杠归一："" 与 "sub" 都以可拼接形态参与拼名。
@@ -255,21 +254,39 @@ auto fold_batch_node(const BatchDirNode &node, const std::string &prefix, unsign
 }  // namespace
 
 auto plan_batch_transfer(const BatchDirNode &root, std::string_view rel_dir,
-                         const BatchLimits &limits) -> BatchPlan {
-    BatchFoldState state{.plan = {}, .limits = limits, .list_failed = false};
+                         const BatchLimits &limits, bool list_failed) -> BatchPlan {
+    // 枚举失败先于形状判定短路：残树上的深度/数量读数都不可信，越线档会把「枚举断了」
+    // 误报成「树太大」，拒绝文案因此必须说得出真正的那一条。
+    if (list_failed) {
+        auto rejected = BatchPlan{};
+        rejected.reject = BatchReject::ListFailed;
+        return rejected;
+    }
+    BatchFoldState state{.plan = {}, .limits = limits};
     state.plan.bytes_complete = true;
     const std::string prefix = with_trailing_slash(rel_dir);
-    const bool ok = fold_batch_node(root, prefix, 1, state);
-    if (!ok) {
+    if (!fold_batch_node(root, prefix, 1, state)) {
         // 拒绝档只带原因，不带残树（fail-closed：调用方不得拿半份清单起跑）。
         auto rejected = BatchPlan{};
-        rejected.reject =
-            state.list_failed ? BatchReject::ListFailed : state.plan.reject;
+        rejected.reject = state.plan.reject;
         return rejected;
     }
     state.plan.engaged = true;
     state.plan.reject = BatchReject::None;
     return state.plan;
+}
+
+auto fold_batch_progress(std::uint64_t bytes_before, const SftpProgress &file_progress,
+                         std::uint64_t batch_total_bytes, bool batch_bytes_complete)
+    -> SftpProgress {
+    // 不确定态只由「计划里有没有未知大小的文件」决定：腿上的 total_known 是服务器
+    // 对这一个文件的 fstat 读数，批次总量早已在预枚举时定死，不该被单件读数反向推翻
+    // ——否则一个不回 size 的目录会让本来算得清的整批反而一直转不确定态。
+    return SftpProgress{
+        .bytes_done = bytes_before + file_progress.bytes_done,
+        .total_bytes = batch_total_bytes,
+        .total_known = batch_bytes_complete,
+    };
 }
 
 }  // namespace borealis::conn

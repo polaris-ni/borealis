@@ -45,6 +45,7 @@
 #include "borealis/conn/profile.h"
 #include "conn/sftp_client.h"  // conn::SftpClient（libssh 只在其实现内出现）
 #include "conn/sftp_model.h"
+#include "ui/sftp_batch.h"  // BatchDecisionLatch（首败问人的决策闸，SPEC.FEAT.CONN.04 递归批）
 
 namespace aurora {
 class OverlayHost;
@@ -60,8 +61,8 @@ public:
     /// 布尔表达同一条呈现口径（软链灰置不跟随；目录可进入）。
     struct LocalEntry {
         std::string name;           ///< 仅名字，不含路径。
-        bool is_directory{false};   ///< 目录（排序置顶、可进入、不可传输）。
-        bool is_symlink{false};     ///< 符号链接（灰置，不跟随）。
+        bool is_directory{false};   ///< 目录（排序置顶、可进入；选中走批次上传腿，SPEC.FEAT.CONN.04 递归批）。
+        bool is_symlink{false};     ///< 符号链接（灰置，不跟随，不可传）。
         std::uint64_t size_bytes{0};
         std::int64_t mtime{0};      ///< 秒级 Unix 时间（ui::format_mtime_local 渲染）。
 
@@ -136,6 +137,8 @@ private:
             RemoveRemote,
             Download,
             Upload,
+            BatchDownload,  ///< 递归目录传输（稿 UI_SFTP_RECURSIVE §1）：a＝远端源目录，local＝本地目标目录。
+            BatchUpload,    ///< 同上反向：a＝远端目标目录，local＝本地源目录。
             Shutdown,
         };
         Kind kind{};
@@ -157,14 +160,20 @@ private:
             OpDone,
             TransferBegin,
             TransferDone,
+            TransferAsk,  ///< 批次首败问人（稿 §2）：path＝失败件相对名，error＝那一次的失败码。
+            BatchDone,    ///< 批次收摊：三计数落留痕；reject 非 None＝整批被守卫线拒绝。
         };
         Kind kind{};
         bool ok{false};
         bool is_download{false};  ///< TransferBegin：当前传输的方向（标签文案用）。
         conn::SftpError error{conn::SftpError::None};
-        std::string path{};  ///< Listing＝目录；TransferBegin＝传输显示名。
+        std::string path{};  ///< Listing＝目录；TransferBegin＝传输显示名；TransferAsk＝失败件名。
         std::vector<conn::SftpEntry> remote_entries{};
         std::vector<LocalEntry> local_entries{};
+        conn::BatchReject batch_reject{conn::BatchReject::None};  ///< BatchDone：守卫线拒绝档。
+        unsigned batch_ok{0};                                     ///< BatchDone：成功件数。
+        unsigned batch_skip{0};                                   ///< BatchDone：跳过件数（含枚举跳过的软链/特殊文件）。
+        unsigned batch_fail{0};                                   ///< BatchDone：中止时那一个失败件（后续件不计）。
     };
 
     // ---- worker 侧（单线程，串行消费）----
@@ -176,6 +185,23 @@ private:
     auto op_and_relist(bool ok, const std::string &relist_dir) -> void;
     auto create_remote_file(const std::string &remote_path, const std::string &relist_dir) -> void;
     auto store_progress(const conn::SftpProgress &progress) -> void;
+    /// @brief 递归目录批次的整条腿（稿 §1 三步：预枚举 → 镜像建目录 → 逐文件投递）。
+    ///
+    /// 全程在 worker 上串行跑；批次对 transfers_posted_ 恒贡献 1（F3），
+    /// 文件级计数只进 BatchDone 留痕。首败经 TransferAsk + BatchDecisionLatch 问人。
+    auto run_batch(const Request &req) -> void;
+    /// @brief 远端递归预枚举：软链/特殊文件只计数不进树；越守卫线处截断成可判形的残树。
+    /// @param level 本 dir 自身的层数（根＝0），与折叠件的深度口径对齐。
+    auto enumerate_remote_tree(std::string_view dir, unsigned level, const conn::BatchLimits &limits,
+                               conn::BatchSkips &skips, std::size_t &files_seen, bool &list_failed)
+        -> std::optional<conn::BatchDirNode>;
+    /// @brief 本地递归预枚举（std::filesystem，逐层 directory_iterator 与远端腿同形）。
+    auto enumerate_local_tree(const std::filesystem::path &dir, unsigned level,
+                              const conn::BatchLimits &limits, conn::BatchSkips &skips,
+                              std::size_t &files_seen, bool &list_failed)
+        -> std::optional<conn::BatchDirNode>;
+    /// @brief 上传方向的远端镜像：按折叠件的 dirs 清单逐级 make_directory（父先于子有保证）。
+    auto create_remote_mirror(const std::string &base, const std::vector<std::string> &dirs) -> bool;
 
     // ---- UI 侧 ----
     auto connect_now() -> void;
@@ -214,6 +240,10 @@ private:
     auto show_name_prompt(const std::string &title_key, const std::string &initial,
                           const std::function<void(const std::string &)> &on_confirm) -> void;
     auto show_delete_confirm(const std::string &name, bool is_directory) -> void;
+    /// @brief 发起递归目录批次的确认框（D5①：文案带目录名与「将覆盖同名文件」）。
+    auto show_batch_confirm(bool download, const std::string &name) -> void;
+    /// @brief 批次首败问人框（D7①：缺省落「中止」档——红色键；超时/收摊同档）。
+    auto show_batch_ask(const std::string &name, conn::SftpError error) -> void;
     auto close_dialog() -> void;
     [[nodiscard]] auto find_remote(const std::string &name) const -> const conn::SftpEntry *;
     [[nodiscard]] auto find_local(const std::string &name) const -> const LocalEntry *;
@@ -236,6 +266,7 @@ private:
 
     conn::SftpClient client_{};       // 只在 worker 线程触碰。
     std::atomic<bool> cancel_flag_{false};  // 传输取消旗标（传输腿按引用轮询）。
+    BatchDecisionLatch batch_latch_{};  // 批次首败问人的决策闸（worker 等、UI 答；稿 §2）。
     int temp_seq_{0};                 // 新建空文件的临时件序号（仅 worker 触碰）。
 
     // ---- UI 态（仅 UI 线程读写）----
@@ -251,6 +282,16 @@ private:
     bool transfer_is_download_{false};
     int transfers_posted_{0};         // 本次打开累计投递的传输数（排队计数＝posted−done）。
     int transfers_done_{0};
+    /// @brief 批次收摊的留痕行（稿 §1）：只存数与档，文案在绘制时现取——语言改了也跟得上。
+    struct BatchTrace {
+        bool shown{false};
+        bool rejected{false};                            ///< true＝守卫线整批拒绝（无计数可言）。
+        conn::BatchReject reject{conn::BatchReject::None};
+        unsigned ok{0};
+        unsigned skipped{0};
+        unsigned failed{0};
+    };
+    BatchTrace batch_trace_{};
     /// @brief 掉线自动重拨的一回旗标（裁决 7.99 D7④）：连接成功与重新打开各复位一次。
     bool redial_armed_{true};
 

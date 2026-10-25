@@ -162,7 +162,24 @@ struct BatchPlan {
 /// @param root 根目录的第一层节点（根自身不进 dirs 清单）。
 /// @param rel_dir 根目录相对前缀（"" 或形如 "sub/"，尾斜杠可有可无）。
 /// @param limits 守卫线。
+/// @param list_failed worker 枚举腿的失败位：某层列目录失败＝树不完整，折叠前先于
+///                    一切形状判定短路成 ListFailed（fail-closed，不带着残树起跑）。
 [[nodiscard]] auto plan_batch_transfer(const BatchDirNode &root, std::string_view rel_dir,
-                                       const BatchLimits &limits = {}) -> BatchPlan;
+                                       const BatchLimits &limits = {},
+                                       bool list_failed = false) -> BatchPlan;
+
+/// @brief 把单件进度折进批次总账（人 2026-10-25 已拍口径③：整批按字节汇总的总进度）。
+///
+/// 批次态下 UI 只看这一份合成快照：`bytes_done` ＝批次累计（已完成的整件 + 当前件的
+/// 已完成字节），`total_bytes` ＝预枚举总量。折出来的形态与单件快照同构，因此
+/// `progress_percent()` 与既有传输条一字不用改。
+/// @param bytes_before 当前件开始之前、批次内已完成文件的字节数。
+/// @param file_progress 当前件的块级快照（传输腿原样给出）。
+/// @param batch_total_bytes 计划里的 total_bytes（只累 size_known 的文件）。
+/// @param batch_bytes_complete 计划无未知大小的文件；false＝整批转不确定态。
+[[nodiscard]] auto fold_batch_progress(std::uint64_t bytes_before,
+                                       const SftpProgress &file_progress,
+                                       std::uint64_t batch_total_bytes,
+                                       bool batch_bytes_complete) -> SftpProgress;
 
 }  // namespace borealis::conn

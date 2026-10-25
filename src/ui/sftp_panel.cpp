@@ -48,6 +48,10 @@ constexpr std::size_t kInboxCapacity = 64;
 /// @brief 双击判定窗口：框架按钮只有单击回调，500 ms 内同条目二击按 D3① 进入。
 constexpr auto kDoubleClickWindow = std::chrono::milliseconds{500};
 
+/// @brief 首败问人闸的定时限（稿 §2 的第四出口）：panel 的 tick 与对话框都不是保证
+/// 存在的对象，无人应答到限按「中止」自收，免得 worker 卡进不了析构 join。
+constexpr int kBatchAskTimeoutMs = 60'000;
+
 /// @brief 本地条目排序：目录置顶、名字 ASCII 大小写折叠、平手按字节序——与
 /// conn::sort_entries 同一口径（模型头注释），两栏行序一致。
 [[nodiscard]] auto name_fold_less(std::string_view lhs, std::string_view rhs) -> bool {
@@ -143,6 +147,7 @@ auto SftpPanel::open() -> void {
     selected_remote_.clear();
     selected_local_.clear();
     transfer_label_.clear();
+    batch_trace_ = BatchTrace{};
     transfers_posted_ = 0;
     transfers_done_ = 0;
     cancel_flag_ = false;
@@ -178,6 +183,9 @@ auto SftpPanel::close() -> void {
     }
     // 先置取消再投 Disconnect：当前传输若在跑，worker 走完取消清理即到断链请求。
     cancel_flag_ = true;
+    // 收摊档（稿 §2 第四出口）：批次若正停在「问人」闸上，无人可答了，闸按「中止」自答，
+    // worker 才能走完清理腿弹出后面的 Disconnect——析构 join 才有尽头。
+    batch_latch_.abort();
     post(Request{.kind = Request::Kind::Disconnect});
     clear_state();
 }
@@ -193,6 +201,7 @@ auto SftpPanel::clear_state() -> void {
     remote_entries_.clear();
     local_entries_.clear();
     transfer_label_.clear();
+    batch_trace_ = BatchTrace{};
     // 重新打开＝新的一条会话生命周期：一回重拨的旗标随之复位（裁决 7.99 D7④ 细则 (ii)）。
     redial_armed_ = true;
     open_ = false;
@@ -313,6 +322,265 @@ auto SftpPanel::create_remote_file(const std::string &remote_path, const std::st
     op_and_relist(true, relist_dir);
 }
 
+auto SftpPanel::enumerate_remote_tree(std::string_view dir, unsigned level,
+                                      const conn::BatchLimits &limits, conn::BatchSkips &skips,
+                                      std::size_t &files_seen, bool &list_failed)
+    -> std::optional<conn::BatchDirNode> {
+    auto entries = client_.list_directory(dir);
+    if (!entries.has_value()) {
+        list_failed = true;
+        return std::nullopt;
+    }
+    conn::BatchDirNode node;
+    for (const conn::SftpEntry &entry : *entries) {
+        // 计数线的代表件收满即止：拒绝档不携带残树，多列一层只会白烧往返（D4①）。
+        if (files_seen > limits.max_files) {
+            break;
+        }
+        switch (entry.kind) {
+        case conn::SftpEntryKind::Directory:
+            if (level + 1 > limits.max_depth) {
+                // 深度 max_depth+1 的**空占位节点**就足以让折叠件判越线：再往下列是白烧。
+                node.dirs.push_back(conn::BatchDirNode{.name = entry.name});
+                break;
+            }
+            {
+                auto child = enumerate_remote_tree(conn::sftp_path_join(dir, entry.name),
+                                                   level + 1, limits, skips, files_seen,
+                                                   list_failed);
+                if (list_failed) {
+                    return std::nullopt;  // 残树不往上拼：断过一层的枚举整批作废。
+                }
+                child->name = entry.name;  // 子节点自身不知自己名字，由父侧回填（根不用此字段）。
+                node.dirs.push_back(std::move(*child));
+            }
+            break;
+        case conn::SftpEntryKind::File:
+            // 远端 File 的 size_bytes 是 attr 现值（F1），总量口径直接可信。
+            node.files.push_back(conn::BatchFileNode{
+                .name = entry.name, .size_bytes = entry.size_bytes, .size_known = true});
+            ++files_seen;
+            break;
+        case conn::SftpEntryKind::Symlink:
+            ++skips.symlinks;  // D1①：条目卡不跟随软链是既有模型口径，批次只计数。
+            break;
+        case conn::SftpEntryKind::Other:
+            ++skips.others;
+            break;
+        }
+    }
+    return node;
+}
+
+auto SftpPanel::enumerate_local_tree(const std::filesystem::path &dir, unsigned level,
+                                     const conn::BatchLimits &limits, conn::BatchSkips &skips,
+                                     std::size_t &files_seen, bool &list_failed)
+    -> std::optional<conn::BatchDirNode> {
+    std::error_code ec;
+    // skip_permission_denied 与本地列栏腿同口径；目录迭代只走 worker（AGENTS §4.5 第 25 条）。
+    std::filesystem::directory_iterator it{
+        dir, std::filesystem::directory_options::skip_permission_denied, ec};
+    if (ec) {
+        list_failed = true;
+        return std::nullopt;
+    }
+    conn::BatchDirNode node;
+    for (const std::filesystem::directory_entry &entry : it) {
+        if (files_seen > limits.max_files) {
+            break;
+        }
+        std::error_code link_ec;
+        if (entry.is_symlink(link_ec)) {
+            ++skips.symlinks;  // D1① 双向同规：本地软链也只计数不跟随。
+            continue;
+        }
+        std::error_code kind_ec;
+        const bool is_dir = entry.is_directory(kind_ec);
+        if (!kind_ec && is_dir) {
+            if (level + 1 > limits.max_depth) {
+                node.dirs.push_back(
+                    conn::BatchDirNode{.name = entry.path().filename().string()});
+                continue;
+            }
+            auto child = enumerate_local_tree(entry.path(), level + 1, limits, skips, files_seen,
+                                              list_failed);
+            if (list_failed) {
+                return std::nullopt;
+            }
+            child->name = entry.path().filename().string();
+            node.dirs.push_back(std::move(*child));
+            continue;
+        }
+        std::error_code regular_ec;
+        const bool is_regular = entry.is_regular_file(regular_ec);
+        if (kind_ec || regular_ec || !is_regular) {
+            ++skips.others;  // 特殊文件与读不出形状的坏 inode：跳过计数，不为一颗断 inode 停整批。
+            continue;
+        }
+        std::error_code size_ec;
+        const std::uint64_t size = static_cast<std::uint64_t>(entry.file_size(size_ec));
+        node.files.push_back(conn::BatchFileNode{
+            .name = entry.path().filename().string(),
+            .size_bytes = size_ec ? 0U : size,
+            .size_known = !size_ec});
+        ++files_seen;
+    }
+    return node;
+}
+
+auto SftpPanel::create_remote_mirror(const std::string &base,
+                                     const std::vector<std::string> &dirs) -> bool {
+    // 折叠件的 dirs 是父先于子的入序清单（push 在递归之前），逐级 mkdir 天然满足依赖。
+    for (const std::string &rel : dirs) {
+        if (cancel_flag_) {
+            return false;
+        }
+        if (!client_.make_directory(conn::sftp_normalize(base + "/" + rel))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+auto SftpPanel::run_batch(const Request &req) -> void {
+    const bool download = req.kind == Request::Kind::BatchDownload;
+    // 排队期间被取消（close/取消钮先于出队落旗）：不烧预枚举的往返，直接按取消收摊。
+    if (cancel_flag_) {
+        push_inbox(InboxMessage{.kind = InboxMessage::Kind::BatchDone,
+                                .ok = false,
+                                .is_download = download,
+                                .error = conn::SftpError::Cancelled});
+        return;
+    }
+    const std::string root_name =
+        download ? std::string{conn::sftp_basename_of(req.a)} : req.local.filename().string();
+
+    // ① 预枚举 + 折叠：守卫线与枚举失败都在纯逻辑件里判（plan_batch_transfer，有 utest 证人）。
+    conn::BatchLimits limits{};  // D4①：缺省两线（深度 64 / 件数 100 000）即模型定义。
+    conn::BatchSkips skips{};
+    std::size_t files_seen = 0;
+    bool list_failed = false;
+    auto tree = download ? enumerate_remote_tree(req.a, 0, limits, skips, files_seen, list_failed)
+                         : enumerate_local_tree(req.local, 0, limits, skips, files_seen,
+                                                list_failed);
+    auto plan = conn::plan_batch_transfer(tree.value_or(conn::BatchDirNode{}), "", limits,
+                                          list_failed || !tree.has_value());
+    plan.skips = skips;  // 跳过件的分类计数只有枚举腿看得见（形状树里没有 kind）。
+
+    if (!plan.engaged) {
+        // D4① fail-closed：整批拒绝，不进传输、不建目录，只落留痕（不弹框）。
+        push_inbox(InboxMessage{.kind = InboxMessage::Kind::BatchDone,
+                                .is_download = download,
+                                .batch_reject = plan.reject});
+        return;
+    }
+
+    // 批次对传输条与排队计数恒呈「一件在途」（F3）：开始与收摊各一条消息，件数只进留痕。
+    push_inbox(InboxMessage{.kind = InboxMessage::Kind::TransferBegin,
+                            .is_download = download,
+                            .path = root_name});
+
+    const std::filesystem::path local_base =
+        download ? req.local / std::filesystem::path{root_name} : req.local;
+    const std::string remote_base =
+        download ? std::string{req.a} : conn::sftp_path_join(req.a, root_name);
+
+    // ② 镜像建目录（先判取消：发起钮按下到此处之间用户可能已收摊）。
+    if (cancel_flag_) {
+        push_inbox(InboxMessage{.kind = InboxMessage::Kind::BatchDone,
+                                .ok = false,
+                                .is_download = download,
+                                .error = conn::SftpError::Cancelled});
+        return;
+    }
+    if (download) {
+        std::error_code ec;
+        std::filesystem::create_directories(local_base, ec);
+        for (const std::string &rel : plan.dirs) {
+            std::filesystem::create_directories(local_base / std::filesystem::path{rel}, ec);
+            if (ec) {
+                break;
+            }
+        }
+        if (ec) {
+            push_inbox(InboxMessage{.kind = InboxMessage::Kind::BatchDone,
+                                    .ok = false,
+                                    .is_download = download,
+                                    .error = conn::SftpError::LocalIo});
+            return;
+        }
+    } else if (!create_remote_mirror(remote_base, plan.dirs)) {
+        push_inbox(InboxMessage{.kind = InboxMessage::Kind::BatchDone,
+                                .ok = false,
+                                .is_download = download,
+                                .error = cancel_flag_ ? conn::SftpError::Cancelled
+                                                       : client_.last_error()});
+        return;
+    }
+
+    // ③ 逐文件投递：进度折进批次总账（fold_batch_progress，人拍口径③）；首败问人（稿 §2）。
+    unsigned ok_count = 0;
+    unsigned ask_skip_count = 0;
+    unsigned fail_count = 0;
+    std::uint64_t bytes_before = 0;
+    conn::SftpError stop_error = conn::SftpError::None;
+    for (const std::string &rel : plan.files) {
+        if (cancel_flag_) {
+            stop_error = conn::SftpError::Cancelled;  // 取消＝整批止（稿 §1），当前件半成品已由腿清理。
+            break;
+        }
+        std::uint64_t file_done_final = 0;
+        const auto pump = [this, &file_done_final, bytes_before, &plan](
+                              const conn::SftpProgress &progress) -> void {
+            file_done_final = progress.bytes_done;
+            store_progress(conn::fold_batch_progress(bytes_before, progress, plan.total_bytes,
+                                                     plan.bytes_complete));
+        };
+        const std::filesystem::path local_side = local_base / std::filesystem::path{rel};
+        const std::string remote_side = conn::sftp_normalize(remote_base + "/" + rel);
+        const bool file_ok =
+            download ? client_.download_file(remote_side, local_side, pump, cancel_flag_)
+                     : client_.upload_file(local_side, remote_side, pump, cancel_flag_);
+        if (file_ok) {
+            ++ok_count;
+            bytes_before += file_done_final;
+            continue;
+        }
+        const conn::SftpError err = client_.last_error();
+        if (err == conn::SftpError::Cancelled || cancel_flag_) {
+            stop_error = conn::SftpError::Cancelled;
+            break;
+        }
+        // 非取消类首败：问人（答话/超时/取消/收摊四出口都在闸上，BatchDecisionLatch 有 utest）。
+        push_inbox(InboxMessage{.kind = InboxMessage::Kind::TransferAsk,
+                                .error = err,
+                                .path = rel});
+        const BatchDecision decision = batch_latch_.wait_for_decision(kBatchAskTimeoutMs);
+        // 失败件已走过的字节照计入总账：回拨进度条比多算几字节更误导。
+        bytes_before += file_done_final;
+        if (decision == BatchDecision::Skip) {
+            ++ask_skip_count;
+            continue;
+        }
+        ++fail_count;
+        stop_error = err;
+        break;  // D7①：中止是缺省档——超时与收摊都落到这里。
+    }
+
+    push_inbox(InboxMessage{.kind = InboxMessage::Kind::BatchDone,
+                            .ok = stop_error == conn::SftpError::None,
+                            .is_download = download,
+                            .error = stop_error,
+                            .batch_ok = ok_count,
+                            .batch_skip = ask_skip_count + plan.skips.total(),
+                            .batch_fail = fail_count});
+    if (download) {
+        push_local_listing(req.local);  // 与单文件腿同款：落地即刷目标栏。
+    } else {
+        push_remote_listing(req.a);
+    }
+}
+
 auto SftpPanel::run_worker() -> void {
     for (;;) {
         Request req;
@@ -363,8 +631,6 @@ auto SftpPanel::run_worker() -> void {
                           req.b);
             break;
         case Request::Kind::Download: {
-            // TODO(SPEC.FEAT.CONN.04): 递归目录传输——目录条目本期置灰不可传，
-            // 需要时在 worker 侧先枚举再逐文件投递（传输条按文件粒度走）。
             const std::filesystem::path target =
                 req.local / std::filesystem::path{req.a}.filename();
             push_inbox(InboxMessage{.kind = InboxMessage::Kind::TransferBegin,
@@ -399,6 +665,10 @@ auto SftpPanel::run_worker() -> void {
             push_remote_listing(req.a);  // 上传落地即刷远端栏。
             break;
         }
+        case Request::Kind::BatchDownload:
+        case Request::Kind::BatchUpload:
+            run_batch(req);
+            break;
         case Request::Kind::Shutdown:
             return;
         }
@@ -521,6 +791,34 @@ auto SftpPanel::apply_message(const InboxMessage &msg) -> bool {
             return false;
         }
         return true;
+    case InboxMessage::Kind::TransferAsk:
+        // 批次首败问人（稿 §2）：框挂浮层宿主、答话投闸；卡结构没变，本帧不重建。
+        show_batch_ask(msg.path, msg.error);
+        return false;
+    case InboxMessage::Kind::BatchDone:
+        // 批次对 transfers_posted_ 恒贡献 1（F3），收摊与单文件 TransferDone 同位清账。
+        ++transfers_done_;
+        transfer_label_.clear();
+        {
+            std::lock_guard<std::mutex> lock{inbox_mutex_};
+            progress_active_ = false;
+            progress_ = conn::SftpProgress{};
+        }
+        batch_trace_ = BatchTrace{
+            .shown = true,
+            .rejected = msg.batch_reject != conn::BatchReject::None,
+            .reject = msg.batch_reject,
+            .ok = msg.batch_ok,
+            .skipped = msg.batch_skip,
+            .failed = msg.batch_fail,
+        };
+        // 守卫线拒绝不是「这一手操作失败」，不占错误态也不重拨；其余失败走既有掉线腿（F5）。
+        last_error_ = msg.ok || msg.batch_reject != conn::BatchReject::None ? conn::SftpError::None
+                                                                            : msg.error;
+        if (redial_once(msg.error)) {
+            return false;
+        }
+        return true;
     }
     return false;
 }
@@ -615,10 +913,13 @@ auto SftpPanel::build_card() -> std::shared_ptr<aurora::Column> {
 
     const bool connected = state_ == ConnState::Connected;
     const conn::SftpEntry *remote_pick = find_remote(selected_remote_);
-    const bool can_download = connected && remote_pick != nullptr && remote_pick->kind == conn::SftpEntryKind::File;
+    // 目录条目从置灰改可点（人 2026-10-25 已拍口径①）：File 走单文件腿，Directory 走批次腿。
+    const bool can_download = connected && remote_pick != nullptr &&
+                              (remote_pick->kind == conn::SftpEntryKind::File ||
+                               remote_pick->kind == conn::SftpEntryKind::Directory);
     const LocalEntry *local_pick = find_local(selected_local_);
-    const bool can_upload = connected && local_pick != nullptr && !local_pick->is_directory &&
-                            !local_pick->is_symlink;
+    const bool can_upload =
+        connected && local_pick != nullptr && !local_pick->is_symlink;
     const auto chrome2 = chrome;
     auto upload_button = std::make_shared<aurora::Button>(aurora::ButtonProps{
         .label = settings_label("sftp.action.upload"),
@@ -665,6 +966,38 @@ auto SftpPanel::build_card() -> std::shared_ptr<aurora::Column> {
     const int queued = transfers_posted_ - transfers_done_;
     if (state_ == ConnState::Connected && (!transfer_label_.empty() || queued > 0)) {
         children.emplace_back(std::static_pointer_cast<aurora::Widget>(build_transfer_bar()));
+    }
+
+    // 批次留痕行（稿 §1 末步）：收摊后常驻到下次发起/关板；拒绝档给可行动的文案。
+    if (batch_trace_.shown) {
+        std::string trace;
+        if (batch_trace_.rejected) {
+            const conn::BatchLimits limits{};
+            switch (batch_trace_.reject) {
+            case conn::BatchReject::OverDepth:
+                trace = settings_label("sftp.batch.reject.depth",
+                                       {{"limit", static_cast<std::int64_t>(limits.max_depth)}});
+                break;
+            case conn::BatchReject::OverCount:
+                trace = settings_label("sftp.batch.reject.count",
+                                       {{"limit", static_cast<std::int64_t>(limits.max_files)}});
+                break;
+            case conn::BatchReject::ListFailed:
+            case conn::BatchReject::OverBytes:
+            case conn::BatchReject::None:
+                // OverBytes 本期未启用（模型头口径）；None 是拒绝档的不应到形态——同归枚举失败文案。
+                trace = settings_label("sftp.batch.reject.list");
+                break;
+            }
+        } else {
+            trace = settings_label("sftp.batch.summary",
+                                   {{"ok", static_cast<std::int64_t>(batch_trace_.ok)},
+                                    {"skip", static_cast<std::int64_t>(batch_trace_.skipped)},
+                                    {"fail", static_cast<std::int64_t>(batch_trace_.failed)}});
+        }
+        auto trace_note = make_text(std::move(trace), chrome.text_dim);
+        trace_note->modifier.set(aurora::Modifier{}.fill_max_width());
+        children.emplace_back(std::static_pointer_cast<aurora::Widget>(std::move(trace_note)));
     }
 
     auto card = std::make_shared<aurora::Column>(aurora::ColumnProps{
@@ -873,8 +1206,12 @@ auto SftpPanel::build_transfer_bar() -> std::shared_ptr<aurora::Row> {
     progress_bar_->set_thickness(6.0F);
     progress_bar_->modifier.set(aurora::Modifier{}.width(140.0F));
 
+    // 取消＝整批止（稿 §1）：旗标掐当前件与后续件，闸上若有未答的首败问也即刻按「中止」自答。
     auto cancel_button = make_button(settings_label("sftp.action.cancel"), 48.0F,
-                                     [this]() -> void { cancel_flag_ = true; });
+                                     [this]() -> void {
+                                         cancel_flag_ = true;
+                                         batch_latch_.abort();
+                                     });
 
     std::vector<aurora::Node> children;
     children.emplace_back(std::static_pointer_cast<aurora::Widget>(std::move(transfer_text_)));
@@ -1004,8 +1341,16 @@ auto SftpPanel::start_transfer(bool download) -> void {
     cancel_flag_ = false;  // 新传输从干净旗标起跑（上一单的取消不连坐）。
     if (download) {
         const conn::SftpEntry *entry = find_remote(selected_remote_);
-        if (entry == nullptr || entry->kind != conn::SftpEntryKind::File) {
-            return;  // 目录不传输（置灰），递归目录传输见 run_worker 的 TODO。
+        if (entry == nullptr) {
+            return;
+        }
+        if (entry->kind == conn::SftpEntryKind::Directory) {
+            // 目录走批次腿（稿 §1）：先 D5① 确认（覆盖警示在前），确认回调里才投递。
+            show_batch_confirm(true, entry->name);
+            return;
+        }
+        if (entry->kind != conn::SftpEntryKind::File) {
+            return;  // 软链与其他类型不可传（D1① 的条目卡口径）。
         }
         Request req{.kind = Request::Kind::Download,
                     .a = conn::sftp_path_join(remote_path_, entry->name),
@@ -1014,7 +1359,11 @@ auto SftpPanel::start_transfer(bool download) -> void {
         post(std::move(req));
     } else {
         const LocalEntry *entry = find_local(selected_local_);
-        if (entry == nullptr || entry->is_directory || entry->is_symlink) {
+        if (entry == nullptr || entry->is_symlink) {
+            return;
+        }
+        if (entry->is_directory) {
+            show_batch_confirm(false, entry->name);
             return;
         }
         Request req{.kind = Request::Kind::Upload,
@@ -1216,6 +1565,120 @@ auto SftpPanel::show_delete_confirm(const std::string &name, bool is_directory) 
 
     auto content = std::make_shared<aurora::Column>(
         aurora::ColumnProps{.children = std::move(children), .gap = 8.0F});
+    dialog_ = std::make_shared<aurora::Dialog>();
+    dialog_->set_content(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(content))});
+    dialog_index_ = host_->add_overlay(aurora::Node{dialog_});
+    dialog_->show();
+}
+
+auto SftpPanel::show_batch_confirm(bool download, const std::string &name) -> void {
+    const auto chrome = settings_chrome();
+    close_dialog();
+
+    auto title = make_text(settings_label("sftp.batch.confirm.title"), chrome.text);
+    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    // D5①：覆盖警示（D2/D3① 的后果面）必须先于动作可见，文案点名目录名与「同名覆盖」。
+    auto body = make_text(settings_label("sftp.batch.confirm.body", {{"name", name}}), chrome.text);
+    body->modifier.set(aurora::Modifier{}.fill_max_width());
+
+    auto confirm = [this, download, name]() -> void {
+        close_dialog();
+        if (state_ != ConnState::Connected) {
+            return;
+        }
+        cancel_flag_ = false;  // 批次接旗：上一单的取消不得先掐批次的第一件。
+        batch_trace_ = BatchTrace{};
+        Request req;
+        if (download) {
+            req = Request{.kind = Request::Kind::BatchDownload,
+                          .a = conn::sftp_path_join(remote_path_, name),
+                          .local = std::filesystem::path{local_path_}};
+        } else {
+            req = Request{.kind = Request::Kind::BatchUpload,
+                          .a = remote_path_,
+                          .local = std::filesystem::path{local_path_} /
+                                   std::filesystem::path{name}};
+        }
+        ++transfers_posted_;  // 批次恒贡献 1（F3），文件数不进 chip。
+        post(std::move(req));
+        rebuild_overlay();
+    };
+    auto confirm_button = std::make_shared<aurora::Button>(aurora::ButtonProps{
+        .label = settings_label("sftp.action.confirm"),
+        .color = chrome.accent,
+        .on_color = chrome.window_bg,
+        .min_width = 64.0F,
+    });
+    confirm_button->set_on_click(confirm);
+    auto cancel_button = make_button(settings_label("sftp.action.cancel"), 64.0F,
+                                     [this]() -> void { close_dialog(); });
+
+    auto content = std::make_shared<aurora::Column>(aurora::ColumnProps{
+        .children = std::vector<aurora::Node>{
+            aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(title))},
+            aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(body))},
+            aurora::Node{std::static_pointer_cast<aurora::Widget>(
+                std::make_shared<aurora::Row>(aurora::RowProps{
+                    .children = std::vector<aurora::Node>{
+                        aurora::Node{std::static_pointer_cast<aurora::Widget>(
+                            std::move(confirm_button))},
+                        aurora::Node{std::static_pointer_cast<aurora::Widget>(
+                            std::move(cancel_button))}},
+                    .gap = 8.0F}))}},
+        .gap = 8.0F});
+    dialog_ = std::make_shared<aurora::Dialog>();
+    dialog_->set_content(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(content))});
+    dialog_index_ = host_->add_overlay(aurora::Node{dialog_});
+    dialog_->show();
+}
+
+auto SftpPanel::show_batch_ask(const std::string &name, conn::SftpError error) -> void {
+    const auto chrome = settings_chrome();
+    close_dialog();
+
+    auto title = make_text(settings_label("sftp.batch.ask.title"), chrome.text);
+    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    std::string error_text;
+    const std::string_view error_key = sftp_error_key(error);
+    if (!error_key.empty()) {
+        error_text = settings_label(error_key);
+    }
+    auto body = make_text(
+        settings_label("sftp.batch.ask.body",
+                       {{"name", name}, {"error", std::move(error_text)}}),
+        chrome.text);
+    body->modifier.set(aurora::Modifier{}.fill_max_width());
+
+    auto skip_button = make_button(settings_label("sftp.batch.ask.skip"), 64.0F,
+                                   [this]() -> void {
+                                       close_dialog();
+                                       batch_latch_.post_decision(BatchDecision::Skip);
+                                   });
+    // D7①：缺省落「中止」——红键居首与删除确认同族；超时与收摊档在闸上同值，不在此处。
+    auto abort_button = std::make_shared<aurora::Button>(aurora::ButtonProps{
+        .label = settings_label("sftp.batch.ask.abort"),
+        .color = aurora::colors::AURORA_RED,
+        .on_color = chrome.window_bg,
+        .min_width = 64.0F,
+    });
+    abort_button->set_on_click([this]() -> void {
+        close_dialog();
+        batch_latch_.post_decision(BatchDecision::Abort);
+    });
+
+    auto content = std::make_shared<aurora::Column>(aurora::ColumnProps{
+        .children = std::vector<aurora::Node>{
+            aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(title))},
+            aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(body))},
+            aurora::Node{std::static_pointer_cast<aurora::Widget>(
+                std::make_shared<aurora::Row>(aurora::RowProps{
+                    .children = std::vector<aurora::Node>{
+                        aurora::Node{std::static_pointer_cast<aurora::Widget>(
+                            std::move(abort_button))},
+                        aurora::Node{std::static_pointer_cast<aurora::Widget>(
+                            std::move(skip_button))}},
+                    .gap = 8.0F}))}},
+        .gap = 8.0F});
     dialog_ = std::make_shared<aurora::Dialog>();
     dialog_->set_content(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(content))});
     dialog_index_ = host_->add_overlay(aurora::Node{dialog_});

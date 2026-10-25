@@ -664,6 +664,60 @@
     "sftp.action.retry": "重试",
     "sftp.action.up": "向上",
     "sftp.action.upload": "上传",
+    "sftp.batch.ask.abort": "中止",
+    "sftp.batch.ask.body": "{name} 传输失败：{error}。跳过这一件，还是中止整批？",
+    "@sftp.batch.ask.body": {
+      "placeholders": {
+        "error": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "sftp.batch.ask.skip": "跳过",
+    "sftp.batch.ask.title": "传输失败",
+    "sftp.batch.confirm.body": "将递归传输目录 {name}，目标侧已存在的同名文件会被覆盖。确认开始？",
+    "@sftp.batch.confirm.body": {
+      "placeholders": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "sftp.batch.confirm.title": "传输文件夹",
+    "sftp.batch.reject.count": "文件数超过上限 {limit}，本批未执行；请压缩成单文件后再传。",
+    "@sftp.batch.reject.count": {
+      "placeholders": {
+        "limit": {
+          "type": "int64"
+        }
+      }
+    },
+    "sftp.batch.reject.depth": "目录层级超过上限 {limit}，本批未执行。",
+    "@sftp.batch.reject.depth": {
+      "placeholders": {
+        "limit": {
+          "type": "int64"
+        }
+      }
+    },
+    "sftp.batch.reject.list": "枚举目录失败，本批未执行。",
+    "sftp.batch.summary": "批次结束：成功 {ok}，跳过 {skip}，失败 {fail}",
+    "@sftp.batch.summary": {
+      "placeholders": {
+        "fail": {
+          "type": "int64"
+        },
+        "ok": {
+          "type": "int64"
+        },
+        "skip": {
+          "type": "int64"
+        }
+      }
+    },
     "sftp.column.local": "本地",
     "sftp.column.mtime": "修改时间",
     "sftp.column.name": "名称",

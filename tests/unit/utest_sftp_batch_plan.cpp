@@ -2,11 +2,13 @@
 /// 目标单元: src/conn/sftp_model.h 的批次计划折叠（plan_batch_transfer）
 /// 测试说明: 守住递归目录传输的纯逻辑矩阵——目录先于文件的确定序、相对路径
 ///           拼接（含 rel_dir 尾斜杠归一）、字节求和只认已知大小档、守卫线
-///           两档越线整批拒绝且**不携带残树**、空树可执行。枚举 IO 不在
-///           本层（worker 侧 list_directory / filesystem，沙箱无 sshd）。
+///           两档越线整批拒绝且**不携带残树**、空树可执行、枚举失败短路档、
+///           批次总账进度折叠。枚举 IO 不在本层（worker 侧 list_directory /
+///           filesystem，沙箱无 sshd）。
 
 #include "conn/sftp_model.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -20,6 +22,7 @@ using conn::BatchDirNode;
 using conn::BatchFileNode;
 using conn::BatchLimits;
 using conn::BatchReject;
+using conn::SftpProgress;
 using conn::plan_batch_transfer;
 
 [[nodiscard]] auto file(std::string name, std::uint64_t bytes, bool known = true)
@@ -128,6 +131,59 @@ AURORA_TEST_CASE(files_directly_at_the_depth_line_still_pass) {
 
     AURORA_TEST_CHECK_TRUE(plan.engaged);
     AURORA_TEST_CHECK_MSG(plan.files[0] == "one/f", "file level is not a directory level");
+}
+
+AURORA_TEST_CASE(list_failure_short_circuits_before_shape_verdicts) {
+    // 枚举断过一层＝树不完整：即便残树形状同时越深度线，拒绝档也必须是 ListFailed——
+    // 文案要说得出真正那一条（越线树说「太大」、断链树说「太大」会把人引去压缩而非重试）。
+    const auto root = dir("", {}, {dir("one", {}, {dir("two", {file("deep", 1)})})});
+
+    const auto broken = plan_batch_transfer(root, "", BatchLimits{/*max_depth=*/1, 100},
+                                            /*list_failed=*/true);
+    AURORA_TEST_CHECK_TRUE(!broken.engaged);
+    AURORA_TEST_CHECK_TRUE(broken.reject == BatchReject::ListFailed);
+    AURORA_TEST_CHECK_MSG(broken.files.empty() && broken.dirs.empty(),
+                          "list failure rejects without residue too");
+
+    // 同一棵形状合法的树，缺省 list_failed==false 时照常可执行。
+    const auto sound = plan_batch_transfer(root, "", BatchLimits{/*max_depth=*/2, 100});
+    AURORA_TEST_CHECK_TRUE(sound.engaged);
+}
+
+AURORA_TEST_CASE(fold_batch_progress_accumulates_bytes_over_completed_files) {
+    using conn::fold_batch_progress;
+
+    // 第三件传到一半：总账＝前两件整件 + 当前件已完成。
+    const auto mid = fold_batch_progress(/*bytes_before=*/300,
+                                         SftpProgress{.bytes_done = 40, .total_bytes = 100,
+                                                      .total_known = true},
+                                         /*batch_total=*/1000, /*complete=*/true);
+    AURORA_TEST_CHECK_TRUE(mid.total_known);
+    AURORA_TEST_CHECK_EQ(mid.total_bytes, std::uint64_t{1000});
+    AURORA_TEST_CHECK_EQ(mid.bytes_done, std::uint64_t{340});
+    AURORA_TEST_CHECK_TRUE(mid.progress_percent() == std::optional<unsigned>{34});
+}
+
+AURORA_TEST_CASE(fold_batch_progress_indeterminate_is_decided_by_the_plan_alone) {
+    using conn::fold_batch_progress;
+
+    // 计划里有未知大小的文件＝整批转不确定态，与当前件自身的 fstat 读数无关。
+    const auto unknown_plan =
+        fold_batch_progress(0, SftpProgress{.bytes_done = 5, .total_bytes = 9, .total_known = true},
+                            0, /*complete=*/false);
+    AURORA_TEST_CHECK_TRUE(!unknown_plan.total_known);
+    AURORA_TEST_CHECK_TRUE(unknown_plan.progress_percent() == std::nullopt);
+
+    // 反过来：计划算得清、当前件没回 size（total_known==false）——批次总量早已定死，
+    // 不被单件读数推翻，进度照旧可判。
+    const auto sound_plan =
+        fold_batch_progress(/*bytes_before=*/100,
+                            SftpProgress{.bytes_done = 30, .total_bytes = 0, .total_known = false},
+                            /*batch_total=*/200, /*complete=*/true);
+    AURORA_TEST_CHECK_TRUE(sound_plan.total_known);
+    AURORA_TEST_CHECK_EQ(sound_plan.bytes_done, std::uint64_t{130});
+    AURORA_TEST_CHECK_TRUE(
+        sound_plan.progress_percent() == std::optional<unsigned>{65});
 }
 
 }  // namespace borealis::test_cases::utest_sftp_batch_plan
