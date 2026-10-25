@@ -519,4 +519,129 @@ AURORA_TEST_CASE(quick_connect_parses_host_port_pairs) {
     AURORA_TEST_CHECK_TRUE(profile.ssh.port == 2222);
 }
 
+AURORA_TEST_CASE(quick_connect_line_without_marker_keeps_the_old_semantics) {
+    // 无 `-J` 的行逐帧走既有宽容口径（旧行为回归网就钉在这几条上）。
+    for (const auto &input : {std::string_view{"gw.example.com"},
+                              std::string_view{"  gw.example.com:2222\t"},
+                              std::string_view{"host:name"}, std::string_view{"host:99999"}}) {
+        const auto [value, issue] = conn::parse_quick_connect_line(input);
+        AURORA_TEST_CHECK_MSG(issue == conn::QuickJumpIssue::None, "no marker, no jump issue");
+        const auto legacy = conn::parse_quick_connect(input);
+        AURORA_TEST_REQUIRE(value.has_value() == legacy.has_value());
+        if (value.has_value()) {
+            AURORA_TEST_CHECK_TRUE(value->host == legacy->first && value->port == legacy->second);
+            AURORA_TEST_CHECK_TRUE(value->jumps.empty());
+        }
+    }
+
+    // 空输入＝「无值、无问题」：侧栏据此保持静默（现行语义）。
+    const auto [empty_value, empty_issue] = conn::parse_quick_connect_line("   ");
+    AURORA_TEST_CHECK_FALSE(empty_value.has_value());
+    AURORA_TEST_CHECK_TRUE(empty_issue == conn::QuickJumpIssue::None);
+
+    // 大小写敏感：`-j` 不是标记，整段按主机名收——「不猜」的另一面。
+    const auto [lower, lower_issue] = conn::parse_quick_connect_line("myhost -j gw");
+    AURORA_TEST_CHECK_TRUE(lower_issue == conn::QuickJumpIssue::None);
+    AURORA_TEST_REQUIRE(lower.has_value());
+    AURORA_TEST_CHECK_TRUE(lower->host == "myhost -j gw" && lower->port == 22);
+
+    // 子串不是标记：`-J` 必须是空白分隔的裸 token，`my-Jhost` 整段仍是主机名。
+    const auto [substr, substr_issue] = conn::parse_quick_connect_line("my-Jhost:2200");
+    AURORA_TEST_CHECK_TRUE(substr_issue == conn::QuickJumpIssue::None);
+    AURORA_TEST_REQUIRE(substr.has_value());
+    AURORA_TEST_CHECK_TRUE(substr->host == "my-Jhost" && substr->port == 2200);
+}
+
+AURORA_TEST_CASE(quick_connect_line_folds_the_jump_tail_through_the_grammar_owner) {
+    const auto [value, issue] = conn::parse_quick_connect_line("target.example:2222 -J gw1,gw2:2222");
+    AURORA_TEST_CHECK_TRUE(issue == conn::QuickJumpIssue::None);
+    AURORA_TEST_REQUIRE(value.has_value());
+    AURORA_TEST_CHECK_TRUE(value->host == "target.example" && value->port == 2222);
+    AURORA_TEST_REQUIRE_EQ(value->jumps.size(), std::size_t{2});
+    // 端口折法全随语法层：留空折 22、显式照收；档案序＝跳序（第一项最靠近本机）。
+    AURORA_TEST_CHECK_TRUE(value->jumps[0].host == "gw1" && value->jumps[0].port == 22);
+    AURORA_TEST_CHECK_TRUE(value->jumps[1].host == "gw2" && value->jumps[1].port == 2222);
+
+    // 折进临时档案：proxy_jumps 原样进 ssh 段，id 仍按 host:port 定（跳表不分叉 id）。
+    const auto profile = conn::quick_connect_profile(value->host, value->port, value->jumps);
+    AURORA_TEST_CHECK_EQ(profile.ssh.proxy_jumps.size(), std::size_t{2});
+    AURORA_TEST_CHECK_TRUE(profile.id == "quick:target.example:2222");
+
+    // `--jump` 同义；`none` 与「-J 后面没写」都折成空链路＝直连（语法层同义口径）。
+    const auto [alt, alt_issue] = conn::parse_quick_connect_line("host --jump gw");
+    AURORA_TEST_CHECK_TRUE(alt_issue == conn::QuickJumpIssue::None);
+    AURORA_TEST_REQUIRE(alt.has_value());
+    AURORA_TEST_REQUIRE_EQ(alt->jumps.size(), std::size_t{1});
+    for (const auto &tail : {std::string_view{"host -J none"}, std::string_view{"host -J "}}) {
+        const auto [none_value, none_issue] = conn::parse_quick_connect_line(tail);
+        AURORA_TEST_CHECK_TRUE(none_issue == conn::QuickJumpIssue::None);
+        AURORA_TEST_REQUIRE(none_value.has_value());
+        AURORA_TEST_CHECK_TRUE(none_value->jumps.empty());
+    }
+
+    // 主机段照旧宽容：`user@` 不进主机段判据（quick connect 文法本就无 user@ 一档）。
+    const auto [porty, porty_issue] = conn::parse_quick_connect_line("h:1 -J g");
+    AURORA_TEST_CHECK_TRUE(porty_issue == conn::QuickJumpIssue::None);
+    AURORA_TEST_REQUIRE(porty.has_value());
+    AURORA_TEST_CHECK_TRUE(porty->host == "h" && porty->port == 1);
+}
+
+AURORA_TEST_CASE(quick_connect_line_refuses_a_bad_jump_list_without_connecting) {
+    // 超出跳数上限的一串（9 枚 > `kMaxProxyHops`＝8）——语法层的拒串经本件透传。
+    auto too_many = std::string{"host -J "};
+    for (std::size_t index = 0; index < 9; ++index) {
+        too_many += index == 0 ? "a" : ",a";
+    }
+    const std::vector<std::string_view> bads{std::string_view{"host -J bad token"},  // 逗号串被空格劈开
+                                             std::string_view{"host -J gw:abc"},      // 端口非数字
+                                             std::string_view{"host -J gw,%h"},       // 宏不展开
+                                             std::string_view{"host -J ,"},           // 空 token
+                                             std::string_view{too_many}};
+    // 坏跳表＝整行拒（语法层「任一枚坏 token 整串拒」经本件透传）：无值 + 指名问题码。
+    for (const auto bad : bads) {
+        const auto [value, issue] = conn::parse_quick_connect_line(bad);
+        AURORA_TEST_CHECK_MSG(value == std::nullopt, "a bad jump list never yields a profile");
+        AURORA_TEST_CHECK_MSG(issue == conn::QuickJumpIssue::BadJumpList, "the notice needs this code");
+    }
+
+    // 坏跳表排在空主机之前拒：` -J bad%h` 的输入者写坏的是跳表，静默吞掉就没人告诉他。
+    const auto [headless, headless_issue] = conn::parse_quick_connect_line(" -J bad%h");
+    AURORA_TEST_CHECK_FALSE(headless.has_value());
+    AURORA_TEST_CHECK_TRUE(headless_issue == conn::QuickJumpIssue::BadJumpList);
+}
+
+AURORA_TEST_CASE(hop_secrets_silent_follows_the_per_hop_plan) {
+    using conn::hop_secrets_silent;
+    using conn::InMemoryCredentialStore;
+    using conn::SecretHandle;
+    using conn::SshHop;
+    using conn::SshProfile;
+
+    conn::InMemoryCredentialStore memory;
+    conn::UnavailableCredentialStore unavailable;
+
+    auto profile = SshProfile{};
+    // 0 跳恒静默（两台库同判）。
+    AURORA_TEST_CHECK_TRUE(hop_secrets_silent(profile, memory));
+    AURORA_TEST_CHECK_TRUE(hop_secrets_silent(profile, unavailable));
+
+    auto agent_hop = SshHop{};
+    agent_hop.auth_method = "agent";
+    agent_hop.credential = SecretHandle::reference("libsecret:jump");
+    auto password_hop = SshHop{};
+    password_hop.auth_method = "password";
+    password_hop.credential = SecretHandle::reference("libsecret:jump");
+
+    // agent 跳挂着句柄也不取（认证方式说了算）；Stored 跳算静默——取空是运行期的另一档。
+    profile.proxy_jumps = {agent_hop, password_hop};
+    AURORA_TEST_CHECK_TRUE(hop_secrets_silent(profile, memory));
+
+    // 库不可用 ⇒ 那一跳落 Ask ⇒ 整条链不静默：自启据此跳过，绝不把模态框带进启动序（稿 D8）。
+    AURORA_TEST_CHECK_FALSE(hop_secrets_silent(profile, unavailable));
+
+    // 判据指向「任一跳」，与跳序无关：好跳在前也挡不住坏跳翻红。
+    profile.proxy_jumps = {password_hop, agent_hop};
+    AURORA_TEST_CHECK_FALSE(hop_secrets_silent(profile, unavailable));
+}
+
 }  // namespace borealis::test_cases::utest_profile_views

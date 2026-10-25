@@ -154,6 +154,40 @@ struct CredentialPlan {
     -> std::optional<std::pair<std::string, int>>;
 
 /// @brief 一条 quick connect 的临时 SSH 档案（不入库：id 带 `quick:` 前缀，缺省 agent 认证）。
-[[nodiscard]] auto quick_connect_profile(std::string host, int port) -> Profile;
+///
+/// @p jumps 空＝直连，与不带 `-J` 的旧调用点逐帧同形（`SPEC.FEAT.CONN.03` 稿 D5）。
+[[nodiscard]] auto quick_connect_profile(std::string host, int port,
+                                         std::vector<SshHop> jumps = {}) -> Profile;
+
+/// @brief quick connect 的解析结果（批 7 稿 D5）：主机段 + 折好的跳表。
+struct QuickConnect {
+    std::string host{};
+    int port{22};
+    std::vector<SshHop> jumps{};  ///< 空＝直连；`none` 与不写 `-J` 是同义（语法层口径）。
+};
+
+/// @brief `-J` 腿的问题码（UI 把它映射成一句留痕；本层不产文案）。
+enum class QuickJumpIssue : std::uint8_t {
+    None,        ///< 通过；空输入也是「无值、无问题」——沿用既有的静默档。
+    BadJumpList, ///< 跳表段坏（任一枚坏 token／越上限）⇒ 整行拒，不连（稿 D5）。
+};
+
+/// @brief 带 `-J` 尾段的 quick connect 解析（`SPEC.FEAT.CONN.03` 批 7 稿 D5）。
+///
+/// 以**最后一个**空白分隔的 `-J`／`--jump` token 切两段（字面两形态、大小写敏感——「不猜」
+/// 口径；把 `-J` 塞在主机段中间的 argv 形不支持，坏值走留痕而非静默错连）：前段整交既有
+/// `parse_quick_connect`（宽容口径原样继承），后段整交 `parse_proxy_jump_list`——本件零新
+/// 解析规则，跳链语法唯一主人不变。跳表段为**空**（`host -J` 尾巴没写）按语法层折成空链路
+/// ＝直连，与 `none` 同义；段内含空白（逗号串被空格劈开）落 `BadJumpList`。
+/// @return 主机段空 ⇒ `{nullopt, None}`（静默，同旧语义）；跳表坏 ⇒ `{nullopt, BadJumpList}`。
+[[nodiscard]] auto parse_quick_connect_line(std::string_view text)
+    -> std::pair<std::optional<QuickConnect>, QuickJumpIssue>;
+
+/// @brief 逐跳材料是否全部可静默解析（批 7 稿 D8 的自启预检，纯逻辑）。
+///
+/// 判据与 `plan_hop_credential` 逐跳同一口径：任一跳 `route == Ask` ⇒ false。`Stored` 算
+/// 静默——运行期库里取空是既有的另一档（拨号侧现形），启动序只问「该不该弹问」。
+[[nodiscard]] auto hop_secrets_silent(const SshProfile &ssh, const CredentialStore &store)
+    -> bool;
 
 }  // namespace borealis::conn

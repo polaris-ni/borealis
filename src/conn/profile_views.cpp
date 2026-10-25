@@ -263,7 +263,7 @@ auto parse_quick_connect(std::string_view text) -> std::optional<std::pair<std::
     return std::make_pair(std::string{text.substr(0, colon)}, static_cast<int>(port));
 }
 
-auto quick_connect_profile(std::string host, int port) -> Profile {
+auto quick_connect_profile(std::string host, int port, std::vector<SshHop> jumps) -> Profile {
     auto profile = Profile{};
     profile.id = "quick:" + host + ":" + std::to_string(port);
     profile.name = host + ":" + std::to_string(port);
@@ -271,7 +271,80 @@ auto quick_connect_profile(std::string host, int port) -> Profile {
     profile.ssh.host = std::move(host);
     profile.ssh.port = port;
     profile.ssh.auth_method = "agent";  // 临时通道缺省 agent：无档案即无凭据可引。
+    // 跳表原样进档案（批 7 稿 D5）：解析侧折出的跳一律 agent 认证，所以 quick connect 全程
+    // 不会触发逐跳询问——口令跳板走档案/向导那条路，不是这条临时通道的事。
+    profile.ssh.proxy_jumps = std::move(jumps);
     return profile;
+}
+
+namespace {
+
+/// @brief 从两端剥空白与制表（与 `parse_quick_connect` 同口径；不碰中间字符）。
+[[nodiscard]] auto trim_edges(std::string_view text) -> std::string_view {
+    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
+        text.remove_prefix(1);
+    }
+    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) {
+        text.remove_suffix(1);
+    }
+    return text;
+}
+
+}  // namespace
+
+auto parse_quick_connect_line(std::string_view text)
+    -> std::pair<std::optional<QuickConnect>, QuickJumpIssue> {
+    // 找最后一个空白分隔的 `-J`／`--jump` 裸 token（大小写敏感——「不猜」）。逐段扫而不是
+    // 子串搜：子串会误中 `my-Jhost` 这类合法主机名片段。
+    std::size_t marker_pos = std::string_view::npos;
+    std::size_t marker_end = 0;
+    for (std::size_t cursor = 0; cursor < text.size();) {
+        while (cursor < text.size() && (text[cursor] == ' ' || text[cursor] == '\t')) {
+            ++cursor;
+        }
+        const std::size_t start = cursor;
+        while (cursor < text.size() && text[cursor] != ' ' && text[cursor] != '\t') {
+            ++cursor;
+        }
+        if (start == cursor) {
+            break;
+        }
+        const auto token = text.substr(start, cursor - start);
+        if (token == "-J" || token == "--jump") {
+            marker_pos = start;
+            marker_end = cursor;
+        }
+    }
+
+    if (marker_pos == std::string_view::npos) {
+        // 没有 `-J` 段：整行交既有解析，宽容口径逐帧继承（旧行为回归网就钉在这）。
+        const auto parsed = parse_quick_connect(text);
+        if (!parsed.has_value()) {
+            return {std::nullopt, QuickJumpIssue::None};
+        }
+        return {QuickConnect{parsed->first, parsed->second, {}}, QuickJumpIssue::None};
+    }
+
+    const auto jump_text = trim_edges(text.substr(marker_end));
+    // 跳表段整交语法层唯一主人；`host -J`（段为空）按语法层折成空链路＝直连，与 none 同义。
+    const auto jumps = parse_proxy_jump_list(jump_text);
+    if (!jumps.has_value()) {
+        return {std::nullopt, QuickJumpIssue::BadJumpList};
+    }
+    const auto parsed = parse_quick_connect(text.substr(0, marker_pos));
+    if (!parsed.has_value()) {
+        return {std::nullopt, QuickJumpIssue::None};  // 空主机沿用静默档（坏跳表已在上面先拒）。
+    }
+    return {QuickConnect{parsed->first, parsed->second, *jumps}, QuickJumpIssue::None};
+}
+
+auto hop_secrets_silent(const SshProfile &ssh, const CredentialStore &store) -> bool {
+    for (const auto &hop : ssh.proxy_jumps) {
+        if (plan_hop_credential(hop, store).route == CredentialRoute::Ask) {
+            return false;
+        }
+    }
+    return true;
 }
 
 }  // namespace borealis::conn
