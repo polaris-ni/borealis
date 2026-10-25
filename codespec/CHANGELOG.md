@@ -4,6 +4,16 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.152（2026-10-25）**`SPEC.FEAT.WS.03` 批 4 在册最后一条 `TODO(SPEC.FEAT.WS.03)` 结项：唤醒腿随关静默做成会话层不变式（裁决 7.152；代码一笔 `11407f3` → 文档回写（本笔））**
+
+**动机**：装配层唯一长命的捕窗引用腿——`build_pane_view` 给每条会话注入的 `set_frame_wake([&window]{ window.surface->request_wake(); })`——在残留档场景（重启的 `retired`、换视口失败回滚归还）里把「已 close 的会话 + 指着属主窗的闭包」留在档中。此前「此刻它只可能指着还活着的那一扇」只靠关窗撤账链 close-join 先于 erase 的次序担保，而 `main.cpp` 不进 runner（裁决 7.83），这条论证永远拿不到自动化证人。收口形态经人拍板取「**Session 侧静默**」档（否决「窗侧活体令牌」——加件也改变不了装配层无证人，且改动面更大；否决「只撤账不改码」——把欠账从注释搬进文档而已）。
+
+**落地形态**：`Session::close()` 在连接 join 返回后、停笔落盘前清空 `frame_wake_`——**清腿排在 join 之后**让末路 `on_closed` 的唤醒仍赶得上班车（WS.05 dead-session 浮层那一眼不被吞），**join 之后永不再点亮帧**让先 close 再离手的残留档结构性不持任何闭包，悬垂一类关死的不是概率而是构造。公共头 `close()`／`set_frame_wake()` 注释同步改口「注入的句柄只活到本会话 close()」；`src/main.cpp` 撤 `TODO(SPEC.FEAT.WS.03)`，注释写明双层担保（关窗链次序 + 会话层清腿）。
+
+**验收读数**：构建通过（linux preset，无新警告）；`ctest --test-dir build -E etest_` **126/126**（套件数持平 v0.151）；runner **1529/1529**（基线 1527＋2——`utest_session` 53→55：`close_silences_the_frame_wake_leg_afterwards` 钉「close 后 resize 与迟到边沿永久静默、只停叫醒不吞已排的脏」，`the_last_wake_inside_close_still_gets_through` 借替身连接新增的一次性 `on_close` 钩子（自废设计防 `~Session` 第二跳回调半死对象）钉「末路唤醒赶在清腿前送达」）。变异两刃各有指名红：V1 删清腿块 ⇒ 两案红；V2 清腿挪到 join 前 ⇒ 只有末路唤醒案红而静默案恰绿（时序两面各自钉死）；逐字节还原复绿。
+
+**边界与不称可用**：本条证人钉的是 `Session` 契约，装配调用序仍在 7.83 无面区内；WS.03 稿 §9 七条真机走照欠、CONN.04 稿 §6 七条走照欠 ⇒ 均不称「可用」；Win32／MSVC 未复核。代码侧在册 `TODO(SPEC.*)` 由三处减为**两处**：`src/conn/ssh_dial.h` 的 CONN.03 跳链三条腿、`tests/support/fake_ssh_server.cpp` 的 CONN.02 假服务器 Win32 腿。B 档清欠（「先做B吧」两件套：CONN.04 递归批 7.151 ＋ 本条 7.152）就此收口。
+
 ## v0.151（2026-10-25）**`SPEC.FEAT.CONN.04` 的延后子项「递归目录传输」结项：折叠件与决策闸两片纯逻辑＋面板三步接线，`TODO(SPEC.FEAT.CONN.04)` 撤账（裁决 7.151；本地提交 `fc5736d`（稿收口）→ 批 1 `4db1441`（纯逻辑）→ 批 2 `fa54447`（接线与词条）→ 文档回写（本笔））**
 
 **动机**：SFTP 面板第一期把目录条目置灰、`TODO(SPEC.FEAT.CONN.04)` 挂账在 `src/ui/sftp_panel.cpp`——递归目录传输是需求「上传/下载」在目录上的另一半。本棒按设计稿 `codespec/UI_SFTP_RECURSIVE.draft.md`（2026-10-25 收口，D1–D8 全按推荐，人逐条裁可）落地；四条已由人拍板的口径：入口＝与单文件同款的右键／对传按钮（目录条目改可点，不加第二形态）、首个失败即弹框问「跳过／中止」、进度＝整批按字节汇总的总进度（预枚举算总量）、面板维持自开独立 SSH 会话（本棒不接 CONN.02 复用）。
