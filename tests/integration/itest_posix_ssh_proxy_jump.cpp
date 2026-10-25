@@ -1,7 +1,7 @@
 /// 测试类型: integration（POSIX 腿）
 /// 目标单元: src/conn/ssh_hop_chain.{h,cpp} + src/conn/ssh_dial.{h,cpp} 的 seed 腿 +
-///           src/platform/posix/hop_pipe.cpp + 三条未接线腿的拒拨口径
-///           （sftp_client／tunnel_client／key_push）
+///           src/platform/posix/hop_pipe.cpp + 三条拨号腿（sftp_client／tunnel_client／
+///           key_push）的接链形态（`SPEC.FEAT.CONN.03` 批 6）
 /// 测试说明: `SPEC.FEAT.CONN.03` 跳板机（稿 D1「自建 direct-tcpip 跳链」／D4／D6／D10）的
 ///           **真协议**端到端证人。对端是 2–3 台进程内假 SSH 服务器（跳板那几台开了
 ///           `allow_direct_tcpip`，于是它们真的替客户端把字节搬到下一台），链路两端跑的
@@ -13,9 +13,11 @@
 ///              已建好的第 1 跳就地收口，目标服务器**零**连接。
 ///           ④ E4 主机密钥：跳板策略 `Yes` + 陌生密钥 ⇒ 档位 `HostKey`、hop_index 指到那一跳
 ///              （一跳与二跳各证一次），目标服务器零连接。
-///           ⑤ D6/E6 fail-closed：档案带跳链而调用方给不了 seed ⇒ 记 `HopUnwired` 且**不发起**
-///              连接（两侧服务器都是零连接），绝不静默直连。同一判据在**三条还没接线的腿**
-///              （SFTP／隧道／密钥推送）上各证一次——它们的失败档位不同，证人都是「零连接」。
+///           ⑤ D6/E6 兜底与翻正（批 6）：dial 原语带跳链不交 seed 仍记 `HopUnwired` 且**不发起**
+///              连接（漏接线的兜底档）；三条腿则**翻正**为经链拨通——SFTP 与密钥推送走完跳链与
+///              目标认证、各自停在假服务器不应的子系统／exec 请求上（本件假服务器不说 SFTP 与
+///              exec，成功面归真机走查，在册边界），隧道腿直接爬到 `Active`；跳板认证谈不成时
+///              目标依旧零连接（腿上的 E3 等价面）。
 ///           ⑥ 0 跳链路是合法空操作：`open()` 回 true、`seed_fd()` 回 0。
 ///           ⑦ E5 共线：同目标同跳链同秘密的两格只拨一次（跳板与目标各 1 条连接、目标 2 条
 ///              通道、跳板 1 次 `direct-tcpip`），回显各归各格不串。
@@ -436,8 +438,8 @@ AURORA_TEST_CASE(profile_with_jumps_without_seed_refuses_to_connect_directly) {
     FakeSshServer target{target_options()};
     AURORA_TEST_REQUIRE_MSG(jump.ok() && target.ok(), "fake ssh servers could not listen");
 
-    // 判据 ⑤（稿 D6）：带跳链的档案落到一条建不了链的腿上＝拒拨，而不是「退回直连」。
-    //         这条腿在批 4 接进共享表之前，正是 SFTP／隧道／密钥推送三条腿的现形口径。
+    // 判据 ⑤ 的兜底（稿 D6）：`HopUnwired` 由此退为**漏接线的兜底档**——批 6 起四条腿都接了
+    // 链，只有装配漏交 seed 才会再见到这一档；两台服务器零连接证拒拨不是「静默直连」。
     const auto profile = target_profile(target, {make_hop(jump)});
     auto session = Session{};
     const auto outcome =
@@ -448,47 +450,87 @@ AURORA_TEST_CASE(profile_with_jumps_without_seed_refuses_to_connect_directly) {
     AURORA_TEST_CHECK_EQ(jump.accepted_connections(), std::size_t{0});
 }
 
-AURORA_TEST_CASE(sftp_tunnel_and_key_push_legs_refuse_a_profile_with_jumps) {
+AURORA_TEST_CASE(sftp_leg_dials_the_target_through_the_chain) {
     FakeSshServer jump{jump_options()};
     FakeSshServer target{target_options()};
     AURORA_TEST_REQUIRE_MSG(jump.ok() && target.ok(), "fake ssh servers could not listen");
 
-    // 判据 ⑤ 的另一半（稿 E6）：三条**尚未接线**的腿各自现形。这里要的不是「回 false」那句措辞，
-    // 而是「一条都没拨」——静默退回直连正是原生路线的既有行为（稿 F7），本仓不接受，故两台服务器
-    // 都摆成证人；少一台就看不出「绕过了跳板」。
+    // 判据 ⑤ 的翻正（批 6 D7，E6 的反面）：SFTP 腿不再拒拨——跳链建立、目标在 seed 上拨通并
+    // 认证，本件假服务器**不说 SFTP 子系统**（在册边界，同 exec 腿留给真 sshd 走查那条），于是
+    // 唯一停在 `sftp_init` 的拒绝上。判据的关键不是那个 false，而是两台服务器都被拨到、转发
+    // 恰好一次——静默直连（稿 F7 的原生行为）会叫跳板那侧零连接。
     const auto profile = target_profile(target, {make_hop(jump)});
-
-    // SFTP 腿：只吃目标秘密，建连失败落 `Network`（档位表里没有跳板一档，精确原因在 dial 腿的日志）。
     auto sftp = SftpClient{};
-    AURORA_TEST_CHECK_FALSE(sftp.connect(profile, std::optional<std::string>{std::string{kSecret}}));
-    AURORA_TEST_CHECK_MSG(sftp.last_error() == SftpError::Network, "sftp failure bucket");
+    AURORA_TEST_CHECK_FALSE(sftp.connect(profile, chain_bundle(profile)));
+    AURORA_TEST_CHECK_MSG(sftp.last_error() == SftpError::Protocol,
+                          "sftp must survive dial and stop at the subsystem");
     AURORA_TEST_CHECK_FALSE(sftp.connected());
+    AURORA_TEST_CHECK_EQ(jump.accepted_connections(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(jump.direct_tcpip_requests(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(target.accepted_connections(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(target.auth_attempts(), std::size_t{1});
+}
 
-    // 密钥推送腿：终值停在拨号格（纯逻辑闸已过——交出去的是一行合法公钥）。
+AURORA_TEST_CASE(key_push_leg_dials_the_target_through_the_chain) {
+    FakeSshServer jump{jump_options()};
+    FakeSshServer target{target_options()};
+    AURORA_TEST_REQUIRE_MSG(jump.ok() && target.ok(), "fake ssh servers could not listen");
+
+    // 判据 ⑤ 的翻正（批 6 D7）：推送腿走过拨号与认证，停在假服务器不应的 exec 请求上
+    // （`ExecRefused` 而非旧口径的 `Dial` 格）——阶梯走到第三格就是「链上拨通了」的现形。
+    const auto profile = target_profile(target, {make_hop(jump)});
     const auto report = borealis::conn::push_public_key(
-        profile, std::optional<std::string>{std::string{kSecret}},
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 tester@example");
-    AURORA_TEST_CHECK_MSG(report.stage == PushStage::Dial, "key push left the dial stage");
+        profile, chain_bundle(profile), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 tester@example");
+    AURORA_TEST_CHECK_MSG(report.stage == PushStage::Exec, "key push stopped before the exec leg");
     AURORA_TEST_CHECK_TRUE(report.failure.has_value());
+    AURORA_TEST_CHECK_MSG(report.failure.value_or(conn::PushFailure::DialNetwork) ==
+                              conn::PushFailure::ExecRefused,
+                          "push failure bucket is not the refused-exec one");
+    AURORA_TEST_CHECK_EQ(jump.accepted_connections(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(jump.direct_tcpip_requests(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(target.accepted_connections(), std::size_t{1});
+}
 
-    // 隧道腿自带退避环：重试钳成一次，等它自己走到 `Failed` 终态（不钳就会一直重拨到超时之外）。
+AURORA_TEST_CASE(tunnel_leg_reaches_active_over_the_chain) {
+    FakeSshServer jump{jump_options()};
+    FakeSshServer target{target_options()};
+    AURORA_TEST_REQUIRE_MSG(jump.ok() && target.ok(), "fake ssh servers could not listen");
+
+    // 判据 ⑤ 的翻正（批 6 D7）：隧道经一跳链拨通目标并走到 `Active`（本地监听起来即可，
+    // 不需要服务器侧转发面）。旧口径是拒拨后钳一次重试落 `Failed`——如今 `Active` 就是接线本身。
+    const auto profile = target_profile(target, {make_hop(jump)});
     auto spec = TunnelSpec{};
-    spec.id = "e6-unwired";
-    spec.name = "e6-unwired";
+    spec.id = "batch6-active";
+    spec.name = "batch6-active";
     spec.kind = TunnelKind::Local;
-    spec.listen_port = 28081;
+    spec.listen_port = 28083;
     spec.target_host = "127.0.0.1";
     spec.target_port = 80;
     auto sink = TunnelSink{};
-    auto tunnel = Tunnel(profile, std::optional<std::string>{std::string{kSecret}}, spec,
-                         RetryPolicy{.base_ms = 10, .cap_ms = 20, .max_attempts = 1});
+    auto tunnel = Tunnel(profile, chain_bundle(profile), spec, RetryPolicy{});
     tunnel.start(sink);
-    AURORA_TEST_REQUIRE_MSG(wait_until([&] { return tunnel.state() == TunnelState::Failed; }, 8000),
-                            "the tunnel never reached its terminal failure state");
+    AURORA_TEST_REQUIRE_MSG(wait_until([&] { return tunnel.state() == TunnelState::Active; }, 8000),
+                            "the tunnel never came up over the chain");
+    AURORA_TEST_CHECK_EQ(tunnel.bound_listen_port(), 28083);
+    AURORA_TEST_CHECK_EQ(jump.accepted_connections(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(jump.direct_tcpip_requests(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(target.accepted_connections(), std::size_t{1});
     tunnel.stop();
+}
 
+AURORA_TEST_CASE(hop_auth_failure_keeps_the_sftp_leg_off_the_target) {
+    FakeSshServer jump{jump_options(/*reject_auth=*/true)};
+    FakeSshServer target{target_options()};
+    AURORA_TEST_REQUIRE_MSG(jump.ok() && target.ok(), "fake ssh servers could not listen");
+
+    // 判据 ③ 在腿上的等价面（批 6）：跳板认证谈不成 ⇒ 目标一次都不该被碰。档位落 `Network`
+    // （D5：不新开档），精确原因（hop_index=0）在链日志里——真机上看「第几跳谈不成」就在那行。
+    const auto profile = target_profile(target, {make_hop(jump)});
+    auto sftp = SftpClient{};
+    AURORA_TEST_CHECK_FALSE(sftp.connect(profile, chain_bundle(profile)));
+    AURORA_TEST_CHECK_MSG(sftp.last_error() == SftpError::Network, "hop failure bucket");
     AURORA_TEST_CHECK_EQ(target.accepted_connections(), std::size_t{0});
-    AURORA_TEST_CHECK_EQ(jump.accepted_connections(), std::size_t{0});
+    AURORA_TEST_CHECK_EQ(jump.auth_attempts(), std::size_t{1});
 }
 
 AURORA_TEST_CASE(chain_without_hops_is_a_valid_no_op) {

@@ -45,6 +45,7 @@
 #include "borealis/conn/profile.h"
 #include "conn/sftp_client.h"  // conn::SftpClient（libssh 只在其实现内出现）
 #include "conn/sftp_model.h"
+#include "conn/ssh_shared.h"  // conn::SshSecretBundle（Hooks 材料面，批 6 D2/D3）
 #include "ui/sftp_batch.h"  // BatchDecisionLatch（首败问人的决策闸，SPEC.FEAT.CONN.04 递归批）
 
 namespace aurora {
@@ -74,7 +75,10 @@ public:
         /// @brief 活动 SSH 标签的档案；nullopt＝当前标签不是 SSH 会话。
         std::function<std::optional<conn::SshProfile>()> current_ssh_profile;
         /// @brief CONN.09 凭据链解析（装配层询问/句柄拆包；本件不经手明文存储）。
-        std::function<std::optional<std::string>()> resolve_secret;
+        ///        交回**整套 bundle**（目标 + 逐跳，`SPEC.FEAT.CONN.03` 批 6 D3）：材料在开标签
+        ///        那一刻就齐了，本件只随格交出——不新增任何取料趟。空 bundle＝无材料（agent
+        ///        认证本就无需，带跳缺料的落在拨号侧现形，口径同装配层留档）。
+        std::function<conn::SshSecretBundle()> resolve_secret;
         /// @brief 拨号算法覆盖项（`connection.ssh.kex_algorithms`/`host_key_algorithms` 的现取值）。
         ///        空表＝库缺省；每次 Connect 现取，口径同 `resolve_secret`——设置改了下次重拨即生效。
         std::function<conn::SshAlgorithmOverrides()> algorithm_overrides;
@@ -147,7 +151,7 @@ private:
         std::filesystem::path local;  ///< Download＝本地目标目录；Upload＝本地源文件。
         bool is_directory{false};     ///< RemoveRemote：条目是否目录（remove_directory 腿）。
         conn::SshProfile profile{};   ///< Connect：连接档案。
-        std::optional<std::string> secret;  ///< Connect：凭据链解析出的秘密材料。
+        conn::SshSecretBundle bundle;  ///< Connect：凭据链解析出的秘密材料（目标 + 逐跳，批 6 D3）。
         conn::SshAlgorithmOverrides algorithms;  ///< Connect：拨号算法覆盖项（空＝库缺省）。
     };
 

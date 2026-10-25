@@ -17,8 +17,9 @@
 // 会话归属（D8①）：每次推送自开自关，口径同 7.96①「每隧道自开会话」；不借用活动标签
 // 的既有会话，`SshConnection` 的通道所有权模型因此一行未动。
 //
-// 明表面（CONN.09）：`secret` 随 `ssh_dial_and_authenticate` 的形参进、随返回消失，
-// 本件不留副本、不落盘、不进日志。公钥行**不是**秘密，但按 D7① 同样不进命令行、
+// 明表面（CONN.09）：`bundle` 的目标格随 `ssh_dial_and_authenticate` 的形参进、随返回消失，
+// 逐跳格随 `SshHopChain::open()` 进各跳拨号、就地消费；本件不留副本、不落盘、不进日志。
+// 公钥行**不是**秘密，但按 D7① 同样不进命令行、
 // 不进日志——它是用户的身份标识，留在日志里没有裁决价值。
 //
 // 与纯逻辑层的分界：判重与追加字节全在 `conn/key_model`（`is_authorized` /
@@ -33,6 +34,7 @@
 
 #include "borealis/conn/profile.h"
 #include "conn/ssh_dial.h"
+#include "conn/ssh_shared.h"  // SshSecretBundle（形参换型，SPEC.FEAT.CONN.03 批 6 D2）
 
 namespace borealis::conn {
 
@@ -52,7 +54,8 @@ enum class PushStage : std::uint8_t {
 ///
 /// 前四档由 `conn::DialOutcome` 的失败值翻译而来（该枚举实测七档失败含 `Options` 与
 /// `SPEC.FEAT.CONN.03` 的跳板两档；`Options`/`Hop`/`HopUnwired` 都并入「连不上」那句措辞，
-/// 精确原因在日志里——本腿不建跳链，带跳档案按稿 D6 拒拨。枚举的 `Ok` 不映射进本枚举——
+/// 精确原因在日志里——批 6 起本腿自带跳链，跳板侧失败经 `SshHopChain::failure()` 的档位
+/// 同样折进这四档（批 6 D5：不新开措辞档，第几跳见日志）。枚举的 `Ok` 不映射进本枚举——
 /// 本枚举压根没有「无失败」值，成功与否由 `PushReport::failure`
 /// 是否为空表达，省掉一个能被摆错的档位）。稿原写「四档失败＋推送腿两档＝六档措辞」，
 /// 落地期按代码订正为下表七档：多出的 `InvalidLine` 是**拨号之前**的闸（见该档注释），
@@ -97,24 +100,28 @@ struct PushReport {
 
 /// @brief 把一行公钥推到目标档案的主机上（判据 6 的整条腿）。
 ///
-/// 顺序四步，任一步失败就地收尾并回终值：
+/// 顺序五步，任一步失败就地收尾并回终值：
 /// ⑴ **纯逻辑闸**：`plan_append(empty, line)` 的 payload 为空即 `InvalidLine`，
 ///    连会话都不分配——拿着废行去拨号是白跑一次网络往返，还可能触发远端账号锁定；
-/// ⑵ 自开会话 + `ssh_dial_and_authenticate`（口径同 sftp_client，策略与日志都在 dial 腿）；
-/// ⑶ exec `authorized_keys_read_command()` 取回远端现内容，交 `plan_append()` 判重：
+/// ⑵ **开跳链**（`SPEC.FEAT.CONN.03` 批 6 D1）：一律建 `SshHopChain` 并 `open()`——0 跳是
+///    合法空操作、seed 回 0＝直连；某一跳谈不成即 `Dial`/`Auth` 格失败，hop_index 进日志；
+/// ⑶ 自开会话 + `ssh_dial_and_authenticate`（带链的 seed，口径同 sftp_client，策略与日志都在
+///    dial 腿）；
+/// ⑷ exec `authorized_keys_read_command()` 取回远端现内容，交 `plan_append()` 判重：
 ///    已含同一行则 `already_authorized` 真、**不发写**、回成功（判据 §6 第一句）；
-/// ⑷ 需追加时 exec `authorized_keys_append_command()`，把 payload 走 stdin 交进去、
+/// ⑸ 需追加时 exec `authorized_keys_append_command()`，把 payload 走 stdin 交进去、
 ///    `send_eof`、排空两条流后取退出码；非零或取不到即 `WriteRejected`。
 ///
 /// 读回腿的退出码**不参与判据**：`cat` 在文件不存在时本就回非零并往 stderr 抱怨，
 /// 那正是「远端还没有授权表」的形态，判重侧按空内容走新建那一支（写腿才是权威）。
 ///
-/// @param profile 目标档案（主机/端口/用户/认证方式/known_hosts 策略），来自档案下拉。
-/// @param secret  已解析的秘密材料；agent 认证传 nullopt。随 dial 返回即消失。
+/// @param profile 目标档案（主机/端口/用户/认证方式/known_hosts 策略/跳链），来自档案下拉。
+/// @param bundle  已解析的秘密材料（目标 + 逐跳，批 6 D2）；agent 认证传空。逐跳随链的
+///                `open()` 进各跳、目标随 dial 返回即消失，本件不留副本（CONN.09）。
 /// @param line    `public_line()` 的产物，或 `.pub` 文件里的那一行。
 /// @param algorithms 算法覆盖项（`connection.ssh.kex_algorithms`/`host_key_algorithms` 的
-///                推送期快照），口径同 `ssh_dial_and_authenticate`；拒收落在拨号格。
-[[nodiscard]] auto push_public_key(const SshProfile &profile, std::optional<std::string> secret,
+///                推送期快照），口径同 `ssh_dial_and_authenticate`；拒收落在拨号格，逐跳同表。
+[[nodiscard]] auto push_public_key(const SshProfile &profile, SshSecretBundle bundle,
                                    std::string_view line,
                                    const SshAlgorithmOverrides &algorithms = {}) -> PushReport;
 

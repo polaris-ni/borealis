@@ -43,7 +43,7 @@ using namespace borealis;
 }  // namespace
 
 AURORA_TEST_CASE(a_refused_host_lands_the_failure_on_the_dial_step) {
-    const auto report = conn::push_public_key(refused_profile(), std::nullopt, well_formed_line());
+    const auto report = conn::push_public_key(refused_profile(), conn::SshSecretBundle{}, well_formed_line());
 
     AURORA_TEST_CHECK_EQ(static_cast<int>(report.stage), static_cast<int>(conn::PushStage::Dial));
     AURORA_TEST_CHECK_TRUE(report.failure.has_value());
@@ -58,7 +58,7 @@ AURORA_TEST_CASE(an_unformed_line_never_opens_a_socket) {
     for (const auto &line : {std::string{"ssh-ed25519"},
                              std::string{"AAAAC3NzaC1lZDI1NTE5AAAAIOW3xkQ8bVJ3qZ0tFm2pYd"},
                              std::string{"   "}}) {
-        const auto report = conn::push_public_key(refused_profile(), std::nullopt, line);
+        const auto report = conn::push_public_key(refused_profile(), conn::SshSecretBundle{}, line);
         AURORA_TEST_CHECK_MSG(static_cast<int>(report.stage) ==
                                   static_cast<int>(conn::PushStage::Dial) &&
                                   report.failure.value_or(conn::PushFailure::DialNetwork) ==

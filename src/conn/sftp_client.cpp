@@ -74,27 +74,43 @@ SftpClient::~SftpClient() {
     disconnect();
 }
 
-auto SftpClient::connect(const SshProfile &profile, std::optional<std::string> secret,
+auto SftpClient::connect(const SshProfile &profile, SshSecretBundle bundle,
                          const SshAlgorithmOverrides &algorithms) -> bool {
     // 幂等：一个客户端一条会话，重复 connect 不重拨（UI 侧一个面板一个实例）。
     if (connected_.load()) {
         return true;
     }
     last_error_ = SftpError::None;
+    // 批 6 D1：一律建链——0 跳是合法空操作（open 回 true、seed 回 0＝直连），于是带跳与
+    // 非跳走同一条路径，父稿 D6 的腿侧拒拨随接线退场。链活到 disconnect（D6）：中继线程
+    // 搬的是整条会话的字节，不只拨号期。
+    hop_chain_.emplace();
+    if (!hop_chain_->open(profile, bundle.hops, algorithms)) {
+        const auto hop_failure = hop_chain_->failure();
+        AURORA_LOG_ERROR("conn", "sftp: hop chain open failed: outcome=",
+                         static_cast<int>(hop_failure.outcome), " hop_index=",
+                         hop_failure.hop_index);
+        hop_chain_.reset();
+        last_error_ = SftpError::Network;  // D5：不新开档，第几跳见日志。
+        return false;
+    }
     session_ = ssh_new();
     if (session_ == nullptr) {
+        hop_chain_.reset();  // 没建成会话也不能留悬着的线程与句柄（链的收口语义）。
         last_error_ = SftpError::Network;
         AURORA_LOG_ERROR("conn", "sftp: cannot allocate ssh session");
         return false;
     }
     // 秘密材料移交 dial 腿消费，无论成败返回后即清空；本类不留存（CONN.09）。
-    if (ssh_dial_and_authenticate(profile, std::move(secret), session_, algorithms) !=
-        DialOutcome::Ok) {
+    if (ssh_dial_and_authenticate(profile, std::move(bundle.target), session_, algorithms,
+                                  hop_chain_->seed_fd()) != DialOutcome::Ok) {
         ssh_free(session_);
         session_ = nullptr;
+        hop_chain_.reset();  // 序：ssh_free 先于链收口（F12）。
         last_error_ = SftpError::Network;
         return false;
     }
+    bundle = SshSecretBundle{};  // 逐跳材料也在此就地作废（open 已按值消费进各跳）。
     sftp_ = sftp_new(session_);
     if (sftp_ == nullptr || sftp_init(sftp_) != 0) {
         AURORA_LOG_ERROR("conn", "sftp: subsystem init failed: ", ssh_get_error(session_));
@@ -105,6 +121,7 @@ auto SftpClient::connect(const SshProfile &profile, std::optional<std::string> s
         ssh_disconnect(session_);
         ssh_free(session_);
         session_ = nullptr;
+        hop_chain_.reset();
         last_error_ = SftpError::Protocol;
         return false;
     }
@@ -123,6 +140,8 @@ auto SftpClient::disconnect() -> void {
         ssh_free(session_);
         session_ = nullptr;
     }
+    // 链排在会话释放之后收口（批 6 D6／F12）：seed 端句柄归链所有，`ssh_disconnect` 不关它。
+    hop_chain_.reset();
 }
 
 auto SftpClient::connected() const noexcept -> bool {

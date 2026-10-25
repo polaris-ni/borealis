@@ -161,9 +161,9 @@ auto SftpPanel::open() -> void {
     }
     overlay_index_ = host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(build_root())});
     if (profile.has_value()) {
-        std::optional<std::string> secret;
+        conn::SshSecretBundle bundle;
         if (hooks_.resolve_secret != nullptr) {
-            secret = hooks_.resolve_secret();
+            bundle = hooks_.resolve_secret();
         }
         conn::SshAlgorithmOverrides algorithms;
         if (hooks_.algorithm_overrides != nullptr) {
@@ -171,7 +171,7 @@ auto SftpPanel::open() -> void {
         }
         Request req{.kind = Request::Kind::Connect,
                     .profile = std::move(*profile),
-                    .secret = std::move(secret),
+                    .bundle = std::move(bundle),
                     .algorithms = std::move(algorithms)};
         post(std::move(req));
     }
@@ -596,7 +596,7 @@ auto SftpPanel::run_worker() -> void {
         switch (req.kind) {
         case Request::Kind::Connect: {
             client_.disconnect();
-            const bool ok = client_.connect(req.profile, std::move(req.secret), req.algorithms);
+            const bool ok = client_.connect(req.profile, std::move(req.bundle), req.algorithms);
             push_inbox(InboxMessage{.kind = InboxMessage::Kind::ConnectDone,
                                     .ok = ok,
                                     .error = ok ? conn::SftpError::None : client_.last_error()});
@@ -1318,9 +1318,9 @@ auto SftpPanel::connect_now() -> void {
     }
     state_ = ConnState::Connecting;
     last_error_ = conn::SftpError::None;
-    std::optional<std::string> secret;
+    conn::SshSecretBundle bundle;
     if (hooks_.resolve_secret != nullptr) {
-        secret = hooks_.resolve_secret();
+        bundle = hooks_.resolve_secret();
     }
     conn::SshAlgorithmOverrides algorithms;
     if (hooks_.algorithm_overrides != nullptr) {
@@ -1328,7 +1328,7 @@ auto SftpPanel::connect_now() -> void {
     }
     Request req{.kind = Request::Kind::Connect,
                 .profile = std::move(*profile),
-                .secret = std::move(secret),
+                .bundle = std::move(bundle),
                 .algorithms = std::move(algorithms)};
     post(std::move(req));
     rebuild_overlay();

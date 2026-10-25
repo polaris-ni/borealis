@@ -6,6 +6,8 @@
 // SPEC.FEAT.CONN.04（SFTP 文件浏览）的 libssh 传输层：自开一条 SSH 会话
 // （建连/认证/主机密钥核对走共用腿 conn/ssh_dial，CONN.02 同款），在其上
 // 挂 SFTP 子系统，提供列目录、建删改名与上传/下载（进度 + 取消）。
+// 档案带跳链时经 `SshHopChain` 建链再拨（`SPEC.FEAT.CONN.03` 批 6，口径同终端腿）：
+// 中继线程与跳板会话随本会话同生死，`disconnect()` 在 ssh_free 之后收链（稿 §5 F12）。
 //
 // 阻塞语义：所有操作都可能阻塞在网络往返上，调用方必须放到工作线程执行，
 // 结果按 SPEC.NF.PERF.06 经有界队列交回 UI（本层不碰线程与 UI）。
@@ -28,6 +30,8 @@
 #include "borealis/conn/profile.h"
 #include "conn/sftp_model.h"
 #include "conn/ssh_dial.h"
+#include "conn/ssh_hop_chain.h"  // SshHopChain 成员（SPEC.FEAT.CONN.03 批 6，D6）
+#include "conn/ssh_shared.h"     // SshSecretBundle（形参换型，批 6 D2）
 
 // libssh 前向声明：头里只出现指针，实现文件才包含 libssh 头。
 struct ssh_session_struct;
@@ -52,13 +56,15 @@ public:
 
     /// @brief 建连 → 主机密钥核对 → 认证 → 开 SFTP 子系统（阻塞，勿在 UI 线程调）。
     ///
-    /// @param secret 已解析的秘密材料，口径同 ssh_dial_and_authenticate：
-    ///               password＝口令、privatekey＝passphrase、其余方式按 dial
-    ///               腿口径；本参数无论成败返回后即被清空。
-    /// @param algorithms 算法覆盖项，口径同 ssh_dial_and_authenticate（空＝库缺省）。
+    /// @param bundle 秘密材料（目标 + 逐跳，`SPEC.FEAT.CONN.03` 批 6 D2）：口径同
+    ///               ssh_dial_and_authenticate——password＝口令、privatekey＝passphrase、
+    ///               其余方式按 dial 腿口径；档案带跳链时先建 `SshHopChain` 再按 seed 拨
+    ///               （口径同终端腿，0 跳＝合法空操作、直连）。本参数无论成败返回后即被清空。
+    /// @param algorithms 算法覆盖项，口径同 ssh_dial_and_authenticate（空＝库缺省），逐跳同表。
     /// @return 成功回 true；已连接时幂等回 true（一个客户端一条会话，不重拨）。
-    ///         失败看 last_error()（建连/认证/算法表被拒一律 Network，dial 腿已记日志）。
-    auto connect(const SshProfile &profile, std::optional<std::string> secret,
+    ///         失败看 last_error()（建连/认证/跳板侧失败一律 Network，hop_index 在链日志里——
+    ///         批 6 D5：不新开措辞档）。
+    auto connect(const SshProfile &profile, SshSecretBundle bundle,
                  const SshAlgorithmOverrides &algorithms = {}) -> bool;
 
     /// @brief 断开并释放 SFTP 与 SSH 会话（幂等，可随时调用）。
@@ -113,6 +119,10 @@ private:
 
     ssh_session_struct *session_ = nullptr;  ///< libssh 会话（connect 分配，disconnect 释放）。
     sftp_session_struct *sftp_ = nullptr;    ///< SFTP 子系统句柄（认证成功后分配）。
+    /// 本会话的跳链（批 6 D6）：中继线程搬的是整条会话的字节，故链必须活到 disconnect；
+    /// 关闭序是硬约束——吃 seed 的会话先 `ssh_free`，链才许 `close()`（父稿 §5 F12 探针踩过
+    /// 段错误）。0 跳链是合法空操作，connect 一律建链、腿内不分带跳/非跳两支（批 6 D1）。
+    std::optional<SshHopChain> hop_chain_{};
     std::atomic<bool> connected_{false};     ///< 原子在线标志：UI 线程可无锁问询。
     SftpError last_error_{SftpError::None};
 };

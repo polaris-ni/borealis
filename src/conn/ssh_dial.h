@@ -119,9 +119,9 @@ struct SshAlgorithmOverrides {
 ///                不关它，见稿 D4）。档案带跳链而未交 seed ⇒ `HopUnwired`（稿 D6）。
 /// @return 认证成功回 `Ok`；其余按失败所在的那一步回对应档位。
 ///
-/// TODO(SPEC.FEAT.CONN.03): 终端腿已按 seed 建链（`SshConnection` → `SshHopChain`，稿 §7 批 4）；
-///         SFTP／隧道／密钥推送三条腿仍在批 6——期间它们对带跳档案一律**拒拨**而非直连，
-///         现形口径由 `itest_posix_ssh_proxy_jump` 的 E6 一案逐腿盯着。
+/// `SPEC.FEAT.CONN.03` 的四条拨号腿（终端/SFTP/隧道/密钥推送）均已按 seed 建链
+/// （`SshHopChain`，稿 §7 批 4 与批 6）：`HopUnwired` 由此退为**漏接线的兜底档**——
+/// 接了线的腿要么带链的 seed、要么 0 跳空链直连，不会再见到这一档。
 [[nodiscard]] auto ssh_dial_and_authenticate(const SshProfile &profile,
                                              std::optional<std::string> secret,
                                              ssh_session_struct *session,

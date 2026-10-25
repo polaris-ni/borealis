@@ -126,7 +126,7 @@ AURORA_TEST_CASE(dial_refused_retries_then_fails) {
 AURORA_TEST_CASE(invalid_spec_refused_before_thread) {
     Recorder recorder;
     // Local 且监听端口 0：非法定义，start() 不得起线程，直接 Failed。
-    conn::Tunnel tunnel(refused_profile(), std::nullopt, local_spec(0), conn::RetryPolicy{});
+    conn::Tunnel tunnel(refused_profile(), conn::SshSecretBundle{}, local_spec(0), conn::RetryPolicy{});
     tunnel.start(recorder);
     AURORA_TEST_CHECK_EQ(static_cast<int>(tunnel.state()),
                          static_cast<int>(TunnelState::Failed));

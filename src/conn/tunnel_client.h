@@ -26,6 +26,7 @@
 
 #include "borealis/conn/profile.h"
 #include "conn/ssh_dial.h"
+#include "conn/ssh_shared.h"  // SshSecretBundle（形参换型，SPEC.FEAT.CONN.03 批 6 D2）
 #include "conn/tunnel_model.h"
 
 namespace borealis::conn {
@@ -49,17 +50,20 @@ class TunnelEvents {
 ///
 /// 生命周期：构造 → start() → （运行/退避/…） → stop()/析构。start() 立即
 /// 返回；stop() 置停止标志并 join，等待上界＝一个轮询拍（200 ms）+ 一次
-/// 建连超时，与 SshConnection::close() 同款纪律。
+/// 建连面——带跳时建连面是整条跳链，最坏等待逐跳叠加（批 6 §7 风险 2），
+/// 与 SshConnection::close() 同款纪律。
 class Tunnel final {
   public:
     /// @param profile 承载隧道拨号的 SSH 档案（装配层按 spec.profile_id 解析）。
-    /// @param secret  已解析的秘密材料，口径同 ssh_dial_and_authenticate；
-    ///                每次重拨在副本上消费，原值留到隧道停止（见头注释）。
+    /// @param bundle  已解析的秘密材料（目标 + 逐跳，`SPEC.FEAT.CONN.03` 批 6 D2），口径同
+    ///                ssh_dial_and_authenticate；每次重拨在副本上消费，原值留到隧道停止
+    ///                （见头注释）。档案带跳链时每次尝试先开一整条 `SshHopChain` 再按 seed
+    ///                拨（批 6 D1/D3，口径同终端腿）；退避重拨＝整链重开。
     /// @param spec    隧道定义（形态/监听点/目标）。
     /// @param policy  失败重试策略。
     /// @param algorithms 算法覆盖项（`connection.ssh.kex_algorithms`/`host_key_algorithms` 的
-    ///                拨号期快照）；口径同 ssh_dial_and_authenticate，重拨沿用同一份。
-    Tunnel(const SshProfile &profile, std::optional<std::string> secret, TunnelSpec spec,
+    ///                拨号期快照）；口径同 ssh_dial_and_authenticate，重拨沿用同一份，逐跳同表。
+    Tunnel(const SshProfile &profile, SshSecretBundle bundle, TunnelSpec spec,
            RetryPolicy policy = {}, SshAlgorithmOverrides algorithms = {});
 
     Tunnel(const Tunnel &) = delete;
@@ -89,7 +93,7 @@ class Tunnel final {
     auto emit(TunnelState state, TunnelError error) -> void;
 
     SshProfile profile_;
-    std::optional<std::string> secret_;
+    SshSecretBundle secret_{};  ///< 目标 + 逐跳；每次尝试在副本上消费，stop() 即清（CONN.09）。
     TunnelSpec spec_;
     RetryPolicy policy_;
     SshAlgorithmOverrides algorithms_;

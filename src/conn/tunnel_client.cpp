@@ -17,6 +17,7 @@
 
 #include "aurora/core/log.h"
 #include "conn/ssh_dial.h"
+#include "conn/ssh_hop_chain.h"  // 每次尝试的跳链（SPEC.FEAT.CONN.03 批 6）
 #include "conn/tunnel_socks.h"
 #include "platform/tcp.h"
 
@@ -280,10 +281,10 @@ auto sleep_checked(const std::atomic<bool> &closing, int total_ms) -> void {
 
 }  // namespace
 
-Tunnel::Tunnel(const SshProfile &profile, std::optional<std::string> secret, TunnelSpec spec,
+Tunnel::Tunnel(const SshProfile &profile, SshSecretBundle bundle, TunnelSpec spec,
                RetryPolicy policy, SshAlgorithmOverrides algorithms)
     : profile_(profile),
-      secret_(std::move(secret)),
+      secret_(std::move(bundle)),
       spec_(std::move(spec)),
       policy_(policy),
       algorithms_(std::move(algorithms)) {}
@@ -309,7 +310,7 @@ auto Tunnel::stop() -> void {
     if (worker_.joinable()) {
         worker_.join();
     }
-    secret_.reset();  // CONN.09：停止即清内存副本。
+    secret_ = SshSecretBundle{};  // CONN.09：停止即清内存副本（目标与逐跳一起作废）。
 }
 
 auto Tunnel::state() const -> TunnelState {
@@ -347,10 +348,21 @@ auto Tunnel::run_loop() -> void {
             terminal_error = TunnelError::DialFailed;
             break;
         }
-        const auto secret_copy = secret_;
+        const auto bundle_copy = secret_;
+        // 批 6 D1：每次尝试一律开链——0 跳是合法空操作（seed 回 0＝直连），退避重拨＝整链
+        // 重开（口径同终端腿）。链声明在本体内、显式收口排在 ssh_free 之后（F12 关闭序）。
+        SshHopChain chain;
+        const bool chained = chain.open(profile_, bundle_copy.hops, algorithms_);
+        if (!chained) {
+            const auto hop_failure = chain.failure();
+            AURORA_LOG_ERROR("conn", "tunnel: hop chain open failed: outcome=",
+                             static_cast<int>(hop_failure.outcome), " hop_index=",
+                             hop_failure.hop_index);
+        }
         const bool dialed =
-            ssh_dial_and_authenticate(profile_, secret_copy, session, algorithms_) ==
-            DialOutcome::Ok;
+            chained && ssh_dial_and_authenticate(profile_, bundle_copy.target, session,
+                                                 algorithms_, chain.seed_fd()) ==
+                           DialOutcome::Ok;
 
         TunnelError error{TunnelError::None};
         std::unique_ptr<platform::TcpListener> listener;
@@ -414,6 +426,7 @@ auto Tunnel::run_loop() -> void {
             ssh_disconnect(session);
         }
         ssh_free(session);
+        chain.close();  // 序：吃 seed 的会话已 ssh_free，链才收口（批 6 D6／父稿 F12）。
 
         if (closing_.load(std::memory_order_relaxed) || error == TunnelError::None) {
             break;
@@ -429,7 +442,7 @@ auto Tunnel::run_loop() -> void {
         sleep_checked(closing_, retry_delay_ms(attempt, policy_));
     }
 
-    secret_.reset();  // 认证材料不比对活得久（终态即清）。
+    secret_ = SshSecretBundle{};  // 认证材料不比对活得久（终态即清，含逐跳）。
     if (terminal == TunnelState::Failed) {
         emit(TunnelState::Failed, terminal_error);
     } else {

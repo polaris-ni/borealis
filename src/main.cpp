@@ -1101,8 +1101,8 @@ auto main(int argc, char **argv) -> int {
     // `SshConnection::secret_`（连接关闭即清）——不落盘、不进日志；CONN.09 本期
     // 降级为「每次询问」，SFTP 面板的独立会话复用同一次询问的材料，不再二次弹窗。
     // CONN.03 批 4 起这份留档是**一整套**（目标 + 逐跳）：切分与重启都按同一份 bundle 重拨，
-    // 于是新格与老格共享同一条跳链（稿 D5「跳链属于链路，不随标签」）。SFTP 面板只吃
-    // `target` 那一格——它没有 seed，带跳档案在它那条腿上按 `HopUnwired` 拒拨（稿 D6）。
+    // 于是新格与老格共享同一条跳链（稿 D5「跳链属于链路，不随标签」）。批 6 起 SFTP 面板也吃
+    // 整套——它的独立会话经同一份逐跳材料建链（批 6 D3，`HopUnwired` 拒拨口径随接线退场）。
     std::map<borealis::ui::TabId, borealis::conn::SshProfile> ssh_profile_by_tab;
     std::map<borealis::ui::TabId, borealis::conn::SshSecretBundle> ssh_secret_by_tab;
 
@@ -3205,28 +3205,39 @@ auto main(int argc, char **argv) -> int {
     auto tunnel_skipped = std::make_shared<std::set<std::string>>();
     std::map<std::string, TunnelEntry> tunnel_entries{};
 
-    launch_tunnel = [&store, &tunnel_entries, tunnel_mutex, tunnel_runtimes, tunnel_skipped](
-                        const borealis::conn::SshProfile &ssh_profile,
-                        std::optional<std::string> secret,
-                        const borealis::conn::TunnelSpec &spec) -> void {
-        auto sink = std::make_unique<TunnelSink>();
-        sink->mutex = tunnel_mutex;
-        sink->runtimes = tunnel_runtimes;
-        sink->id = spec.id;
-        // 快照先归零再起线程：start() 之后的第一个事件（Dialing）不能被这次清零盖掉。
-        {
-            const std::lock_guard lock{*tunnel_mutex};
-            (*tunnel_runtimes)[spec.id] = borealis::ui::TunnelRuntime{};  // 新一轮从空白起。
-            tunnel_skipped->erase(spec.id);
-        }
-        // 逐条重试档直接取自定义（D9②），不再吃全局缺省。
-        auto tunnel = std::make_unique<borealis::conn::Tunnel>(
-            ssh_profile, std::move(secret), spec, spec.retry,
-            borealis::conn::SshAlgorithmOverrides{
-                store.settings().connection.ssh.kex_algorithms,
-                store.settings().connection.ssh.host_key_algorithms});
-        tunnel->start(*sink);
-        tunnel_entries[spec.id] = TunnelEntry{std::move(sink), std::move(tunnel)};
+    // 拉起前先过 `with_hop_secrets`（`SPEC.FEAT.CONN.03` 批 6 D3/D4）：0 跳同步回调、时序与本批
+    // 之前完全一致；带跳时逐跳材料经凭据库后台补齐，回-call 落主线程再建 `Tunnel`——启动序
+    // 依旧零模态、零阻塞等待（钥匙环解锁是系统级行为，口径同开档案页的 D8）。回调按引用捕获
+    // main 的局部是既有先例形态（`open_ssh_tab` 那一支同款）：任务在途期间 main 不散。
+    launch_tunnel = [&store, &tunnel_entries, &with_hop_secrets, tunnel_mutex, tunnel_runtimes,
+                     tunnel_skipped](const borealis::conn::SshProfile &ssh_profile,
+                                     std::optional<std::string> secret,
+                                     const borealis::conn::TunnelSpec &spec) -> void {
+        with_hop_secrets(ssh_profile, std::move(secret),
+                         [&store, &tunnel_entries, tunnel_mutex, tunnel_runtimes, tunnel_skipped,
+                          profile = ssh_profile,
+                          spec](borealis::conn::SshSecretBundle bundle) -> void {
+                             // profile/spec 按值入闭包：调用方的档案可能是 `store.settings()` 局部副本
+                             // 里的引用（tunnel_hooks.start 那一支），异步回-call 时原件早已不在。
+                             auto sink = std::make_unique<TunnelSink>();
+                             sink->mutex = tunnel_mutex;
+                             sink->runtimes = tunnel_runtimes;
+                             sink->id = spec.id;
+                             // 快照先归零再起线程：start() 之后的第一个事件（Dialing）不能被这次清零盖掉。
+                             {
+                                 const std::lock_guard lock{*tunnel_mutex};
+                                 (*tunnel_runtimes)[spec.id] = borealis::ui::TunnelRuntime{};  // 新一轮从空白起。
+                                 tunnel_skipped->erase(spec.id);
+                             }
+                             // 逐条重试档直接取自定义（D9②），不再吃全局缺省。
+                             auto tunnel = std::make_unique<borealis::conn::Tunnel>(
+                                 profile, std::move(bundle), spec, spec.retry,
+                                 borealis::conn::SshAlgorithmOverrides{
+                                     store.settings().connection.ssh.kex_algorithms,
+                                     store.settings().connection.ssh.host_key_algorithms});
+                             tunnel->start(*sink);
+                             tunnel_entries[spec.id] = TunnelEntry{std::move(sink), std::move(tunnel)};
+                         });
     };
 
     borealis::ui::TunnelPanel::Hooks tunnel_hooks;
@@ -3292,8 +3303,11 @@ auto main(int argc, char **argv) -> int {
     };
     borealis::ui::TunnelPanel tunnel_panel{*host, std::move(tunnel_hooks)};
 
-    // 启动序自启扫描（D8②细则）：只拉起「autostart ∧ 凭据可静默解析」的隧道；
-    // 询问型记入 skipped 集供行内提示——本路径零模态框、零阻塞等待。
+    // 启动序自启扫描（D8②细则）：只拉起「autostart ∧ 目标凭据可静默解析」的隧道；
+    // 询问型记入 skipped 集供行内提示——本路径零模态框、零阻塞等待。带跳的档案**照常放行**
+    // （`SPEC.FEAT.CONN.03` 批 6 D4 A 档）：逐跳材料的补齐在 `launch_tunnel` 里走后台取料，
+    // 不新增模态；取不到的跳留空、在拨号侧落 `Auth` 带 hop_index——提示文案不说谎，因为
+    // 「需先存凭据」只针对目标那一格。
     {
         const auto settings = store.settings();
         for (const auto &spec : settings.tunnels) {
@@ -3347,15 +3361,16 @@ auto main(int argc, char **argv) -> int {
         const auto it = ssh_profile_by_tab.find(target.value());
         return it != ssh_profile_by_tab.end() ? std::optional{it->second} : std::nullopt;
     };
-    // SFTP 面板只吃**目标**那一格材料：它没有 seed，带跳档案在它那条腿上按 `HopUnwired` 拒拨（稿 D6）。
-    sftp_hooks.resolve_secret = [&ssh_secret_by_tab, &command_tab_id]() -> std::optional<std::string> {
+    // SFTP 面板吃**整套留档**（目标 + 逐跳，`SPEC.FEAT.CONN.03` 批 6 D3）：材料在开标签那一刻
+    // 就齐了（`with_hop_secrets` 那一趟），这里只随格交出——不新增取料趟，标签不在档即空 bundle
+    // （agent 认证本就无需材料；带跳缺料的跳在拨号侧落 `Auth` 带 hop_index，口径同终端腿）。
+    sftp_hooks.resolve_secret = [&ssh_secret_by_tab, &command_tab_id]() -> borealis::conn::SshSecretBundle {
         const std::optional<borealis::ui::TabId> target = command_tab_id();
         if (!target.has_value()) {
-            return std::nullopt;
+            return borealis::conn::SshSecretBundle{};
         }
         const auto it = ssh_secret_by_tab.find(target.value());
-        return (it != ssh_secret_by_tab.end() && it->second.target.has_value()) ? it->second.target
-                                                                                : std::nullopt;
+        return it != ssh_secret_by_tab.end() ? it->second : borealis::conn::SshSecretBundle{};
     };
     // 算法覆盖项：设置是全局档，每次 Connect 现取——改完设置后面板的重拨（`connect_now`）
     // 即用新表，无需重建面板（NextSession 口径：在途会话不换协商面）。
@@ -3414,26 +3429,36 @@ auto main(int argc, char **argv) -> int {
             });
     };
 
-    // 推送公钥的提交点（hook 与凭据回-call 共用）：档案副本与公钥行按值进任务，
-    // 认证材料随 dial 返回即消失（CONN.09 的明文纪律）。
+    // 推送公钥的提交点（hook 与凭据回-call 共用）：认证材料随 dial 返回即消失（CONN.09 的
+    // 明文纪律）。批 6 D3：提交前先过 `with_hop_secrets` 补齐逐跳材料——0 跳同步回-call，
+    // 时序与本批之前完全一致；带跳时回-call 落主线程，算法快照仍按「提交这一刻」在 UI 线程
+    // 现取。档案与公钥行**按值**入闭包：询问型那一支交来的是 `store.settings()` 局部副本里
+    // 的引用（`keys_hooks.push`），异步回来时原件早已不在。
     submit_keys_push = [&](const std::string &path, const borealis::conn::SshProfile &profile,
                            std::optional<std::string> secret, std::string_view line) -> void {
-        // 算法覆盖项在提交这一刻拍快照（UI 线程读配置），随任务进 worker——worker 不直接读 store。
-        const auto algorithms = borealis::conn::SshAlgorithmOverrides{
-            store.settings().connection.ssh.kex_algorithms,
-            store.settings().connection.ssh.host_key_algorithms};
-        keys_worker.submit(
-            borealis::ui::KeysOpKind::Push, path,
-            [path_target = path, profile, secret = std::move(secret),
-             line = std::string{line}, algorithms, mutex = keys_worker.mutex(),
-             latest = keys_worker.latest()]() -> void {
-                const auto report = borealis::conn::push_public_key(profile, std::move(secret),
-                                                                    line, algorithms);
-                const std::lock_guard lock{*mutex};
-                latest->push_step = borealis::conn::push_stage_index(report.stage);
-                latest->notice_key = std::string{borealis::ui::key_push_notice_key(report)};
-                latest->notice_arg.clear();
-            });
+        with_hop_secrets(profile, std::move(secret),
+                         [&, path, profile,
+                          line = std::string{line}](borealis::conn::SshSecretBundle bundle) -> void {
+                             // 算法覆盖项在提交这一刻拍快照（UI 线程读配置），随任务进 worker——
+                             // worker 不直接读 store。
+                             const auto algorithms = borealis::conn::SshAlgorithmOverrides{
+                                 store.settings().connection.ssh.kex_algorithms,
+                                 store.settings().connection.ssh.host_key_algorithms};
+                             keys_worker.submit(
+                                 borealis::ui::KeysOpKind::Push, path,
+                                 [path_target = path, profile, bundle = std::move(bundle), line,
+                                  algorithms, mutex = keys_worker.mutex(),
+                                  latest = keys_worker.latest()]() -> void {
+                                     const auto report = borealis::conn::push_public_key(
+                                         profile, std::move(bundle), line, algorithms);
+                                     const std::lock_guard lock{*mutex};
+                                     latest->push_step =
+                                         borealis::conn::push_stage_index(report.stage);
+                                     latest->notice_key =
+                                         std::string{borealis::ui::key_push_notice_key(report)};
+                                     latest->notice_arg.clear();
+                                 });
+                         });
     };
 
     borealis::ui::KeysPanel::Hooks keys_hooks;

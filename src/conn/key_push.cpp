@@ -34,6 +34,7 @@
 #include "aurora/core/log.h"
 #include "conn/key_model.h"
 #include "conn/ssh_dial.h"
+#include "conn/ssh_hop_chain.h"  // 推送腿的跳链（SPEC.FEAT.CONN.03 批 6）
 
 namespace borealis::conn {
 
@@ -178,8 +179,10 @@ auto run_exec(ssh_session_struct *session, std::string_view command, std::string
         return PushFailure::DialHostKey;
     case DialOutcome::Auth:
         return PushFailure::DialAuth;
-    // 跳板两档（`SPEC.FEAT.CONN.03` 稿 D6）：本腿不建链，带跳档案一律拒拨。面板那四级阶梯
-    // 讲的是「走到哪一步」，不为一条尚未接线的腿再开一档文案；精确原因在 ERROR 日志里。
+    // 跳板两档（`SPEC.FEAT.CONN.03` 批 6 D5）：本腿已建链，跳板侧失败由
+    // `SshHopChain::failure()` 的**那一跳自己的档位**折进上面四档（Auth 落 DialAuth、其余落
+    // 「连不上」）；`HopUnwired` 是漏接线的兜底档，理论不可达，兜底也归「连不上」。面板那
+    // 四级阶梯讲的是「走到哪一步」，不为某一跳再开一档文案；hop_index 在 ERROR 日志里。
     case DialOutcome::Hop:
     case DialOutcome::HopUnwired:
     case DialOutcome::Ok:
@@ -212,7 +215,7 @@ auto push_stage_index(PushStage stage) -> int {
     return 0;  // 穷尽后不可达：阶梯不能有一格落到格子外面（与 `key_push_stage_key` 同尾）。
 }
 
-auto push_public_key(const SshProfile &profile, std::optional<std::string> secret,
+auto push_public_key(const SshProfile &profile, SshSecretBundle bundle,
                      std::string_view line, const SshAlgorithmOverrides &algorithms) -> PushReport {
     auto report = PushReport{};
 
@@ -225,7 +228,24 @@ auto push_public_key(const SshProfile &profile, std::optional<std::string> secre
         return report;
     }
 
-    // ⑵ 自开会话（D8①）：口径照 sftp_client，建连/核对/认证全在 dial 腿，本件不重拼策略。
+    // ⑵ 开跳链（`SPEC.FEAT.CONN.03` 批 6 D1）：一律建 `SshHopChain`——0 跳是合法空操作
+    //     （seed 回 0＝直连），带跳与非跳走同一条路径。某一跳谈不成落在这里：那一跳自己的
+    //     档位折进四档措辞（D5），hop_index 进日志。
+    SshHopChain chain;
+    if (!chain.open(profile, bundle.hops, algorithms)) {
+        const auto hop_failure = chain.failure();
+        AURORA_LOG_ERROR("conn", "ssh: push: hop chain open failed: outcome=",
+                         static_cast<int>(hop_failure.outcome), " hop_index=",
+                         hop_failure.hop_index);
+        // 认证那一格的归属同 dial 腿口径：只有 Auth 落 Auth 格，其余都在拨号格。
+        report.stage = hop_failure.outcome == DialOutcome::Auth ? PushStage::Auth : PushStage::Dial;
+        report.failure = failure_of_dial(hop_failure.outcome);
+        return report;
+    }
+
+    // ⑶ 自开会话（D8①）：口径照 sftp_client，建连/核对/认证全在 dial 腿，本件不重拼策略。
+    //     声明序是关闭序的一半——链先声明、会话后声明，退场时会话（`ssh_free`）先散、链后收
+    //     （批 6 D6／父稿 F12：seed 端句柄归链所有，越过这个序就是关仍在被使用的句柄）。
     auto session = adopt_session(ssh_new());
     if (!session) {
         report.stage = PushStage::Dial;
@@ -233,16 +253,17 @@ auto push_public_key(const SshProfile &profile, std::optional<std::string> secre
         AURORA_LOG_ERROR("conn", "ssh: push: cannot allocate ssh session");
         return report;
     }
-    const auto dial =
-        ssh_dial_and_authenticate(profile, std::move(secret), session.get(), algorithms);
+    const auto dial = ssh_dial_and_authenticate(profile, std::move(bundle.target), session.get(),
+                                                algorithms, chain.seed_fd());
     if (dial != DialOutcome::Ok) {
         // 认证那一格只归认证；其余失败都发生在拨号格（主机键核对也算，dial 腿的口径）。
         report.stage = dial == DialOutcome::Auth ? PushStage::Auth : PushStage::Dial;
         report.failure = failure_of_dial(dial);
         return report;
     }
+    bundle = SshSecretBundle{};  // 兜底清剩料（逐跳已随 open 进各跳就地消费；CONN.09）。
 
-    // ⑶ 读回远端现内容 → 交 `plan_append()` 判重（本地判重是判据 §6 的第一句）。
+    // ⑷ 读回远端现内容 → 交 `plan_append()` 判重（本地判重是判据 §6 的第一句）。
     const auto read = run_exec(session.get(), kReadCommand, {});
     if (!read.started) {
         report.stage = PushStage::Exec;
@@ -257,7 +278,7 @@ auto push_public_key(const SshProfile &profile, std::optional<std::string> secre
         return report;
     }
 
-    // ⑷ 追加：公钥行走 stdin（⑵ 的命令串里没有它），退出码是这一段的唯一回执。
+    // ⑸ 追加：公钥行走 stdin（⑵ 的命令串里没有它），退出码是这一段的唯一回执。
     const auto write = run_exec(session.get(), kAppendCommand, plan.payload);
     if (!write.started) {
         report.stage = PushStage::Exec;
