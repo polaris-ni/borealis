@@ -1,6 +1,7 @@
 # SFTP 递归目录传输设计稿（`SPEC.FEAT.CONN.04` 延后子项）
 
-> **状态**：评审稿已收口（2026-10-25）——§3 的 D1–D8 **均按推荐裁决**（并入 `codespec/SPECIFICATIONS.md` §7 裁决 7.151），据此转实现（§4 布局）。
+> **状态**：评审稿已收口（2026-10-25）——§3 的 D1–D8 **均按推荐裁决**（并入 `codespec/SPECIFICATIONS.md` §7 裁决 7.151），据此按 §4 布局转实现。
+> **交付（2026-10-25，裁决 7.151）**：`fc5736d`（本稿收口）→ `4db1441`（批 1 纯逻辑）→ `fa54447`（批 2 接线与词条）。与初稿两处出入已就地更正：① §2 的「三出口」实现改判**四出口**——「人没答」那档做成 **60 s 超时落中止**的主动档（worker 不无限等，关框/浮层被摘的兜底也收敛到超时）；② §4 的折叠证人实为**新文件 `utest_sftp_batch_plan.cpp`（11 案）**，非「扩案 `utest_sftp_model.cpp`」；latch 证人 `utest_sftp_batch.cpp` 6 案。§6 七条真机走查未做 ⇒ 不称「可用」。
 > **父需求**：`SPEC.FEAT.CONN.04`（面板与单文件传输腿已随裁决 **7.95** 交付）；本棒结掉 `src/ui/sftp_panel.cpp` 的 `TODO(SPEC.FEAT.CONN.04)` 与 §4 清册里那条「递归目录传输」。
 > **已拍口径（人 2026-10-25，不再进 D 表）**：① 入口＝与单文件同款的右键菜单/对传按钮（目录条目从置灰改可点，不加第二形态）；② 途中单个文件失败＝**首个失败即弹框问「跳过 / 中止」**；③ 进度＝**整批按字节汇总的总进度**（预枚举算总量）；④ 面板**维持自开独立 SSH 会话**，本棒不接 CONN.02 连接复用（7.147）。
 
@@ -45,13 +46,13 @@ worker：① 预枚举（远端递归 list_directory / 本地 recursive_director
 ## 2 决策往返（本棒唯一的新跨线程件）
 
 ```
-worker：TransferAsk{path, error, seq} 投收件箱 → 在 cv 上等「答话槽」（有界等待 + 取消旗标 + 面板析构三出口）
+worker：TransferAsk{path, error, seq} 投收件箱 → 在 cv 上等「答话槽」（四出口：人答 / 60 s 超时 / 取消旗标 / 面板析构）
 UI   ：tick 取到 Ask → au::confirm「跳过 / 中止」→ 答话写「决策槽」并 notify
-三出口：人没答（关框/浮层被摘）＝恒按「中止」；cancel_flag_ 置位＝中止；析构＝中止。
+四出口：答话按人所选取；60 s 无人答＝按缺省焦点档「中止」（关框/浮层被摘同落此档——实现把初稿的被动档改判为主动超时，worker 不无限等）；cancel_flag_ 置位＝中止；析构＝中止。
 ```
 
 - 问人框期间 worker **不持任何传输句柄**（当前件已按返回值收尾，半成品清理已完成或已放弃），等待不阻塞 UI（AGENTS §4.5 第 25 条：等待在 worker 侧，UI 只弹框）。
-- 面板析构路径 `Shutdown` 请求与既有 join 序负责把「永远没人答」这一档收口成中止；该等待件本身做成纯逻辑 `BatchDecisionLatch`（cv + 槽 + 三出口），**有 utest 证人**——面板整件没有可注入的假服务器（F6），latch 单独测不会因此落空。
+- 面板析构路径 `Shutdown` 请求与既有 join 序负责把「永远没人答」这一档收口成中止；该等待件本身做成纯逻辑 `BatchDecisionLatch`（cv + 槽 + 四出口），**有 utest 证人**——面板整件没有可注入的假服务器（F6），latch 单独测不会因此落空。
 
 ## 3 裁决（D1–D8，2026-10-25 收口：均按推荐，人逐条裁「全部按推荐」）
 
@@ -71,9 +72,9 @@ UI   ：tick 取到 Ask → au::confirm「跳过 / 中止」→ 答话写「决�
 ```
 src/conn/sftp_model.{h,cpp}      修改 —— 追加 BatchPlan / BatchFile / plan_batch_transfer(
                                        远端树形如 vector<SftpEntry> 的逐层回调折叠, 守卫线)（纯逻辑，无 IO）
-tests/unit/utest_sftp_model.cpp  扩案 —— 字节求和只认 File、深度/数量越线拒绝、软链与非普通文件计数、空树
-src/ui/sftp_batch.{h,cpp}        新增 —— BatchDecisionLatch（cv+槽+三出口）纯逻辑件（无 au:: 类型，私有头外可放 src/ui）
-tests/unit/utest_sftp_batch.cpp  新增 —— 三出口各自唤醒、答话幂等、先答后问（latch 预置）
+tests/unit/utest_sftp_batch_plan.cpp  新增（11 案，交付时为新文件而非扩案 utest_sftp_model）—— 字节求和只认 File、深度/数量越线拒绝且不携残树、软链与非普通文件计数、空树、list_failed 短路、fold_batch_progress 总账折算
+src/ui/sftp_batch.{h,cpp}        新增 —— BatchDecisionLatch（cv+槽+四出口）纯逻辑件（无 au:: 类型，私有头外可放 src/ui）
+tests/unit/utest_sftp_batch.cpp  新增（6 案）—— 四出口各自唤醒、超时落中止、答话幂等、迟到答话丢弃
 src/ui/sftp_panel.{h,cpp}        修改 —— Request 加两 kind、InboxMessage 加 TransferAsk/决策写回、
                                        run_batch 三步循环、目录条目置灰撤除、D5 确认框、留痕行、总进度折叠
 assets/i18n/*.arb                扩 —— 确认框、问人框、留痕三类文案（两档 key 集等式由门禁守）
@@ -84,10 +85,10 @@ codespec/PLAN.md / SPECIFICATIONS.md / CHANGELOG.md  回写 —— CONN.04 行�
 ## 5 验收判据映射
 
 - 需求「上传/下载（进度与取消）」在批次上的读法：总进度可判（预枚举总量）、取消即整批止且当前件无半成品。
-- 首败问人：`BatchDecisionLatch` 三出口各有 utest；「跳过继续 / 中止收摊」两条分支的批次循环本体按 D8① 登记为无自动化证人（接线腿），归真机走查。
+- 首败问人：`BatchDecisionLatch` 四出口各有 utest；「跳过继续 / 中止收摊」两条分支的批次循环本体按 D8① 登记为无自动化证人（接线腿），归真机走查。
 - 守卫线：`plan_batch_transfer` 的拒绝档有 utest（构造越线树形）；真树上的越线归走查。
 - 覆盖语义（D2/D3①）：确认框文案上屏即判据，真覆盖后果**不进自动化**（须真 sshd），归走查。
-- 结项读数须报：非 e2e CTest 项数与 runner 案数、变异自证台账（latch 三出口与折叠件各注变异指名红案，AGENTS §4.4 第 22 条）。
+- 结项读数须报：非 e2e CTest 项数与 runner 案数、变异自证台账（latch 四出口与折叠件各注变异指名红案，AGENTS §4.4 第 22 条；实落三刃见裁决 7.151⑥与 CHANGELOG v0.151）。
 
 ## 6 真机走查清单（第 33 条门槛，落完不称「可用」直至走完）
 
