@@ -75,7 +75,7 @@ auto CredentialPrompt::ask(conn::SecretAsk kind, const std::string &profile_name
     input_->modifier.set(aurora::Modifier{}.width(280.0F));
 
     auto title = std::make_shared<aurora::Text>(aurora::TextProps{
-        .content = settings_label(title_key_for(kind), {aurora::LocalizedString{profile_name}}),
+        .content = settings_label(title_key_for(kind), {{"subject", profile_name}}),
         .text_color = chrome.text,
     });
     title->modifier.set(aurora::Modifier{}.fill_max_width());

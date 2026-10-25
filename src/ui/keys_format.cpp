@@ -127,11 +127,11 @@ auto key_export_outcome_key(conn::ExportOutcome outcome) -> std::string_view {
     case conn::ExportOutcome::Written:
         return {};
     case conn::ExportOutcome::AlreadyExists:
-        return "keys.export.already_exists";
+        return "keys.export_file.already_exists";
     case conn::ExportOutcome::NeedsPassphrase:
-        return "keys.export.needs_passphrase";
+        return "keys.export_file.needs_passphrase";
     case conn::ExportOutcome::Failed:
-        return "keys.export.failed";
+        return "keys.export_file.failed";
     }
     return {};
 }
@@ -141,11 +141,11 @@ auto key_delete_outcome_key(conn::DeleteOutcome outcome) -> std::string_view {
     case conn::DeleteOutcome::Deleted:
         return {};
     case conn::DeleteOutcome::RefusedSymlink:
-        return "keys.delete.refused_symlink";
+        return "keys.remove.refused_symlink";
     case conn::DeleteOutcome::NotFound:
-        return "keys.delete.not_found";
+        return "keys.remove.not_found";
     case conn::DeleteOutcome::Failed:
-        return "keys.delete.failed";
+        return "keys.remove.failed";
     }
     return {};
 }
@@ -197,9 +197,9 @@ auto key_op_kind_key(KeysOpKind op) -> std::string_view {
     case KeysOpKind::Generate:
         return "keys.op.generate";
     case KeysOpKind::Export:
-        return "keys.op.export";
+        return "keys.op.export_file";
     case KeysOpKind::Delete:
-        return "keys.op.delete";
+        return "keys.op.remove";
     case KeysOpKind::Push:
         return "keys.op.push";
     }

@@ -93,22 +93,19 @@ constexpr float kSearchBand = 52.0F;
             return settings_label("snippets.issue.empty_name");
         case conn::SnippetIssue::NameTooLong:
             return settings_label("snippets.issue.name_too_long",
-                                  {aurora::LocalizedString{
-                                      std::to_string(conn::kSnippetNameMaxBytes)}});
+                                  {{"limit", static_cast<std::int64_t>(conn::kSnippetNameMaxBytes)}});
         case conn::SnippetIssue::NameControlChar:
             return settings_label("snippets.issue.name_control_char");
         case conn::SnippetIssue::GroupTooLong:
             return settings_label("snippets.issue.group_too_long",
-                                  {aurora::LocalizedString{
-                                      std::to_string(conn::kSnippetGroupMaxBytes)}});
+                                  {{"limit", static_cast<std::int64_t>(conn::kSnippetGroupMaxBytes)}});
         case conn::SnippetIssue::GroupControlChar:
             return settings_label("snippets.issue.group_control_char");
         case conn::SnippetIssue::EmptyBody:
             return settings_label("snippets.issue.empty_body");
         case conn::SnippetIssue::BodyTooLong:
             return settings_label("snippets.issue.body_too_long",
-                                  {aurora::LocalizedString{
-                                      std::to_string(conn::kSnippetBodyMaxBytes)}});
+                                  {{"limit", static_cast<std::int64_t>(conn::kSnippetBodyMaxBytes)}});
         case conn::SnippetIssue::None:
             break;
     }
@@ -242,13 +239,12 @@ auto SnippetPanel::install_overlay() -> void {
 
     // ---- 标题行：标题 + 条数 + 新建 + 关闭 ----
     count_text_ = make_text(settings_label("snippets.header.count",
-                                           {aurora::LocalizedString{
-                                               std::to_string(snippets_.size())}}),
+                                           {{"count", static_cast<std::int64_t>(snippets_.size())}}),
                             chrome.text_dim);
     auto header_children = std::vector<aurora::Node>{
         node(make_text(settings_label("snippets.title"), chrome.text)),
         node(std::static_pointer_cast<aurora::Widget>(count_text_)),
-        node(make_button(settings_label("snippets.action.new"), chrome.accent, chrome.window_bg,
+        node(make_button(settings_label("snippets.action.create"), chrome.accent, chrome.window_bg,
                          56.0F, [this]() -> void { open_editor(std::nullopt); }, chrome.card_line)),
         node(make_button(settings_label("snippets.action.close"), chrome.control_bg, chrome.text_dim,
                          48.0F, [this]() -> void { close(); }, chrome.card_line)),
@@ -375,7 +371,7 @@ auto SnippetPanel::refresh_rows() -> void {
         kids.push_back(build_row(snippets_[index]));
     }
     if (kids.empty()) {
-        kids.push_back(node(make_text(settings_label(snippets_.empty() ? "snippets.empty"
+        kids.push_back(node(make_text(settings_label(snippets_.empty() ? "snippets.empty_hint"
                                                                        : "snippets.empty.filtered"),
                                       chrome.text_dim)));
     }
@@ -383,8 +379,7 @@ auto SnippetPanel::refresh_rows() -> void {
     rows_column_->mark_needs_layout();  // `adopt_children` 不标脏，这里换的是可见行序。
     if (count_text_ != nullptr) {
         count_text_->set_content(settings_label("snippets.header.count",
-                                                {aurora::LocalizedString{
-                                                    std::to_string(snippets_.size())}}));
+                                                 {{"count", static_cast<std::int64_t>(snippets_.size())}}));
     }
 }
 
@@ -413,7 +408,7 @@ auto SnippetPanel::refresh_rows() -> void {
         settings_label("snippets.action.edit"), chrome.control_bg, chrome.text_dim, 44.0F,
         [this, id = snippet.id]() -> void { open_editor(id); }, chrome.card_line)));
     line1_children.push_back(node(make_button(
-        settings_label("snippets.action.delete"), chrome.control_bg, chrome.text_dim, 44.0F,
+        settings_label("snippets.action.remove"), chrome.control_bg, chrome.text_dim, 44.0F,
         [this, id = snippet.id]() -> void { open_delete_confirm(id); }, chrome.card_line)));
 
     auto preview = make_text(preview_line(snippet.body), chrome.text_dim);
@@ -454,7 +449,7 @@ auto SnippetPanel::deliver(const conn::Snippet &snippet, const std::string &text
     }
     const bool sent = hooks_.send != nullptr && hooks_.send(payload);
     set_notice(sent ? settings_label("snippets.notice.sent",
-                                     {aurora::LocalizedString{snippet.name}})
+                                     {{"name", snippet.name}})
                     : settings_label("snippets.notice.no_session"));
 }
 
@@ -465,7 +460,7 @@ auto SnippetPanel::send_unique_candidate() -> void {
         return;
     }
     set_notice(settings_label("snippets.notice.candidates",
-                              {aurora::LocalizedString{std::to_string(rows.size())}}));
+                              {{"count", static_cast<std::int64_t>(rows.size())}}));
 }
 
 auto SnippetPanel::set_notice(std::string text) -> void {
@@ -539,7 +534,7 @@ auto SnippetPanel::close_editor() -> void {
     auto children = std::vector<aurora::Node>{};
 
     auto title = make_text(settings_label(existing != nullptr ? "snippets.editor.title.edit"
-                                                            : "snippets.editor.title.new"),
+                                                            : "snippets.editor.title_create"),
                            chrome.text);
     title->modifier.set(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(title))));
@@ -776,27 +771,26 @@ auto SnippetPanel::close_delete_confirm() -> void {
 [[nodiscard]] auto SnippetPanel::build_delete_confirm() -> std::shared_ptr<aurora::Column> {
     const auto chrome = settings_chrome();
     auto children = std::vector<aurora::Node>{};
-    auto title = make_text(settings_label("snippets.delete.title"), chrome.text);
+    auto title = make_text(settings_label("snippets.remove.title"), chrome.text);
     title->modifier.set(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(title))));
 
     const conn::Snippet *snippet = find_snippet(pending_delete_id_);
-    auto body = make_text(settings_label("snippets.delete.body",
-                                         {aurora::LocalizedString{
-                                             snippet != nullptr ? snippet->name
-                                                                : pending_delete_id_}}),
+    auto body = make_text(settings_label("snippets.remove.body",
+                                         {{"name", snippet != nullptr ? snippet->name
+                                                                             : pending_delete_id_}}),
                           chrome.text);
     body->modifier.set(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(body))));
 
     auto confirm = std::make_shared<aurora::Button>(aurora::ButtonProps{
-        .label = settings_label("snippets.delete.action.confirm"),
+        .label = settings_label("snippets.remove.action.confirm"),
         .color = aurora::colors::AURORA_RED,
         .on_color = chrome.window_bg,
         .min_width = 72.0F,
     });
     confirm->set_on_click([this]() -> void { confirm_delete(); });
-    auto cancel = make_button(settings_label("snippets.delete.action.cancel"), chrome.control_bg,
+    auto cancel = make_button(settings_label("snippets.remove.action.cancel"), chrome.control_bg,
                               chrome.text, 64.0F, [this]() -> void { close_delete_confirm(); },
                               chrome.card_line);
     children.push_back(node(std::make_shared<aurora::Row>(aurora::RowProps{

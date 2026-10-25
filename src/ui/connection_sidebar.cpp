@@ -176,7 +176,7 @@ auto ConnectionSidebar::run_import() -> void {
     store_ = conn::ProfileStore{hooks_.load != nullptr ? hooks_.load()
                                                        : store_.profiles()};
     notice_ = settings_label("connections.notice.imported",
-                             {aurora::LocalizedString{std::to_string(count)}});
+                             {{"count", static_cast<std::int64_t>(count)}});
     refresh_rows();
 }
 
@@ -366,7 +366,7 @@ auto ConnectionSidebar::build_overlay() -> std::shared_ptr<aurora::Column> {
     auto action_children = std::vector<aurora::Node>{};
     if (hooks_.create_new != nullptr) {
         auto new_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
-            .label = settings_label("connections.action.new"),
+            .label = settings_label("connections.action.create"),
             .color = chrome.control_bg,
             .on_color = chrome.text,
             .border_color = chrome.card_line,

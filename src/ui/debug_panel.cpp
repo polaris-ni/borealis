@@ -38,9 +38,13 @@ constexpr float kListHeightDp = 260.0F;
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(label))};
 }
 
-/// @brief 数值 → 上屏取值串（数字不属词条，也不属 ASCII 诊断文案规则）。
-[[nodiscard]] auto count_text(std::uint64_t value) -> aurora::LocalizedString {
-    return aurora::LocalizedString{std::to_string(value)};
+/// @brief 计数 → 模板整数参数（数字不属词条，也不属 ASCII 诊断文案规则）。
+///
+/// 引擎对裸 `{name}` 的整数腿走 `std::to_string`（`src/aurora/i18n/message_engine.cpp` 的
+/// `arg_text`），与旧形态自己拼串上屏逐字同形；面板上的计数一律是 `std::uint64_t`，而
+/// `MessageArg` 的整数腿只认 `std::int64_t`（与 `double` 腿同候选时必须显式定型），故收在此一处。
+[[nodiscard]] auto count_arg(std::string_view name, std::uint64_t value) -> aurora::MessageArg {
+    return aurora::MessageArg{std::string{name}, static_cast<std::int64_t>(value)};
 }
 
 /// @brief 一个会话的四行（解析 / 解码 / 发送 / 队列），行标题单独一行。
@@ -49,22 +53,24 @@ auto append_session_rows(const DebugSessionSnapshot &session, const aurora::Colo
     // 标题是装配层**已解析**的显示串（含中文措辞），这里交字面档而不再查表。
     out.push_back(make_text(aurora::LocalizedString{session.title}, color, kBodySizePt, true));
     out.push_back(make_text(settings_text("diagnostics.parse",
-                                          {count_text(session.parse_ignored), count_text(session.parse_cancelled)}),
+                                          {count_arg("ignored", session.parse_ignored),
+                                           count_arg("interrupted", session.parse_cancelled)}),
                             color,
                             kBodySizePt));
     out.push_back(make_text(settings_text("diagnostics.decode",
-                                          {count_text(session.decode_replaced), count_text(session.decode_code_points)}),
+                                          {count_arg("bytes", session.decode_replaced),
+                                           count_arg("code_points", session.decode_code_points)}),
                             color,
                             kBodySizePt));
-    out.push_back(make_text(settings_text("diagnostics.encode", {count_text(session.encode_unrepresentable)}),
+    out.push_back(make_text(settings_text("diagnostics.encode", {count_arg("count", session.encode_unrepresentable)}),
                             color,
                             kBodySizePt));
     out.push_back(make_text(settings_text("diagnostics.queue",
-                                          {count_text(session.queue_pending),
-                                           count_text(session.queue_peak_pending),
-                                           count_text(session.queue_overloads),
-                                           count_text(session.queue_merges),
-                                           count_text(session.queue_yields)}),
+                                          {count_arg("pending", session.queue_pending),
+                                           count_arg("peak", session.queue_peak_pending),
+                                           count_arg("overloads", session.queue_overloads),
+                                           count_arg("merges", session.queue_merges),
+                                           count_arg("yields", session.queue_yields)}),
                             color,
                             kBodySizePt));
 }

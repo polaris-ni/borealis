@@ -189,8 +189,8 @@ auto BroadcastBanner::on_paint(au::Painter &p, const au::Rect &bounds, const au:
     const au::Font subtitle_font{.size_pt = kSubtitlePt};
     const std::string title =
         settings_label("workspace.broadcast.title",
-                       {au::LocalizedString{joined_names(state_.names)},
-                        au::LocalizedString{std::to_string(state_.session_count)}});
+                       {{"names", joined_names(state_.names)},
+                        {"count", static_cast<std::int64_t>(state_.session_count)}});
     const double text_left = left + kTitleLeftDp;
     const double text_room = button_x - kTextRightGapDp - text_left;
     if (text_room <= 0.0) {

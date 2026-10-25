@@ -86,8 +86,8 @@ namespace {
 }
 
 /// @brief 一枚计数词条的实参形态（`{0}` 位一律交现算的读数，不写死在模板里）。
-[[nodiscard]] auto count_arg(std::size_t value) -> std::vector<aurora::LocalizedString> {
-    return {aurora::LocalizedString{std::to_string(value)}};
+[[nodiscard]] auto count_arg(std::size_t value) -> std::vector<aurora::MessageArg> {
+    return {{"count", static_cast<std::int64_t>(value)}};
 }
 
 /// @brief 从环尾取至多 `budget` 个字节，**整条 run 为单位**，只可能切开最旧那一条。
@@ -232,9 +232,8 @@ auto SerialMonitorPanel::notice() const -> std::string {
     }
     // 丢弃必须上屏：不报这一句，「环里最早那行」就会被当成「设备最早发的那行」（D4①）。
     return settings_label("serial.monitor.notice.dropped",
-                          {aurora::LocalizedString{std::to_string(dropped_bytes_)},
-                           aurora::LocalizedString{
-                               std::to_string(session::kMaxRawTapBytes / 1024U)}});
+                          {{"count", static_cast<std::int64_t>(dropped_bytes_)},
+                           {"cap", static_cast<std::int64_t>(session::kMaxRawTapBytes / 1024U)}});
 }
 
 auto SerialMonitorPanel::install_overlay() -> void {
@@ -321,10 +320,10 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
         sw->set_thumb_color(chrome.text);
     }
     children.push_back(row_of(std::vector<aurora::Node>{
-                             node(make_text(settings_label("serial.monitor.switch.timestamp"),
+                             node(make_text(settings_label("serial.monitor.toggle.timestamp"),
                                             chrome.text_dim)),
                              node(std::static_pointer_cast<aurora::Widget>(std::move(timestamp_switch))),
-                             node(make_text(settings_label("serial.monitor.switch.pause"),
+                             node(make_text(settings_label("serial.monitor.toggle.pause"),
                                             chrome.text_dim)),
                              node(std::static_pointer_cast<aurora::Widget>(std::move(pause_switch)))},
                          8.0F));

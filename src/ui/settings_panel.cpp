@@ -27,7 +27,7 @@
 #include "aurora/core/log.h"
 #include "aurora/event/event.h"
 #include "aurora/event/keycode.h"
-#include "aurora/i18n/string_table.h"
+#include "aurora/i18n/message_catalog.h"
 #include "aurora/modifier/modifier.h"
 #include "aurora/render/font_engine.h"
 #include "aurora/render/painter.h"
@@ -191,12 +191,13 @@ constexpr std::string_view kShortcutsKey{"shortcuts.overrides"};
 /// 不参与绘制」。面板若擅自裁到前 N 项，用户打开面板改别的一行就会把存储里那两条静默抹掉。
 [[nodiscard]] auto chain_hint_text(const std::vector<std::string> &items, std::string_view filter,
                                    std::size_t candidate_count) -> aurora::LocalizedString {
-    const aurora::LocalizedString capacity{std::to_string(kChainCapacity)};
+    const std::vector<aurora::MessageArg> capacity{
+        {"limit", static_cast<std::int64_t>(kChainCapacity)}};
     if (items.size() > kChainCapacity) {
-        return settings_text("settings.chain.truncated", {capacity});
+        return settings_text("settings.chain.truncated", capacity);
     }
     if (items.size() == kChainCapacity) {
-        return settings_text("settings.chain.full", {capacity});
+        return settings_text("settings.chain.full", capacity);
     }
     if (items.empty()) {
         return settings_text("settings.chain.empty");
@@ -211,7 +212,7 @@ constexpr std::string_view kShortcutsKey{"shortcuts.overrides"};
 ///
 /// 绘制侧不走这里：`chain_hint_` 的 `content` 收的是 `LocalizedString`，框架在绘制时自己查表。
 [[nodiscard]] auto resolve_hint(const aurora::LocalizedString &hint) -> std::string {
-    return hint.resolve(&aurora::default_string_table(), settings_locale());
+    return hint.resolve(&aurora::default_catalog(), settings_locale());
 }
 
 /// @brief 快捷键只读表某一行的标注列文案（多档以 `" · "` 并列，与行尾角标的拼接同一口径）。
@@ -239,7 +240,7 @@ constexpr std::string_view kShortcutsKey{"shortcuts.overrides"};
                                             });
             names += (found == all.end() ? command : found->title);
         }
-        parts.push_back(settings_label("settings.shortcut.conflict_with", {aurora::LocalizedString{names}}));
+        parts.push_back(settings_label("settings.shortcut.conflict_with", {{"binding", names}}));
     }
     if (row.conflicts_with_workspace) {
         parts.push_back(settings_label("settings.shortcut.conflict_workspace"));
@@ -318,8 +319,7 @@ public:
         return {};
     }
     return settings_label("settings.font.fallback",
-                          {aurora::LocalizedString{std::string{configured}},
-                           aurora::LocalizedString{choice.family}});
+                          {{"configured", std::string{configured}}, {"actual", choice.family}});
 }
 
 /// @brief 页 → 导航按钮的词条 key（`settings.page.<域>`，与 `SettingsPage` 四档一一对应）。
@@ -905,7 +905,7 @@ auto SettingsPanel::build_card() -> aurora::Node {
             // 缺任一条就有一个点了没反应的按钮，而按钮本身并不知道自己缺了哪一条腿（7.38⑥ F-b 同一口径）。
             std::vector<aurora::Node> header_children;
             if (config_actions_ready()) {
-                auto export_button = make_action_button("settings.config.export", false);
+                auto export_button = make_action_button("settings.config.export_file", false);
                 export_button->set_on_click([this]() -> void { run_export(); });
                 export_button_ = export_button;
 
@@ -2742,7 +2742,7 @@ auto SettingsPanel::rollback_to_snapshot(std::size_t index) -> void {
         set_config_notice(settings_label("settings.config.rollback_failed"));
         return;
     }
-    reload_from_store("settings.config.rolled_back", snapshot_name_text(entry.path));
+    reload_from_store(settings_label("settings.config.rolled_back", {{"snapshot", snapshot_name_text(entry.path)}}));
 }
 
 auto SettingsPanel::run_export() -> void {
@@ -2758,7 +2758,7 @@ auto SettingsPanel::run_export() -> void {
         return;
     }
     // 路径是**取值**而不是字面量（同降级对话框的备份行，裁决 7.76⑤），故逐字上屏。
-    set_config_notice(settings_label("settings.config.exported", {aurora::LocalizedString{picked}}));
+    set_config_notice(settings_label("settings.config.exported", {{"path", picked}}));
 }
 
 auto SettingsPanel::run_import() -> void {
@@ -2772,10 +2772,10 @@ auto SettingsPanel::run_import() -> void {
         return;
     }
     // 导入成功走的是「回到那一份现场」那条腿：副本重装载、整份广播、预览跟上、浮层重建。
-    reload_from_store("settings.config.imported", picked);
+    reload_from_store(settings_label("settings.config.imported", {{"path", picked}}));
 }
 
-auto SettingsPanel::reload_from_store(std::string_view notice_key, std::string_view detail) -> void {
+auto SettingsPanel::reload_from_store(std::string notice_text) -> void {
     if (hooks_.load) {
         form_ = SettingsForm{hooks_.load()};
     }
@@ -2784,9 +2784,7 @@ auto SettingsPanel::reload_from_store(std::string_view notice_key, std::string_v
     }
     // 留痕排在重建**之前**落进模型态：那一行是 `LayoutBuilder` 闭包在重建时从 `config_notice_text_` 读的，
     // 而 `clear_config_state()` 刚把上一版的控件句柄清掉——排在之后就只有上一句上屏（裁决 7.87⑦）。
-    config_notice_text_ = detail.empty()
-                              ? settings_label(notice_key)
-                              : settings_label(notice_key, {aurora::LocalizedString{std::string{detail}}});
+    config_notice_text_ = std::move(notice_text);
     refresh_preview();
     rebuild_overlay();
 }

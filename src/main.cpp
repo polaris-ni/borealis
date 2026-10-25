@@ -24,6 +24,10 @@
 #include "aurora/core/log.h"
 #include "aurora/render/font_discovery.h"
 #include "aurora/window/native_surfaces.h"
+// 构建期生成的词表头（`cmake` 见 `src/CMakeLists.txt` 的 `aurora_i18n_generate`）：装配层只有这里
+// 需要**编译期可见的词条 Id**——命令面板那两处上屏文案按 Id 交框架查目录，其余一律按 key 走
+// `ui::settings_label()`。文件名随基准词表 `assets/i18n/messages_zh.json` 的 stem。
+#include "messages_zh.hpp"
 #include "borealis/conn/local_terminal.h"
 #include "borealis/conn/profile.h"
 #include "borealis/cli/handoff.h"
@@ -603,7 +607,8 @@ auto main(int argc, char **argv) -> int {
     };
     // 词条必须在任何控件绘制之前装填：查表失败回退空文本，晚装就会让首帧闪一下空标签。
     // 档位在这一行读定、整进程不再改（`SPEC.FEAT.PREF.05` 稿 D2）：面板上那一行的角标「重启后生效」
-    // 就是这条不变量的用户可见半边，而装填只装选中的那一档（该稿 D4 的落地期改形）。
+    // 就是这条不变量的用户可见半边。装填把整份 bin（两档都在）读进目录，选中的那一档定成缺省档与
+    // `settings_locale()`（i18n v2 改形：该稿 D4 的「只装选定那一档」被「全语言合一」取代）。
     borealis::ui::install_settings_strings(settings.appearance.language);
 
     // 建窗之前的两道校验（稿 §5.4）：档案可解析、动作与档案类型相容。任一不符即退出 2，不建窗、
@@ -1007,9 +1012,9 @@ auto main(int argc, char **argv) -> int {
                     name = decode_utf8(borealis::ui::settings_label("workspace.broadcast.unnamed"));
                 } else if (per_tab[member.tab] > 1U) {
                     name.push_back(U' ');
-                    name += decode_utf8(borealis::ui::settings_label(
-                        "workspace.broadcast.pane",
-                        {au::LocalizedString{std::to_string(++ordinals[member.tab])}}));
+                    name += decode_utf8(borealis::ui::settings_label("workspace.broadcast.pane",
+                                                                     {{"ordinal", static_cast<std::int64_t>(
+                                                                       ++ordinals[member.tab])}}));
                 }
                 state.names.push_back(std::move(name));
             }
@@ -2020,8 +2025,9 @@ auto main(int argc, char **argv) -> int {
             borealis::ui::settings_chrome_theme(),
             aurora::Node{std::static_pointer_cast<au::Widget>(window.overlay_host)});
         // 语言档的注入腿（`SPEC.FEAT.PREF.05` 稿 F19）：绘制侧的 `Text`／`Button` 读的是**环境里的
-        // `Locale`**，没有注入就按 `Locale{}`（＝`en`）查表。本档装填只装选定那一档，中文档今天靠
-        // 缺省档兜得住；等英文档补齐（该稿批 3），不注入等于把整窗绘制侧文案换成英文。
+        // `Locale`**，没有注入就按 `Locale{}`（＝`en`）查表。i18n v2 之后这是**硬要求**而不是保险：
+        // 构建期那枚 bin 两档都有本体，缺了注入就是整窗绘制侧文案换成英文，缺省档兜不住这一回
+        // （`settings_i18n.h` 文件头④）。
         auto locale_scope = std::make_shared<au::LocaleProvider>(
             borealis::ui::settings_locale(),
             aurora::Node{std::static_pointer_cast<au::Widget>(std::move(chrome))});
@@ -3683,13 +3689,13 @@ auto main(int argc, char **argv) -> int {
         // 内部关闭，故只需记录日志（若需要）。
         AURORA_LOG_INFO("main", "command palette executed: ", id);
     });
-    // 占位符与空态文案**不在这里交**：框架按 `AURORA_DEFAULT_PLACEHOLDER_KEY` /
-    // `AURORA_DEFAULT_EMPTY_MESSAGE_KEY` 两条 key 现查 `default_string_table()`（G38 / G39 回货形态），
-    // 而本仓的词条由 `install_settings_strings(语言档)` 装进那张表、缺省档随同一枚参数
-    //（`SPEC.FEAT.PREF.05` 稿 D4）。表里**只有选定那一档**，所以这两处即便按 `Locale{}` 现查，
-    // 第一级 miss 之后也回落得到用户真正选的那一档。
+    // 占位符与空态文案按**词条 Id** 交框架查 `default_catalog()`：框架自带的两条 builtin Id 属于库的保留
+    // 区，本仓的词表不能占用那两个名字（gen_i18n 会直接拒收），故这里显式换成本仓那两条 app 档 key。
+    // 解析发生在布局与绘制期、locale 取场景根注入的 `Locale`，因此这两句跟着 `appearance.language` 走。
     // 刻意不调 `set_placeholder()` / `set_empty_message()`：那两枚是**文本覆盖**，置位即不再走 i18n，
     // 运行期切 locale 就再也翻不动这两句（裁决 **7.92**①）。
+    command_palette->set_placeholder_key(borealis::msg::id::AURORA_COMMAND_PALETTE_FIELD_PLACEHOLDER);
+    command_palette->set_empty_message_key(borealis::msg::id::AURORA_COMMAND_PALETTE_EMPTY_MESSAGE);
 
     // 把命令面板挂进场景根（`OverlayHost` 的子节点 [1..] 是按需追加的浮层）：初始不打开，故只建不弹。
     // 面板的 `open()` / `close()` 会自动管理焦点作用域（push_scope / pop_scope），与设置面板同口径。
@@ -3938,22 +3944,20 @@ auto main(int argc, char **argv) -> int {
         serial_baud_dialog->set_content(std::move(content));
         serial_baud_dialog->show();
     };
-    auto serial_baud_arg = [](const std::string &text) -> std::vector<au::LocalizedString> {
-        return {au::LocalizedString{text}};
-    };
-    auto show_serial_baud_notice = [&](std::string_view key, const std::string &arg) -> void {
+    auto show_serial_baud_notice = [&](std::string_view key, std::string_view arg_name,
+                                       const std::string &arg) -> void {
         const std::string title = borealis::ui::settings_label("serial.set_baud.title");
-        const std::string message =
-            arg.empty() ? borealis::ui::settings_label(key)
-                        : borealis::ui::settings_label(key, serial_baud_arg(arg));
+        const std::string message = arg.empty()
+                                        ? borealis::ui::settings_label(key)
+                                        : borealis::ui::settings_label(
+                                              key, {{std::string{arg_name}, arg}});
         auto dialog = serial_baud_dialog;
         // alert 的 OK 钮不自带关闭：关掉它必须由调用方给回调（`au::alert` 的 on_ok 那一支）。
         show_serial_baud_frame(au::alert(title, message, [dialog]() -> void { dialog->close(); }));
     };
     auto show_serial_baud_picker = [&](borealis::conn::SerialConnection &connection) -> void {
         const std::string title = borealis::ui::settings_label(
-            "serial.set_baud.current",
-            serial_baud_arg(std::to_string(connection.current_baud())));
+            "serial.set_baud.current", {{"baud", std::to_string(connection.current_baud())}});
         auto dialog = serial_baud_dialog;
         auto rows = std::vector<au::Node>{};
         // 标题行即「当前 {0}」：当前档只有连接腿那一个真值源，框里别处不再重复显示（D6② 的
@@ -3979,10 +3983,11 @@ auto main(int argc, char **argv) -> int {
                         dialog->close();
                         // 腿未连（含退避期间）时 `set_baud` 恒 false，走的就是「设备侧拒绝」这一支——
                         // 与「回读不符」同一句措辞，因为对用户而言两者都是「这会儿没改成」。
-                        show_serial_baud_notice(
-                            connection.set_baud(rate) ? "serial.set_baud.applied"
-                                                      : "serial.set_baud.rejected",
-                            std::to_string(rate));
+                        // 具名形参的**名**随分支走：applied 槽位叫 `baud`、rejected 叫 `reason`。
+                        const bool applied = connection.set_baud(rate);
+                        show_serial_baud_notice(applied ? "serial.set_baud.applied"
+                                                        : "serial.set_baud.rejected",
+                                                applied ? "baud" : "reason", std::to_string(rate));
                     });
                 cells.push_back(au::Node{std::static_pointer_cast<au::Widget>(std::move(cell))});
             }
@@ -4018,12 +4023,12 @@ auto main(int argc, char **argv) -> int {
          &show_serial_baud_notice]() -> void {
         const std::optional<borealis::ui::TabId> target = command_tab_id();
         if (!target.has_value()) {
-            show_serial_baud_notice("serial.set_baud.not_serial", {});
+            show_serial_baud_notice("serial.set_baud.not_serial", "", "");
             return;
         }
         const auto bound = serial_by_tab.find(target.value());
         if (bound == serial_by_tab.end() || bound->second.connection == nullptr) {
-            show_serial_baud_notice("serial.set_baud.not_serial", {});
+            show_serial_baud_notice("serial.set_baud.not_serial", "", "");
             return;
         }
         show_serial_baud_picker(*bound->second.connection);
@@ -4084,7 +4089,7 @@ auto main(int argc, char **argv) -> int {
             return path;
         }
         return borealis::ui::settings_label("serial.monitor.binding",
-                                           {au::LocalizedString{name}, au::LocalizedString{path}});
+                                           {{"name", name}, {"path", path}});
     };
 
     borealis::ui::SerialMonitorPanel monitor_panel{*host, std::move(monitor_hooks)};
@@ -4142,8 +4147,8 @@ auto main(int argc, char **argv) -> int {
     // 落点账目同命令面板与波特率框（稿 D6）：初始挂首格，开框时按发起窗搬。
     MountedOverlay log_dialog_mount;
     remount_overlay(log_dialog, log_dialog_mount, *host);
-    auto log_arg = [](const std::string &text) -> std::vector<au::LocalizedString> {
-        return {au::LocalizedString{text}};
+    auto log_arg = [](std::string_view name, const std::string &text) -> std::vector<au::MessageArg> {
+        return {{std::string{name}, text}};
     };
     auto show_log_frame = [&](au::Node content) -> void {
         WorkspaceWindow *const window = command_window ? command_window() : nullptr;
@@ -4153,10 +4158,12 @@ auto main(int argc, char **argv) -> int {
         log_dialog->set_content(std::move(content));
         log_dialog->show();
     };
-    auto show_log_notice = [&](std::string_view key, const std::string &arg) -> void {
+    auto show_log_notice = [&](std::string_view key, std::string_view arg_name,
+                                const std::string &arg) -> void {
         auto dialog = log_dialog;
-        const std::string message =
-            arg.empty() ? borealis::ui::settings_label(key) : borealis::ui::settings_label(key, log_arg(arg));
+        const std::string message = arg.empty()
+                                        ? borealis::ui::settings_label(key)
+                                        : borealis::ui::settings_label(key, log_arg(arg_name, arg));
         show_log_frame(au::alert(borealis::ui::settings_label("session.log.confirm.title"), message,
                                  [dialog]() -> void { dialog->close(); }));
     };
@@ -4243,13 +4250,14 @@ auto main(int argc, char **argv) -> int {
         const auto redactor = borealis::session::compile_redactor(now.connection.session_log_pattern);
         if (!redactor.has_value()) {
             // fail-closed：不回退成内置词表静默续记——「用户显式配了而失效」必须可见（D10 连带的档位）。
-            show_log_notice("session.log.alert.bad_pattern", now.connection.session_log_pattern);
+            show_log_notice("session.log.alert.bad_pattern", "pattern",
+                              now.connection.session_log_pattern);
             return;
         }
         const std::string directory = borealis::session::resolve_log_directory(
             now.connection.session_log_dir, store.report().file.parent_path().string());
         if (directory.empty()) {
-            show_log_notice("session.log.alert.cannot_open", std::string{});
+            show_log_notice("session.log.alert.cannot_open", "path", std::string{});
             return;
         }
         // 落盘文件名里的号取自**当前落点窗**：会话已经从这一号取出来了，此处再取不到即意味着
@@ -4267,7 +4275,8 @@ auto main(int argc, char **argv) -> int {
                                      .string();
         // `au::confirm` 只吃一条 message，故判据 3 那两句（敏感提醒 + 完整路径）合成一行。
         const std::string body = std::string{borealis::ui::settings_label("session.log.confirm.sensitive")} +
-                                 " " + borealis::ui::settings_label("session.log.confirm.path", log_arg(path));
+                                 " " + borealis::ui::settings_label("session.log.confirm.path",
+                                                                        {{"path", path}});
         // 答话可能在标签被关掉之后才回来，故这里存 `weak_ptr`：锁不到就什么都不做。
         const std::weak_ptr<borealis::session::Session> weak_session{session};
         auto dialog = log_dialog;
@@ -4289,7 +4298,7 @@ auto main(int argc, char **argv) -> int {
                 // 配置在两步之间失效（目录不可建、文件打不开）仍走 `cannot_open` 的 fail-closed。
                 if (const auto failure = ensure_log_directory(std::filesystem::path{directory});
                     failure.has_value()) {
-                    show_log_notice("session.log.alert.cannot_open", *failure);
+                    show_log_notice("session.log.alert.cannot_open", "path", *failure);
                     return;
                 }
                 borealis::session::LogSpec spec;
@@ -4297,7 +4306,7 @@ auto main(int argc, char **argv) -> int {
                 spec.timestamp = true;  ///< D8①：会话级参数，形态固定「每行 + 本地秒」，不进 schema。
                 spec.redactor = redactor;
                 if (target->enable_logging(std::move(spec)) == borealis::session::LogOutcome::CannotOpen) {
-                    show_log_notice("session.log.alert.cannot_open", path);
+                    show_log_notice("session.log.alert.cannot_open", "path", path);
                 }
                 // 标题的翻面不在这里补一次：本棒只有一个刷新点（下面 `set_on_frame` 里那一次比较）。
             }));
@@ -4331,8 +4340,8 @@ auto main(int argc, char **argv) -> int {
                 snapshots.push_back(borealis::ui::DebugSessionSnapshot{
                     .title = borealis::ui::settings_label(
                         "diagnostics.session",
-                        {au::LocalizedString{std::to_string(tab_id)},
-                         au::LocalizedString{std::to_string(pane)}}),
+                        {{"tab", static_cast<std::int64_t>(tab_id)},
+                         {"pane", static_cast<std::int64_t>(pane)}}),
                     .parse_ignored = parse.ignored,
                     .parse_cancelled = parse.cancelled,
                     .decode_replaced = decode.replaced,
@@ -4568,7 +4577,7 @@ auto main(int argc, char **argv) -> int {
                 if (const auto note = tag_session->take_logging_notice(); note.has_value()) {
                     // 提示语里的路径是 ASCII 诊断，上屏那句走词条，故日志留原文、界面只报「已停止」。
                     AURORA_LOG_WARN("main", "session log disabled after a write failure: ", *note);
-                    show_log_notice("session.log.alert.write_failed", {});
+                    show_log_notice("session.log.alert.write_failed", {}, {});
                 }
 
                 // BEL 事件传给 TabStrip（`SPEC.FEAT.WS.04`）：取走即清零，不会被下一帧重复点亮

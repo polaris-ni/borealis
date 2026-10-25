@@ -99,7 +99,7 @@ constexpr std::array<std::uint16_t, 3> kRsaBits{2048U, 3072U, 4096U};
     if (arg.empty()) {
         return settings_label(key);
     }
-    return settings_label(key, {aurora::LocalizedString{std::string{arg}}});
+    return settings_label(key, {{"path", std::string{arg}}});
 }
 
 /// @brief 按路径在行表里找那一行（删除确认要复述它配对 `.pub` 的具体路径）。
@@ -296,7 +296,7 @@ auto KeysPanel::build_row(const KeyRow &row) -> aurora::Node {
     // 两族之外的算法族（`public_text()` 为空、但 `.pub` 在场）拿不到这一枚——它的行压根
     // 拼不出可发的字节，导出腿同样交不出东西（`key_store.h` 头注那一档）。
     if (!busy && !row.key.has_public && hooks_.export_public != nullptr) {
-        line1_children.push_back(node(make_button(settings_label("keys.action.export"),
+        line1_children.push_back(node(make_button(settings_label("keys.action.export_file"),
                                                   chrome.accent, chrome.window_bg, 56.0F,
                                                   [this, path = row.key.path]() -> void {
                                                       on_export(path);
@@ -304,7 +304,7 @@ auto KeysPanel::build_row(const KeyRow &row) -> aurora::Node {
                                                   chrome.card_line)));
     }
     if (hooks_.delete_key != nullptr) {
-        line1_children.push_back(node(make_button(settings_label("keys.action.delete"),
+        line1_children.push_back(node(make_button(settings_label("keys.action.remove"),
                                                   chrome.control_bg, chrome.text_dim, 40.0F,
                                                   [this, path = row.key.path]() -> void {
                                                       on_delete(path);
@@ -339,8 +339,7 @@ auto KeysPanel::build_row(const KeyRow &row) -> aurora::Node {
 
     // ---- 标题行：标题 + 行数 + 「添加目录」 + 「生成密钥」 + 关闭 ----
     auto count = make_text(settings_label("keys.header.count",
-                                          {aurora::LocalizedString{
-                                              std::to_string(painted_rows_.size())}}),
+                                          {{"count", static_cast<std::int64_t>(painted_rows_.size())}}),
                            chrome.text_dim);
     auto header_children = std::vector<aurora::Node>{
         node(make_text(settings_label("keys.title"), chrome.text)), node(std::move(count))};
@@ -380,7 +379,7 @@ auto KeysPanel::build_row(const KeyRow &row) -> aurora::Node {
         if (note_key.empty()) {
             continue;
         }
-        auto note = make_text(settings_label(note_key, {aurora::LocalizedString{dir.path}}),
+        auto note = make_text(settings_label(note_key, {{"path", dir.path}}),
                               chrome.text_dim);
         note->modifier.set(aurora::Modifier{}.fill_max_width());
         children.push_back(node(std::move(note)));
@@ -807,7 +806,7 @@ auto KeysPanel::close_push() -> void {
                                    },
                                    chrome.card_line);
     push_button->set_enabled(!pushing && !push_profiles_.empty());
-    auto close_button = make_button(settings_label("keys.push.action.close"), chrome.control_bg,
+    auto close_button = make_button(settings_label("keys.push.close"), chrome.control_bg,
                                      chrome.text, 64.0F, [this]() -> void { close_push(); },
                                      chrome.card_line);
     children.push_back(node(std::make_shared<aurora::Row>(aurora::RowProps{
@@ -846,16 +845,16 @@ auto KeysPanel::open_delete_confirm(std::string path) -> void {
         return node(std::move(widget));
     };
     auto children = std::vector<aurora::Node>{
-        line_of(settings_label("keys.delete.title")),
+        line_of(settings_label("keys.remove.title")),
         line_of(pending_delete_path_)};
     if (row != nullptr && row->key.has_public && !row->key.public_path.empty()) {
         children.push_back(line_of(row->key.public_path));
     }
-    children.push_back(node(make_text(settings_label("keys.delete.warn"),
+    children.push_back(node(make_text(settings_label("keys.remove.warn"),
                                       aurora::colors::AURORA_RED)));
 
     auto confirm = std::make_shared<aurora::Button>(aurora::ButtonProps{
-        .label = settings_label("keys.delete.action"),
+        .label = settings_label("keys.remove.action"),
         .color = aurora::colors::AURORA_RED,  // 危险红（sftp D6① 与隧道确认同口径）
         .on_color = chrome.window_bg,
         .min_width = 80.0F,
@@ -867,7 +866,7 @@ auto KeysPanel::open_delete_confirm(std::string path) -> void {
             hooks_.delete_key(path_copy);
         }
     });
-    auto cancel = make_button(settings_label("keys.delete.action.cancel"), chrome.control_bg,
+    auto cancel = make_button(settings_label("keys.remove.cancel"), chrome.control_bg,
                               chrome.text, 64.0F, [this]() -> void { close_delete_confirm(); },
                               chrome.card_line);
     children.push_back(node(std::make_shared<aurora::Row>(aurora::RowProps{

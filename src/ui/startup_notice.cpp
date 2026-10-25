@@ -149,18 +149,18 @@ auto StartupNotice::show_if_needed(const config::LoadReport &report) -> bool {
         // 两个版本号都是**取值**：文件自报的那一档可能高于本仓能读的最高档，只报本程序支持的档位
         // 就说不清差了多少，而 `LoadReport::message` 是 ASCII 诊断、不能上界面（文件头④）。
         children.push_back(make_text(settings_text("settings.startup.version.body",
-                                                   {aurora::LocalizedString{
-                                                        report.stored_schema_version
-                                                            ? std::to_string(*report.stored_schema_version)
-                                                            : std::string{}},
-                                                    aurora::LocalizedString{std::to_string(
-                                                        config::kSupportedSchemaVersion)}}),
+                                                   {{"file_version",
+                                                     report.stored_schema_version
+                                                         ? std::to_string(*report.stored_schema_version)
+                                                         : std::string{}},
+                                                    {"supported",
+                                                     std::to_string(config::kSupportedSchemaVersion)}}),
                                      chrome.roles.on_surface,
                                      kBodySizePt));
     }
     if (report.corrupt_backup.has_value()) {
         children.push_back(make_text(settings_text("settings.startup.backup",
-                                                   {aurora::LocalizedString{path_text(*report.corrupt_backup)}}),
+                                                   {{"path", path_text(*report.corrupt_backup)}}),
                                      chrome.roles.on_surface,
                                      kBodySizePt));
     }

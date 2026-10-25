@@ -67,8 +67,17 @@ constexpr int kDefaultTelnetPort = 23;
     return static_cast<int>(std::strtol(text.c_str(), nullptr, 10));  // NOLINT: 界面口径宽容
 }
 
+/// @brief 认证方式 → 显示串。
+///
+/// 落盘与 `conn::kSshAuthMethods` 用的是 `keyboard-interactive`（连字符），而词条 key 走 gen_i18n 的
+/// 标识符口径（连字符翻成下划线，见 `assets/i18n/messages_zh.json`），故组合 key 前就地折算这一处。
 [[nodiscard]] auto auth_display(const std::string &method) -> std::string {
-    return settings_label("connections.auth." + method);
+    std::string key{"connections.auth."};
+    key.reserve(key.size() + method.size());
+    for (const char c : method) {
+        key.push_back(c == '-' ? '_' : c);
+    }
+    return settings_label(key);
 }
 
 /// @brief 三个文本参数的循环按钮标签：措辞唯一出自 `serial_format`（本件不 switch 第二套）。

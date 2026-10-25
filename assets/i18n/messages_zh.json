@@ -1,0 +1,974 @@
+{
+  "version": 1,
+  "locale": "zh",
+  "id_base": 1024,
+  "messages": {
+    "appearance.cursor_blink_period_ms": "闪烁频率",
+    "appearance.cursor_blinking": "光标闪烁",
+    "appearance.cursor_shape": "光标形态",
+    "appearance.font_fallback_chain": "CJK 缺字回退链",
+    "appearance.font_family": "等宽字体",
+    "appearance.font_letter_spacing_dp": "字距",
+    "appearance.font_line_height": "行高",
+    "appearance.font_size_pt": "字号",
+    "appearance.language": "界面语言",
+    "appearance.palette.background": "默认背景色",
+    "appearance.palette.basic": "16 色重映射",
+    "appearance.palette.bold_is_bright": "粗体提亮",
+    "appearance.palette.cursor": "光标色",
+    "appearance.palette.foreground": "默认前景色",
+    "appearance.palette.min_contrast": "最小对比度阈值",
+    "appearance.palette.min_contrast_enabled": "启用最小对比度",
+    "appearance.palette.selection": "选区色",
+    "appearance.sidebar_collapsed": "侧栏收起",
+    "appearance.status_bar.show_clipboard_policy": "剪贴板策略",
+    "appearance.status_bar.show_connection": "连接状态",
+    "appearance.status_bar.show_cursor_position": "光标位置",
+    "appearance.status_bar.show_encoding": "会话编码",
+    "appearance.status_bar.show_font_size": "字号",
+    "appearance.status_bar.show_grid_size": "行列数",
+    "appearance.status_bar.show_input_latency": "输入延迟",
+    "appearance.status_bar.show_reconnect": "重连状态",
+    "appearance.status_bar.show_scrollback": "回看行数",
+    "appearance.status_bar.show_theme": "当前主题",
+    "appearance.tab_name_priority": "标签名优先级",
+    "appearance.theme": "主题",
+    "appearance.viewport_padding_dp": "视口内边距",
+    "command_palette.action.open": "打开命令面板",
+    "command_palette.empty_message": "没有匹配的命令",
+    "command_palette.field_placeholder": "输入命令...",
+    "command_palette.title": "命令面板",
+    "connection.local_shell": "默认 shell",
+    "connection.restore_sessions": "重启后恢复会话",
+    "connection.serial.baud": "波特率",
+    "connection.serial.data_bits": "数据位",
+    "connection.serial.encoding": "串口编码",
+    "connection.serial.flow": "流控",
+    "connection.serial.line_ending": "行尾符",
+    "connection.serial.parity": "校验位",
+    "connection.serial.stop_bits": "停止位",
+    "connection.session_log_dir": "日志目录",
+    "connection.session_log_pattern": "追加敏感正则",
+    "connection.session_logging": "会话日志",
+    "connection.ssh.agent_forwarding": "agent 转发",
+    "connection.ssh.auth_method": "认证方式",
+    "connection.ssh.connect_timeout_sec": "连接超时",
+    "connection.ssh.host_key_algorithms": "主机密钥算法",
+    "connection.ssh.keepalive_interval_sec": "保活间隔",
+    "connection.ssh.kex_algorithms": "密钥交换算法",
+    "connection.ssh.port": "端口",
+    "connection.ssh.reconnect_attempts": "自动重连次数",
+    "connection.ssh.reconnect_base_delay_ms": "重连首轮退避",
+    "connection.ssh.reconnect_max_delay_ms": "重连退避上限",
+    "connection.startup_directory": "启动目录",
+    "connections.action.cancel": "取消",
+    "connections.action.close": "关闭",
+    "connections.action.confirm": "确定",
+    "connections.action.connect": "连接",
+    "connections.action.custom_path": "自定义…",
+    "connections.action.edit": "编辑",
+    "connections.action.import": "导入 ~/.ssh/config",
+    "connections.action.create": "新建",
+    "connections.action.pick_from_list": "列表选择",
+    "connections.action.refresh_devices": "刷新",
+    "connections.action.save": "保存",
+    "connections.auth.agent": "Agent 密钥",
+    "connections.auth.keyboard_interactive": "交互式",
+    "connections.auth.password": "口令",
+    "connections.auth.privatekey": "私钥",
+    "connections.credential.interactive_title": "请回答 {subject} 的认证提示",
+    "@connections.credential.interactive_title": {
+      "placeholders": {
+        "subject": {
+          "type": "string"
+        }
+      }
+    },
+    "connections.credential.passphrase_title": "请输入 {subject} 的私钥 passphrase",
+    "@connections.credential.passphrase_title": {
+      "placeholders": {
+        "subject": {
+          "type": "string"
+        }
+      }
+    },
+    "connections.credential.password_title": "请输入 {subject} 的口令",
+    "@connections.credential.password_title": {
+      "placeholders": {
+        "subject": {
+          "type": "string"
+        }
+      }
+    },
+    "connections.device.placeholder": "请选择设备",
+    "connections.field.auth": "认证方式",
+    "connections.field.baud": "波特率",
+    "connections.field.command": "命令",
+    "connections.field.data_bits": "数据位",
+    "connections.field.device": "设备",
+    "connections.field.encoding": "编码",
+    "connections.field.flow": "流控",
+    "connections.field.host": "主机",
+    "connections.field.identity": "私钥路径",
+    "connections.field.line_ending": "发送行尾",
+    "connections.field.name": "名称",
+    "connections.field.parity": "校验位",
+    "connections.field.port": "端口",
+    "connections.field.proxy_jump": "跳板机（ProxyJump）",
+    "connections.field.stop_bits": "停止位",
+    "connections.field.user": "用户",
+    "connections.field.workdir": "工作目录",
+    "connections.notice.imported": "已导入 {count, plural, other {{count} 条}}",
+    "@connections.notice.imported": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        }
+      }
+    },
+    "connections.policy.accept_new": "首次接受",
+    "connections.policy.ask": "询问",
+    "connections.policy.no": "不核对",
+    "connections.policy.yes": "严格核对",
+    "connections.proxy_jump.placeholder": "形如 jump1.example.com,jump2:2222",
+    "connections.quick.placeholder": "host[:port] 即连",
+    "connections.recent.title": "最近连接",
+    "connections.search.placeholder": "搜索档案",
+    "connections.serial.access.busy": "已被占用",
+    "connections.serial.access.denied": "无权限",
+    "connections.serial.access.unavailable": "暂不可开",
+    "connections.serial.flow.hardware": "硬件 RTS/CTS",
+    "connections.serial.flow.none": "无",
+    "connections.serial.flow.software": "软件 XON/XOFF",
+    "connections.serial.line_ending.cr": "CR",
+    "connections.serial.line_ending.crlf": "CRLF",
+    "connections.serial.line_ending.lf": "LF",
+    "connections.serial.parity.even": "偶",
+    "connections.serial.parity.none": "无",
+    "connections.serial.parity.odd": "奇",
+    "connections.title": "连接",
+    "connections.type.local": "本地终端",
+    "connections.type.serial": "串口终端",
+    "connections.type.ssh": "SSH",
+    "connections.type.telnet": "Telnet",
+    "connections.view.all": "全部",
+    "connections.view.favorites": "收藏",
+    "connections.view.groups": "分组",
+    "connections.wizard.issue_auth": "认证方式无效",
+    "connections.wizard.issue_baud": "波特率须在档位表内",
+    "connections.wizard.issue_data_bits": "数据位须在 5..8",
+    "connections.wizard.issue_device": "设备不能为空",
+    "connections.wizard.issue_empty_host": "主机不能为空",
+    "connections.wizard.issue_empty_name": "名称不能为空",
+    "connections.wizard.issue_port": "端口须在 1..65535",
+    "connections.wizard.issue_proxy_jump": "跳板链无效：须为 user@host:port 逗号分隔，最多 8 跳",
+    "connections.wizard.issue_stop_bits": "停止位须在 1..2",
+    "connections.wizard.title_edit": "编辑连接",
+    "connections.wizard.title_new": "新建连接",
+    "diagnostics.action.open": "打开诊断面板",
+    "diagnostics.decode": "非法字节 {bytes}，码点 {code_points}",
+    "@diagnostics.decode": {
+      "placeholders": {
+        "bytes": {
+          "type": "int64"
+        },
+        "code_points": {
+          "type": "int64"
+        }
+      }
+    },
+    "diagnostics.empty": "没有活动的会话",
+    "diagnostics.encode": "发送侧不可表示 {count}",
+    "@diagnostics.encode": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        }
+      }
+    },
+    "diagnostics.parse": "未知序列 {ignored}，被打断 {interrupted}",
+    "@diagnostics.parse": {
+      "placeholders": {
+        "ignored": {
+          "type": "int64"
+        },
+        "interrupted": {
+          "type": "int64"
+        }
+      }
+    },
+    "diagnostics.queue": "水位 {pending}（峰值 {peak}），过载 {overloads}，合并 {merges}，让出 {yields}",
+    "@diagnostics.queue": {
+      "placeholders": {
+        "pending": {
+          "type": "int64"
+        },
+        "peak": {
+          "type": "int64"
+        },
+        "overloads": {
+          "type": "int64"
+        },
+        "merges": {
+          "type": "int64"
+        },
+        "yields": {
+          "type": "int64"
+        }
+      }
+    },
+    "diagnostics.session": "标签 {tab} · 分屏 {pane}",
+    "@diagnostics.session": {
+      "placeholders": {
+        "tab": {
+          "type": "int64"
+        },
+        "pane": {
+          "type": "int64"
+        }
+      }
+    },
+    "diagnostics.title": "诊断",
+    "keys.action.add_dir": "添加目录",
+    "keys.action.close": "关闭",
+    "keys.action.copy": "复制",
+    "keys.action.remove": "删除",
+    "keys.action.export_file": "导出公钥",
+    "keys.action.generate": "生成密钥",
+    "keys.action.push": "推送",
+    "keys.remove.action": "删除",
+    "keys.remove.cancel": "取消",
+    "keys.remove.failed": "删除失败",
+    "keys.remove.not_found": "文件已不在原处",
+    "keys.remove.refused_symlink": "符号链接不删：链接与目标都保持原样",
+    "keys.remove.title": "删除密钥",
+    "keys.remove.warn": "私钥与配对的公钥将被删除，此操作不可恢复。",
+    "keys.dir.unreachable": "目录不可达：{path}",
+    "@keys.dir.unreachable": {
+      "placeholders": {
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "keys.empty": "暂无密钥：点「生成密钥」创建一把，或添加扫描目录",
+    "keys.export_file.already_exists": "公钥文件已存在，未覆盖",
+    "keys.export_file.failed": "导出公钥失败",
+    "keys.export_file.needs_passphrase": "这把私钥带口令，需要口令才能导出",
+    "keys.generate.action.cancel": "取消",
+    "keys.generate.action.save": "生成",
+    "keys.generate.browse": "浏览",
+    "keys.generate.directory_unusable": "目标目录不可用",
+    "keys.generate.failed": "生成失败",
+    "keys.generate.field.bits": "位数",
+    "keys.generate.field.comment": "注释",
+    "keys.generate.field.directory": "目标目录",
+    "keys.generate.field.name": "文件名",
+    "keys.generate.field.passphrase": "口令（可空）",
+    "keys.generate.field.passphrase_again": "再输一遍口令",
+    "keys.generate.invalid_request": "请求不成立：检查目录与文件名",
+    "keys.generate.issue_mismatch": "两次输入的口令不一致",
+    "keys.generate.name_taken": "同名文件已存在",
+    "keys.generate.title": "生成密钥",
+    "keys.header.count": "{count, plural, other {{count} 把}}",
+    "@keys.header.count": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        }
+      }
+    },
+    "keys.issue.comment.control_char": "注释含不可见字符",
+    "keys.issue.comment.too_long": "注释过长",
+    "keys.issue.name.control_char": "文件名含不可见字符",
+    "keys.issue.name.empty": "文件名不能为空",
+    "keys.issue.name.has_separator": "文件名不能包含路径分隔符",
+    "keys.issue.name.hidden": "点开头的名称会成为隐藏文件",
+    "keys.issue.name.reserved": "这个名称是系统保留名",
+    "keys.issue.name.too_long": "文件名过长",
+    "keys.kind.ed25519": "Ed25519",
+    "keys.kind.rsa": "RSA",
+    "keys.notice.copied": "已复制到剪贴板",
+    "keys.op.remove": "删除中",
+    "keys.op.export_file": "导出中",
+    "keys.op.generate": "生成中",
+    "keys.op.push": "推送中",
+    "keys.op.scan": "扫描中",
+    "keys.push.action": "推送",
+    "keys.push.close": "关闭",
+    "keys.push.already_authorized": "这把公钥已在授权表里",
+    "keys.push.appended": "公钥已追加到服务器的授权表",
+    "keys.push.fail.auth": "认证被拒",
+    "keys.push.fail.exec_refused": "服务器拒绝执行授权表命令",
+    "keys.push.fail.host_key": "主机密钥核对未通过",
+    "keys.push.fail.invalid_line": "这把公钥拼不出有效内容，未发起推送",
+    "keys.push.fail.network": "网络错误：连不上服务器",
+    "keys.push.fail.session_unallocated": "未能建立会话",
+    "keys.push.fail.write_rejected": "授权表写入未成功",
+    "keys.push.field.profile": "目标档案",
+    "keys.push.no_profile": "（无 SSH 档案）",
+    "keys.push.stage.auth": "认证",
+    "keys.push.stage.dial": "连接",
+    "keys.push.stage.done": "完成",
+    "keys.push.stage.exec": "执行",
+    "keys.push.title": "推送公钥",
+    "keys.row.has_passphrase": "有口令",
+    "keys.row.no_passphrase": "无口令",
+    "keys.row.public_missing": "公钥缺失",
+    "keys.title": "SSH 密钥",
+    "links.confirm.cancel": "取消",
+    "links.confirm.open_once": "仅本次打开",
+    "links.confirm.policy": "确认策略：{policy}",
+    "@links.confirm.policy": {
+      "placeholders": {
+        "policy": {
+          "type": "string"
+        }
+      }
+    },
+    "links.confirm.remember_and_open": "记住该域并打开",
+    "links.confirm.source.heuristic": "来源：纯文本启发式识别（非 OSC 8 显式超链接）",
+    "links.confirm.source.osc8": "来源：OSC 8 显式超链接",
+    "links.confirm.title": "打开链接？",
+    "links.confirm.uri": "{uri}",
+    "@links.confirm.uri": {
+      "placeholders": {
+        "uri": {
+          "type": "string"
+        }
+      }
+    },
+    "links.confirm.whitelist": "协议白名单：{schemes}；信任级别两档分开配置",
+    "@links.confirm.whitelist": {
+      "placeholders": {
+        "schemes": {
+          "type": "string"
+        }
+      }
+    },
+    "links.policy.ask_always": "每次都问（ask_always）",
+    "links.policy.ask_once": "首次确认并记住同域（ask_once）",
+    "links.policy.never": "不询问、直接打开（never）",
+    "menu.item.copy": "复制",
+    "menu.item.copy_command_output": "复制上一命令的全部输出",
+    "menu.item.open_link": "打开链接",
+    "menu.item.paste": "粘贴",
+    "quick_select.action.open": "快速选择",
+    "search.action.open": "打开搜索",
+    "search.close": "关闭",
+    "search.count_cap": "{cap}+",
+    "@search.count_cap": {
+      "placeholders": {
+        "cap": {
+          "type": "int64"
+        }
+      }
+    },
+    "search.count_invalid": "表达式非法",
+    "search.count_none": "无匹配",
+    "search.next": "下一个",
+    "search.pending_enter": "按 Enter 应用",
+    "search.placeholder": "搜索终端内容",
+    "search.prev": "上一个",
+    "search.reopen_hint": "按 Enter 搜索",
+    "search.toggle_case": "区分大小写",
+    "search.toggle_regex": "正则表达式",
+    "serial.monitor.action.clear": "清空",
+    "serial.monitor.action.close": "关闭",
+    "serial.monitor.binding": "{name} · {path}",
+    "@serial.monitor.binding": {
+      "placeholders": {
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "serial.monitor.bytes": "{count, plural, other {{count} 字节}}",
+    "@serial.monitor.bytes": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        }
+      }
+    },
+    "serial.monitor.command": "串口十六进制监视",
+    "serial.monitor.empty": "等待数据",
+    "serial.monitor.not_serial": "当前标签不是串口会话",
+    "serial.monitor.notice.dropped": "已丢弃 {count, plural, other {{count} 字节}}（环上限 {cap} KiB）",
+    "@serial.monitor.notice.dropped": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        },
+        "cap": {
+          "type": "int64"
+        }
+      }
+    },
+    "serial.monitor.notice.privacy": "本面板不落盘，数据随会话结束消失",
+    "serial.monitor.toggle.pause": "暂停刷新",
+    "serial.monitor.toggle.timestamp": "时间戳前缀",
+    "serial.monitor.title": "串口监视",
+    "serial.set_baud.applied": "已切到 {baud}",
+    "@serial.set_baud.applied": {
+      "placeholders": {
+        "baud": {
+          "type": "string"
+        }
+      }
+    },
+    "serial.set_baud.current": "当前 {baud}",
+    "@serial.set_baud.current": {
+      "placeholders": {
+        "baud": {
+          "type": "string"
+        }
+      }
+    },
+    "serial.set_baud.not_serial": "当前会话不是串口",
+    "serial.set_baud.rejected": "设备侧拒绝：{reason}",
+    "@serial.set_baud.rejected": {
+      "placeholders": {
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "serial.set_baud.title": "切换串口波特率",
+    "session.log.alert.bad_pattern": "追加的正则无法编译，会话日志未开启：{pattern}",
+    "@session.log.alert.bad_pattern": {
+      "placeholders": {
+        "pattern": {
+          "type": "string"
+        }
+      }
+    },
+    "session.log.alert.cannot_open": "无法创建日志文件，会话日志未开启：{path}",
+    "@session.log.alert.cannot_open": {
+      "placeholders": {
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "session.log.alert.write_failed": "日志写入失败，已停止记录",
+    "session.log.command.start": "会话日志：开启（当前标签）",
+    "session.log.command.stop": "会话日志：停止（当前标签）",
+    "session.log.confirm.path": "将写入：{path}",
+    "@session.log.confirm.path": {
+      "placeholders": {
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "session.log.confirm.sensitive": "日志可能包含密码、令牌或其他敏感信息。",
+    "session.log.confirm.title": "开启会话日志",
+    "session.log.menu.start": "开启会话日志",
+    "session.log.menu.stop": "停止会话日志",
+    "session.reconnect.countdown": "{seconds} 秒后自动重试",
+    "@session.reconnect.countdown": {
+      "placeholders": {
+        "seconds": {
+          "type": "int64"
+        }
+      }
+    },
+    "session.reconnect.exhausted": "重试 {count, plural, other {{count} 次仍失败 · 已停止}}",
+    "@session.reconnect.exhausted": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        }
+      }
+    },
+    "session.reconnect.line": "连接已断开 · 第 {attempt} / {total} 次自动重连",
+    "@session.reconnect.line": {
+      "placeholders": {
+        "attempt": {
+          "type": "int64"
+        },
+        "total": {
+          "type": "int64"
+        }
+      }
+    },
+    "session.reconnect.not_reconnectable": "认证被拒 · 不自动重试",
+    "session.reconnect.retry_now": "立即重试",
+    "session.reconnect.stop": "停止重连",
+    "session.reconnect.user_stopped": "自动重连已停止",
+    "session.restart.button": "重启",
+    "session.restart.by_profile": "重启（按档案）",
+    "session.restart.hint": "会话已退出",
+    "session.restart.retry_credential": "重试并换凭据",
+    "session.restart.title": "重启会话",
+    "settings.action.cancel": "取消",
+    "settings.action.confirm": "确定",
+    "settings.action.edit": "编辑",
+    "settings.action.open": "打开设置",
+    "settings.action.restore_defaults": "恢复默认",
+    "settings.action.theme_default": "恢复主题默认",
+    "settings.action.unset": "未配",
+    "settings.badge.customized": "自定义",
+    "settings.badge.deferred": "延后",
+    "settings.badge.next_launch": "重启后生效",
+    "settings.badge.next_session": "下次会话生效",
+    "settings.chain.down": "↓",
+    "settings.chain.empty": "回退链为空：只走框架的全局默认链",
+    "settings.chain.filter": "输入族名以添加",
+    "settings.chain.full": "已达上限 {limit} 项：追加口已关闭",
+    "@settings.chain.full": {
+      "placeholders": {
+        "limit": {
+          "type": "int64"
+        }
+      }
+    },
+    "settings.chain.no_match": "没有匹配的族名",
+    "settings.chain.remove": "✕",
+    "settings.chain.truncated": "链长超过上限 {limit}：超出部分不参与绘制",
+    "@settings.chain.truncated": {
+      "placeholders": {
+        "limit": {
+          "type": "int64"
+        }
+      }
+    },
+    "settings.chain.up": "↑",
+    "settings.close": "关闭",
+    "settings.config.back": "返回",
+    "settings.config.export_file": "导出配置",
+    "settings.config.export_failed": "导出失败：目标文件没能写出",
+    "settings.config.exported": "已导出到 {path}",
+    "@settings.config.exported": {
+      "placeholders": {
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "settings.config.import": "导入配置",
+    "settings.config.import_failed": "导入失败：那份文件不是一份可用的配置，当前设置未改动",
+    "settings.config.imported": "已导入 {path}",
+    "@settings.config.imported": {
+      "placeholders": {
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "settings.config.rollback_failed": "回滚失败：当前设置未改动",
+    "settings.config.rolled_back": "已回滚到 {snapshot}",
+    "@settings.config.rolled_back": {
+      "placeholders": {
+        "snapshot": {
+          "type": "string"
+        }
+      }
+    },
+    "settings.config.snapshots": "配置快照",
+    "settings.font.fallback": "配置的 {configured} 不可用：实际使用 {actual}",
+    "@settings.font.fallback": {
+      "placeholders": {
+        "configured": {
+          "type": "string"
+        },
+        "actual": {
+          "type": "string"
+        }
+      }
+    },
+    "settings.issue.domain_mismatch": "这个值的类型与该项不符",
+    "settings.issue.malformed_color": "色值须是 #RRGGBB 七位形态",
+    "settings.issue.malformed_number": "请输入一个数字",
+    "settings.issue.not_a_choice": "请从列表里选择一个取值",
+    "settings.issue.not_integral": "这一项只接受整数",
+    "settings.issue.not_loaded": "这个键没有装载到面板上",
+    "settings.issue.out_of_range": "超出允许范围",
+    "settings.issue.slot_out_of_range": "色板格序号超出 0 到 15",
+    "settings.issue.table_size_wrong": "调色板必须是 16 格",
+    "settings.issue.text_not_accepted": "这一项不能直接输入文本",
+    "settings.issue.unknown_key": "这个键不在当前版本的设置表里",
+    "settings.issue.unset_not_allowed": "这一项必须配置一个颜色",
+    "settings.note.clipboard_read": "三态各档的后果：deny 与超限都只回送一条空响应，不弹提示、屏上也查不到；改档即刻对所有在途标签生效；ask 档每条读请求各问一次（同一会话最多同时挂 8 条，超出当场按 deny 答）。",
+    "settings.note.link_confirm": "两枚键各管一个来源：osc8 是程序显式声明的目标，heuristic 是按形状猜出来的串。ask_once 记住的是协议 + 主机 + 端口，同域第二次不再问，换个端口仍会问。",
+    "settings.note.link_schemes": "逗号分隔；白名单外的链接不显示为可点（留空或全是非法词＝什么都不可以点）",
+    "settings.note.serial": "入口先于消费方落地：串口连接族尚未开工，本组改动只落盘",
+    "settings.note.session_log": "能力闸：开启后仍需逐会话显式点「开启会话日志」。日志目录里的旧文件本期不清理、不轮转。",
+    "settings.note.shortcuts": "入口先于消费方落地：键位重绑尚未开工，覆盖表里的组合键不会生效",
+    "settings.note.ssh": "入口先于消费方落地：SSH 连接族尚未开工，本组改动只落盘",
+    "settings.note.ssh_algorithms": "逗号分隔；非空即整表替换库缺省。列旧算法（如 ssh-rsa、diffie-hellman-group14-sha1）会降低安全性，仅连旧设备时启用",
+    "settings.note.status_bar": "入口先于消费方落地：关闭状态栏件尚未开工，本组改动只落盘",
+    "settings.page.appearance": "外观",
+    "settings.page.connection": "连接",
+    "settings.page.shortcuts": "快捷键",
+    "settings.page.terminal": "终端",
+    "settings.shortcut.column.binding": "当前组合键",
+    "settings.shortcut.column.category": "分组",
+    "settings.shortcut.column.note": "标注",
+    "settings.shortcut.column.title": "动作名",
+    "settings.shortcut.conflict_warning": "与以下命令冲突",
+    "settings.shortcut.conflict_with": "与「{binding}」重复",
+    "@settings.shortcut.conflict_with": {
+      "placeholders": {
+        "binding": {
+          "type": "string"
+        }
+      }
+    },
+    "settings.shortcut.conflict_workspace": "与分屏键位冲突",
+    "settings.shortcut.edit_title": "编辑键位绑定",
+    "settings.shortcut.unbound": "未绑定",
+    "settings.snapshot.empty": "暂无快照：本仓还没有落过盘",
+    "settings.snapshot.note": "快照取在每次保存之前，回滚会让这份配置回到那一个现场；面板上尚未落盘的改动会一起丢掉",
+    "settings.snapshot.rollback": "回滚",
+    "settings.startup.ack": "知道了",
+    "settings.startup.backup": "损坏的文件已备份为：{path}",
+    "@settings.startup.backup": {
+      "placeholders": {
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "settings.startup.corrupt.body": "无法读取这个配置文件，本程序已回落到默认设置启动。",
+    "settings.startup.corrupt.title": "配置文件已损坏",
+    "settings.startup.rejected": "以下设置项的值超出可用范围，已回落到默认值：",
+    "settings.startup.version.body": "这个配置文件由更新的版本写出（版本 {file_version}，本程序支持 {supported}），已回落到默认设置启动。",
+    "@settings.startup.version.body": {
+      "placeholders": {
+        "file_version": {
+          "type": "string"
+        },
+        "supported": {
+          "type": "string"
+        }
+      }
+    },
+    "settings.startup.version.title": "配置文件版本高于本程序",
+    "settings.startup.writes_refused": "未能备份损坏的文件：本会话不会写入配置文件，原文件保持原样",
+    "settings.subtitle": "修改即时生效",
+    "settings.title": "设置",
+    "sftp.action.cancel": "取消",
+    "sftp.action.close": "关闭",
+    "sftp.action.confirm": "确定",
+    "sftp.action.remove": "删除",
+    "sftp.action.download": "下载",
+    "sftp.action.new_file": "新建文件",
+    "sftp.action.new_folder": "新建文件夹",
+    "sftp.action.refresh": "刷新",
+    "sftp.action.rename": "重命名",
+    "sftp.action.retry": "重试",
+    "sftp.action.up": "向上",
+    "sftp.action.upload": "上传",
+    "sftp.column.local": "本地",
+    "sftp.column.mtime": "修改时间",
+    "sftp.column.name": "名称",
+    "sftp.column.permissions": "权限",
+    "sftp.column.remote": "远程",
+    "sftp.column.size": "大小",
+    "sftp.remove.body": "确定删除 {name} 吗？此操作不可恢复。",
+    "@sftp.remove.body": {
+      "placeholders": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "sftp.remove.confirm": "删除",
+    "sftp.remove.dir_note": "仅可删除空目录。",
+    "sftp.remove.title": "删除确认",
+    "sftp.error.cancelled": "已取消",
+    "sftp.error.local_io": "本地读写失败",
+    "sftp.error.network": "网络错误",
+    "sftp.error.not_connected": "未连接",
+    "sftp.error.not_found": "路径不存在",
+    "sftp.error.permission_denied": "权限不足",
+    "sftp.error.protocol": "协议错误",
+    "sftp.input.name": "名称",
+    "sftp.input.new_file": "新建文件",
+    "sftp.input.new_folder": "新建文件夹",
+    "sftp.input.rename": "重命名",
+    "sftp.status.connected": "已连接",
+    "sftp.status.connecting": "连接中...",
+    "sftp.status.failed": "连接失败",
+    "sftp.status.not_ssh": "当前标签不是 SSH 会话",
+    "sftp.title": "SFTP 文件",
+    "sftp.transfer.downloading": "下载 {name}",
+    "@sftp.transfer.downloading": {
+      "placeholders": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "sftp.transfer.queued": "排队 {count}",
+    "@sftp.transfer.queued": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        }
+      }
+    },
+    "sftp.transfer.uploading": "上传 {name}",
+    "@sftp.transfer.uploading": {
+      "placeholders": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "shortcuts.overrides": "键位覆盖表",
+    "snippets.action.close": "关闭",
+    "snippets.action.remove": "删除",
+    "snippets.action.edit": "编辑",
+    "snippets.action.create": "新建",
+    "snippets.action.send": "发送",
+    "snippets.remove.action.cancel": "取消",
+    "snippets.remove.action.confirm": "删除",
+    "snippets.remove.body": "确定删除「{name}」？这条操作不可撤销。",
+    "@snippets.remove.body": {
+      "placeholders": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "snippets.remove.title": "删除片段",
+    "snippets.editor.action.cancel": "取消",
+    "snippets.editor.action.save": "保存",
+    "snippets.editor.enter": "发送后追加回车",
+    "snippets.editor.field.body": "正文",
+    "snippets.editor.field.group": "分组（可空）",
+    "snippets.editor.field.name": "名称",
+    "snippets.editor.plain_text_warning": "片段按纯文本保存到配置文件，不要写密码或令牌",
+    "snippets.editor.title.edit": "编辑片段",
+    "snippets.editor.title_create": "新建片段",
+    "snippets.empty_hint": "暂无片段：点「新建」创建第一条",
+    "snippets.empty.filtered": "没有匹配的片段",
+    "snippets.fill.action.cancel": "取消",
+    "snippets.fill.action.send": "发送",
+    "snippets.fill.title": "填写参数",
+    "snippets.group.all": "全部分组",
+    "snippets.header.count": "{count, plural, other {{count} 条}}",
+    "@snippets.header.count": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        }
+      }
+    },
+    "snippets.issue.body_too_long": "正文过长（最多 {limit} 字节）",
+    "@snippets.issue.body_too_long": {
+      "placeholders": {
+        "limit": {
+          "type": "int64"
+        }
+      }
+    },
+    "snippets.issue.empty_body": "正文不能为空",
+    "snippets.issue.empty_name": "名称不能为空",
+    "snippets.issue.group_control_char": "分组含不可见字符",
+    "snippets.issue.group_too_long": "分组过长（最多 {limit} 字节）",
+    "@snippets.issue.group_too_long": {
+      "placeholders": {
+        "limit": {
+          "type": "int64"
+        }
+      }
+    },
+    "snippets.issue.name_control_char": "名称含不可见字符",
+    "snippets.issue.name_too_long": "名称过长（最多 {limit} 字节）",
+    "@snippets.issue.name_too_long": {
+      "placeholders": {
+        "limit": {
+          "type": "int64"
+        }
+      }
+    },
+    "snippets.notice.candidates": "{count, plural, other {{count} 条候选，请再收窄}}",
+    "@snippets.notice.candidates": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        }
+      }
+    },
+    "snippets.notice.no_session": "当前没有可发送的会话",
+    "snippets.notice.save_failed": "保存失败，内存里的片段未改",
+    "snippets.notice.sent": "已发送：{name}",
+    "@snippets.notice.sent": {
+      "placeholders": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "snippets.search.placeholder": "搜索名称、分组或正文",
+    "snippets.title": "快捷片段",
+    "tab.action.undo_close": "重开最近关闭的标签",
+    "tab.close_confirm.body": "该标签里还有正在运行的进程，关闭会终止它们。确定关闭吗？",
+    "tab.close_confirm.title": "关闭标签",
+    "terminal.ambiguous_width": "宽字符判定",
+    "terminal.bell": "铃声",
+    "terminal.clipboard_read": "远端读取剪贴板",
+    "terminal.clipboard_read_confirm.body": "远端程序想读取本地剪贴板的内容并发回会话（选择位 {selection}）。允许吗？拒绝会回送一条空响应，远端不会挂起。",
+    "@terminal.clipboard_read_confirm.body": {
+      "placeholders": {
+        "selection": {
+          "type": "string"
+        }
+      }
+    },
+    "terminal.clipboard_read_confirm.title": "远端请求读取剪贴板",
+    "terminal.command_block_separator": "悬停命令块时显示分隔线",
+    "terminal.copy_on_select": "选中即复制",
+    "terminal.encoding": "会话编码",
+    "terminal.link_heuristic": "纯文本识别的链接打开前",
+    "terminal.link_osc8": "显式超链接（OSC 8）打开前",
+    "terminal.link_schemes": "允许打开的协议",
+    "terminal.long_line": "超长行处理",
+    "terminal.notice.unrepresentable.action": "已按当前处置档发送 · 改档见 设置 › 终端 › 不可表示字符处置",
+    "terminal.notice.unrepresentable.line": "{leg} 发不出这一段里的 {count, plural, other {{count} 个字符}}",
+    "@terminal.notice.unrepresentable.line": {
+      "placeholders": {
+        "leg": {
+          "type": "string"
+        },
+        "count": {
+          "type": "int64"
+        }
+      }
+    },
+    "terminal.paste_multiline.body": "剪贴板里的内容有 {count, plural, other {{count} 行}}，粘贴会把每一行都当成一条命令依次执行。确定粘贴吗？",
+    "@terminal.paste_multiline.body": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        }
+      }
+    },
+    "terminal.paste_multiline.title": "多行粘贴",
+    "terminal.paste_newlines": "粘贴换行处理",
+    "terminal.right_click": "右键行为",
+    "terminal.scrollback_limit": "scrollback 行数",
+    "terminal.smart_line_join": "合并续行",
+    "terminal.strip_tmux_border_chars": "剥 tmux 细线制表符",
+    "terminal.trim_pasted_trailing_space": "复制时剥行尾空白",
+    "terminal.unrepresentable": "不可表示字符处置",
+    "terminal.word_delimiters": "双击选词断点集",
+    "tunnel.action.close": "关闭",
+    "tunnel.action.remove": "删除",
+    "tunnel.action.edit": "编辑",
+    "tunnel.action.create": "新建隧道",
+    "tunnel.action.start": "启动",
+    "tunnel.action.stop": "停止",
+    "tunnel.confirm.action": "停止并删除",
+    "tunnel.confirm.body": "「{name}」正在运行，将先停止再删除。",
+    "@tunnel.confirm.body": {
+      "placeholders": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "tunnel.confirm.title": "停止并删除？",
+    "tunnel.editor.action.cancel": "取消",
+    "tunnel.editor.action.save": "保存",
+    "tunnel.editor.field.autostart": "自动启动",
+    "tunnel.editor.field.listen_addr": "监听地址",
+    "tunnel.editor.field.listen_port": "监听端口",
+    "tunnel.editor.field.name": "名称",
+    "tunnel.editor.field.profile": "承载档案",
+    "tunnel.editor.field.target_host": "目标主机",
+    "tunnel.editor.field.target_port": "目标端口",
+    "tunnel.editor.issue_conflict": "与其他隧道抢同一监听点",
+    "tunnel.editor.issue_listen_port": "监听端口须在合法范围（-R 允许 0）",
+    "tunnel.editor.issue_name": "名称不能为空",
+    "tunnel.editor.issue_profile": "需要选择一个 SSH 档案",
+    "tunnel.editor.issue_target_host": "目标主机不能为空",
+    "tunnel.editor.issue_target_port": "目标端口须在 1..65535",
+    "tunnel.editor.no_profile": "（无 SSH 档案）",
+    "tunnel.editor.retry.attempts": "次数",
+    "tunnel.editor.retry.base": "退避 ms",
+    "tunnel.editor.retry.cap": "上限 ms",
+    "tunnel.editor.retry.hint": "留空＝旧全局档（1s / 30s / 不限次）",
+    "tunnel.editor.title_edit": "编辑隧道",
+    "tunnel.editor.title_new": "新建隧道",
+    "tunnel.empty": "暂无隧道：点「新建隧道」添加",
+    "tunnel.error.bind_failed": "监听端口起不来",
+    "tunnel.error.channel_lost": "会话瞬断",
+    "tunnel.error.dial_failed": "建连/认证失败",
+    "tunnel.error.remote_refused": "远端监听被服务器拒绝",
+    "tunnel.header.running": "运行中 {count}",
+    "@tunnel.header.running": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        }
+      }
+    },
+    "tunnel.kind.dynamic": "SOCKS5 -D",
+    "tunnel.kind.local": "本地 -L",
+    "tunnel.kind.remote": "远端 -R",
+    "tunnel.listen.server_chosen": "服务器已择定端口",
+    "tunnel.listen.server_picked": "端口由服务器择定",
+    "tunnel.notice.persist_failed": "隧道表落盘失败：本次改动只留在内存",
+    "tunnel.row.autostart_skipped": "自动启动已跳过：需先存凭据",
+    "tunnel.row.profile": "承载：{profile}",
+    "@tunnel.row.profile": {
+      "placeholders": {
+        "profile": {
+          "type": "string"
+        }
+      }
+    },
+    "tunnel.row.retry_wait": "第 {attempt} 次重试 · {seconds}s 后",
+    "@tunnel.row.retry_wait": {
+      "placeholders": {
+        "attempt": {
+          "type": "int64"
+        },
+        "seconds": {
+          "type": "int64"
+        }
+      }
+    },
+    "tunnel.state.active": "已就绪",
+    "tunnel.state.backoff": "退避重试",
+    "tunnel.state.dialing": "拨号中",
+    "tunnel.state.failed": "已失败",
+    "tunnel.state.stopped": "已停止",
+    "tunnel.title": "隧道",
+    "window.close_confirm.body": "这扇窗口里还有正在运行的会话，关闭会终止它们。确定关闭吗？",
+    "window.close_confirm.title": "关闭窗口",
+    "workspace.action.new_window": "新建窗口",
+    "workspace.action.toggle_fullscreen": "切换全屏",
+    "workspace.broadcast.badge": "广播 B",
+    "workspace.broadcast.exit": "退出广播",
+    "workspace.broadcast.hint": "仅组内窗格键入时同步发送；点击此处退出",
+    "workspace.broadcast.pane": "窗格 {ordinal}",
+    "@workspace.broadcast.pane": {
+      "placeholders": {
+        "ordinal": {
+          "type": "int64"
+        }
+      }
+    },
+    "workspace.broadcast.title": "广播输入已开启：{names} 共 {count, plural, other {{count} 个会话}}",
+    "@workspace.broadcast.title": {
+      "placeholders": {
+        "names": {
+          "type": "string"
+        },
+        "count": {
+          "type": "int64"
+        }
+      }
+    },
+    "workspace.broadcast.unnamed": "未命名会话"
+  }
+}

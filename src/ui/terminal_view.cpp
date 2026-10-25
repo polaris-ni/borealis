@@ -229,8 +229,9 @@ class StringCollector final : public term::CodePointSink {
 
 /// @brief 菜单条目的显示文案。
 ///
-/// 词条在 `settings_i18n.cpp`（裁决 7.116 的批 2 把菜单两态文案也归到那张表，与本文件里
-/// dead-session 浮层那一句同一条路径），本处不再自持一份中文串——上面那段 CJK-LITERAL 旁注说的是
+/// 词条在构建期词表（`assets/i18n/messages_{zh,en}.json`，由 `settings_i18n.cpp` 装填）——裁决 7.116
+/// 的批 2 把菜单两态文案也归到那张表，与本文件里 dead-session 浮层那一句同一条路径。本处不再自持一份
+/// 中文串——上面那段 CJK-LITERAL 旁注说的是
 /// 「界面文案用中文」这件事，不是「文案只能写在本文件」。
 [[nodiscard]] auto menu_label(MenuCommand command, bool logging) -> std::string {
     switch (command) {
@@ -1727,8 +1728,8 @@ auto TerminalView::paint_restart_overlay(aurora::Painter &p, const aurora::Rect 
     if (redialing) {
         p.draw_text(to_rect(Rect{text_x, text_top, text_w, kRestartHintLineHeightDp}, bounds.origin),
                     settings_label("session.reconnect.line",
-                                   {aurora::LocalizedString{std::to_string(progress->attempt)},
-                                    aurora::LocalizedString{std::to_string(progress->total)}}),
+                                   {{"attempt", static_cast<std::int64_t>(progress->attempt)},
+                                    {"total", static_cast<std::int64_t>(progress->total)}}),
                     ref_font_, chrome.text);
         text_top += kRestartHintLineHeightDp;
         // 第二行只报当下这一档还要等多久：草图那句括注（首次 1 s、逐次翻倍、钳上限）说的是退避**算式**，
@@ -1736,7 +1737,7 @@ auto TerminalView::paint_restart_overlay(aurora::Painter &p, const aurora::Rect 
         // 于是 1000 ms 报「1 秒」而不是「0 秒」。
         p.draw_text(to_rect(Rect{text_x, text_top, text_w, kRestartHintLineHeightDp}, bounds.origin),
                     settings_label("session.reconnect.countdown",
-                                   {aurora::LocalizedString{std::to_string((progress->delay_ms + 999) / 1000)}}),
+                                   {{"seconds", static_cast<std::int64_t>((progress->delay_ms + 999) / 1000)}}),
                     ref_font_, chrome.text);
         text_top += kRestartHintLineHeightDp;
     } else {
@@ -1745,7 +1746,7 @@ auto TerminalView::paint_restart_overlay(aurora::Painter &p, const aurora::Rect 
             switch (progress->stop) {
             case session::ReconnectStop::AttemptsExhausted:
                 hint = settings_label("session.reconnect.exhausted",
-                                      {aurora::LocalizedString{std::to_string(progress->attempt)}});
+                                      {{"count", static_cast<std::int64_t>(progress->attempt)}});
                 break;
             case session::ReconnectStop::NotReconnectable:
                 hint = settings_label("session.reconnect.not_reconnectable");
@@ -1865,8 +1866,8 @@ auto TerminalView::paint_unrepresentable_notice(aurora::Painter &p, const aurora
     p.draw_text(to_rect(Rect{text_x, card_y + kRestartCardPaddingDp, text_w, kRestartHintLineHeightDp},
                         bounds.origin),
                 settings_label("terminal.notice.unrepresentable.line",
-                               {aurora::LocalizedString{unrepresentable_notice_->leg},
-                                aurora::LocalizedString{std::to_string(unrepresentable_notice_->count)}}),
+                               {{"leg", unrepresentable_notice_->leg},
+                               {"count", static_cast<std::int64_t>(unrepresentable_notice_->count)}}),
                 ref_font_, chrome.text);
     // 第二行只指路径、不报当前档位名（D4①）：设置页那枚下拉显示的是 ASCII 档名本身，卡片报中文档名
     // 会对不上、报 ASCII 又违背界面语言。副色档与「出口」这句话的分量相称。
@@ -2256,9 +2257,8 @@ auto TerminalView::ask_multiline_warning(const term::PastePlan &plan, std::funct
             host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(multiline_warning_)}));
     }
     // 行数取待发块数而不是原文换行数：警告要说的是「会有几行被当成命令执行」。
-    const std::string message =
-        settings_label("terminal.paste_multiline.body",
-                       {aurora::LocalizedString{std::to_string(plan.chunks.size())}});
+    const std::string message = settings_label("terminal.paste_multiline.body",
+                                                {{"count", static_cast<std::int64_t>(plan.chunks.size())}});
     multiline_warning_->set_content(aurora::confirm(
         settings_label("terminal.paste_multiline.title"),
         message,
@@ -2368,8 +2368,8 @@ auto TerminalView::ask_clipboard_read_dialog(const term::ClipboardReadRequest &r
         pc.assign(1, static_cast<char>(static_cast<unsigned char>(request.pc.front())));
     }
     clipboard_read_dialog_->set_content(aurora::confirm(
-        settings_label("terminal.clipboard_read.title"),
-        settings_label("terminal.clipboard_read.body", {aurora::LocalizedString{pc}}),
+        settings_label("terminal.clipboard_read_confirm.title"),
+        settings_label("terminal.clipboard_read_confirm.body", {{"selection", pc}}),
         [this, answer = std::move(answer)](bool granted) -> void {
             clipboard_read_dialog_->close();
             answer(granted);
@@ -2547,7 +2547,7 @@ auto TerminalView::ask_open_link_dialog(const LinkOpenRequest &request,
             host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(link_open_dialog_)}));
     }
     const auto chrome = settings_chrome();
-    auto line = [this, &chrome](std::string_view key, std::vector<aurora::LocalizedString> args,
+    auto line = [this, &chrome](std::string_view key, std::vector<aurora::MessageArg> args,
                                 const aurora::Color &color) -> aurora::Node {
         auto text = std::make_shared<aurora::Text>(aurora::TextProps{
             .content = settings_text(key, std::move(args)),
@@ -2582,18 +2582,19 @@ auto TerminalView::ask_open_link_dialog(const LinkOpenRequest &request,
     // 而把「默认」二字印在一档非默认的档位旁边就是假话（此即稿 §4 批 2 那条改口的落点）。
     std::vector<aurora::Node> children;
     children.push_back(line("links.confirm.title", {}, chrome.text));
-    children.push_back(line("links.confirm.uri", {aurora::LocalizedString{request.target}}, chrome.text));
+    children.push_back(line("links.confirm.uri", {{"uri", request.target}}, chrome.text));
     children.push_back(line(request.source == LinkSource::Osc8 ? "links.confirm.source.osc8"
                                                                 : "links.confirm.source.heuristic",
                             {}, chrome.text_dim));
     children.push_back(line("links.confirm.whitelist",
-                            {aurora::LocalizedString{link_schemes_display(options_.link.scan.schemes)}},
+                            {{"schemes", link_schemes_display(options_.link.scan.schemes)}},
                             chrome.text_dim));
-    children.push_back(
-        line("links.confirm.policy",
-             {aurora::LocalizedString{settings_label(link_policy_label(
-                  request.source == LinkSource::Osc8 ? options_.link.osc8 : options_.link.heuristic))}},
-             chrome.text_dim));
+    children.push_back(line("links.confirm.policy",
+                            {{"policy",
+                              settings_label(link_policy_label(request.source == LinkSource::Osc8
+                                                                   ? options_.link.osc8
+                                                                   : options_.link.heuristic))}},
+                            chrome.text_dim));
     children.push_back(aurora::Node{std::make_shared<aurora::Row>(aurora::RowProps{
         .children = {
             button("links.confirm.cancel", chrome.control_bg, chrome.text, true, LinkOpenAnswer::Cancel),

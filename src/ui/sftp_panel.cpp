@@ -553,7 +553,7 @@ auto SftpPanel::refresh_progress_in_place() -> void {
     if (transfer_text_ != nullptr) {
         std::string text =
             settings_label(transfer_is_download_ ? "sftp.transfer.downloading" : "sftp.transfer.uploading",
-                           {aurora::LocalizedString{transfer_label_}});
+                           {{"name", transfer_label_}});
         if (percent.has_value()) {
             text += " " + std::to_string(*percent) + "%";
         }
@@ -854,7 +854,7 @@ auto SftpPanel::build_remote_actions() -> std::shared_ptr<aurora::Row> {
         make_button(settings_label("sftp.action.rename"), 40.0F,
                     [this]() -> void { request_rename(); })));
     children.emplace_back(std::static_pointer_cast<aurora::Widget>(
-        make_button(settings_label("sftp.action.delete"), 40.0F,
+        make_button(settings_label("sftp.action.remove"), 40.0F,
                     [this]() -> void { request_delete(); })));
     return std::make_shared<aurora::Row>(aurora::RowProps{
         .children = std::move(children), .gap = 4.0F});
@@ -864,7 +864,7 @@ auto SftpPanel::build_transfer_bar() -> std::shared_ptr<aurora::Row> {
     const auto chrome = settings_chrome();
     transfer_text_ = make_text(
         settings_label(transfer_is_download_ ? "sftp.transfer.downloading" : "sftp.transfer.uploading",
-                       {aurora::LocalizedString{transfer_label_}}),
+                       {{"name", transfer_label_}}),
         chrome.text);
     transfer_text_->modifier.set(aurora::Modifier{}.fill_max_width());
 
@@ -883,7 +883,7 @@ auto SftpPanel::build_transfer_bar() -> std::shared_ptr<aurora::Row> {
     const int queued = transfers_posted_ - transfers_done_;
     if (queued > 0) {
         auto queue_cell = make_text(
-            settings_label("sftp.transfer.queued", {aurora::LocalizedString{std::to_string(queued)}}),
+            settings_label("sftp.transfer.queued", {{"count", static_cast<std::int64_t>(queued)}}),
             chrome.text_dim);
         children.emplace_back(std::static_pointer_cast<aurora::Widget>(std::move(queue_cell)));
     }
@@ -1171,9 +1171,9 @@ auto SftpPanel::show_delete_confirm(const std::string &name, bool is_directory) 
     const auto chrome = settings_chrome();
     close_dialog();
 
-    auto title = make_text(settings_label("sftp.delete.title"), chrome.text);
+    auto title = make_text(settings_label("sftp.remove.title"), chrome.text);
     title->modifier.set(aurora::Modifier{}.fill_max_width());
-    auto body = make_text(settings_label("sftp.delete.body", {aurora::LocalizedString{name}}),
+    auto body = make_text(settings_label("sftp.remove.body", {{"name", name}}),
                           chrome.text);
     body->modifier.set(aurora::Modifier{}.fill_max_width());
 
@@ -1190,7 +1190,7 @@ auto SftpPanel::show_delete_confirm(const std::string &name, bool is_directory) 
     };
     // D6①：确认键危险红（固定暗红，不随主题 chrome 变——危险语义不属主题表达）。
     auto confirm_button = std::make_shared<aurora::Button>(aurora::ButtonProps{
-        .label = settings_label("sftp.delete.confirm"),
+        .label = settings_label("sftp.remove.confirm"),
         .color = aurora::colors::AURORA_RED,
         .on_color = chrome.window_bg,
         .min_width = 64.0F,
@@ -1203,7 +1203,7 @@ auto SftpPanel::show_delete_confirm(const std::string &name, bool is_directory) 
         aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(title))},
         aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(body))}};
     if (is_directory) {
-        auto note = make_text(settings_label("sftp.delete.dir_note"), chrome.text_dim);
+        auto note = make_text(settings_label("sftp.remove.dir_note"), chrome.text_dim);
         note->modifier.set(aurora::Modifier{}.fill_max_width());
         children.emplace_back(std::static_pointer_cast<aurora::Widget>(std::move(note)));
     }

@@ -289,8 +289,8 @@ auto TunnelPanel::build_row(const TunnelRow &row) -> aurora::Node {
         auto reason = settings_label(tunnel_error_key(row.runtime.error));
         auto wait = settings_label(
             "tunnel.row.retry_wait",
-            {aurora::LocalizedString{std::to_string(row.runtime.attempt)},
-             aurora::LocalizedString{std::to_string(tunnel_retry_wait_s(row))}});
+            {{"attempt", static_cast<std::int64_t>(row.runtime.attempt)},
+             {"seconds", static_cast<std::int64_t>(tunnel_retry_wait_s(row))}});
         auto note = make_text(reason + " " + wait, chrome.text_dim);
         note->modifier.set(aurora::Modifier{}.width(150.0F));
         line1_children.push_back(node(std::move(note)));
@@ -324,7 +324,7 @@ auto TunnelPanel::build_row(const TunnelRow &row) -> aurora::Node {
                                               },
                                               chrome.card_line)));
     if (hooks_.persist != nullptr) {
-        line1_children.push_back(node(make_button(settings_label("tunnel.action.delete"),
+        line1_children.push_back(node(make_button(settings_label("tunnel.action.remove"),
                                                   chrome.control_bg, chrome.text_dim, 40.0F,
                                                   [this, id = row.spec.id]() -> void {
                                                       on_delete(id);
@@ -340,8 +340,7 @@ auto TunnelPanel::build_row(const TunnelRow &row) -> aurora::Node {
     if (!note_key.empty()) {
         line2_children.push_back(node(make_text(settings_label(note_key), chrome.text_dim)));
     }
-    auto profile_name = settings_label("tunnel.row.profile",
-                                       {aurora::LocalizedString{row.spec.profile_id}});
+    auto profile_name = settings_label("tunnel.row.profile", {{"profile", row.spec.profile_id}});
     line2_children.push_back(node(make_text(std::move(profile_name), chrome.text_dim)));
 
     auto line1 = std::make_shared<aurora::Row>(aurora::RowProps{
@@ -373,13 +372,13 @@ auto TunnelPanel::build_row(const TunnelRow &row) -> aurora::Node {
     // 标题不抓 fill_max_width：那会把计数/新建/关闭整组挤出卡宽（派发链实测点不到）。
     auto title = make_text(settings_label("tunnel.title"), chrome.text);
     auto count =
-        make_text(settings_label("tunnel.header.running", {aurora::LocalizedString{
-                      std::to_string(running)}}),
+        make_text(settings_label("tunnel.header.running",
+                                   {{"count", static_cast<std::int64_t>(running)}}),
                    chrome.text_dim);
     auto header_children =
         std::vector<aurora::Node>{node(std::move(title)), node(std::move(count))};
     if (hooks_.persist != nullptr) {
-        header_children.push_back(node(make_button(settings_label("tunnel.action.new"),
+        header_children.push_back(node(make_button(settings_label("tunnel.action.create"),
                                                    chrome.accent, chrome.window_bg, 64.0F,
                                                    [this]() -> void { open_editor(std::nullopt); },
                                                    chrome.card_line)));
@@ -811,8 +810,7 @@ auto TunnelPanel::open_delete_confirm(std::string id) -> void {
 
     auto title = make_text(settings_label("tunnel.confirm.title"), chrome.text);
     title->modifier.set(aurora::Modifier{}.fill_max_width());
-    auto body = make_text(settings_label("tunnel.confirm.body",
-                                         {aurora::LocalizedString{name}}),
+    auto body = make_text(settings_label("tunnel.confirm.body", {{"name", name}}),
                           chrome.text);
     body->modifier.set(aurora::Modifier{}.fill_max_width());
     auto confirm_button = std::make_shared<aurora::Button>(aurora::ButtonProps{

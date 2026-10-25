@@ -509,7 +509,7 @@ auto SearchOverlay::count_text() const -> std::string {
     }
     const std::string denominator = matches->truncated()
                                         ? settings_label("search.count_cap",
-                                                         {aurora::LocalizedString{std::to_string(kMaxSearchMatches)}})
+                                                         {{"cap", static_cast<std::int64_t>(kMaxSearchMatches)}})
                                         : std::to_string(matches->count());
     // 游标为空时只给分母：新扫出的表本来就没有游标，挂一个 `1/` 就是谎报「当前命中在第一段上」。
     const std::optional<std::size_t> cursor = matches->cursor();

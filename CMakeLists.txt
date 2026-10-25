@@ -30,6 +30,13 @@ set(AURORA_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 
 add_subdirectory("${BOREALIS_AURORA_DIR}" "${CMAKE_BINARY_DIR}/aurora")
 
+# i18n 词表的构建期管线（Aurora 主仓 `cmake/AuroraI18n.cmake`）：本仓在 add_subdirectory
+# 之后接入。`AURORA_GEN_I18N_EXE` 在 Aurora 侧是**目录作用域**变量（`set()` 未进缓存），
+# 子目录的赋值不向父目录传播，故此处按同一表达式自取——`gen_i18n` 目标是全局的，
+# `$<TARGET_FILE:...>` 在本作用域同样可解析。
+include("${BOREALIS_AURORA_DIR}/cmake/AuroraI18n.cmake")
+set(AURORA_GEN_I18N_EXE "$<TARGET_FILE:gen_i18n>")
+
 # 源码为 UTF-8（含中文注释），MSVC 在 CJK 代码页下须 /utf-8 解析，否则伪错误（与 Aurora 同口径）。
 if (MSVC)
     add_compile_options(/utf-8)

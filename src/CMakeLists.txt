@@ -172,6 +172,19 @@ target_link_libraries(borealis_core PRIVATE Iconv::Iconv)
 
 # 消费者统一配置（链接 aurora + C++20 + 共享 PCH + 统一告警），额外私有头目录为本仓公共头根。
 aurora_setup_consumer_target(borealis_core "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+
+# 界面短语的构建期词表（`SPEC.FEAT.PREF.05`，Aurora i18n v2 管线）：两档 ARB JSON 一份基准
+# （zh）+ 一份译文（en）在构建期交 `gen_i18n`，产出强类型 Id 与具名形参构造函数的生成头，
+# 以及 `AUM1` 二进制词表（运行期整读喂 `MessageCatalog::load_binary`）。译文字面量因此
+# **不在源码里**——`tools/check/check_display_literals.py` 的白名单对象随之改成 JSON。
+# 生成物落 core：core 是应用与测试 runner 的共同上游，头目录取 PUBLIC 让两侧同一份 Id。
+aurora_i18n_generate(TARGET borealis_core
+        NAMESPACE borealis::msg
+        BASE "${CMAKE_CURRENT_SOURCE_DIR}/../assets/i18n/messages_zh.json"
+        LOCALES "${CMAKE_CURRENT_SOURCE_DIR}/../assets/i18n/messages_en.json"
+        OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/i18n"
+        ID_BASE 1024)
+target_include_directories(borealis_core PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/i18n")
 # 私有头互引路径：conn/ssh_connection.h、conn/profile_views.h 等私有头按
 # "conn/xxx.h" 相对 src/ 解析（头仍在 src/ 树内，公共面不因此扩一寸）。
 target_include_directories(borealis_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

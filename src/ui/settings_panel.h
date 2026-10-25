@@ -766,7 +766,7 @@ private:
     /// 建行时从表单读的，不重建就会显出「表单已是新值、开关还停在旧档」。
     /// 面板原先未落盘的改动在这一步**丢失**，这是「回到那一份现场」的字面代价，界面上由那一行留痕说出来
     /// （裁决 7.87⑦）。新建的表单相对它自己的基线**不脏**，故这里不需要 `note_persisted()`。
-    auto reload_from_store(std::string_view notice_key, std::string_view detail) -> void;
+    auto reload_from_store(std::string notice_text) -> void;
 
     /// @brief 写卡片头部那一行留痕并重绘（一次动作一句话，上一句被覆盖）。
     auto set_config_notice(std::string text) -> void;
