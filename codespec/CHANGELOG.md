@@ -4,6 +4,37 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.156（2026-10-26）**Windows/MSVC 主通道重新启用：4 处 Win32 腿硬错误、4 处平台行为差、2 处通道读数订正一并修掉（裁决 7.156；本地提交 `867cd87`（msvc_env）→ `bca80d5`（Win32 腿与测试修正）→ 文档回写（本笔））**
+
+**动机**：批 4／5／6／7 的「Win32／MSVC 未复核」欠账叠加到本棒——7.155 的回存工作在 Windows 主通道执行，该腿自 2026-10-08 以来第一次完整编译，欠账集中现形。所有改动与回存意图独立，按 §4.6 第 26 条单独成笔。
+
+**落地形态**：
+
+- **4 处硬错误**：`crash_handler.cpp` 的 `const HANDLE` 是常量指针而非指向常量的指针（`&handle` 交不进 `void*`）⇒ 留可变局部；`tcp.cpp` 的 SDK 只定义 `ADDRINFOA`（无小写 tag `addrinfoA`），`getaddrinfo` 的 `const u_long*` 取址同理 ⇒ 去 `const`；`serial.cpp` 的 `std::milliseconds` ⇒ `std::chrono::milliseconds`；`src/CMakeLists.txt` 为 `main.cpp` 触顶的 C1128 给 `borealis` 补 MSVC-only `/bigobj`（GCC 腿无同类门槛）。
+- **4 处平台行为差**：`codec.cpp` 的 GBK 别名改 `CP936`——libiconv 的 GBK 拒收 0x80（U+20AC）而 CP936 收（ctypes 探针实测 `e2 82 ac`），glibc 侧 CP936 本就是 GBK 别名，两腿同判据；`tcp.cpp` 监听独占改 `SO_EXCLUSIVEADDRUSE`——Win32 的 `SO_REUSEADDR` 允许二活监听、对隧道就是静默抢流（代价与 PuTTY／Win32-OpenSSH 同档：TIME_WAIT 未散尽时重建要等）；`utest_workspace_snapshot.cpp` 的 `path::string_type` 宽窄差；`itest_keys_panel.cpp` 的空钩子在 Win32 会弹真对话框 ⇒ 取消档在 `file_dialog::interactive=false` 下走取消腿。
+- **2 处通道读数订正**：`itest_tunnel_failure.cpp` 的等待预算 5 s→60 s（libssh 对关闭回环端口单次拨号 10 s、三次尝试 ≈30 s，环境读数非实现成本）；会话日志两件的写失败注入由「删开着的文件」改「置只读」（Win32 句柄共享删除）。
+- **工具链**：`tools/msvc_env.bat` 用 vswhere 解析 VSROOT（VS 2026 已就位，旧 2022 路径可能残留成空目录骗过存在性检查），并把 VS 自带 Ninja 补进 PATH（`vcvars64` 不代劳，Ninja 生成器需要它可达）。
+
+**验收读数**：构建通过（`cmake --build --preset msvc --parallel`）；`ctest --preset msvc -E etest_` **118/118 全绿**；无头 runner **1471 案／1468 绿**（三红＝`etest_libsecret_credential_store`，Windows 无 secret-service 真后端，属 e2e 真后端面、不入 `-E etest_` 基线）。
+
+**边界与不称可用**：Win32 腿的真机交互（ConPTY 交互桌面会话、真系统对话框）与 Windows 侧 e2e 不在本读数内；`hop_pipe`／`agent_socket`／`SSH_OPTIONS_FD` 的 Winsock 句柄截断风险（父稿 F17）等未复核处按原样在册；本条不替任何需求摘「可用」（§4.4 第 33 条）。
+
+## v0.155（2026-10-26）**`SPEC.FEAT.CONN.03` §4 清册末行「跳板答案回存」结项：逐跳 vault 键、答齐一批的乐观写回与审计面扩形（裁决 7.155；本地提交 `4692d6b`（回存落地）→ 文档回写（本笔））**
+
+**动机**：裁决 7.154④ 把跳板答案限制在内存槽位走完当次连接，逐跳 vault 键（一档案多键位＋乐观写回＋审计扩形）入 §4 清册。本棒按子稿 `codespec/CONN03_HOPVAULT.draft.md`（D1–D8 按推荐档自裁执行）收口，清册该行结项。
+
+**落地形态**：
+
+- **键位（D1①）**：`hop_vault_key = <档案 id> + "#" + <规范化跳形>`，命名用户即 `user@host:port`、**无名用户保留前导 `@`**（消除「名为 host 的用户」与「无名 host」撞键）；`%`／`#` 单趟转义。键随身份不随下标——链序调整、中间插跳不掉已存答案；改 `user@` 前缀＝换身份（旧答案作废重问）。档案级键仍是裸 `<profile_id>`，两型同库并存，逆解析与平台两腿零改动。
+- **三件纯逻辑**：`hop_vault_key`、`plan_hop_vault_keys`（与 `plan_hop_credential` 同口径只给 Ask 跳出键位）、`plan_hop_writeback`（答齐后唯一判据：非 SSH 类型闸 → 下标边界 → 有明文 → 键位按当前跳复核 → 当前仍 Ask；计划件不改档案），挂 `src/conn/profile_views.{h,cpp}`。
+- **写回时机（D3）**：只在串问泵 `finish(filled)` 一次写，`on_cancel`／`nullopt` ⇒ 一个键位都不写。装配层 `remember_hop_secrets` 回查 `settings.profiles` → 计划件 → 逐条 `credential_vault_id(prefix, key)` 置 `Reference` → 一次 `store.replace` → 逐键 `au::async` 入库（乐观写句柄同目标腿现档，入库失败不回滚、下次取空自然回询问）；quick connect 与已删档案（id 不在档）整段跳过。
+- **审计扩形（D4①）**：规则零改动——`find_credential_key` 只扫 JSON 键名，复合键是值天然过闸；`utest_credential_audit` 补有名/无名两枚复合键跳的扩形案。D4② 是稿面误判（`utest_config` 早已覆盖跳句柄往返），不补新案。
+- **连带行为（F7）**：回存后 `hop_secrets_silent` 现读为真 ⇒ 带跳档案下一程可进开机静默自启（零新代码）。
+
+**验收读数**：构建通过（msvc preset）；`ctest --preset msvc -E etest_` **118/118**；无头 runner **1471 案**（1468 绿，三红为 libsecret e2e 真后端面）；`utest_hop_vault` **7 案**。四刃变异各有指名红（撤无名补 `@`／撤仍-Ask 闸／撤键位复核／撤非 SSH 闸），逐字节还原后 md5 复核复绿；落地期修掉一处证人空转（`Stored` 条目原给 `nullopt`，撤闸时不红——补明文后转红）。
+
+**边界与不称可用**：`src/main.cpp` 的泵槽位、三步搬运与 `on_cancel` 控制流不编入 runner（裁决 7.83）⇒ 源码审查＋真机走查；档案删除清库（孤儿条目与目标腿现役行为同档）与重拨／重启腿回存不做（稿 §4）；真机走查四档未做（首程两跳串问→二程零重问、钥匙环可见逐跳条目、删档案后孤儿仍在、Win32 腿实测）⇒ **不称「可用」**。
+
 ## v0.154（2026-10-26）**`SPEC.FEAT.CONN.03` §4 清册次行两条延后子项同棒结项：逐跳凭据询问串问泵 + quick connect 的 `-J` 尾段（裁决 7.154；本地提交 `e55163f`（子稿收口）→ `5b2bd6f`（批 A 纯逻辑两片）→ `1951082`（批 B 泵与侧栏接线）→ 文档回写（本笔）**
 
 **动机**：裁决 7.148／7.153 收口跳链时，「装配层跳板询问 UI 未扩（`AskEveryTime` 的跳留空）」与「quick connect 不接 `-J`」两条挂在 §4 清册次行；且批 6 的自启放行只审了目标静默（F10：目标 agent、跳 Ask 的档案会在开机时由新泵弹第一框）。本棒按子稿 `codespec/CONN03_ASKHOP_QUICKJ.draft.md`（D1–D8 逐条经人裁「全部按推荐档」，D3 取 A、D8 顺手修 F10）一次收掉两条并补全那道闸。

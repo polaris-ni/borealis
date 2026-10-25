@@ -297,7 +297,7 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 | 项 | 去向 |
 |:---|:---|
 | `ProxyCommand`（外部命令） | 不进本条需求原文；如未来要，走 `SPEC.FEAT.CONN.02` 的新延后项，另起标识 |
-| 逐跳凭据的询问 UI（`AskEveryTime` 的跳） | **已结项（2026-10-26，裁决 7.154，子稿 `CONN03_ASKHOP_QUICKJ.draft.md`）**：串问泵进 `with_hop_secrets`，取消任一跳整次作罢；跳板答案的回存另起一棒在册 |
+| 逐跳凭据的询问 UI（`AskEveryTime` 的跳） | **已结项（2026-10-26，裁决 7.154，子稿 `CONN03_ASKHOP_QUICKJ.draft.md`）**：串问泵进 `with_hop_secrets`，取消任一跳整次作罢；跳板答案的回存**已结项（2026-10-26，裁决 7.155，子稿 `CONN03_HOPVAULT.draft.md`）** |
 | 跳板接进 SFTP／隧道／密钥推送 | 本稿 §7 批 6 |
 | quick connect 的 `-J` 语法 | **已结项（2026-10-26，裁决 7.154）**：`parse_quick_connect_line` 尾段切分，坏值整行拒且侧栏留痕 |
 | 真机 sshd 的 `direct-tcpip` 许可面 | 随 CONN.08 的 etest 欠账 |
