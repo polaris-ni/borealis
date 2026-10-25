@@ -202,3 +202,15 @@ submit_keys_push = 【实体】with_hop_secrets(ssh, secret, ⇒ keys_worker.sub
 - CONN.09（凭据不落明文）：hop 材料只在内存 bundle 与凭据库句柄之间流动，三腿均不留盘；
   「配置目录 grep 无明文凭据」自动化用例不受影响。
 - 本批落地后 CONN.03 的 §4 清册功能棒清空，剩余欠账只有走查与 Windows 复核（均非代码棒）。
+
+## 9 交付后记（2026-10-25，裁决 7.153；代码一笔 `2c72dfb`）
+
+落地与稿面的差异逐条如实登记：
+
+- **D7 证人档位订正**：稿面「SFTP 见 `list_directory` 文件、推送达 `Done`」的更强措辞在本沙箱**结构性不可达**——进程内假服务器没有 SFTP subsystem 处理也没有 exec 通道回调（实测：两类请求都被 libssh 默认拒绝，落 `SftpError::Protocol` 与 `PushFailure::ExecRefused`）。正向证人止于「已穿链拨到目标并停在各自档位」（隧道则真到 `Active` 并绑端口）；全腿成功腿并入真机走查欠账（带跳三条）。
+- **D2「旧调用点零改动」有一处例外**：裸 `std::nullopt` 实参到 `SshSecretBundle` 需要两步用户定义转换、不成立；`itest_keys_push`／`itest_tunnel_failure` 三处调用点改传 `SshSecretBundle{}`。
+- **D3 闭包捕获形态订正**：`launch_tunnel` 与 `submit_keys_push` 的异步回-call 里档案与 spec **按值入闭包**——调用方可能持 `store.settings()` 局部副本里的引用，原件在回-call 归时已不在（稿面按引用捕获的既有先例形态在异步腿上不安全）。
+- **run_loop 尾部第二处秘密清空点**（`tunnel_client.cpp` 终态即清）不在稿面清单里，换型时一并改 `secret_ = SshSecretBundle{}`。
+- **变异自证台账**：V1（SFTP 拨号不交 seed）⇒ `sftp_leg_dials_the_target_through_the_chain` 红（两断言：档位与目标认证计数）；V3（隧道建链绕开 `bundle.hops`）⇒ `tunnel_leg_reaches_active_over_the_chain` 红；**V2（链在 `ssh_free` 前收口）静默通过**——关闭序在测试侧没有断言窗口（seed 先关后 `ssh_disconnect` 写坏 fd 不炸不红），该序改由源码审查＋父稿 F12 探针担保，**不称证人**。三刃逐字节还原（cmp 无差）后全 suite 复绿。
+- **结项读数**：ctest 126/126（套件数持平、无新用例文件）；runner 1532/1532（−1 旧 E6 案＋4 新案）；门禁 PASS（249 文件/540 键，零新词条）；代码侧在册 TODO 两处→一处（只剩 `fake_ssh_server.cpp` 的 CONN.02 Win32 腿）。
+- **§6 验收判据逐条对照**：①三腿正向✓（档位档）②一跳板被拒⇒目标零✓③dial 兜底案保留✓④TODO 撤账 grep 只剩一处✓⑤读数全绿✓⑥带跳三条真机走查**未做** ⇒ 本条不称「可用」。

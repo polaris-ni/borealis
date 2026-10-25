@@ -137,7 +137,7 @@ class SshHopChain final {
 
 `sftp_client`／`tunnel_client`／`key_push` 本批不改一行代码，但 `ssh_dial_and_authenticate()` 一旦看到 `profile.proxy_jumps` 非空而 `seed_fd` 未交、链也未建（这三条腿根本不会建链），就记一条 ERROR 并回 `HopUnwired`，**不发起连接**。
 
-理由：静默直连等于绕过用户显式配置的跳板——在 Windows 上这正是原生路线的既有行为（F7），本仓不接受。接线留后续批（§9 批 6），届时三条腿各自持有一份 `SshHopChain`。
+理由：静默直连等于绕过用户显式配置的跳板——在 Windows 上这正是原生路线的既有行为（F7），本仓不接受。接线留后续批（§9 批 6），届时三条腿各自持有一份 `SshHopChain`。**批 6 回写（裁决 7.153）**：三条腿已各自建链，本闸退为 dial 层兜底档——只兜「漏接线」，不再是三腿的现行口径。
 
 **落地形态（批 4 实测）**：三条腿仍不改一行代码——`HopUnwired` 从 `ssh_dial_and_authenticate()` 的返回值现形为各腿自己的失败档：SFTP ⇒ `connect()` 回 `false` 且 `last_error() == SftpError::Network`；隧道 ⇒ 首轮拨号即失败，经退避环收在 `TunnelState::Failed`（`max_attempts=1` 时零 Backoff）；密钥推送 ⇒ `PushStage::Dial` 且 `failure` 有值。三腿各证一次落在 `itest_posix_ssh_proxy_jump.sftp_tunnel_and_key_push_legs_refuse_a_profile_with_jumps`，末尾以两侧假服务器 `accepted_connections() == 0` 收口（拒拨＝不发起连接，而不是连上再断）。
 
@@ -252,7 +252,7 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 | E4 | 跳板主机密钥策略：`Yes` + 陌生跳板 ⇒ `HostKey` 档、hop_index 指到该跳、不发起目标连接。**批 3 已落**：`jump_host_key_policy_refuses_unknown_key_before_target`（首跳与次跳两式归因）。**后半句改口径**：「`AcceptNew` ⇒ 首跳写入 known_hosts（临时 HOME）」**不入集成件**——F16 实测 libssh 的主目录取 `getpwuid(2)` 的 `pw_dir`，临时 `$HOME` 拦不住，写盘会污染真机的 `~/.ssh/known_hosts`；策略判定本身由 `utest_ssh` 的 `policy_accepts` 无头见证，真机写盘腿归 CONN.08 的 etest 欠账。 |
 | E4b | 拨号侧两条补充边界（批 3 顺带落）：`profile.proxy_jumps` 非空而 seed 未接 ⇒ `HopUnwired` 且**不发起连接**（D6 的 dial 级证人 `profile_with_jumps_without_seed_refuses_to_connect_directly`）；0 跳链路是合法空操作且 `close()` 幂等（`chain_without_hops_is_a_valid_no_op`）。 |
 | E5 | 共享与分线：同目标同跳链同秘密的两格共线（跳板服务器 `accepted_connections` 仍为 1）；同目标但跳链为空/非空、或跳板秘密不同 ⇒ 两条独立链路。**批 4 已落**：`itest_posix_ssh_proxy_jump.chain_shape_and_hop_secret_split_the_link` 与 `two_tabs_over_the_same_chain_share_one_jump_connection`。变异「`key.proxy_jumps` 不入键」→ 单测与集成件各打红一案；变异「`same_secret` 去掉 hops」→ 各打红一案。 |
-| E6 | fail-closed：SFTP／隧道／密钥推送任一条腿吃带跳档案 ⇒ `HopUnwired`，目标服务器零连接、跳板服务器零连接。**批 4 已落**：`sftp_tunnel_and_key_push_legs_refuse_a_profile_with_jumps`（三腿各按自己的失败档现形，见 D6 的落地形态）；变异「D6 闸取反」与 E4b 那一案同时打红。 |
+| E6 | fail-closed：SFTP／隧道／密钥推送任一条腿吃带跳档案 ⇒ `HopUnwired`，目标服务器零连接、跳板服务器零连接。**批 4 已落**：`sftp_tunnel_and_key_push_legs_refuse_a_profile_with_jumps`（三腿各按自己的失败档现形，见 D6 的落地形态）；变异「D6 闸取反」与 E4b 那一案同时打红。**批 6 订正（裁决 7.153）**：该案已删旧翻正——三腿各按正向档位案作证（假服务器无 subsystem／exec 处理，证人止于 `Protocol`／`ExecRefused`／`Active` 档位）；本档在 dial 层的证人改由 `profile_with_jumps_without_seed_refuses_to_connect_directly` 保留。 |
 | E7 | 关一格标签不叫停其它标签的跳板链路（对 F15 那条原生缺陷的反向证成：我们自己的停止位只作用于本链）。**批 4 已落**：`closing_one_tab_does_not_stop_the_chain_of_the_others`——关掉第一格后第二格的 shell 仍在回显、跳板服务器仍只有 1 枚连接。 |
 | E8 | 配置审计：跳板元素里塞 `secret` 明文被 `find_credential_key` 抓住；正常落盘只含句柄。**批 2 已落**：`utest_config.an_unsafe_document_is_refused_whole_and_changes_nothing`（跳板元素里的 `passphrase` 撞禁列名单那一案）与 `an_ssh_proxy_chain_round_trips_and_a_legacy_file_carries_none`（往返只带句柄、旧档无该键＝空链路）。 |
 | E9 | 快照往返：带跳档案的采集→落盘→重放**保住跳链**（八键之外的第九键）；无该键的旧快照折成空链路而非报错。**批 2 已落**：`utest_workspace_snapshot.a_proxy_chain_absent_is_an_empty_chain_and_a_bad_one_rejects_the_whole_document`（缺键＝空链、坏元素整份拒绝，含 `kProxyJumpsSlot` 那一组坏值表）；带链采集→重放的等值断言在 `the_profile_blocks_are_the_same_json_the_config_store_writes` 与四型往返案里。 |
@@ -283,7 +283,7 @@ auto same_secret(const SshSecretBundle &, const SshSecretBundle &) -> bool;
 | 批 3 | D10 `hop_pipe` + D4 `SshHopChain` + `ssh_dial` 的 seed 参数与两档新增 + 假服务器 `direct-tcpip` 扩口（F13） | **已交付**：E1/E2/E3/E4（含改口径的 E4b）共 6 案 `itest_posix_ssh_proxy_jump` 全绿、5 轮无 flaky；四条变异自证各自打红（seed 腿失效→2 案、D6 闸取反→1 案、跳序写反→2 案、hop_index 抹平→2 案）；全量 ctest 121/121、无头 runner 1463/1463 |
 | 批 4 | D5 共享键与秘密判据扩容 + D8 bundle 与装配 + D6 三条腿的 fail-closed 现形 | **已交付**：E5/E6/E7 共 4 案新落，`itest_posix_ssh_proxy_jump` 10 案全绿；`utest_ssh_session_key` 6 案、`utest_profile_views` 13 案全绿；全量 ctest 121/121。三条变异自证各自打红（`key.proxy_jumps` 不入键→单测 1 案 + 集成 1 案、`same_secret` 去 hops→单测 1 案 + 分线一案、D6 闸取反→E4b 与 E6 两案）；第四条变异（去掉 bundle 的 `hops.resize`）**无自动化证人**，缺口已登记 §6 |
 | 批 5 | D9 向导那一行 + 词条双档 + 覆盖闸与体积闸；变异自证；文档回写与分层提交 | **已交付**：E10 落（`itest_connection_wizard` 11 案、`utest_profile_views` 15 案全绿，全量 ctest 121/121、无头 runner 1474/1474（本批新增 3 案）；覆盖闸 `tools/check/check_display_literals.py` PASS（表外 240 文件无引号内中文），两档 key 集等式与体积闸（`utest_i18n_tiers` 9 案）自动吃下新增的三枚键。六条变异自证各自打红：去掉 `validate_draft` 的 `BadProxyJump` 闸→单测 1 案 + 集成 1 案（且那一下保存会交出**空链路档案**，即稿 D9 要防的静默直连）、去掉 `profile_to_draft` 的回填→单测 1 案 + 集成 1 案、去掉 `collect_draft` 的收值→集成 1 案、那一行不挂进字段集→集成 1 案、`draft_to_profile` 不折链→单测 2 案 + 集成 1 案、问题码折错文案档→集成 1 案 |
-| 批 6（延后，另起裁决） | 跳板接进 SFTP／隧道／密钥推送三条腿 | 不在本稿射程 |
+| 批 6（另起裁决 **7.153**，子稿 `CONN03_PROXYJUMP_LEGS.draft.md`） | 跳板接进 SFTP／隧道／密钥推送三条腿 | **已交付（2026-10-25）**：三腿各自无条件建链后交 seed 拨目标（0 跳＝合法空操作），秘密参数换型 `SshSecretBundle`，`itest_posix_ssh_proxy_jump` 10→13 案；D6 的拒拨闸退为 dial 层兜底档，`ssh_dial.h` 的 TODO 撤账。带跳三条真机走查未做 |
 
 ## 8 与本仓既有裁决的接缝
 

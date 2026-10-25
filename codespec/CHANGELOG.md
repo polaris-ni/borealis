@@ -4,6 +4,22 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.153（2026-10-25）**`SPEC.FEAT.CONN.03` 延后子项「跳板接进 SFTP／隧道／密钥推送三条腿」结项：三腿无条件建链交 seed，`ssh_dial.h` 的 TODO 撤账（裁决 7.153；本地提交 `5a47938`（子稿收口）→ `2c72dfb`（三条腿接线与证人）→ 文档回写（本笔））**
+
+**动机**：裁决 7.148 把跳板机终端腿五批落地时，SFTP／隧道／密钥推送三条腿按「吃带跳档案即拒拨」的 fail-closed 口径挂账（稿 §7 批 6）。本棒按子稿 `codespec/CONN03_PROXYJUMP_LEGS.draft.md`（D1–D7 经人逐条裁「全部按推荐档」，D4 选 A 自启放行）把 `conn::SshHopChain` 接进这三条腿，跳板机就此覆盖全部四腿，在册代码挂账随之撤账。
+
+**落地形态**：
+
+- **三腿统一建链**（D1）：各腿拨目标前无条件开链、seed 经 `SSH_OPTIONS_FD` 交目标拨号——0 跳＝合法空操作（seed_fd 0 直连），原三条腿拒拨闸退为 dial 层兜底档（`HopUnwired` 仍在、只兜「漏接线」）。
+- **秘密换型 `SshSecretBundle`**（D2）：`SftpClient::connect`／`Tunnel` 构造／`push_public_key` 的目标秘密与逐跳材料同批抵达；隐式构造接旧调用点，**裸 `std::nullopt` 实参例外**（两步用户转换不成立，三处测试调用点改传 `SshSecretBundle{}`）。
+- **取料**（D3）：SFTP 面板钩子直发整套 bundle；隧道 `launch_tunnel` 与密钥推送 `submit_keys_push` 包 `with_hop_secrets` 缝——0 跳同步回-call 时序不变，带跳后台补齐、回-call 落主线程，档案与 spec **按值入闭包**（调用方可能持 settings 局部副本里的引用）。带跳隧道的开机自启同批放行（D4 A 档，启动序依旧零模态零阻塞）。
+- **失败档零新增**（D5）、**关闭序一律 `ssh_free` 先于链收口**（D6：SFTP 整会话持链、隧道逐尝试局部、推送以声明序担保；父稿 F12——seed 端句柄归链所有）。
+- **证人翻正**（D7，落地期口径订正）：假服务器无 SFTP subsystem 与 exec 处理，正向证人止于「穿链拨到目标并停在各自档位」（SFTP `Protocol`／推送 `Exec`＋`ExecRefused`／隧道 `Active`），稿面更强措辞结构性不可达——全腿成功腿入真机走查欠账；`itest_posix_ssh_proxy_jump` 10→**13 案**（旧拒拨案删、三正向＋一跳板被拒⇒目标零连接案新增，dial 兜底案保留）。
+
+**验收读数**：构建通过（linux preset）；`ctest --test-dir build -E etest_` **126/126**（套件数持平 v0.152，无新用例文件）；runner **1532/1532**（1529−1 旧案＋4 新案）；门禁 `check_display_literals` PASS（249 个源文件／540 键，零新词条）。变异三刃：V1（SFTP 不交 seed）⇒ 指名 sftp 案红；V3（隧道绕开 `bundle.hops`）⇒ 指名 Active 案红；**V2（链在 `ssh_free` 前收口）静默通过**——关闭序无测试断言窗口，如实登记为「审查＋父稿 F12 探针担保、非证人」；逐字节还原核验树净后复绿。
+
+**边界与不称可用**：Win32／MSVC 本批未复核（`make_hop_pair` Win32 腿未编译，批 4／5 同欠）；带跳三条真机走查（SFTP 经真跳板浏览/下载、带跳隧道自启＋手动、密钥推送经真跳板）一条未做 ⇒ 不称「可用」；逐跳凭据询问 UI 仍挂 §4 清册次行随 CONN.09。代码侧在册 `TODO(SPEC.*)` 由两处减为**一处**：`tests/support/fake_ssh_server.cpp` 的 CONN.02 假服务器 Win32 腿。CONN.03 §4 清册的功能棒就此清空，剩余欠账全是走查与环境腿。
+
 ## v0.152（2026-10-25）**`SPEC.FEAT.WS.03` 批 4 在册最后一条 `TODO(SPEC.FEAT.WS.03)` 结项：唤醒腿随关静默做成会话层不变式（裁决 7.152；代码一笔 `11407f3` → 文档回写（本笔））**
 
 **动机**：装配层唯一长命的捕窗引用腿——`build_pane_view` 给每条会话注入的 `set_frame_wake([&window]{ window.surface->request_wake(); })`——在残留档场景（重启的 `retired`、换视口失败回滚归还）里把「已 close 的会话 + 指着属主窗的闭包」留在档中。此前「此刻它只可能指着还活着的那一扇」只靠关窗撤账链 close-join 先于 erase 的次序担保，而 `main.cpp` 不进 runner（裁决 7.83），这条论证永远拿不到自动化证人。收口形态经人拍板取「**Session 侧静默**」档（否决「窗侧活体令牌」——加件也改变不了装配层无证人，且改动面更大；否决「只撤账不改码」——把欠账从注释搬进文档而已）。
