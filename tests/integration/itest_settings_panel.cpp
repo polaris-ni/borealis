@@ -102,7 +102,7 @@
 #include "aurora/app/shortcuts.h"
 #include "aurora/event/dispatcher.h"
 #include "aurora/event/focus.h"
-#include "aurora/i18n/string_table.h"
+#include "aurora/i18n/message_catalog.h"
 #include "aurora/render/font_engine.h"
 #include "aurora/widget/button.h"
 #include "aurora/widget/dropdown.h"
@@ -593,11 +593,10 @@ AURORA_TEST_CASE(every_catalog_key_resolves_to_a_display_label) {
                               CommitIssue::TableSizeWrong}) {
         const au::LocalizedString text = borealis::ui::settings_issue_text(issue);
         AURORA_TEST_CHECK_MSG(
-            !text.resolve(&au::default_string_table(), borealis::ui::settings_locale()).empty(),
+            !borealis::ui::settings_resolve(text).empty(),
             "issue " + std::to_string(static_cast<int>(issue)) + " has no locale entry");
     }
-    AURORA_TEST_CHECK_MSG(borealis::ui::settings_issue_text(CommitIssue::None)
-                              .resolve(&au::default_string_table(), borealis::ui::settings_locale())
+    AURORA_TEST_CHECK_MSG(borealis::ui::settings_resolve(borealis::ui::settings_issue_text(CommitIssue::None))
                               .empty(),
                           "CommitIssue::None must yield no text");
 }
@@ -1197,7 +1196,7 @@ AURORA_TEST_CASE(the_chain_section_projects_the_form_and_the_hint_tracks_its_len
     AURORA_TEST_CHECK_TRUE(panel.chain_view().at_capacity);
     AURORA_TEST_CHECK_EQ(panel.chain_view().hint,
                          borealis::ui::settings_label("settings.chain.full",
-                                                      {au::LocalizedString{std::to_string(kChainCapacity)}}));
+                                                      {{"limit", static_cast<std::int64_t>(kChainCapacity)}}));
 
     // 超出上限：本件**不裁数据**（擅自裁到前 N 项会让用户改别的一行时把存储里那几条静默抹掉），
     // 故这里既判「全量仍在」也判「提示换档」，两档必须互异——只判非空会被「提示写错档」读成绿。
@@ -1208,9 +1207,9 @@ AURORA_TEST_CASE(the_chain_section_projects_the_form_and_the_hint_tracks_its_len
     AURORA_TEST_CHECK_TRUE(panel.chain_view().at_capacity);
     AURORA_TEST_CHECK_EQ(panel.chain_view().hint,
                          borealis::ui::settings_label("settings.chain.truncated",
-                                                      {au::LocalizedString{std::to_string(kChainCapacity)}}));
+                                                      {{"limit", static_cast<std::int64_t>(kChainCapacity)}}));
     AURORA_TEST_CHECK_TRUE(panel.chain_view().hint != borealis::ui::settings_label(
-                             "settings.chain.full", {au::LocalizedString{std::to_string(kChainCapacity)}}));
+                               "settings.chain.full", {{"limit", static_cast<std::int64_t>(kChainCapacity)}}));
 }
 
 /// @brief 一次改链 ＝ 一次落盘 + 一次即时广播（该键 `Wired ∧ Immediate`，判据文 A5-a 的那条计数线）。
@@ -2958,7 +2957,7 @@ AURORA_TEST_CASE(the_candidate_append_is_open_until_the_chain_reaches_the_framew
                          {"Cascadia Code", "Fira Code"});
     AURORA_TEST_CHECK_EQ(panel->chain_view().hint,
                          borealis::ui::settings_label("settings.chain.full",
-                                                      {au::LocalizedString{std::to_string(kChainCapacity)}}));
+                                                      {{"limit", static_cast<std::int64_t>(kChainCapacity)}}));
     for (std::size_t slot = 0; slot < 2U; ++slot) {
         AURORA_TEST_REQUIRE(panel->chain_candidate(slot) != nullptr);
         AURORA_TEST_CHECK_FALSE(panel->chain_candidate(slot)->wants_click());
@@ -3093,8 +3092,8 @@ AURORA_TEST_CASE(the_family_section_projects_the_effective_family_and_the_pinned
         AURORA_TEST_CHECK_EQ(view.effective, std::string{"Cascadia Code"});
         AURORA_TEST_CHECK_EQ(view.notice,
                              borealis::ui::settings_label("settings.font.fallback",
-                                                          {au::LocalizedString{std::string{"Courier New"}},
-                                                           au::LocalizedString{std::string{"Cascadia Code"}}}));
+                                                          {{"configured", std::string{"Courier New"}},
+                                                           {"actual", std::string{"Cascadia Code"}}}));
         // 配置值不在池里就不置顶（把目录里没有的名摆到第一档，等于请用户再点一次那族用不了的名字）。
         check_key_sequence("an unlisted configured value is not pinned", view.choices,
                            {"Cascadia Code", "Consolas", "DejaVu Sans Mono", "Fira Code", "JetBrains Mono",
@@ -3113,8 +3112,8 @@ AURORA_TEST_CASE(the_family_section_projects_the_effective_family_and_the_pinned
         AURORA_TEST_CHECK_EQ(view.effective, std::string{"Cascadia Code"});
         AURORA_TEST_CHECK_EQ(view.notice,
                              borealis::ui::settings_label("settings.font.fallback",
-                                                          {au::LocalizedString{std::string{"Arial"}},
-                                                           au::LocalizedString{std::string{"Cascadia Code"}}}));
+                                                          {{"configured", std::string{"Arial"}},
+                                                           {"actual", std::string{"Cascadia Code"}}}));
         AURORA_TEST_CHECK_EQ(view.choices.size(), 6U);  // 目录给了七档，池里只有六档
         for (const std::string &family : view.choices) {
             AURORA_TEST_CHECK_NE(family, std::string{"Arial"});
@@ -3918,9 +3917,9 @@ AURORA_TEST_CASE(the_conflict_notes_come_from_key_presses_rather_than_binding_te
 
     // ⑵ 文本不同而键位相同 ⇒ 互标冲突，且引用的是动作名。
     const std::string twin_b_note =
-        borealis::ui::settings_label("settings.shortcut.conflict_with", {aurora::LocalizedString{"Twin B"}});
+        borealis::ui::settings_label("settings.shortcut.conflict_with", {{"binding", std::string{"Twin B"}}});
     const std::string twin_a_note =
-        borealis::ui::settings_label("settings.shortcut.conflict_with", {aurora::LocalizedString{"Twin A"}});
+        borealis::ui::settings_label("settings.shortcut.conflict_with", {{"binding", std::string{"Twin A"}}});
     const SettingsPanel::ShortcutRowView *twin_a = find_shortcut(rows, "Twin A");
     const SettingsPanel::ShortcutRowView *twin_b = find_shortcut(rows, "Twin B");
     AURORA_TEST_REQUIRE(twin_a != nullptr);
@@ -3940,9 +3939,9 @@ AURORA_TEST_CASE(the_conflict_notes_come_from_key_presses_rather_than_binding_te
     // ⑷ 只差锁定态位的两条：互判同一键位，且各自都撞保留位 ⇒ 两档并列（表内冲突在前）。
     //     每一行的标注引用的是**对方**的动作名，故这里的预期与行名刻意交错。
     const std::string lock_off_note =
-        borealis::ui::settings_label("settings.shortcut.conflict_with", {aurora::LocalizedString{"Lock off"}});
+        borealis::ui::settings_label("settings.shortcut.conflict_with", {{"binding", std::string{"Lock off"}}});
     const std::string lock_on_note =
-        borealis::ui::settings_label("settings.shortcut.conflict_with", {aurora::LocalizedString{"Lock on"}});
+        borealis::ui::settings_label("settings.shortcut.conflict_with", {{"binding", std::string{"Lock on"}}});
     const SettingsPanel::ShortcutRowView *lock_off = find_shortcut(rows, "Lock off");
     const SettingsPanel::ShortcutRowView *lock_on = find_shortcut(rows, "Lock on");
     AURORA_TEST_REQUIRE(lock_off != nullptr);
@@ -4248,7 +4247,7 @@ AURORA_TEST_CASE(a_real_click_on_a_rollback_line_restores_that_snapshot_and_relo
     AURORA_TEST_CHECK_EQ(*panel->form().value("appearance.font_size_pt")->as_real(), 22.0);
     AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
     const std::string wanted = borealis::ui::settings_label(
-        "settings.config.rolled_back", {aurora::LocalizedString{"settings.config.snapshot-1720000200"}});
+        "settings.config.rolled_back", {{"snapshot", std::string{"settings.config.snapshot-1720000200"}}});
     AURORA_TEST_CHECK_EQ(panel->config_notice(), wanted);
     AURORA_TEST_CHECK_EQ(painted_notice(*panel), wanted);
     AURORA_TEST_CHECK_TRUE(panel->showing_snapshots());  // 名单是一种态，一次动作不该把它弹回设置页
@@ -4359,7 +4358,7 @@ AURORA_TEST_CASE(a_successful_export_names_the_file_and_commits_no_form_value) {
     AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
     AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
     const std::string wanted =
-        borealis::ui::settings_label("settings.config.exported", {aurora::LocalizedString{probe.export_pick}});
+        borealis::ui::settings_label("settings.config.exported", {{"path", probe.export_pick}});
     AURORA_TEST_CHECK_EQ(panel->config_notice(), wanted);
     AURORA_TEST_CHECK_EQ(painted_notice(*panel), wanted);
     panel->close();
@@ -4399,7 +4398,7 @@ AURORA_TEST_CASE(a_successful_import_reloads_the_copy_and_broadcasts_the_whole_f
     AURORA_TEST_CHECK_EQ(*panel->form().value("appearance.font_size_pt")->as_real(), 18.0);
     AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
     const std::string wanted =
-        borealis::ui::settings_label("settings.config.imported", {aurora::LocalizedString{probe.import_pick}});
+        borealis::ui::settings_label("settings.config.imported", {{"path", probe.import_pick}});
     AURORA_TEST_CHECK_EQ(panel->config_notice(), wanted);
     AURORA_TEST_CHECK_EQ(painted_notice(*panel), wanted);
     AURORA_TEST_CHECK_EQ(h.overlay_count(), 1U);

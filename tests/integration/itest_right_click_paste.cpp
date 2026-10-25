@@ -774,7 +774,7 @@ AURORA_TEST_CASE(the_dialog_yes_button_is_clicked_through_the_hit_chain) {
     // 与 `menu_label` 那几案（同文件 545 行形似）同档，不是表自身读数的自反式重复。
     AURORA_TEST_CHECK_EQ(h.dialog_text(0), borealis::ui::settings_label("terminal.paste_multiline.title"));
     AURORA_TEST_CHECK_EQ(h.dialog_text(1), borealis::ui::settings_label("terminal.paste_multiline.body",
-                                                                        {aurora::LocalizedString{"2"}}));
+                                                                       {{"count", std::int64_t{2}}}));
     const Harness::ButtonSpot yes = h.find_dialog_button(0);
     AURORA_TEST_REQUIRE(yes.widget != nullptr);  // 内容不入链时这里就是空
     auto *button = dynamic_cast<au::Button *>(yes.widget);

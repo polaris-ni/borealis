@@ -105,6 +105,17 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     return report;
 }
 
+/// @brief 某词条在「树里没注 `LocaleProvider`」时的框架读数（用例侧现算，不吃实现件的串）。
+///
+/// 本例的显示串读点是 `Text::accessibility_label()`，而框架在没有环境 `Locale` 时按 `Locale{}`
+/// （＝英文档）查目录。v2 之前只装选定一档、`Locale{}` 两级全 miss 才落到缺省档，两侧同读中文；
+/// v2 的 bin 两档都有本体，`Locale{}` 因此读英文。本案要断的是「哪几行上屏、参数代没代进去、
+/// 诊断串有没有漏上界面」，与档位无关，故期望串跟着框架那份缺省读数走；绘制侧随用户档移动那件事
+/// 由 `itest_command_palette` 的像素案与装配层（`src/main.cpp` 的 `make_window_scene`）承担。
+[[nodiscard]] auto shown(std::string_view key, std::vector<au::MessageArg> args = {}) -> std::string {
+    return borealis::ui::settings_text(key, std::move(args)).resolve(&au::default_catalog(), au::Locale{});
+}
+
 /// @brief 收集一棵子树里全部 `Text` 的显示串（按树序）。
 auto collect_labels(const au::Widget &widget, std::vector<std::string> &out) -> void {
     if (const auto *text = dynamic_cast<const au::Text *>(&widget)) {
@@ -158,7 +169,7 @@ auto collect_labels(const au::Widget &widget, std::vector<std::string> &out) -> 
 
 /// @brief 判一行显示文字是否等于某词条就地解析出的那一条（③④ 的比对基准）。
 [[nodiscard]] auto has_label(const std::vector<std::string> &labels, std::string_view key) -> bool {
-    return std::find(labels.begin(), labels.end(), borealis::ui::settings_label(key)) != labels.end();
+    return std::find(labels.begin(), labels.end(), shown(key)) != labels.end();
 }
 
 /// @brief 同上，但词条带模板参数（版本号与备份路径两行的比对基准）。
@@ -166,8 +177,8 @@ auto collect_labels(const au::Widget &widget, std::vector<std::string> &out) -> 
 /// 参数由**用例侧**从 `LoadReport` 现算（而不是取实现件算好的串），故「参数没代进去」「代错一个」都会转红。
 [[nodiscard]] auto has_label_with(const std::vector<std::string> &labels,
                                   std::string_view key,
-                                  std::vector<au::LocalizedString> args) -> bool {
-    return std::find(labels.begin(), labels.end(), borealis::ui::settings_label(key, std::move(args)))
+                                  std::vector<au::MessageArg> args) -> bool {
+    return std::find(labels.begin(), labels.end(), shown(key, std::move(args)))
         != labels.end();
 }
 
@@ -465,8 +476,8 @@ AURORA_TEST_CASE(the_backup_path_and_both_schema_versions_reach_the_display_text
     // 备份那一行由**整条路径**代进模板：算式与实现件同（`u8string()`）而各算一遍，取错形态即转红。
     AURORA_TEST_CHECK_TRUE(has_label_with(corrupt_labels,
                                           "settings.startup.backup",
-                                          {au::LocalizedString{u8_of(*corrupt_store.report().corrupt_backup)}}));
-    AURORA_TEST_CHECK_FALSE(any_contains(corrupt_labels, "{0}"));
+                                          {{"path", u8_of(*corrupt_store.report().corrupt_backup)}}));
+    AURORA_TEST_CHECK_FALSE(any_contains(corrupt_labels, "{path"));
 
     const auto newer = make_path("newer_text.json");
     write_file(newer, kNewerFile);
@@ -481,11 +492,11 @@ AURORA_TEST_CASE(the_backup_path_and_both_schema_versions_reach_the_display_text
     // 两个版本号都得报出：只报本程序支持的那一档就说不清差了多少。
     AURORA_TEST_CHECK_TRUE(has_label_with(version_labels,
                                           "settings.startup.version.body",
-                                          {au::LocalizedString{std::to_string(
-                                               *newer_store.report().stored_schema_version)},
-                                           au::LocalizedString{std::to_string(kSupportedSchemaVersion)}}));
-    AURORA_TEST_CHECK_FALSE(any_contains(version_labels, "{0}"));
-    AURORA_TEST_CHECK_FALSE(any_contains(version_labels, "{1}"));
+                                          {{"file_version",
+                                            std::to_string(*newer_store.report().stored_schema_version)},
+                                           {"supported", std::to_string(kSupportedSchemaVersion)}}));
+    AURORA_TEST_CHECK_FALSE(any_contains(version_labels, "{file_version"));
+    AURORA_TEST_CHECK_FALSE(any_contains(version_labels, "{supported"));
     AURORA_TEST_CHECK_TRUE(has_label(version_labels, "settings.startup.version.title"));
     AURORA_TEST_CHECK_FALSE(has_label(version_labels, "settings.startup.corrupt.title"));
     AURORA_TEST_CHECK_FALSE(has_label(version_labels, "settings.startup.writes_refused"));

@@ -201,14 +201,14 @@ AURORA_TEST_CASE(an_unreachable_dir_is_the_only_note_a_directory_can_ask_for) {
 AURORA_TEST_CASE(the_three_action_families_keep_success_silent_and_failures_distinct) {
     check_outcome_family("keys.generate.", all_generate_outcomes(), conn::GenerateOutcome::Created,
                          ui::key_generate_outcome_key);
-    check_outcome_family("keys.export.", all_export_outcomes(), conn::ExportOutcome::Written,
+    check_outcome_family("keys.export_file.", all_export_outcomes(), conn::ExportOutcome::Written,
                          ui::key_export_outcome_key);
-    check_outcome_family("keys.delete.", all_delete_outcomes(), conn::DeleteOutcome::Deleted,
+    check_outcome_family("keys.remove.", all_delete_outcomes(), conn::DeleteOutcome::Deleted,
                          ui::key_delete_outcome_key);
     // 导出那一档里 `NeedsPassphrase` **不是**失败：它是 D12⑵ 反话的正 half（删除不问、导出必问），
-    // 混进 `keys.export.failed` 就等于把「该弹询问」说成「办砸了」。
+    // 混进 `keys.export_file.failed` 就等于把「该弹询问」说成「办砸了」。
     AURORA_TEST_CHECK_MSG(
-        ui::key_export_outcome_key(conn::ExportOutcome::NeedsPassphrase) == "keys.export.needs_passphrase",
+        ui::key_export_outcome_key(conn::ExportOutcome::NeedsPassphrase) == "keys.export_file.needs_passphrase",
         "the passphrase prompt has its own wording");
 }
 

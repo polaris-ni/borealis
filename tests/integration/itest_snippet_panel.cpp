@@ -350,11 +350,8 @@ AURORA_TEST_CASE(send_delivers_body_and_enter_appends_one_newline) {
     AURORA_TEST_CHECK(probe.sent[0] == "uptime");
     AURORA_TEST_CHECK(panel->is_open());
     AURORA_TEST_CHECK(panel->notice() ==
-                      ui::settings_label("snippets.notice.sent",
-                                         {aurora::LocalizedString{std::string{"uptime"}}}));
-    AURORA_TEST_CHECK(h.find_text(ui::settings_label(
-                          "snippets.notice.sent",
-                          {aurora::LocalizedString{std::string{"uptime"}}}))
+                      ui::settings_label("snippets.notice.sent", {{"name", std::string{"uptime"}}}));
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("snippets.notice.sent", {{"name", std::string{"uptime"}}}))
                           .widget != nullptr);
 
     auto second_send = h.find_button(ui::settings_label("snippets.action.send"), 2);
@@ -446,7 +443,7 @@ AURORA_TEST_CASE(new_snippet_saves_a_full_table_and_rejects_bad_drafts) {
     auto panel = h.attach(probe);
     h.open(*panel);
 
-    auto new_spot = h.find_button(ui::settings_label("snippets.action.new"));
+    auto new_spot = h.find_button(ui::settings_label("snippets.action.create"));
     AURORA_TEST_REQUIRE_MSG(new_spot.widget != nullptr, "the new button is not reachable");
     h.click(new_spot);
     h.render();
@@ -487,7 +484,7 @@ AURORA_TEST_CASE(new_snippet_saves_a_full_table_and_rejects_bad_drafts) {
     AURORA_TEST_CHECK_EQ(panel->visible_rows().size(), 2U);
 
     // 空名：红提示就地拒绝，落盘 Hook 零调用，框不收。
-    h.click(h.find_button(ui::settings_label("snippets.action.new")));
+    h.click(h.find_button(ui::settings_label("snippets.action.create")));
     h.render();
     h.render();
     AURORA_TEST_REQUIRE(panel->editor_open());
@@ -583,7 +580,7 @@ AURORA_TEST_CASE(delete_is_two_step_and_persists_the_remaining_table) {
     auto panel = h.attach(probe);
     h.open(*panel);
 
-    auto del = h.find_button(ui::settings_label("snippets.action.delete"), 1);
+    auto del = h.find_button(ui::settings_label("snippets.action.remove"), 1);
     AURORA_TEST_REQUIRE_MSG(del.widget != nullptr, "the delete button is not reachable");
     h.click(del);
     h.render();
@@ -594,7 +591,7 @@ AURORA_TEST_CASE(delete_is_two_step_and_persists_the_remaining_table) {
     AURORA_TEST_CHECK_EQ(panel->visible_rows().size(), 2U);
 
     // 第一段的取消腿：一物不动。
-    auto cancel = h.find_button(ui::settings_label("snippets.delete.action.cancel"));
+    auto cancel = h.find_button(ui::settings_label("snippets.remove.action.cancel"));
     AURORA_TEST_REQUIRE_MSG(cancel.widget != nullptr, "the delete cancel is not reachable");
     h.click(cancel);
     h.render();
@@ -604,11 +601,11 @@ AURORA_TEST_CASE(delete_is_two_step_and_persists_the_remaining_table) {
     AURORA_TEST_CHECK_EQ(panel->visible_rows().size(), 2U);
 
     // 第二段：确认后交回余表，条目从可见行消失，面板不关。
-    h.click(h.find_button(ui::settings_label("snippets.action.delete"), 1));
+    h.click(h.find_button(ui::settings_label("snippets.action.remove"), 1));
     h.render();
     h.render();
     AURORA_TEST_REQUIRE(panel->delete_confirm_open());
-    auto confirm = h.find_button(ui::settings_label("snippets.delete.action.confirm"));
+    auto confirm = h.find_button(ui::settings_label("snippets.remove.action.confirm"));
     AURORA_TEST_REQUIRE_MSG(confirm.widget != nullptr, "the delete confirm is not reachable");
     h.click(confirm);
     h.render();
@@ -656,8 +653,7 @@ AURORA_TEST_CASE(enter_sends_only_a_unique_candidate) {
     h.render();
     AURORA_TEST_CHECK_EQ(probe.sent.size(), 1U);
     AURORA_TEST_CHECK(panel->notice() ==
-                      ui::settings_label("snippets.notice.candidates",
-                                         {aurora::LocalizedString{std::string{"0"}}}));
+                      ui::settings_label("snippets.notice.candidates", {{"count", std::int64_t{0}}}));
 
     // 两条候选：同样不发送。
     clear_search(h, 2);
@@ -670,8 +666,7 @@ AURORA_TEST_CASE(enter_sends_only_a_unique_candidate) {
     h.render();
     AURORA_TEST_CHECK_EQ(probe.sent.size(), 1U);
     AURORA_TEST_CHECK(panel->notice() ==
-                      ui::settings_label("snippets.notice.candidates",
-                                         {aurora::LocalizedString{std::string{"2"}}}));
+                      ui::settings_label("snippets.notice.candidates", {{"count", std::int64_t{2}}}));
 }
 
 // ------------------------------------------------------------

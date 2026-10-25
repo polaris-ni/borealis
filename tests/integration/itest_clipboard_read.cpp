@@ -581,13 +581,13 @@ AURORA_TEST_CASE(the_question_strings_exist_in_the_setting_table) {
     // 问框的标题与正文都走词条表（裁决 7.52 的 S11）：漏配词条时框架回退的是空 text，
     // 界面上就是一个空白标题，故这一条要按 key 直接断，而不是断解析出来的串。
     borealis::ui::install_settings_strings();
-    AURORA_TEST_CHECK_TRUE(borealis::ui::has_settings_string("terminal.clipboard_read.title"));
-    AURORA_TEST_CHECK_TRUE(borealis::ui::has_settings_string("terminal.clipboard_read.body"));
-    // 正文带一个 `{0}` 槽给选择位：填进去之后原文案里的那一位必须换成实测值。
+    AURORA_TEST_CHECK_TRUE(borealis::ui::has_settings_string("terminal.clipboard_read_confirm.title"));
+    AURORA_TEST_CHECK_TRUE(borealis::ui::has_settings_string("terminal.clipboard_read_confirm.body"));
+    // 正文带一个 `{selection}` 槽给选择位：填进去之后原文案里的那一位必须换成实测值。
     const std::string body =
-        borealis::ui::settings_label("terminal.clipboard_read.body", {aurora::LocalizedString{std::string{"p"}}});
+        borealis::ui::settings_label("terminal.clipboard_read_confirm.body", {{"selection", std::string{"p"}}});
     AURORA_TEST_CHECK(body.find("p") != std::string::npos);
-    AURORA_TEST_CHECK(body.find("{0}") == std::string::npos);
+    AURORA_TEST_CHECK(body.find("{selection") == std::string::npos);
 }
 
 #else

@@ -8,14 +8,19 @@
 ///           - 解析出的占位符确实落到内置搜索框那一只控件上（裁决 **7.91** 的教训：模型层断言全绿而
 ///             屏幕上从未出现过，因为没有任何东西把绘制侧标脏）；
 ///           - **上屏**：改一次词条 → 屏幕上出现两簇分开的墨迹变化，上簇归占位符、下簇归空态提示。
-///             本例只断「本仓这一侧接上了没有」的像素形态：覆盖词条表后，借框架**已支持**的
+///             本例只断「本仓这一侧接上了没有」的像素形态：覆盖词表里那一档的取值后，借框架**已支持**的
 ///             `set_placeholder_key` / `set_empty_message_key` 触发重解析（构造期与 `open()` 都不查表，
 ///             故不能靠 `close()+open()` 把改动送上屏——这是框架现状，运行期切语言须显式重解析），证
-///             「改了词条 ⇒ 那一带的墨迹跟着换」。中文一律经词条表在运行期交出，本文件不写中文字面量
-///             （§4.3 第 14 条）。无头后端是否有 CJK 面不影响判据：两条帧之间只要有一侧显形就有色差，
-///             本例断的是「换了词条 ⇒ 那一带的墨迹跟着换」，不是「汉字画得好不好看」。`src/main.cpp`
-///             不编入 CTest runner（裁决 7.83 那条物理事实），装配处那一行无自动化证人，代价如实登记
-///             在裁决 **7.92**④。
+///             「改了词条 ⇒ 那一带的墨迹跟着换」。
+///           **构建期词表落地后的两处形态变化**（本轮适配）：① 框架那两个 builtin 名字（`command_palette.
+///           placeholder` / `.no_results`）在 `gen_i18n` 里是保留名，本仓词表**不能占用**，故本仓另立
+///           `command_palette.field_placeholder` / `.empty_message` 两条 app 档 key，装配处必须显式
+///           `set_placeholder_key`／`set_empty_message_key` 换掉那两个 Id——本件的驱动台与 `src/main.cpp`
+///           同式，这一换就是「接上了没有」的全部实质。② 中文一律出自词表在运行期交出，本文件不写中文
+///           字面量（§4.3 第 14 条）。无头后端是否有 CJK 面不影响判据：两条帧之间只要有一侧显形就有色差，
+///           本例断的是「换了词条 ⇒ 那一带的墨迹跟着换」，不是「汉字画得好不好看」。`src/main.cpp`
+///           不编入 CTest runner（裁决 7.83 那条物理事实），装配处那两行无自动化证人，代价如实登记
+///           在裁决 **7.92**④。
 
 #include <algorithm>
 #include <cstddef>
@@ -30,11 +35,13 @@
 
 #include "aurora/aurora.h"
 #include "aurora/i18n/locale.h"
-#include "aurora/i18n/string_table.h"
+#include "aurora/i18n/message_catalog.h"
 #include "aurora/widget/command_palette.h"
 #include "aurora/widget/text.h"
 #include "aurora/widget/text_input.h"
 #include "framework/aurora_test.h"
+// 构建期生成的词表头（`src/CMakeLists.txt` 的 `aurora_i18n_generate`）：本件要的正是那两条 app 档 Id。
+#include "messages_zh.hpp"
 // 私有头（裁决 D1①），按相对路径取用而不给整个测试目标开 `src/` 含目录。
 #include "../../src/ui/settings_i18n.h"
 
@@ -47,14 +54,36 @@ namespace {
 using Palette = au::CommandPalette;
 
 /// @brief 装配处同款的面板实例；注册表交 `nullptr` ⇒ 结果表恒空 ⇒ 空态提示那一行才是画面上唯一的列表内容。
+///
+/// 两条上屏文案的 Id 在这里换成本仓词表那两条 app 档 key：框架自带的两个 builtin 名字是保留名，
+/// 本仓词表装不进去（`gen_i18n` 直接拒收），不换就一直读着框架那两条英文字面量。
 [[nodiscard]] auto make_palette() -> std::shared_ptr<Palette> {
-    return std::make_shared<Palette>(nullptr);
+    auto palette = std::make_shared<Palette>(nullptr);
+    palette->set_placeholder_key(borealis::msg::id::AURORA_COMMAND_PALETTE_FIELD_PLACEHOLDER);
+    palette->set_empty_message_key(borealis::msg::id::AURORA_COMMAND_PALETTE_EMPTY_MESSAGE);
+    return palette;
 }
 
-/// @brief 把某条词条在**本仓所用那一档 locale** 上临时改成框架的兜底英文（复验「查表是否真发生」）。
+/// @brief 把某条词条在**本仓所用那一档 locale** 上临时改成给定文本（复验「查表是否真发生」）。
 auto overwrite_entry(std::string_view key, std::string_view text) -> void {
-    au::default_string_table().add(
-        borealis::ui::settings_locale(), std::string{key}, std::string{text});
+    static_cast<void>(
+        au::default_catalog().add(borealis::ui::settings_locale(), key, std::string{text}));
+}
+
+/// @brief 本档两条上屏文案的原值（覆盖之后要按它复原，别让后续用例读到被改过的那一份）。
+struct PaletteStrings {
+    std::string placeholder;
+    std::string empty_message;
+};
+
+[[nodiscard]] auto current_palette_strings() -> PaletteStrings {
+    return {borealis::ui::settings_label("command_palette.field_placeholder"),
+            borealis::ui::settings_label("command_palette.empty_message")};
+}
+
+auto restore(const PaletteStrings &values) -> void {
+    overwrite_entry("command_palette.field_placeholder", values.placeholder);
+    overwrite_entry("command_palette.empty_message", values.empty_message);
 }
 
 /// @brief 走进一棵子树找那只内置搜索框（公共面无「取字段控件」的入口，故按树序扫类型）。
@@ -73,41 +102,55 @@ auto overwrite_entry(std::string_view key, std::string_view text) -> void {
 }  // namespace
 
 AURORA_TEST_CASE(both_strings_come_from_the_registered_entries_rather_than_the_fallbacks) {
-    borealis::ui::install_settings_strings();
+    static_cast<void>(borealis::ui::install_settings_strings());
     const std::shared_ptr<Palette> palette = make_palette();
 
-    AURORA_TEST_CHECK_EQ(palette->placeholder(),
-                         borealis::ui::settings_label("command_palette.placeholder"));
-    AURORA_TEST_CHECK_EQ(palette->empty_message(), borealis::ui::settings_label("command_palette.no_results"));
-    // 回落就是「汉化静默失败」的现场：词条在表里而面板读不到，屏幕上留英文。
-    AURORA_TEST_CHECK_TRUE(palette->placeholder() != std::string{Palette::AURORA_DEFAULT_PLACEHOLDER_TEXT});
-    AURORA_TEST_CHECK_TRUE(palette->empty_message() != std::string{Palette::AURORA_DEFAULT_EMPTY_MESSAGE_TEXT});
-    // 空串是框架查表失败的另一型回退（`tr()` 实例的 `text` 恒空，裁决 7.59⑥），故一并挡住。
+    // 面板问的是本仓那两条 key，而不是框架自带的两个 builtin Id。
+    AURORA_TEST_CHECK_EQ(palette->placeholder_key(),
+                         borealis::msg::id::AURORA_COMMAND_PALETTE_FIELD_PLACEHOLDER);
+    AURORA_TEST_CHECK_EQ(palette->empty_message_key(),
+                         borealis::msg::id::AURORA_COMMAND_PALETTE_EMPTY_MESSAGE);
+    AURORA_TEST_CHECK_EQ(au::default_catalog().canonical_name(palette->placeholder_key()),
+                         std::string_view{"command_palette.field_placeholder"});
+    AURORA_TEST_CHECK_EQ(au::default_catalog().canonical_name(palette->empty_message_key()),
+                         std::string_view{"command_palette.empty_message"});
+    // 本档（缺省中文）那两句都在词表里且非空；回落症状就是屏幕上留英文兜底串，而英文兜底串与本仓
+    // 英文档的取值**逐字相同**，故「读到了 app 档」只能由「本档的取值不等于那两句英文」来证。
+    const std::string placeholder = borealis::ui::settings_label("command_palette.field_placeholder");
+    const std::string empty_message = borealis::ui::settings_label("command_palette.empty_message");
+    AURORA_TEST_CHECK_FALSE(placeholder.empty());
+    AURORA_TEST_CHECK_FALSE(empty_message.empty());
+    AURORA_TEST_CHECK_TRUE(placeholder != std::string{Palette::AURORA_DEFAULT_PLACEHOLDER_TEXT});
+    AURORA_TEST_CHECK_TRUE(empty_message != std::string{Palette::AURORA_DEFAULT_EMPTY_MESSAGE_TEXT});
+    // 面板那两枚 getter 此刻按 `Locale{}`（＝英文档）解析：装配处注入 `LocaleProvider` 之后绘制侧
+    // 才跟着用户档走，那一路由下面 `#ifdef AURORA_BACKEND_HEADLESS` 的像素例证；这里只挡空串。
     AURORA_TEST_CHECK_FALSE(palette->placeholder().empty());
     AURORA_TEST_CHECK_FALSE(palette->empty_message().empty());
 }
 
-AURORA_TEST_CASE(the_registered_entry_names_are_the_very_keys_the_framework_asks_for) {
-    // key 由框架命名（`AURORA_DEFAULT_*_KEY`），本仓只登记取值，故这一例钉的是名字而不是译文：
-    // 词条表里改了 key 而这里仍绿，就说明面板问的 key 与本仓登记的 key 不是同一条。
-    borealis::ui::install_settings_strings();
+AURORA_TEST_CASE(the_registered_entry_names_are_the_very_keys_the_app_asks_for) {
+    // key 由本仓命名（框架那两个 builtin 名是保留名，词表占用不了），装配处必须显式换 Id；
+    // 这一例钉的是「换的是哪两条名字」而不是译文：改名而装配处没跟着换，面板就又读回英文兜底串。
+    static_cast<void>(borealis::ui::install_settings_strings());
+    const std::shared_ptr<Palette> unwired = std::make_shared<Palette>(nullptr);
+    AURORA_TEST_CHECK_EQ(unwired->placeholder_key(), Palette::AURORA_DEFAULT_PLACEHOLDER_KEY);
     const std::shared_ptr<Palette> palette = make_palette();
 
-    AURORA_TEST_CHECK_EQ(palette->placeholder_key(), std::string{Palette::AURORA_DEFAULT_PLACEHOLDER_KEY});
-    AURORA_TEST_CHECK_EQ(palette->empty_message_key(), std::string{Palette::AURORA_DEFAULT_EMPTY_MESSAGE_KEY});
-    AURORA_TEST_CHECK_TRUE(borealis::ui::has_settings_string(Palette::AURORA_DEFAULT_PLACEHOLDER_KEY));
-    AURORA_TEST_CHECK_TRUE(borealis::ui::has_settings_string(Palette::AURORA_DEFAULT_EMPTY_MESSAGE_KEY));
+    AURORA_TEST_CHECK_NE(palette->placeholder_key(), Palette::AURORA_DEFAULT_PLACEHOLDER_KEY);
+    AURORA_TEST_CHECK_NE(palette->empty_message_key(), Palette::AURORA_DEFAULT_EMPTY_MESSAGE_KEY);
+    AURORA_TEST_CHECK_TRUE(borealis::ui::has_settings_string("command_palette.field_placeholder"));
+    AURORA_TEST_CHECK_TRUE(borealis::ui::has_settings_string("command_palette.empty_message"));
 }
 
 AURORA_TEST_CASE(the_resolved_placeholder_lands_on_the_search_field_widget) {
     // 面板的 getter 与真正落笔的那只控件是两次赋值；缺了同步就只剩 getter 绿而屏幕上没有。
-    borealis::ui::install_settings_strings();
+    static_cast<void>(borealis::ui::install_settings_strings());
     const std::shared_ptr<Palette> palette = make_palette();
 
     const au::TextInput *field = find_field(*palette);
     AURORA_TEST_REQUIRE_MSG(field != nullptr, "the palette has no text input child");
     AURORA_TEST_CHECK_EQ(field->accessibility_label(), palette->placeholder());
-    AURORA_TEST_CHECK_TRUE(field->accessibility_label() != std::string{Palette::AURORA_DEFAULT_PLACEHOLDER_TEXT});
+    AURORA_TEST_CHECK_FALSE(field->accessibility_label().empty());
 }
 
 #ifdef AURORA_BACKEND_HEADLESS
@@ -162,7 +205,11 @@ class Harness {
             aurora::TextProps{.content = std::string{"base"}, .text_color = au::Color{0, 0, 0, 0xFF}});
         // 浮层序号从「基础内容之后」起算且 `overlay_count()` 不含基础内容，故宿主须带一个基础子节点。
         static_cast<void>(host_->add_overlay(au::Node{base_}));
-        root_ = au::Node{std::static_pointer_cast<au::Widget>(host_)};
+        // 语言档注入腿（`settings_i18n.h` 文件头④）：绘制侧按环境里的 `Locale` 查目录，不注入就按
+        // `Locale{}`（＝英文档）解析——与装配处 `make_window_scene` 同款，本例要的正是用户那一档。
+        auto locale_scope = std::make_shared<au::LocaleProvider>(
+            borealis::ui::settings_locale(), au::Node{std::static_pointer_cast<au::Widget>(host_)});
+        root_ = au::Node{std::static_pointer_cast<au::Widget>(std::move(locale_scope))};
         focus_.set_root(&root_.widget());
     }
 
@@ -245,9 +292,9 @@ class Harness {
 }  // namespace
 
 AURORA_TEST_CASE(each_entry_change_moves_its_own_band_of_ink_on_the_screen) {
-    borealis::ui::install_settings_strings();
-    // 中文副本先取：后面的覆盖会把表里那一档的值改掉，复原时再读表读到的就是被改过的那一份。
-    const std::string zh_placeholder = borealis::ui::settings_label("command_palette.placeholder");
+    static_cast<void>(borealis::ui::install_settings_strings());
+    // 中文副本先取：后面的覆盖会改掉词表里那一档的取值，复原时要按取下的这一份写回去。
+    const PaletteStrings zh = current_palette_strings();
     Harness h;
     h.attach(make_palette());
 
@@ -266,10 +313,10 @@ AURORA_TEST_CASE(each_entry_change_moves_its_own_band_of_ink_on_the_screen) {
     AURORA_TEST_REQUIRE_MSG(h.palette().is_open(), "the palette did not stay open after the first frame");
 
     // 只改占位符那一簇：经受支持的 `set_placeholder_key` 触发框架重解析（构造期与 `open()` 都不查表，
-    // 故必须走 setter 而非 `close()+open()`）。改的是表里那一条取值，故仍验「查表发生」，而不会把覆盖
+    // 故必须走 setter 而非 `close()+open()`）。改的是词表里那一条取值，故仍验「查表发生」，而不会把覆盖
     // 字面量冻进控件（`set_placeholder` 才走那条，本例不取）。
-    overwrite_entry(Palette::AURORA_DEFAULT_PLACEHOLDER_KEY, Palette::AURORA_DEFAULT_PLACEHOLDER_TEXT);
-    h.palette().set_placeholder_key(Palette::AURORA_DEFAULT_PLACEHOLDER_KEY);
+    overwrite_entry("command_palette.field_placeholder", Palette::AURORA_DEFAULT_PLACEHOLDER_TEXT);
+    h.palette().set_placeholder_key(borealis::msg::id::AURORA_COMMAND_PALETTE_FIELD_PLACEHOLDER);
     h.render();
     AURORA_TEST_CHECK_FALSE(h.idle());
     AURORA_TEST_CHECK_EQ(h.palette().placeholder(), std::string{Palette::AURORA_DEFAULT_PLACEHOLDER_TEXT});
@@ -277,8 +324,8 @@ AURORA_TEST_CASE(each_entry_change_moves_its_own_band_of_ink_on_the_screen) {
     AURORA_TEST_REQUIRE_FALSE(placeholder_only.empty());
 
     // 再只改空态提示那一簇：此时两簇都动，且它们是隔开的两处（一处墨迹说明其中一条根本没上屏）。
-    overwrite_entry(Palette::AURORA_DEFAULT_EMPTY_MESSAGE_KEY, Palette::AURORA_DEFAULT_EMPTY_MESSAGE_TEXT);
-    h.palette().set_empty_message_key(Palette::AURORA_DEFAULT_EMPTY_MESSAGE_KEY);
+    overwrite_entry("command_palette.empty_message", Palette::AURORA_DEFAULT_EMPTY_MESSAGE_TEXT);
+    h.palette().set_empty_message_key(borealis::msg::id::AURORA_COMMAND_PALETTE_EMPTY_MESSAGE);
     h.render();
     const Points both = Harness::changed(chinese, h.pixels());
     const std::vector<Band> bands = bands_of(both);
@@ -286,18 +333,18 @@ AURORA_TEST_CASE(each_entry_change_moves_its_own_band_of_ink_on_the_screen) {
     AURORA_TEST_CHECK_TRUE(Harness::box_of(placeholder_only).y1 < bands[1].y0);
 
     // 回退占位符到中文：剩下的差分只落在上簇（空态那簇不动）。
-    overwrite_entry(Palette::AURORA_DEFAULT_PLACEHOLDER_KEY, zh_placeholder);
-    h.palette().set_placeholder_key(Palette::AURORA_DEFAULT_PLACEHOLDER_KEY);
+    overwrite_entry("command_palette.field_placeholder", zh.placeholder);
+    h.palette().set_placeholder_key(borealis::msg::id::AURORA_COMMAND_PALETTE_FIELD_PLACEHOLDER);
     h.render();
     const Points empty_only = Harness::changed(chinese, h.pixels());
     AURORA_TEST_REQUIRE_FALSE(empty_only.empty());
     AURORA_TEST_CHECK_TRUE(Harness::box_of(empty_only).y0 > bands[0].y1);
 
-    // 复原进程级词条表（`install_settings_strings` 幂等覆盖同 key）并把面板重新解析回中文帧，
+    // 复原进程级词表（覆盖只改运行期那一条，构建期产物不动）并把面板重新解析回中文帧，
     // 避免污染后续用例。
-    borealis::ui::install_settings_strings();
-    h.palette().set_placeholder_key(Palette::AURORA_DEFAULT_PLACEHOLDER_KEY);
-    h.palette().set_empty_message_key(Palette::AURORA_DEFAULT_EMPTY_MESSAGE_KEY);
+    restore(zh);
+    h.palette().set_placeholder_key(borealis::msg::id::AURORA_COMMAND_PALETTE_FIELD_PLACEHOLDER);
+    h.palette().set_empty_message_key(borealis::msg::id::AURORA_COMMAND_PALETTE_EMPTY_MESSAGE);
     h.render();
     AURORA_TEST_CHECK_MSG(h.pixels() == chinese, "the restored table did not give the original frame back");
 }

@@ -341,9 +341,9 @@ AURORA_TEST_CASE(copy_hands_over_the_full_single_line) {
     AURORA_TEST_CHECK(!h.find_button(ui::settings_label("keys.action.copy")).widget);
     AURORA_TEST_CHECK(!h.find_button(ui::settings_label("keys.action.push")).widget);
     // 它有配对 `.pub`，也不该出现「导出公钥」。
-    AURORA_TEST_CHECK(!h.find_button(ui::settings_label("keys.action.export")).widget);
+    AURORA_TEST_CHECK(!h.find_button(ui::settings_label("keys.action.export_file")).widget);
     // 删除这枚常驻动作还在——认不出算法族的钥匙也得删得掉（keys_format.h 头注的同一条口径）。
-    AURORA_TEST_CHECK(h.find_button(ui::settings_label("keys.action.delete")).widget != nullptr);
+    AURORA_TEST_CHECK(h.find_button(ui::settings_label("keys.action.remove")).widget != nullptr);
 }
 
 // ------------------------------------------------------------
@@ -521,7 +521,7 @@ AURORA_TEST_CASE(delete_is_two_stage_and_cancel_touches_nothing) {
     auto panel = h.attach(probe);
     h.open(*panel);
 
-    auto delete_spot = h.find_button(ui::settings_label("keys.action.delete"));
+    auto delete_spot = h.find_button(ui::settings_label("keys.action.remove"));
     AURORA_TEST_REQUIRE_MSG(delete_spot.widget != nullptr, "the delete button is not reachable");
     h.click(delete_spot);
     h.render();
@@ -535,7 +535,7 @@ AURORA_TEST_CASE(delete_is_two_stage_and_cancel_touches_nothing) {
     AURORA_TEST_REQUIRE_MSG(path_spot.widget != nullptr, "the confirm dialog does not name the path");
 
     // 取消：框收、整条不跑。
-    auto cancel_spot = h.find_button(ui::settings_label("keys.delete.action.cancel"));
+    auto cancel_spot = h.find_button(ui::settings_label("keys.remove.cancel"));
     AURORA_TEST_REQUIRE(cancel_spot.widget != nullptr);
     h.click(cancel_spot);
     h.render();
@@ -548,7 +548,7 @@ AURORA_TEST_CASE(delete_is_two_stage_and_cancel_touches_nothing) {
     h.render();
     h.render();
     AURORA_TEST_CHECK_TRUE(panel->delete_confirm_open());
-    auto confirm_spot = h.find_button(ui::settings_label("keys.delete.action"));
+    auto confirm_spot = h.find_button(ui::settings_label("keys.remove.action"));
     AURORA_TEST_REQUIRE_MSG(confirm_spot.widget != nullptr, "the confirm button is not reachable");
     h.click(confirm_spot);
     h.render();
@@ -601,7 +601,7 @@ AURORA_TEST_CASE(empty_state_and_unreachable_dir_notes_are_drawn) {
     auto empty_spot = h.find_text(ui::settings_label("keys.empty"));
     AURORA_TEST_REQUIRE_MSG(empty_spot.widget != nullptr, "the empty state is not drawn");
     auto gone_spot = h.find_text(
-        ui::settings_label("keys.dir.unreachable", {aurora::LocalizedString{"/srv/gone"}}));
+        ui::settings_label("keys.dir.unreachable", {{"path", std::string{"/srv/gone"}}}));
     AURORA_TEST_REQUIRE_MSG(gone_spot.widget != nullptr, "the unreachable note is not drawn");
     AURORA_TEST_CHECK_EQ(panel->visible_rows().size(), 0U);
 }

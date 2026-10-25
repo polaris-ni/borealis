@@ -162,6 +162,16 @@ class FakeConnection final : public Connection {
     return options;
 }
 
+/// @brief 把整棵场景套进 `LocaleProvider`（值取进程档，此刻必为中文档）。
+///
+/// `borealis::ui::install_settings_strings()` 在构造体里才跑，但缺省档就是中文档且用例不改档，
+/// 故这里按 `settings_locale()` 现取一份即可与断言侧同值。
+[[nodiscard]] auto locale_scoped(std::shared_ptr<au::Widget> child) -> au::Node {
+    borealis::ui::install_settings_strings();
+    auto scope = std::make_shared<au::LocaleProvider>(borealis::ui::settings_locale(), au::Node{std::move(child)});
+    return au::Node{std::static_pointer_cast<au::Widget>(std::move(scope))};
+}
+
 /// @brief 驱动台：会话 + 替身连接 + 视口控件 + 浮层宿主 + 无头窗口 + 名单本体 + 两条打开接缝的替身。
 class Harness {
   public:
@@ -174,7 +184,9 @@ class Harness {
                                                std::chrono::milliseconds{500}, options)),
           host_(std::make_shared<au::OverlayHost>(
               au::Node{std::static_pointer_cast<au::Widget>(view_)})),
-          root_(std::static_pointer_cast<au::Widget>(host_)) {
+          // 语言档注入腿（`settings_i18n.h` 文件头④）：不注入就按 `Locale{}`（＝英文档）解析，
+          // 与装配处 `make_window_scene` 同款——本例要的正是用户那一档。
+          root_(locale_scoped(std::static_pointer_cast<au::Widget>(host_))) {
         borealis::ui::install_settings_strings();  // 词条装填幂等（`settings_i18n.h` ②）
         view_->set_trusted_link_hosts(hosts);
         // 名单本体的变化回调：本用例用它数「落盘几次」，而不是真的写文件（IO 归装配层）。

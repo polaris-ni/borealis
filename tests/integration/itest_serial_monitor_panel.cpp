@@ -413,8 +413,7 @@ AURORA_TEST_CASE(binding_follows_the_identity_and_the_disclaimer_stays) {
     AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.title")).widget != nullptr);
     AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.notice.privacy")).widget != nullptr);
     // 标题行的字节计数走的是词条，两档都有模板（覆盖闸之外唯一的一条同源判据）。
-    AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.bytes",
-                                                     {au::LocalizedString{std::string{"8"}}}))
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.bytes", {{"count", std::int64_t{8}}}))
                           .widget != nullptr);
 }
 

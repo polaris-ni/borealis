@@ -66,32 +66,43 @@ namespace {
     };
 }
 
-/// @brief 数值 → 上屏取值串（与实现件同式而**用例侧独立算一遍**，取错即转红）。
-[[nodiscard]] auto count(std::uint64_t value) -> au::LocalizedString {
-    return au::LocalizedString{std::to_string(value)};
+/// @brief 数值 → 具名模板实参（与实现件同式而**用例侧独立算一遍**，取错名字或取错值都会转红）。
+[[nodiscard]] auto count(std::string_view name, std::uint64_t value) -> au::MessageArg {
+    return au::MessageArg{std::string{name}, static_cast<std::int64_t>(value)};
+}
+
+/// @brief 显示串读点的期望值：本例不绘制，直接读 `Text::accessibility_label()`，而框架在树里没有
+///        `LocaleProvider` 时按 `Locale{}`（＝英文档）查目录（`aurora/widget/button.h` 的
+///        `resolved_label`／同件 `accessibility_label` 的缺省腿）。v2 之前只装选定一档、`Locale{}`
+///        两级全 miss 才落到缺省档，两侧同读中文；v2 的 bin 两档都有本体，`Locale{}` 因此读英文。
+///        本案要断的是「标题与计数行都上屏、参数代得进去」，与档位无关，故期望串跟着框架的读数走；
+///        绘制侧随用户档移动那件事由 `itest_command_palette` 的像素案与装配层
+///        （`src/main.cpp` 的 `make_window_scene`）承担。
+[[nodiscard]] auto shown(std::string_view key, std::vector<au::MessageArg> args = {}) -> std::string {
+    return borealis::ui::settings_text(key, std::move(args)).resolve(&au::default_catalog(), au::Locale{});
 }
 
 /// @brief 按快照现算某一行词条的预期显示串。
 [[nodiscard]] auto expected_parse(const DebugSessionSnapshot &s) -> std::string {
-    return borealis::ui::settings_label("diagnostics.parse", {count(s.parse_ignored), count(s.parse_cancelled)});
+    return shown("diagnostics.parse",
+                 {count("ignored", s.parse_ignored), count("interrupted", s.parse_cancelled)});
 }
 
 [[nodiscard]] auto expected_decode(const DebugSessionSnapshot &s) -> std::string {
-    return borealis::ui::settings_label("diagnostics.decode",
-                                        {count(s.decode_replaced), count(s.decode_code_points)});
+    return shown("diagnostics.decode", {count("bytes", s.decode_replaced),
+                                        count("code_points", s.decode_code_points)});
 }
 
 [[nodiscard]] auto expected_encode(const DebugSessionSnapshot &s) -> std::string {
-    return borealis::ui::settings_label("diagnostics.encode", {count(s.encode_unrepresentable)});
+    return shown("diagnostics.encode", {count("count", s.encode_unrepresentable)});
 }
 
 [[nodiscard]] auto expected_queue(const DebugSessionSnapshot &s) -> std::string {
-    return borealis::ui::settings_label("diagnostics.queue",
-                                        {count(s.queue_pending),
-                                         count(s.queue_peak_pending),
-                                         count(s.queue_overloads),
-                                         count(s.queue_merges),
-                                         count(s.queue_yields)});
+    return shown("diagnostics.queue", {count("pending", s.queue_pending),
+                                         count("peak", s.queue_peak_pending),
+                                         count("overloads", s.queue_overloads),
+                                         count("merges", s.queue_merges),
+                                         count("yields", s.queue_yields)});
 }
 
 [[nodiscard]] auto snapshot_row_count(const DebugSessionSnapshot &) -> std::size_t { return 5U; }
@@ -143,7 +154,7 @@ AURORA_TEST_CASE(one_snapshot_draws_its_title_and_all_counter_rows_with_the_give
     const std::vector<std::string> labels = drawn_labels(*panel.dialog());
     // 标题行 + 两份快照各五行（标题 + 四计数行）。
     AURORA_TEST_REQUIRE_EQ(labels.size(), 1U + 2U * snapshot_row_count(first));
-    AURORA_TEST_CHECK_TRUE(contains(labels, borealis::ui::settings_label("diagnostics.title")));
+    AURORA_TEST_CHECK_TRUE(contains(labels, shown("diagnostics.title")));
     for (const DebugSessionSnapshot &s : {first, second}) {
         AURORA_TEST_CHECK_TRUE(contains(labels, s.title));
         AURORA_TEST_CHECK_TRUE(contains(labels, expected_parse(s)));
@@ -153,7 +164,7 @@ AURORA_TEST_CASE(one_snapshot_draws_its_title_and_all_counter_rows_with_the_give
     }
     // 模板参数没代进去就会留下占位符。
     for (const std::string &label : labels) {
-        AURORA_TEST_CHECK_TRUE(label.find("{0}") == std::string::npos);
+        AURORA_TEST_CHECK_TRUE(label.find('{') == std::string::npos);
     }
 }
 
@@ -168,10 +179,11 @@ AURORA_TEST_CASE(an_empty_snapshot_list_draws_the_empty_row_and_no_counter_rows)
     AURORA_TEST_REQUIRE(panel.is_showing());
     const std::vector<std::string> labels = drawn_labels(*panel.dialog());
     AURORA_TEST_REQUIRE_EQ(labels.size(), 2U);  // 面板标题 + 空态那一行
-    AURORA_TEST_CHECK_TRUE(contains(labels, borealis::ui::settings_label("diagnostics.empty")));
+    AURORA_TEST_CHECK_TRUE(contains(labels, shown("diagnostics.empty")));
     // 任何一行都不带计数措辞（空态下画一份「全零」的假快照就是谎报有会话）。
     AURORA_TEST_CHECK_TRUE(
-        contains(labels, borealis::ui::settings_label("diagnostics.parse", {count(0U), count(0U)})) == false);
+        contains(labels, borealis::ui::settings_label("diagnostics.parse",
+                                                      {count("ignored", 0U), count("interrupted", 0U)})) == false);
 }
 
 AURORA_TEST_CASE(toggling_twice_closes_the_dialog_but_keeps_the_overlay_slot) {

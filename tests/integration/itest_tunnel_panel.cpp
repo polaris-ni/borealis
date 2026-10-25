@@ -332,7 +332,7 @@ AURORA_TEST_CASE(conflict_is_shown_and_save_refused) {
     auto panel = h.attach(probe);
     h.open(*panel);
 
-    auto new_spot = h.find_button(ui::settings_label("tunnel.action.new"));
+    auto new_spot = h.find_button(ui::settings_label("tunnel.action.create"));
     AURORA_TEST_REQUIRE(new_spot.widget != nullptr);
     h.click(new_spot);
     h.render();
@@ -409,7 +409,7 @@ AURORA_TEST_CASE(delete_is_two_stage_for_running_rows) {
     auto panel = h.attach(probe);
     h.open(*panel);
 
-    auto delete_spot = h.find_button(ui::settings_label("tunnel.action.delete"));
+    auto delete_spot = h.find_button(ui::settings_label("tunnel.action.remove"));
     AURORA_TEST_REQUIRE(delete_spot.widget != nullptr);
     h.click(delete_spot);  // 第一行是运行中的 tun-a。
     h.render();
@@ -438,7 +438,7 @@ AURORA_TEST_CASE(stopped_row_deletes_without_confirm) {
     auto panel = h.attach(probe);
     h.open(*panel);
 
-    auto delete_spot = h.find_button(ui::settings_label("tunnel.action.delete"));
+    auto delete_spot = h.find_button(ui::settings_label("tunnel.action.remove"));
     AURORA_TEST_REQUIRE(delete_spot.widget != nullptr);
     h.click(delete_spot);
     h.render();
@@ -583,7 +583,7 @@ AURORA_TEST_CASE(same_name_new_tunnels_get_distinct_ids) {
     // 填一份「名称 dup + 指定监听端口」的最小合法定义（Local 式要有 target 两栏）
     // 并存下去。两次的监听端口不同，冲突闸不管它们——撞的只是名字。
     auto fill_and_save = [&](const char *port) -> void {
-        auto new_spot = h.find_button(ui::settings_label("tunnel.action.new"));
+        auto new_spot = h.find_button(ui::settings_label("tunnel.action.create"));
         AURORA_TEST_REQUIRE(new_spot.widget != nullptr);
         h.click(new_spot);
         h.render();
