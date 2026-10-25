@@ -93,6 +93,7 @@ add_library(borealis_core STATIC
         ui/settings_panel.cpp
         ui/settings_preview.cpp
         ui/shortcuts_table.cpp
+        ui/sftp_batch.cpp
         ui/sftp_format.cpp
         ui/sftp_panel.cpp
         ui/snippet_panel.cpp

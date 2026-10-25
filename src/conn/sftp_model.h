@@ -95,4 +95,74 @@ enum class SftpError : std::uint8_t {
     Protocol,         ///< SFTP 协议层意外（含服务器不支持某操作）。
 };
 
+// ============================================================
+// 递归目录传输的批次计划（SPEC.FEAT.CONN.04 延后子项，
+// 稿 codespec/UI_SFTP_RECURSIVE.draft.md，裁决 7.151）。
+// 枚举 IO 在 worker 侧（远端 list_directory / 本地 filesystem），本层只做
+// 形状折叠：树 → 文件清单 + 目录镜像清单 + 守卫线判定，无 IO、无 libssh。
+// ============================================================
+
+/// @brief 预枚举守卫线的越线档（D4①）：整批 fail-closed 拒绝，不弹框。
+enum class BatchReject : std::uint8_t {
+    None,        ///< 未越线（engaged==false 的计划里才允许出现）。
+    OverDepth,   ///< 某目录节点深度越线。
+    OverCount,   ///< 文件数越线（跳过件不计）。
+    ListFailed,  ///< 某层枚举失败（死会话 / 权限）——批次不带着残树起跑。
+    OverBytes,   ///< 预留：字节上限档（本期 D4① 未启用，调用方不得回绕）。
+};
+
+/// @brief 批次守卫线（缺省即 D4① 的两条线）。
+struct BatchLimits {
+    unsigned max_depth{64};
+    unsigned max_files{100'000};
+};
+
+/// @brief 树里的一条普通文件；size_known==false（本地档）时字节不计入总量，
+///        批次只按「件」推进（传输条转不确定态，口径同既有下载无 total 档）。
+struct BatchFileNode {
+    std::string name;  ///< 仅名字；相对路径由父目录拼出。
+    std::uint64_t size_bytes{0};
+    bool size_known{true};
+};
+
+/// @brief 预枚举折叠出的一个目录节点（children 为该层全部文件，dirs 为子目录）。
+///
+/// 根节点自身的 name 不参与拼路径（根的目标位置由调用方给），留空即可。
+struct BatchDirNode {
+    std::string name;  ///< 目录名（相对路径的段；根节点不用此字段）。
+    std::vector<BatchFileNode> files;
+    std::vector<BatchDirNode> dirs;
+};
+
+/// @brief 跳过件的分类计数（D1①：软链与特殊文件一律跳过并计数）。
+struct BatchSkips {
+    unsigned symlinks{0};
+    unsigned others{0};  ///< 设备 / 套接字 / FIFO。
+
+    [[nodiscard]] auto total() const noexcept -> unsigned { return symlinks + others; }
+};
+
+/// @brief 一条可执行的批次计划（拒绝档只有 reject，不携带残树）。
+struct BatchPlan {
+    bool engaged{false};
+    BatchReject reject{BatchReject::None};
+    std::vector<std::string> files;        ///< 相对路径（'/' 分隔、不以 '/' 开头）。
+    std::vector<std::string> dirs;         ///< 相对镜像目录（含空目录，不含根自身）。
+    std::uint64_t total_bytes{0};          ///< 只累 size_known 的文件。
+    bool bytes_complete{true};             ///< false＝计划里有未知大小的文件。
+    BatchSkips skips{};
+
+    [[nodiscard]] auto file_count() const noexcept -> std::size_t { return files.size(); }
+};
+
+/// @brief 折叠一棵目录树：深度/数量越线与枚举失败 → 拒绝；软链与 Other 只计数。
+///
+/// 确定序口径：目录先于文件进入清单，同级沿用入参次序（worker 侧表已由
+/// sort_entries 排过，这里不重排）；相对路径 = 入参 rel_dir 拼名字。
+/// @param root 根目录的第一层节点（根自身不进 dirs 清单）。
+/// @param rel_dir 根目录相对前缀（"" 或形如 "sub/"，尾斜杠可有可无）。
+/// @param limits 守卫线。
+[[nodiscard]] auto plan_batch_transfer(const BatchDirNode &root, std::string_view rel_dir,
+                                       const BatchLimits &limits = {}) -> BatchPlan;
+
 }  // namespace borealis::conn
