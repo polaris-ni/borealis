@@ -231,6 +231,86 @@ auto plan_hop_credential(const SshHop &hop, const CredentialStore &store) -> Cre
     return plan_credential(hop_profile_of(hop), store);
 }
 
+namespace {
+
+/// @brief 键位一段的转义：`%` 与 `#` 是本层唯一的两种分隔符（单趟扫描，故 `%23` 不会被
+///        二次转义）。规范化跳形本身的白名单不含这两枚字符，转义主要防的是手改档案 id。
+[[nodiscard]] auto escape_vault_segment(std::string_view text) -> std::string {
+    std::string out;
+    out.reserve(text.size());
+    for (const char c : text) {
+        if (c == '%') {
+            out += "%25";
+        } else if (c == '#') {
+            out += "%23";
+        } else {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+auto hop_vault_key(std::string_view profile_id, const SshHop &hop) -> std::string {
+    if (profile_id.empty() || profile_id.find('\0') != std::string_view::npos) {
+        return {};
+    }
+    // 坏跳不生成键位：库里的条目必须能反推回一个合法身份，否则下次连接对不上。
+    if (!validate_proxy_hops({hop})) {
+        return {};
+    }
+    auto token = render_proxy_jump_list({hop});
+    if (hop.user.empty()) {
+        token.insert(token.begin(), '@');
+    }
+    return escape_vault_segment(profile_id) + "#" + escape_vault_segment(token);
+}
+
+auto plan_hop_vault_keys(const SshProfile &ssh, const CredentialStore &store,
+                         std::string_view profile_id) -> std::vector<std::string> {
+    std::vector<std::string> keys(ssh.proxy_jumps.size());
+    if (profile_id.empty()) {
+        return keys;
+    }
+    for (std::size_t index = 0; index < ssh.proxy_jumps.size(); ++index) {
+        if (plan_hop_credential(ssh.proxy_jumps[index], store).route == CredentialRoute::Ask) {
+            keys[index] = hop_vault_key(profile_id, ssh.proxy_jumps[index]);
+        }
+    }
+    return keys;
+}
+
+auto plan_hop_writeback(const Profile &profile, const CredentialStore &store,
+                        const std::vector<std::pair<std::size_t, std::string>> &answered,
+                        const std::vector<std::optional<std::string>> &hop_secrets)
+    -> std::vector<HopWriteback> {
+    auto out = std::vector<HopWriteback>{};
+    if (profile.type != ConnectionType::Ssh) {
+        return out;
+    }
+    for (const auto &[index, key] : answered) {
+        if (key.empty() || index >= profile.ssh.proxy_jumps.size() ||
+            index >= hop_secrets.size() || !hop_secrets[index].has_value()) {
+            continue;
+        }
+        const auto &hop = profile.ssh.proxy_jumps[index];
+        // 询问期间链可能被改（下标错位）：按当前跳重算键位，对不上就不写。
+        if (hop_vault_key(profile.id, hop) != key) {
+            continue;
+        }
+        // 已经拿到可用句柄的跳不再覆写：答话来自旧计划，库里的那条才是用户的现状。
+        if (plan_hop_credential(hop, store).route != CredentialRoute::Ask) {
+            continue;
+        }
+        out.push_back(HopWriteback{.index = index,
+                                   .key = key,
+                                   .label = profile.name + " / " + render_proxy_jump_list({hop}),
+                                   .secret = *hop_secrets[index]});
+    }
+    return out;
+}
+
 auto parse_quick_connect(std::string_view text) -> std::optional<std::pair<std::string, int>> {
     // 剥两端空白。
     while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {

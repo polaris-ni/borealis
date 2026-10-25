@@ -58,6 +58,7 @@
 #include "conn/key_push.h"
 #include "conn/key_store.h"
 #include "conn/profile_views.h"
+#include "conn/proxy_jump.h"  // render_proxy_jump_list：逐跳回存条目的 label 取唯一串形
 #include "conn/serial_connection.h"
 #include "conn/serial_model.h"
 #include "conn/ssh_connection.h"
@@ -2520,7 +2521,10 @@ auto main(int argc, char **argv) -> int {
     /// 跳链为空时实现体同步回调；有跳且至少一跳是 `Stored` 时走后台任务（钥匙环可能弹解锁框并阻塞，
     /// UI 线程不许等，同目标那条腿的 D8 理由），回调仍落在主线程。`Ask` 的那几跳由实现体内的
     /// 串问泵经 `ask_secret` 逐跳询问——四个消费者因此**免费**获得逐跳问句，各自的取消支见调用点。
+    /// `profile_id` 只用于答齐后的乐观回存（批 8）：空串＝临时档案（quick connect），键位整表为空、
+    /// 泵只搬答案不落盘。
     auto with_hop_secrets = std::function<void(const borealis::conn::SshProfile &,
+                                               const std::string &profile_id,
                                                std::optional<std::string>,
                                                std::function<void(std::optional<
                                                    borealis::conn::SshSecretBundle>)>)>{};
@@ -2646,7 +2650,7 @@ auto main(int argc, char **argv) -> int {
         if (!pending_credential_fetches->insert(fetch_key).second) {
             return;  // 同一档案的跳板取料已在途：连点合并成一次。
         }
-        with_hop_secrets(profile.ssh, std::move(secret),
+        with_hop_secrets(profile.ssh, profile.id, std::move(secret),
                          [profile, anchor, fetch_key, pending = pending_credential_fetches,
                           &open_ssh_tab_ready](
                              std::optional<borealis::conn::SshSecretBundle> bundle) -> void {
@@ -2831,11 +2835,15 @@ auto main(int argc, char **argv) -> int {
     ///
     /// 单槽：与 `pending_profile` 同一条「后一次意图覆盖前一次」纪律——问句漏斗本就单实例，
     /// 新串问开始时旧串的 `done` 不再被调用（那次连接静默作罢），与目标询问被覆盖的现语义同形。
-    /// 答案只在槽位里过一手、不回存（D4：逐跳 vault 键另起一棒）。
+    /// 答案先落槽位；答齐一次**批量**回存（批 8 D3）——取消整串则一个都不写。
     struct HopAskSession {
         std::vector<std::size_t> queue{};   ///< 还没答的 Ask 跳下标（档案序，一题一题）。
         std::vector<borealis::conn::SecretAsk> kinds{};  ///< 与 queue 同序的问型。
         std::vector<std::string> subjects{};             ///< 与 queue 同序的 {subject}（稿 D3 A 档）。
+        /// 与 queue 同序的回存键位（`hop_vault_key` 折算；空＝只进内存）。队列推进时一起弹。
+        std::vector<std::string> keys{};
+        std::vector<std::pair<std::size_t, std::string>> answered{};  ///< 已答 (下标, 键位)。
+        std::string profile_id{};  ///< 本串所属档案；空＝临时档案，答齐也不回存（稿 D5①）。
         borealis::conn::SshSecretBundle bundle{};
         std::function<void(std::optional<borealis::conn::SshSecretBundle>)> done;
         bool active = false;
@@ -2852,6 +2860,7 @@ auto main(int argc, char **argv) -> int {
     // 否则同一条链的两次取料会因「一份空向量 / 一份 [nullopt,nullopt]」被判成两条不同链路（稿 D5）。
     with_hop_secrets = [&credential_store, &ask_secret, hop_ask](
                            const borealis::conn::SshProfile &ssh,
+                           const std::string &profile_id,
                            std::optional<std::string> secret,
                            std::function<void(std::optional<borealis::conn::SshSecretBundle>)> done)
         -> void {
@@ -2867,6 +2876,10 @@ auto main(int argc, char **argv) -> int {
         auto queue = std::vector<std::size_t>{};
         auto kinds = std::vector<borealis::conn::SecretAsk>{};
         auto subjects = std::vector<std::string>{};
+        // 键位表与串问队列同源（批 8 D2）：同一份 `plan_hop_credential` 判据筛 Ask 跳，答齐时
+        // 按这份表回存。临时档案的 profile_id 为空 ⇒ 整表空，泵照常问、只是不落盘。
+        const auto vault_keys = borealis::conn::plan_hop_vault_keys(ssh, *credential_store, profile_id);
+        auto keys = std::vector<std::string>{};
         for (std::size_t k = 0; k < ssh.proxy_jumps.size(); ++k) {
             const auto &hop = ssh.proxy_jumps[k];
             const auto plan = borealis::conn::plan_hop_credential(hop, *credential_store);
@@ -2879,6 +2892,7 @@ auto main(int argc, char **argv) -> int {
             if (plan.route == borealis::conn::CredentialRoute::Ask) {
                 queue.push_back(k);
                 kinds.push_back(plan.ask);
+                keys.push_back(vault_keys[k]);
                 // {subject}＝`user@host:port`（稿 D3 A 档，零新询问词条）：主机/端口是动态数据
                 // 不是字面量，不触门禁 CJK 闸；user 空时省 `user@`，与档案展示同口径。
                 std::string subject;
@@ -2896,6 +2910,8 @@ auto main(int argc, char **argv) -> int {
                               std::vector<std::size_t> pending_queue,
                               std::vector<borealis::conn::SecretAsk> pending_kinds,
                               std::vector<std::string> pending_subjects,
+                              std::vector<std::string> pending_keys,
+                              std::string session_profile_id,
                               std::function<void(std::optional<borealis::conn::SshSecretBundle>)> finish)
             -> void {
             if (pending_queue.empty()) {
@@ -2905,6 +2921,9 @@ auto main(int argc, char **argv) -> int {
             hop_ask->queue = std::move(pending_queue);
             hop_ask->kinds = std::move(pending_kinds);
             hop_ask->subjects = std::move(pending_subjects);
+            hop_ask->keys = std::move(pending_keys);
+            hop_ask->answered.clear();
+            hop_ask->profile_id = std::move(session_profile_id);
             hop_ask->bundle = std::move(filled);
             hop_ask->done = std::move(finish);
             hop_ask->active = true;
@@ -2912,7 +2931,8 @@ auto main(int argc, char **argv) -> int {
         };
         if (!any_to_fetch) {
             start_asks(std::move(bundle), std::move(queue), std::move(kinds),
-                       std::move(subjects), std::move(done));
+                       std::move(subjects), std::move(keys), std::string{profile_id},
+                       std::move(done));
             return;
         }
         auto task = au::async([credential_store,
@@ -2927,14 +2947,16 @@ auto main(int argc, char **argv) -> int {
         });
         static_cast<void>(task.then(
             [bundle = std::move(bundle), queue = std::move(queue), kinds = std::move(kinds),
-             subjects = std::move(subjects), done = std::move(done), start_asks](
+             subjects = std::move(subjects), keys = std::move(keys),
+             profile_id = std::string{profile_id}, done = std::move(done), start_asks](
                 const au::Result<std::vector<std::optional<std::string>>> &result) mutable -> void {
                 // 整趟取料失败（任务级错误）⇒ 逐跳留空：宁可在拨号侧现形，也不拿半截材料硬连。
                 if (result.ok()) {
                     bundle.hops = result.value();
                 }
                 start_asks(std::move(bundle), std::move(queue), std::move(kinds),
-                           std::move(subjects), std::move(done));
+                           std::move(subjects), std::move(keys), std::move(profile_id),
+                           std::move(done));
             }));
     };
     // 在途去重键与撤销取料序号声明在上方 `open_ssh_tab` 之前（跳链取料也要用）。
@@ -2955,10 +2977,10 @@ auto main(int argc, char **argv) -> int {
     // 的反面）；推送「询问型档案先问认证材料」（D7①，同 pending_tunnel 的先例形态）。
     auto pending_export = std::optional<std::pair<std::string, std::string>>{};
     auto pending_push = std::optional<
-        std::tuple<std::string, borealis::conn::SshProfile, std::string>>{};
+        std::tuple<std::string, std::string, borealis::conn::SshProfile, std::string>>{};
     auto submit_keys_export =
         std::function<void(const std::string &, std::optional<std::string>)>{};
-    auto submit_keys_push = std::function<void(const std::string &,
+    auto submit_keys_push = std::function<void(const std::string &, const std::string &,
                                                const borealis::conn::SshProfile &,
                                                std::optional<std::string>, std::string_view)>{};
     // 启动重放的凭据挂起态（`SPEC.FEAT.WS.11` 批 5-C）：SSH 腿按 D4① 要重新问材料，而询问件的答案是
@@ -3004,27 +3026,87 @@ auto main(int argc, char **argv) -> int {
             return true;
         }));
     };
+    // 逐跳答案的回存（`SPEC.FEAT.CONN.03` 批 8 D1/D3）：整串答齐才写，一次 replace 带多跳句柄，
+    // 每键一枚任务入库；取消整串则一个都不写。句柄是确定性的 `<前缀><profile_id>#<跳形>`，
+    // 入库失败不回滚——与目标腿同档代价（下次取空自然重问，不会误用旧秘密）。
+    auto remember_hop_secrets =
+        [&store, credential_store](const std::string &profile_id,
+                                   const std::vector<std::pair<std::size_t, std::string>> &answered,
+                                   const borealis::conn::SshSecretBundle &bundle) -> void {
+        if (profile_id.empty() || answered.empty() || !credential_store->available()) {
+            return;  // 临时档案／库不可用：与目标腿的现闸同口径（稿 D5①②）。
+        }
+        auto next = store.settings();
+        borealis::conn::Profile *target = nullptr;
+        for (auto &candidate : next.profiles) {
+            if (candidate.id == profile_id) {
+                target = &candidate;
+                break;
+            }
+        }
+        if (target == nullptr || target->type != borealis::conn::ConnectionType::Ssh) {
+            return;
+        }
+        // 「该写哪几跳」收在纯逻辑件里（键位复核、Stored 不覆写、缺答案跳过都在那儿有证人）；
+        // 这里只做三步搬运：置句柄 → 一次 replace → 每键一枚任务入库。
+        const auto entries =
+            borealis::conn::plan_hop_writeback(*target, *credential_store, answered, bundle.hops);
+        if (entries.empty()) {
+            return;
+        }
+        auto pending = std::vector<std::tuple<std::string, std::string, std::string>>{};
+        pending.reserve(entries.size());
+        for (const auto &entry : entries) {
+            const std::string vault_id = borealis::platform::credential_vault_id(
+                borealis::platform::credential_vault_prefix(), entry.key);
+            if (vault_id.empty()) {
+                continue;
+            }
+            target->ssh.proxy_jumps[entry.index].credential =
+                borealis::conn::SecretHandle::reference(vault_id);
+            pending.emplace_back(entry.key, entry.label, entry.secret);
+        }
+        if (pending.empty()) {
+            return;
+        }
+        if (const auto error = store.replace(next); error.has_value()) {
+            AURORA_LOG_WARN("main", "hop credential handles not persisted for ", profile_id, ": ",
+                            *error);
+        }
+        static_cast<void>(au::async([credential_store, pending = std::move(pending)]() -> bool {
+            for (const auto &[key, label, secret] : pending) {
+                static_cast<void>(credential_store->store(key, label, secret));
+            }
+            return true;
+        }));
+    };
     borealis::ui::CredentialPrompt::Hooks prompt_hooks;
     prompt_hooks.on_secret =
         [&open_ssh_tab, &restart_ssh_tab, &pending_profile, &pending_restart,
          &pending_tunnel, &pending_export, &pending_push, &remember_profile_secret,
-         &tab_profile_id, &launch_tunnel, &submit_keys_export, &submit_keys_push,
-         &restore_waiting_for_secret, &restore_secret_sink, &ask_secret,
+         &remember_hop_secrets, &tab_profile_id, &launch_tunnel, &submit_keys_export,
+         &submit_keys_push, &restore_waiting_for_secret, &restore_secret_sink, &ask_secret,
          hop_ask](const std::string &secret) -> void {
         // 逐跳串问先认领（`SPEC.FEAT.CONN.03` 批 7 D1）：泵在途时的问句只可能是它发的。答一题
         // 落进槽位——队列还有下一题就当场续问（本回调栈里只发起模态，不等答案），答齐才交回。
-        // 明文不回存（D4）：`remember_profile_secret` 只认档案 id，跳板答案随 bundle 走完整次连接
-        // 即弃，与 `CredentialPrompt`「本件不留副本」同纪律。
+        // 批 8 D3：答齐后按键位列**一次**回存本串答过的跳；取消走 on_cancel，不经过这里。
         if (hop_ask->active) {
             const auto index = hop_ask->queue.front();
             static_cast<void>(hop_ask->queue.erase(hop_ask->queue.begin()));
             static_cast<void>(hop_ask->kinds.erase(hop_ask->kinds.begin()));
             static_cast<void>(hop_ask->subjects.erase(hop_ask->subjects.begin()));
+            const auto vault_key = std::move(hop_ask->keys.front());
+            static_cast<void>(hop_ask->keys.erase(hop_ask->keys.begin()));
+            if (!vault_key.empty()) {
+                hop_ask->answered.emplace_back(index, vault_key);
+            }
             hop_ask->bundle.hops[index] = secret;
             if (hop_ask->queue.empty()) {
                 hop_ask->active = false;
                 auto finish = std::move(hop_ask->done);
                 auto filled = std::move(hop_ask->bundle);
+                remember_hop_secrets(hop_ask->profile_id, hop_ask->answered, filled);
+                hop_ask->answered.clear();
                 finish(std::move(filled));
                 return;
             }
@@ -3068,9 +3150,9 @@ auto main(int argc, char **argv) -> int {
             return;
         }
         if (pending_push.has_value()) {
-            auto [path, ssh_profile, line] = std::move(*pending_push);
+            auto [path, profile_id, ssh_profile, line] = std::move(*pending_push);
             pending_push.reset();
-            submit_keys_push(path, ssh_profile, secret, line);
+            submit_keys_push(path, profile_id, ssh_profile, secret, line);
         }
     };
     prompt_hooks.on_cancel = [&pending_profile, &pending_restart, &pending_tunnel,
@@ -3079,8 +3161,11 @@ auto main(int argc, char **argv) -> int {
         // 串问泵取消＝整次作罢（批 7 D1）：`done(nullopt)` 让四个消费者各走自己的取消支
         // （开标签静默返回、隧道丢弃、密钥不投、恢复泵中止余下重放）。先放行再清 pending——
         // 与恢复腿同款：两套状态互不相干，多清一遍无害，但漏清会留下半挂起的意图。
+        // 批 8 D3：取消整串 ⇒ 一个键位都不写（`answered` 连同半截链一起作废）。
         if (hop_ask->active) {
             hop_ask->active = false;
+            hop_ask->answered.clear();
+            hop_ask->keys.clear();
             auto finish = std::move(hop_ask->done);
             finish(std::nullopt);
         }
@@ -3316,7 +3401,7 @@ auto main(int argc, char **argv) -> int {
                      tunnel_skipped](const borealis::conn::SshProfile &ssh_profile,
                                      std::optional<std::string> secret,
                                      const borealis::conn::TunnelSpec &spec) -> void {
-        with_hop_secrets(ssh_profile, std::move(secret),
+        with_hop_secrets(ssh_profile, spec.profile_id, std::move(secret),
                          [&store, &tunnel_entries, tunnel_mutex, tunnel_runtimes, tunnel_skipped,
                           profile = ssh_profile,
                           spec](std::optional<borealis::conn::SshSecretBundle> bundle) -> void {
@@ -3541,9 +3626,10 @@ auto main(int argc, char **argv) -> int {
     // 时序与本批之前完全一致；带跳时回-call 落主线程，算法快照仍按「提交这一刻」在 UI 线程
     // 现取。批 7 D1：某一询问跳被取消 ⇒ 不投（这一趟推送就此作罢）。档案与公钥行**按值**入闭包：
     // 询问型那一支交来的是 `store.settings()` 局部副本里的引用（`keys_hooks.push`），异步回来时原件早已不在。
-    submit_keys_push = [&](const std::string &path, const borealis::conn::SshProfile &profile,
+    submit_keys_push = [&](const std::string &path, const std::string &profile_id,
+                           const borealis::conn::SshProfile &profile,
                            std::optional<std::string> secret, std::string_view line) -> void {
-        with_hop_secrets(profile, std::move(secret),
+        with_hop_secrets(profile, profile_id, std::move(secret),
                          [&, path, profile,
                           line = std::string{line}](
                              std::optional<borealis::conn::SshSecretBundle> bundle) -> void {
@@ -3666,10 +3752,10 @@ auto main(int argc, char **argv) -> int {
         const auto ask = borealis::conn::secret_ask_for(
             borealis::conn::normalized_auth_method(target->ssh));
         if (ask == borealis::conn::SecretAsk::None) {
-            submit_keys_push(path, target->ssh, std::nullopt, line);
+            submit_keys_push(path, profile_id, target->ssh, std::nullopt, line);
             return;
         }
-        pending_push = std::tuple{path, target->ssh, line};
+        pending_push = std::tuple{path, profile_id, target->ssh, line};
         ask_secret(ask, target->name);
     };
     keys_hooks.delete_key = [&keys_worker, &store, keys_user_dir](const std::string &path)
@@ -5457,7 +5543,7 @@ auto main(int argc, char **argv) -> int {
                 if (!profile->proxy_jumps.empty() && bundle.hops.empty()) {
                     restore_awaiting_hops = true;
                     with_hop_secrets(
-                        *profile, bundle.target,
+                        *profile, item.profile_id, bundle.target,
                         [&restore_awaiting_hops, &restore_hop_bundle, &restore_hop_release,
                          &restore_done, &restore_aborted](
                             std::optional<borealis::conn::SshSecretBundle> filled) -> void {

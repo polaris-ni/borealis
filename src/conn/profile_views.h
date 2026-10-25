@@ -144,9 +144,49 @@ struct CredentialPlan {
 /// 装配层的串问泵据此决定这一跳怎么办：`Stored` 去凭据库后台取、`Ask` 按档案序逐跳弹问句
 /// （`SPEC.FEAT.CONN.03` 批 7 D1/D2），取消任一跳整次作罢。`Stored` 取回空**不再二次询问**——
 /// 句柄在档说明用户选过「不回存问」那一档，兜底询问是目标那条腿的语义；该跳在拨号侧落 `Auth`
-/// 并带 `hop_index`。本期**不回存**跳板答案（稿 D4：逐跳 vault 键另起一棒）。
+/// 并带 `hop_index`。答话的回存在批 8 落地（键位见 `hop_vault_key`）。
 [[nodiscard]] auto plan_hop_credential(const SshHop &hop, const CredentialStore &store)
     -> CredentialPlan;
+
+/// @brief 一跳的回存键位：`<profile_id>#<规范化跳形>`（`SPEC.FEAT.CONN.03` 批 8 D1）。
+///
+/// 跳形沿用 `render_proxy_jump_list` 的唯一串形，但 user 为空时**保留前导 `@`**
+/// （`@host:port`）：键位按身份寻址，不靠「省略 user@」去猜。两段里的 `#` 与 `%`
+/// 分别转义成 `%23`／`%25`（单趟，`%` 先遇到就先转），于是档案 id 自带的 `#` 不会把
+/// 键位劈成两段、也不会和「本该是 `%23` 的字面串」撞键。
+///
+/// 空档案 id、含 NUL 的档案 id、以及 `validate_proxy_hops` 拒收的坏跳一律回空串——
+/// 调用方按「不存」处理（宁可这一跳下次重问，也不把畸形身份折成库里的条目）。
+[[nodiscard]] auto hop_vault_key(std::string_view profile_id, const SshHop &hop) -> std::string;
+
+/// @brief 本次连接会走 Ask 的跳各自的回存键位（与 `proxy_jumps` 同下标，其余项为空串）。
+///
+/// 与串问泵同一判据（`plan_hop_credential(...).route == Ask`）：泵的队列与回存表同源，
+/// 不会出现「问了却没键位」或「没问却回存」。库可用性不在这里判——`Stored` 跳本就不该
+/// 回存，而库不可用时装配层的回存闸整段跳过（稿 D5②）。
+[[nodiscard]] auto plan_hop_vault_keys(const SshProfile &ssh, const CredentialStore &store,
+                                       std::string_view profile_id)
+    -> std::vector<std::string>;
+
+/// @brief 一条待回存的跳：档案下标、键位、库内标签与明文。
+struct HopWriteback {
+    std::size_t index{};
+    std::string key;
+    std::string label;   ///< `<档案名> / <该跳的规范化串形>`，只给人辨认。
+    std::string secret;
+    [[nodiscard]] auto operator==(const HopWriteback &) const noexcept -> bool = default;
+};
+
+/// @brief 本串答过的跳折成回存动作（`SPEC.FEAT.CONN.03` 批 8 D3）。
+///
+/// 逐项四道闸：下标在档且 `hop_secrets` 有值；键位与**当前**跳重算的 `hop_vault_key`
+/// 逐字节相等（询问期间改过链就不写，绝不把口令挂到另一台跳板）；按 `store` 现读该跳
+/// 仍走 `Ask`（已经 `Stored` 的句柄不被覆写）；档案非 SSH 或 id 为空时整段回空。
+/// 返回项按 `answered` 原序；调用方只负责「置句柄 + 落盘 + 入库」三步搬运。
+[[nodiscard]] auto plan_hop_writeback(const Profile &profile, const CredentialStore &store,
+                                      const std::vector<std::pair<std::size_t, std::string>> &answered,
+                                      const std::vector<std::optional<std::string>> &hop_secrets)
+    -> std::vector<HopWriteback>;
 
 /// @brief quick connect 输入的解析（CONN.03：`host[:port]` 临时输入即连，不生成档案）。
 ///

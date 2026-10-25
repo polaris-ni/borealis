@@ -28,6 +28,7 @@
 #include "borealis/ui/workspace_snapshot.h"
 #include "config/window_geometry_store.h"
 #include "config/workspace_store.h"
+#include "conn/profile_views.h"  // hop_vault_key：逐跳复合键的现役串形（批 8 D4①）
 #include "framework/aurora_test.h"
 
 namespace borealis::test_cases::utest_credential_audit {
@@ -184,6 +185,7 @@ struct AuditReport {
 struct Artifacts {
     InMemoryCredentialStore vault;
     SecretHandle password_handle;
+    std::string composite_hop_vault_id;  ///< 逐跳复合键（`<id>#<跳形>`）的现役串形。
 };
 
 /// @brief 按生产形态生成三枚 `Preferences` 的全部写入产物。
@@ -199,7 +201,24 @@ struct Artifacts {
 
     auto settings = Settings{};
     settings.appearance.theme = "nord";
-    settings.profiles.push_back(ssh_profile("audit-ssh", password_handle));
+    auto jump_profile = ssh_profile("audit-ssh", password_handle);
+    // 逐跳复合键（`SPEC.FEAT.CONN.03` 批 8）：user 有名/无名两态都落盘，且键里带 `#` 与 `@`。
+    // 审计的禁键名单只看 JSON 键名，这两枚该原样通过——本段就是「复合键不触发误报」的证人。
+    auto named_hop = borealis::conn::SshHop{};
+    named_hop.host = "bastion.example.invalid";
+    named_hop.port = 22;
+    named_hop.user = "operator";
+    named_hop.auth_method = "password";
+    const auto named_key = borealis::conn::hop_vault_key("audit-ssh", named_hop);
+    named_hop.credential = SecretHandle::reference("vault://" + named_key);
+    auto anonymous_hop = borealis::conn::SshHop{};
+    anonymous_hop.host = "bastion2.example.invalid";
+    anonymous_hop.port = 2200;
+    anonymous_hop.auth_method = "password";
+    anonymous_hop.credential =
+        SecretHandle::reference("vault://" + borealis::conn::hop_vault_key("audit-ssh", anonymous_hop));
+    jump_profile.ssh.proxy_jumps = {std::move(named_hop), std::move(anonymous_hop)};
+    settings.profiles.push_back(std::move(jump_profile));
     settings.profiles.push_back(ssh_profile("audit-key", passphrase_handle));
     settings.profiles.push_back(
         ssh_profile("audit-ask", SecretHandle::ask_every_time("audit-ask", "audit prompt")));
@@ -239,7 +258,9 @@ struct Artifacts {
     workspace.preferences()->set(std::string{kWorkspaceLayoutKey}, layout.value());
     AURORA_TEST_REQUIRE_MSG(!workspace.flush().has_value(), "workspace.json flush failed");
 
-    return Artifacts{.vault = std::move(vault), .password_handle = password_handle};
+    return Artifacts{.vault = std::move(vault),
+                     .password_handle = password_handle,
+                     .composite_hop_vault_id = "vault://" + named_key};
 }
 
 }  // namespace
@@ -256,6 +277,10 @@ AURORA_TEST_CASE(the_three_preferences_leave_no_plaintext_credential_in_the_conf
     // 生产产物确实带着凭据句柄：否则「扫不到明文」可能只是三份文档里压根没有凭据字段。
     const auto settings_text = read_file(dir / kConfigFileName);
     AURORA_TEST_CHECK_MSG(settings_text.find(artifacts.password_handle.vault_id) != std::string::npos,
+                          settings_text);
+    // 逐跳复合键也在盘上原样落着（`<id>#<user@host:port>`）：审计若把 `@`/`#` 当异常、
+    // 或把复合键误当明文，这一条就会红。
+    AURORA_TEST_CHECK_MSG(settings_text.find(artifacts.composite_hop_vault_id) != std::string::npos,
                           settings_text);
     const auto workspace_text = read_file(dir / kWorkspaceFileName);
     AURORA_TEST_CHECK_MSG(workspace_text.find(artifacts.password_handle.vault_id) != std::string::npos,
