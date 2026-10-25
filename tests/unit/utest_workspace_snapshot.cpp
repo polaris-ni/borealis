@@ -1132,7 +1132,9 @@ AURORA_TEST_CASE(the_snapshot_flushes_to_its_own_file_under_one_top_level_key) {
     AURORA_TEST_CHECK_EQ(field(*on_disk, {"layout", "schema_version"}).as_int().value_or(std::int64_t{-1}),
                          kWorkspaceSnapshotSchemaVersion);
     for (std::string_view other : {"borealis.json", "windows.json"}) {
-        AURORA_TEST_CHECK_NE(std::string{file.filename()}, std::string{other});
+        // path::string_type 在 Win32 腿是 wstring ⇒ 直接 `std::string{path}` 编不过（GCC 腿的
+        // string_type 恰是 std::string 才让它一直绿）；两侧都取 native 窄串再比。
+        AURORA_TEST_CHECK_NE(file.filename().string(), std::string(other));
     }
     // 装配层走的是默认绑定：落点须是配置目录那一层（与另两枚同层、不含应用子目录）。
     WorkspaceStore at_default{};

@@ -578,8 +578,14 @@ AURORA_TEST_CASE(the_directory_leg_hands_the_picked_path_to_the_assembly) {
     AURORA_TEST_CHECK(probe.add_dir_calls[0] == "/srv/keys");
 
     // 钩子置空＝取消（或平台起不来）：整条不跑且不留痕。
+    // Win32 腿在钩子为空时会去弹真选择器（POSIX 自绘腿没有 Application 上下文即 WARN 回空，
+    // 所以这条在 GCC 腿一直绿）⇒ 本段必须同时把 `interactive` 关掉，否则 MSVC 上整套挂在
+    // 一个等不到人的系统对话框里（2026-10-26 首次 Win32 腿实测）。
     aurora::file_dialog::headless_folder_result.clear();
+    const bool interactive_before = aurora::file_dialog::interactive;
+    aurora::file_dialog::interactive = false;
     h.click(add_spot);
+    aurora::file_dialog::interactive = interactive_before;
     AURORA_TEST_CHECK_EQ(probe.add_dir_calls.size(), 1U);
     aurora::file_dialog::headless_folder_result.clear();
 }

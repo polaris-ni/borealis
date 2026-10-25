@@ -96,7 +96,10 @@ AURORA_TEST_CASE(dial_refused_retries_then_fails) {
                         policy);
     tunnel.start(recorder);
 
-    const auto reached = wait_until([&] { return tunnel.state() == TunnelState::Failed; }, 5000);
+    // 预算 60 s 而非 5 s：Win32 腿上这一次拨号的 connect 走 libssh 的 10 s 超时（本机 2026-10-26
+    // 实测三条 ERR 各隔 10 s：01:58:03 / :13 / :23），max_attempts=3 整条链约 30 s；5 s 预算在
+    // MSVC 腿永远等不到终态。POSIX 腿是毫秒级拒连，预算放大只抬高上限、不改判据。
+    const auto reached = wait_until([&] { return tunnel.state() == TunnelState::Failed; }, 60000);
     AURORA_TEST_CHECK_TRUE(reached);
     AURORA_TEST_CHECK_TRUE(recorder.saw_dial_failed_terminal());
 

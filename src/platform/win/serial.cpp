@@ -161,7 +161,7 @@ class WinSerialPort final : public SerialPort {
         if (out.empty()) {
             return SerialRead{SerialReadOutcome::Timeout, 0};
         }
-        const auto deadline = steady_clock::now() + std::milliseconds(timeout_ms);
+        const auto deadline = steady_clock::now() + std::chrono::milliseconds(timeout_ms);
         for (;;) {
             COMSTAT status{};
             DWORD errors = 0;

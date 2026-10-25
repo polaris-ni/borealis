@@ -239,9 +239,13 @@ auto tcp_listen(const std::string &bind_address, int port) -> std::unique_ptr<Tc
         return nullptr;
     }
     SocketHandle guard{handle};
-    const BOOL reuse = TRUE;
-    ::setsockopt(guard.get(), SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&reuse),
-                 sizeof(reuse));
+    // Win32 的 SO_REUSEADDR 与 POSIX 语义不同：它允许第二个监听者绑同一端口（二活），对隧道
+    // 监听点就是静默抢流；独占语义要用 SO_EXCLUSIVEADDRUSE（2026-10-26 首次 Win32 腿实测：
+    // REUSEADDR 下二次 bind 成功，`utest_tcp_loopback` 的指名案红）。代价与 PuTTY/Win32-OpenSSH
+    // 同档：端口上若还有 TIME_WAIT 连接，重建监听要等它散尽。
+    const BOOL exclusive = TRUE;
+    ::setsockopt(guard.get(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                 reinterpret_cast<const char *>(&exclusive), sizeof(exclusive));
     if (::bind(guard.get(), reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) ==
         SOCKET_ERROR) {
         AURORA_LOG_ERROR("platform", "tcp bind failed on port: ", std::to_string(port),
@@ -269,19 +273,19 @@ auto tcp_connect(const std::string &address, int port, int timeout_ms)
         AURORA_LOG_ERROR("platform", "winsock startup failed");
         return nullptr;
     }
-    addrinfoA hints{};
+    ADDRINFOA hints{};
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
-    addrinfoA *results = nullptr;
+    ADDRINFOA *results = nullptr;
     const int code = ::getaddrinfo(address.c_str(), std::to_string(port).c_str(), &hints,
                                    &results);
     if (code != 0 || results == nullptr) {
         AURORA_LOG_ERROR("platform", "tcp resolve failed for: ", address);
         return nullptr;
     }
-    std::unique_ptr<addrinfoA, decltype(&::freeaddrinfo)> list{results, &::freeaddrinfo};
+    std::unique_ptr<ADDRINFOA, decltype(&::freeaddrinfo)> list{results, &::freeaddrinfo};
 
-    for (addrinfoA *item = list.get(); item != nullptr; item = item->ai_next) {
+    for (ADDRINFOA *item = list.get(); item != nullptr; item = item->ai_next) {
         SOCKET handle = ::socket(item->ai_family, item->ai_socktype, item->ai_protocol);
         if (handle == INVALID_SOCKET) {
             continue;
@@ -289,7 +293,7 @@ auto tcp_connect(const std::string &address, int port, int timeout_ms)
         SocketHandle guard{handle};
         // Winsock 默认阻塞：超时 connect 需显式非阻塞进出（WSAEWOULDBLOCK 只
         // 会在非阻塞套接字上出现）。
-        const u_long nonblocking = 1;
+        u_long nonblocking = 1;
         ::ioctlsocket(guard.get(), FIONBIO, &nonblocking);
         const int rc = ::connect(guard.get(), item->ai_addr, static_cast<int>(item->ai_addrlen));
         if (rc != 0 && ::WSAGetLastError() != WSAEWOULDBLOCK) {
@@ -308,7 +312,7 @@ auto tcp_connect(const std::string &address, int port, int timeout_ms)
                 continue;
             }
         }
-        const u_long blocking = 0;
+        u_long blocking = 0;
         ::ioctlsocket(guard.get(), FIONBIO, &blocking);
         return std::make_unique<WinTcpStream>(std::move(guard));
     }

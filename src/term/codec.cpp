@@ -39,7 +39,10 @@ constexpr std::size_t kOutputChunk = 4096;
 ///
 /// 刻意不给 iconv 的别名集合兜底：实测 glibc 认 `CP437` 而**不认** `Latin-1`，libiconv 的
 /// 别名面与之又不尽相同，故本表取两边都认的名字（`BIG5` / `IBM437` / `ISO-8859-1`）。
-/// Windows 腿这几个名字的可用性尚未实测（沙箱无 MSVC），届时以构建与运行复验出账。
+/// `GBK` 一档取 `CP936` 而非 `GBK`：libiconv 的 `GBK` 把 0x80 判 EILSEQ（我们的解码腿落
+/// U+FFFD），而 `CP936` 按微软代码页把它折成 U+20AC——Windows 腿 2026-10-26 实测（ctypes 直调
+/// `iconv-2.dll`：GBK 返回 -1／0 字节，CP936 返回 e2 82 ac）。glibc 侧 `CP936` 是 `GBK` 的
+/// 别名，两腿因此同一档语义，夹具 `gbk_euro` 两腿同过。
 struct EncodingAlias {
     std::string_view config_name;
     std::string_view iconv_name;
@@ -48,7 +51,7 @@ struct EncodingAlias {
 constexpr std::array<EncodingAlias, 6> kAliases{
     EncodingAlias{"UTF-8", "UTF-8"},
     EncodingAlias{"GB18030", "GB18030"},
-    EncodingAlias{"GBK", "GBK"},
+    EncodingAlias{"GBK", "CP936"},
     EncodingAlias{"Big5", "BIG5"},
     EncodingAlias{"Latin-1", "ISO-8859-1"},
     EncodingAlias{"CP437", "IBM437"},

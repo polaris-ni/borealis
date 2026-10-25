@@ -196,6 +196,11 @@ target_compile_definitions(borealis_core PRIVATE BOREALIS_VERSION="${PROJECT_VER
 add_executable(borealis main.cpp)
 
 aurora_setup_consumer_target(borealis "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+# main.cpp 是一枚六千行量级的装配 TU，MSVC 的对象文件分节数会越过 COFF 上限
+# （fatal error C1128）⇒ 只有这条腿需要 /bigobj；GCC 腿没有同类门槛。
+if(MSVC)
+    target_compile_options(borealis PRIVATE /bigobj)
+endif()
 # 同 borealis_core：main 直引 conn/ssh_connection.h 等私有头装配 SSH 腿。
 target_include_directories(borealis PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(borealis PRIVATE borealis_core)

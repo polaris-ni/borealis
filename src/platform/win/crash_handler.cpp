@@ -75,8 +75,10 @@ LONG WINAPI on_unhandled_exception(EXCEPTION_POINTERS *info) noexcept {
         path[position++] = *suffix;
     }
 
-    const HANDLE handle = ::CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
-                                        FILE_ATTRIBUTE_NORMAL, nullptr);
+    // HANDLE 本身是 void*，`const HANDLE` 只会把指针置为常量 ⇒ `&handle` 成 `void* const*`，
+    // 无法交给 `emit_crash_report` 的 `void*` 形参（Win32 腿首次编译即撞上）。此处必须留可变值。
+    HANDLE handle = ::CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
+                                 FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle != INVALID_HANDLE_VALUE) {
         const DWORD code = info == nullptr ? 0U : info->ExceptionRecord->ExceptionCode;
         const diag::CrashFactsSnapshot facts =

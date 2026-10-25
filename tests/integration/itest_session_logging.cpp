@@ -286,7 +286,8 @@ AURORA_TEST_CASE(the_first_file_is_owner_only_and_a_reopen_appends_instead_of_tr
 #endif
 
 AURORA_TEST_CASE(a_write_failure_disables_logging_and_the_notice_reaches_the_main_thread) {
-    // 造法同 utest 那一则：把文件摘掉，越限那次「读后半」必然失败。
+    // 造法同 utest 那一则：把文件置成只读，越限那次「重开截断」必然失败（Win32 腿摘不掉
+    // 已打开的落盘件，见 utest 那一处的实测注）。
     // 这里多证一段接线：禁用发生在读线程那一侧，而提示由主线程在帧边界经 `take_logging_notice` 取走。
     auto fixture = make_fixture();
     LogSpec spec = plain_spec("broken.log");
@@ -295,7 +296,9 @@ AURORA_TEST_CASE(a_write_failure_disables_logging_and_the_notice_reaches_the_mai
     AURORA_TEST_CHECK_EQ(static_cast<int>(fixture.session->enable_logging(std::move(spec))),
                          static_cast<int>(LogOutcome::Started));
     std::error_code ec;
-    std::filesystem::remove(path, ec);
+    std::filesystem::permissions(path, std::filesystem::perms::owner_read,
+                                 std::filesystem::perm_options::replace, ec);
+    AURORA_TEST_REQUIRE_MSG(!ec, "could not make the log read-only");
 
     for (int index = 0; index < 20; ++index) {
         fixture.connection->deliver(std::string("line-") + std::to_string(index) + "\r\n");

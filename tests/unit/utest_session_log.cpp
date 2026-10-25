@@ -333,12 +333,17 @@ AURORA_TEST_CASE(under_the_limit_the_file_is_byte_for_byte_stable) {
 }
 
 AURORA_TEST_CASE(write_failure_disables_logging_and_arms_a_one_shot_notice) {
-    // 造法：把文件从目录里摘掉，越限时那次「读后半」必然失败 ⇒ 走 fail_and_disable 那条腿。
+    // 造法：把文件置成只读，越限时那次「重开截断」必然失败 ⇒ 走 fail_and_disable 那条腿。
+    // 不用 remove：Win32 腿的落盘句柄没共享删除权，摘不掉文件会让这条腿静默空转（2026-10-26
+    // 首次 Win32 腿实测）；只读则两腿同效——POSIX 得 EACCES，Win32 得 FILE_ATTRIBUTE_READONLY。
     // 写失败之后不再拖该会话的读线程（D5① 的代价面之一），提示每个落盘件只上弦一次（照 F7 同形）。
     SessionLog log{make_spec("broken.log", 40U, false)};
     AURORA_TEST_REQUIRE_TRUE(log.is_open());
     std::error_code ec;
-    std::filesystem::remove(std::filesystem::path{log_path("broken.log")}, ec);
+    std::filesystem::permissions(std::filesystem::path{log_path("broken.log")},
+                                 std::filesystem::perms::owner_read,
+                                 std::filesystem::perm_options::replace, ec);
+    AURORA_TEST_REQUIRE_MSG(!ec, "could not make the log read-only");
 
     for (int index = 0; index < 20; ++index) {
         feed(log, std::string("line-") + std::to_string(index) + "\r\n");
