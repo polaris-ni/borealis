@@ -80,6 +80,15 @@ auto Session::close() -> void {
     connection_->close();
     // 连接侧 join 了读线程之后才停笔：反过来会让「末段 flush」与仍在途的一轮 append 抢同一把
     // io_mutex_，而末段完整性正是 `SPEC.FEAT.CONN.11` 要的那条判据（标签关闭 ⇒ 末段已落盘）。
+    // 清腿同样排在 join 之后：join 返回前读线程投出的末路边沿（`on_closed` 那一记唤醒，
+    // `SPEC.FEAT.WS.05` dead-session 浮层要的那一眼）必须还叫得醒主线程；join 返回后再没有合法
+    // 调用者，此后本会话永不点亮帧——「close ⇒ 唤醒腿静默」让装配层先 close 再离手的残留档
+    // （重启的 `retired`、回滚归还那一条）结构性不持任何闭包（`SPEC.FEAT.WS.03` 唤醒腿判据，
+    // 证人 `utest_session`）。
+    {
+        const std::lock_guard lock{mutex_};
+        frame_wake_ = {};
+    }
     disable_logging();
 }
 

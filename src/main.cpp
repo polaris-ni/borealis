@@ -1360,10 +1360,10 @@ auto main(int argc, char **argv) -> int {
                                borealis::term::LineEnding line_ending)
         -> std::shared_ptr<borealis::ui::TerminalView> {
         // 按属主窗取 surface：读的是 `WorkspaceWindow::surface` 这一枚成员指针，窗登记进宿主之后它
-        // 仍有效（窗口本体归宿主，surface 归窗口）。拆窗时这一腿要停发——那半区归关窗撤账链（批 4-B
-        // 的 ①②：本窗名下全部标签先走 `perform_close`，会话随账目一起散，此后没有还能触到这一腿的读线程）。
-        // TODO(SPEC.FEAT.WS.03): 残留档＝会话被装配层的中间态留档（重启的 `retired`、回滚那一条）持着时，
-        // 唤醒腿仍捕本 `WorkspaceWindow &`；此刻它只可能指着还活着的那一扇，但这一条没有证人（裁决 7.83）。
+        // 仍有效（窗口本体归宿主，surface 归窗口）。拆窗时这一腿的停发有**两层**担保：装配侧关窗
+        // 撤账链先逐格 close 会话（连接侧 join 读线程）才 erase 窗；会话侧 `Session::close()` 在
+        // join 返回后清空本腿——先 close 再离手的残留档（重启的 `retired`、回滚归还那一条）自此
+        // 不持任何闭包，悬垂一类被结构性关死（判据证人 `utest_session`，`SPEC.FEAT.WS.03`）。
         session->set_frame_wake([&window]() -> void {
             if (window.surface != nullptr) {
                 window.surface->request_wake();

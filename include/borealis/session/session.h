@@ -95,6 +95,11 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     auto start() -> void;
 
     /// @brief 主动结束连接，之后不再接收回调（关闭标签、退出会话）。
+    ///
+    /// 唤醒腿随关静默：连接侧 join 返回后本层清空注入的句柄，此后 `resize`、重连进度一类
+    /// 路径都不再点亮帧——先 close 再离手的会话（装配层残留档那条）因此不持任何闭包
+    /// （`SPEC.FEAT.WS.03`）。join 返回前沿读线程投出的末路 `on_closed` 唤醒仍可达，
+    /// dead-session 浮层那一眼不被这道清腿吃掉。
     auto close() -> void;
 
     /// @brief 注入帧唤醒句柄：本次确有网格提交入队后、在锁外调用一次（架构 §3.2）。
@@ -102,7 +107,8 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// 读线程由连接回调驱动，而排帧在主线程，故「唤醒主线程」这个跨线程动作必须由装配层交进来
     /// ——它调的是什么（`Surface::request_wake` 一类）本层不知道，也不该知道。一轮批量输入只唤醒
     /// 一次，不按提交条数唤醒；一轮既没有提交、也没有 `OSC 133` 块表变化就不唤醒（后者是
-    /// 「`D` 标记不动网格」那条的唯一出口，见文件头注）。
+    /// 「`D` 标记不动网格」那条的唯一出口，见文件头注）。注入的句柄只活到本会话 `close()`：
+    /// join 返回即被清空，重新注入才有下一段（见 `close()` 注）。
     /// @param wake 唤醒动作，须线程安全且不得阻塞（它在读线程上被调用）。
     auto set_frame_wake(std::function<void()> wake) -> void;
 

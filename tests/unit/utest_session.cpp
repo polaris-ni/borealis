@@ -6,7 +6,8 @@
 ///           未武装即没有环）、OSC 消费产物
 ///           的会话侧取值（标题 / 工作目录 / 超链接 / 剪贴板待写合并 / 命令块快照）、帧唤醒句柄的
 ///           注入与唤醒时机（含「连接生死那一次唤醒独立于批量输入有没有产出提交」这一条
-///           `SPEC.FEAT.WS.05` 的例外，与「块表变化也唤醒」），以及对端退出时的解码收尾与非法字节替换
+///           `SPEC.FEAT.WS.05` 的例外，与「块表变化也唤醒」，以及 `SPEC.FEAT.WS.03` 唤醒腿
+///           判据「close ⇒ join 返回后永久静默、join 返回前的末路边沿仍可达」），以及对端退出时的解码收尾与非法字节替换
 ///           （SPEC.FEAT.TERM.01 查询响应、SPEC.FEAT.TERM.07 OSC 消费、
 ///           SPEC.FEAT.INTEG.01 命令块来源、
 ///           SPEC.FEAT.TERM.09 双向编码、SPEC.FEAT.CONN.05 发送行尾折算与十六进制视图采集、
@@ -16,6 +17,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -73,7 +75,16 @@ class FakeConnection final : public Connection {
 
     auto resize(Size size) -> void override { resizes.push_back(size); }
 
-    auto close() -> void override { alive_ = false; }
+    auto close() -> void override {
+        alive_ = false;
+        // 一次性钩子先取后落再调：模拟真读线程在 close 内、join 返回前投出的末路边沿；析构
+        // 那第二跳 `~Session` 也会 close 一次，自废保证不再回调半死的会话对象。
+        if (on_close) {
+            const std::function<void()> last{std::move(on_close)};
+            on_close = nullptr;
+            last();
+        }
+    }
 
     [[nodiscard]] auto alive() const noexcept -> bool override { return alive_; }
 
@@ -93,6 +104,7 @@ class FakeConnection final : public Connection {
 
     std::vector<std::byte> written;   ///< 会话下发的字节（含状态机应答）。
     std::vector<Size> resizes;        ///< 会话下发的尺寸。
+    std::function<void()> on_close{}; ///< close 内、置死之前的一次性钩子（末路边沿用例用）。
 
   private:
     [[nodiscard]] static auto to_bytes(std::string_view text) -> std::vector<std::byte> {
@@ -732,6 +744,39 @@ AURORA_TEST_CASE(replacing_the_wake_handle_takes_effect_immediately) {
     fixture.connection->deliver("ab");
     AURORA_TEST_CHECK_EQ(first, 0);
     AURORA_TEST_CHECK_EQ(second, 1);  // 注入式接缝：装配换句柄不需要重启会话
+}
+
+AURORA_TEST_CASE(close_silences_the_frame_wake_leg_afterwards) {
+    // `SPEC.FEAT.WS.03` 唤醒腿随关静默：装配层残留档（重启的 `retired`、回滚归还那一条）都
+    // 先 close 再离手，close 返回后这条腿必须永不再点亮帧。
+    auto fixture = make_session();
+    int wakes = 0;
+    fixture.session->set_frame_wake([&wakes]() { ++wakes; });
+    fixture.connection->deliver("ab");
+    AURORA_TEST_CHECK_EQ(wakes, 1);  // 关之前腿是活的
+
+    fixture.session->close();
+    fixture.session->resize(Size{12, 4});        // 主线程侧唯一还能点火的通路（脏照排、帧不叫）
+    fixture.connection->deliver_closed();        // 迟到的末路边沿：真产品 join 后不会发生，替身
+                                                 // 直调以钉死「清腿」而非「连接已死」判的正是它
+    AURORA_TEST_CHECK_EQ(wakes, 1);
+    AURORA_TEST_CHECK_TRUE(fixture.session->has_damage());  // 清腿只停叫醒，不吞已排的脏
+}
+
+AURORA_TEST_CASE(the_last_wake_inside_close_still_gets_through) {
+    // 清腿排在 join **之后**：连接关断过程中读线程投出的末路 `on_closed`（`SPEC.FEAT.WS.05`
+    // dead-session 浮层要的那一眼）仍须叫得醒主线程。排在之前就会把这一记吞掉。
+    auto fixture = make_session();
+    int wakes = 0;
+    fixture.session->set_frame_wake([&wakes]() { ++wakes; });
+    fixture.connection->on_close = [connection = fixture.connection]() {
+        connection->deliver_closed();  // join 返回前的最后一记边沿
+    };
+
+    fixture.session->close();
+    AURORA_TEST_CHECK_EQ(wakes, 1);    // 末路唤醒赶上了清腿前的班车
+    fixture.session->resize(Size{12, 4});
+    AURORA_TEST_CHECK_EQ(wakes, 1);    // 此后同一条腿彻底沉默
 }
 
 AURORA_TEST_CASE(bell_flag_survives_the_drain_and_is_taken_once) {
