@@ -337,8 +337,8 @@ auto monitor_row_window(const std::vector<session::RawRun> &runs, const MonitorR
                        std::span<const std::byte> bytes) -> bool {
         const bool in_window = index >= first_row && rows.size() < max_rows;
         if (text_view && !in_window) {
-            // 窗口之前的字节仍要过一遍解码器：多字节序列可能被 96 字节的预算切在行界上，跳过那几行
-            // 就等于让窗口首行少半个字（稿 D31 认下的那条成本，hex 档没有它）。
+            // 窗口之前的字节仍要过一遍解码器：多字节序列可能被字节预算切在行界上，跳过那几行就等于
+            // 让窗口首行少半个字（稿 D31 认下的那条成本，hex 档没有它）。
             decoder->feed(bytes, discard_sink);
         }
         if (in_window) {

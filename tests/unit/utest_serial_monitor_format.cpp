@@ -446,29 +446,45 @@ AURORA_TEST_CASE(text_view_breaks_lines_on_the_same_four_rules) {
     AURORA_TEST_CHECK_EQ(ui::row_text(rows[2]), "RX  Cdef");  // 跨 run 的那一段仍是一行
 }
 
-AURORA_TEST_CASE(text_view_chunks_on_ninety_six_bytes_and_keeps_the_rows_head_run) {
-    // 文本档不吃 `bytes_per_row`：预算恒为 `kMonitorTextRowBytes`（稿 D27①）。一条 200 字节的设备行
-    // 拆成 96 + 96 + 10，三个分格行都沿用**这条设备行行首**那条 run 的方向与时刻（D6①：续行不另取，
-    // 跨 run 也一样）——只有真正的行尾才让下一格换一份头。
-    const auto runs = std::vector{run(session::RawDirection::Transmitted, local_epoch_ms(1, 2, 3, 4),
-                                      std::string(100U, 'a')),
-                                  run(session::RawDirection::Received, local_epoch_ms(1, 2, 6, 0),
-                                      std::string(100U, 'b') + "\r\n"),
-                                  run(session::RawDirection::Received, local_epoch_ms(1, 2, 9, 0), "Z")};
+AURORA_TEST_CASE(text_view_chunks_on_the_byte_budget_and_keeps_the_rows_head_run) {
+    // 文本档不吃 `bytes_per_row`：预算恒为 `kMonitorTextRowBytes`（稿 D27①）。一条整四格的设备行拆成
+    // 四个分格行，它们都沿用**这条设备行行首**那条 run 的方向与时刻（D6①：续行不另取，跨 run 也一样）
+    // ——只有真正的行尾才让下一格换一份头；行尾那两个字节本身不上屏（D29）。
+    const auto budget = ui::kMonitorTextRowBytes;
+    const auto runs = std::vector{
+        run(session::RawDirection::Transmitted, local_epoch_ms(1, 2, 3, 4), std::string(2U * budget + 4U, 'a')),
+        run(session::RawDirection::Received, local_epoch_ms(1, 2, 6, 0),
+            std::string(2U * budget - 6U, 'b') + "\r\n"),
+        run(session::RawDirection::Received, local_epoch_ms(1, 2, 9, 0), "Z")};
     const auto options = ui::MonitorRowOptions{.bytes_per_row = 8U, .view = ui::MonitorView::Text};
     const auto rows = ui::monitor_rows(runs, options);
-    AURORA_TEST_REQUIRE_EQ(rows.size(), 4U);
-    AURORA_TEST_CHECK_EQ(rows[0].dump.size(), 2U + ui::kMonitorTextRowBytes);
-    AURORA_TEST_CHECK_EQ(rows[1].dump.size(), 2U + ui::kMonitorTextRowBytes);
-    // 尾格只有 8 个 `b`：那条 CRLF 是断点，不占文本面的一格（稿 D29）。
-    AURORA_TEST_CHECK_EQ(rows[2].dump.size(), 2U + 8U);
-    AURORA_TEST_CHECK_EQ(rows[3].dump, "  Z");
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 5U);
     for (std::size_t index = 0U; index < 3U; ++index) {
+        AURORA_TEST_CHECK_EQ(rows[index].dump.size(), 2U + budget);
         AURORA_TEST_CHECK_EQ(rows[index].direction_label, "TX");
         AURORA_TEST_CHECK_EQ(rows[index].timestamp_prefix, "[01:02:03.004] ");
     }
-    AURORA_TEST_CHECK_EQ(rows[3].direction_label, "RX");
-    AURORA_TEST_CHECK_EQ(rows[3].timestamp_prefix, "[01:02:09.000] ");
+    AURORA_TEST_CHECK_EQ(rows[3].dump.size(), 2U + budget - 2U);  // 末格少了那条 CRLF 的两个字节
+    AURORA_TEST_CHECK_EQ(rows[3].direction_label, "TX");          // 行首在 run1：整条设备行同一份头
+    AURORA_TEST_CHECK_EQ(rows[4].dump, "  Z");
+    AURORA_TEST_CHECK_EQ(rows[4].direction_label, "RX");
+    AURORA_TEST_CHECK_EQ(rows[4].timestamp_prefix, "[01:02:09.000] ");
+}
+
+AURORA_TEST_CASE(the_text_budget_is_the_card_width_left_after_the_row_head) {
+    // 行不越卡宽是这条判据的全部内容：`LazyList` 的固定行高几何（D15①）容不下换行，越界不是截一行
+    // 而是整屏错位。界＝(640 − 2×12) dp ÷ 11 dp（F8）＝56 格，减去前缀 15 与方向 2 与两空格 2＝19 格；
+    // 上限 37 但取 36——留一格余量，理由在常量头注（满格行是常态，次像素进位就在最右截掉一格）。
+    // 取**字节**数为界是安全上界：这几条腿每字节的显示宽度都不超过一格（GBK／Big5 两字节一个宽字符＝
+    // 两格，UTF-8 三字节一个宽字符＝两格），故文本段恒 ≤ 预算格数。
+    constexpr std::size_t kCardCells = (640U - 2U * 12U) / 11U;
+    AURORA_TEST_CHECK_TRUE(ui::kMonitorTextRowBytes + 15U + 2U + 2U <= kCardCells);
+    // 满格行还剩至少一格余量（不是贴着界走），这一句才是「次像素进位不截字」的那道保险。
+    AURORA_TEST_CHECK_TRUE(ui::kMonitorTextRowBytes + 15U + 2U + 2U + 1U <= kCardCells);
+    // 十六进制档那一行 54 字符（稿 §2 的算术）也在同一道界内——两档共用一块卡面，不该一档溢出。
+    AURORA_TEST_CHECK_TRUE(15U + 2U + 2U + (ui::kMonitorBytesPerRow * 3U - 1U) + 2U +
+                                       (ui::kMonitorBytesPerRow + 2U) <=
+                           kCardCells);
 }
 
 AURORA_TEST_CASE(text_view_folds_control_code_points_to_a_dot_but_keeps_the_replacement) {
@@ -491,12 +507,14 @@ AURORA_TEST_CASE(text_view_decodes_a_non_utf8_leg) {
 }
 
 AURORA_TEST_CASE(a_multibyte_sequence_cut_on_the_budget_boundary_is_not_emitted_early) {
-    // 96 字节的预算可以切在任何一处，包括一个多字节序列中间。解码器的状态跨行保留，故前一行**不**产出
+    // 字节预算可以切在任何一处，包括一个多字节序列中间。解码器的状态跨行保留，故前一行**不**产出
     // 半个字（那会是一屏莫名其妙的替换字符），后一行拿到整字（稿 D27① 的代价面）。
-    const auto runs = std::vector{received(std::string(95U, 'a') + "\xE4"), received("\xB8\xADx")};
+    const auto budget = ui::kMonitorTextRowBytes;
+    const auto runs = std::vector{received(std::string(budget - 1U, 'a') + "\xE4"),
+                                  received("\xB8\xADx")};
     const auto rows = ui::monitor_rows(runs, text_options());
     AURORA_TEST_REQUIRE_EQ(rows.size(), 2U);
-    AURORA_TEST_CHECK_EQ(rows[0].dump, "  " + std::string(95U, 'a'));
+    AURORA_TEST_CHECK_EQ(rows[0].dump, "  " + std::string(budget - 1U, 'a'));
     AURORA_TEST_CHECK_EQ(rows[1].dump, "  \xE4\xB8\xADx");
 }
 
@@ -517,13 +535,17 @@ AURORA_TEST_CASE(the_row_count_needs_no_decoding_and_matches_the_fold_in_text_vi
     const auto runs = std::vector{received("OK\r\n"), received(std::string(200U, 'x') + "\r\n"),
                                   run(session::RawDirection::Transmitted, 0, "AT")};
     const auto gb = text_options("GB18030");
-    AURORA_TEST_REQUIRE_EQ(ui::monitor_row_count(runs, gb), 5U);
+    // 期望行数写成预算的表达式而不是字面量：行段的预算**含行尾字节**，故一条「200 字 + CRLF」
+    // 占 ⌈202/预算⌉ 段，前后各一段（`OK\r\n` 一段、无行尾的末段 `AT` 一段）。
+    const auto budget = ui::kMonitorTextRowBytes;
+    const auto expected_rows = 1U + (202U + budget - 1U) / budget + 1U;
+    AURORA_TEST_REQUIRE_EQ(ui::monitor_row_count(runs, gb), expected_rows);
     AURORA_TEST_CHECK_EQ(ui::monitor_row_count(runs, gb), ui::monitor_rows(runs, gb).size());
-    AURORA_TEST_CHECK_EQ(ui::monitor_row_window(runs, gb, 0U, 999U).size(), 5U);
+    AURORA_TEST_CHECK_EQ(ui::monitor_row_window(runs, gb, 0U, 999U).size(), expected_rows);
     AURORA_TEST_CHECK_EQ(ui::monitor_row_count(runs, gb), ui::monitor_row_count(runs, text_options()));
     // 窗口切片同样落在同一套行号上（面板的 `LazyList` 总行数就靠这条恒等式）。
     AURORA_TEST_CHECK_EQ(ui::monitor_row_window(runs, gb, 1U, 2U).size(), 2U);
-    AURORA_TEST_CHECK_TRUE(ui::monitor_row_window(runs, gb, 5U, 2U).empty());
+    AURORA_TEST_CHECK_TRUE(ui::monitor_row_window(runs, gb, expected_rows, 2U).empty());
 }
 
 AURORA_TEST_CASE(the_dump_follows_the_current_view_mode) {
