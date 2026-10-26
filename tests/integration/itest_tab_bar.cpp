@@ -18,6 +18,8 @@
 ///           照旧走差分而不是比色（稿 **7.129** 的 D4／D5／D7 与 §2 判据 ②～⑤）：未登记类型 ⇒ 左槽
 ///           单一底色（不画也不占位）、登记 ⇒ 栏位宽恰 +18 dp（锚＝右上那颗 BEL 的落位）、图标与三枚
 ///           角标四带互不相交、逐格类型改动不牵连邻格、四型四帧两两不同。
+///           本棒（`SPEC.FEAT.PREF.01`）再追加一条**色板证人**：同一棵标签栏在暗、亮两档各出一帧，
+///           栏底逐档等于 `chrome_palette()` 的 `card_bg`，且切回暗档逐位复现首帧（换肤可逆）。
 ///           像素一律比 RGBA 四通道含 alpha（与 `itest_render_viewport` 同一条口径：Headless 帧底色是
 ///           全透明黑，只比 RGB 会把「画了个纯黑」与「什么都没画」混为一谈）。
 ///           角标的**色值**不在这里断：那三档颜色是本棒拍的实现细节（裁决 7.91③），真机目视才判得出
@@ -42,6 +44,7 @@
 #include "framework/aurora_test.h"
 // 私有头（裁决 D1①：类声明含框架类型，故不进 `include/borealis/`），按相对路径取用，
 // 而不给整个测试目标开 `src/` 含目录。
+#include "../../src/ui/settings_panel.h"  // PREF.01：活动档与唯一色值表（标签栏底取它的 card_bg）
 #include "../../src/ui/tab_bar.h"
 
 namespace borealis::test_cases::itest_tab_bar {
@@ -352,6 +355,52 @@ class Harness {
 #endif
 
 }  // namespace
+
+AURORA_TEST_CASE(the_bar_background_follows_the_active_chrome_scheme) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // PREF.01 稿 §4 的像素证人：同一棵标签栏在暗档与亮档各出一帧，栏底逐档等于唯一色值表里
+    // 「标签栏底」那一格（`card_bg`；稿 §4 原文写的 `window_bg` 与 §1 表和 D6 冲突，以表和 D6 为准）。
+    // 再切回暗档出一帧，须与首帧逐位相同——换肤在绘制侧读的是活动档这个状态量，而不是把一次改色
+    // 记进控件。
+    struct Restore {
+        borealis::ui::ChromeScheme saved = borealis::ui::chrome_scheme();
+        ~Restore() { borealis::ui::set_chrome_scheme(saved); }
+    } restore;
+
+    borealis::ui::set_chrome_scheme(borealis::ui::ChromeScheme::Dark);
+    Harness dark;
+    const Frame dark_frame = dark.pixels();
+    borealis::ui::set_chrome_scheme(borealis::ui::ChromeScheme::Light);
+    Harness light;
+    const Frame light_frame = light.pixels();
+
+    // 单格标签最宽 240 dp，x=600 落在栏位之外的空白栏底；y=8 避开选中格的 2 dp 下划线（y 40..41）。
+    const auto bar_pixel = [](const Frame &frame) -> std::array<std::uint8_t, 4U> {
+        const std::size_t index = (8U * static_cast<std::size_t>(kWindowWidth) + 600U) * 4U;
+        return {frame[index], frame[index + 1U], frame[index + 2U], frame[index + 3U]};
+    };
+    const auto expected = [](const au::Color &color) -> std::array<std::uint8_t, 4U> {
+        return {color.r, color.g, color.b, color.a};
+    };
+    const au::Color dark_bg = borealis::ui::chrome_palette(borealis::ui::ChromeScheme::Dark).card_bg;
+    const au::Color light_bg = borealis::ui::chrome_palette(borealis::ui::ChromeScheme::Light).card_bg;
+    // 反空转前提：两档栏底真不同，否则下面两句在「读到的其实是同一块」时也会绿。
+    AURORA_TEST_CHECK_MSG(!(dark_bg.r == light_bg.r && dark_bg.g == light_bg.g && dark_bg.b == light_bg.b),
+                          "the two palettes share one bar background");
+    AURORA_TEST_CHECK_MSG(bar_pixel(dark_frame) == expected(dark_bg),
+                          "the dark bar bottom is not the dark card_bg");
+    AURORA_TEST_CHECK_MSG(bar_pixel(light_frame) == expected(light_bg),
+                          "the light bar bottom is not the light card_bg");
+    AURORA_TEST_CHECK_MSG(dark_frame != light_frame, "switching the scheme changed nothing on screen");
+
+    borealis::ui::set_chrome_scheme(borealis::ui::ChromeScheme::Dark);
+    Harness back;
+    AURORA_TEST_CHECK_MSG(back.pixels() == dark_frame,
+                          "switching back to dark did not reproduce the first frame");
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
 
 AURORA_TEST_CASE(the_exit_badge_reaches_the_screen_without_the_window_being_resized) {
 #ifdef AURORA_BACKEND_HEADLESS
