@@ -932,22 +932,29 @@ Serial Port Monitor 每次 read 一段；两者都是**按读块成段**而不�
 -- RX 4 B --
 [10:23:42.314] RX  2B 57 44 54 3A 20 31 0D                    |+WDT: 1.|
 [10:23:42.314] RX  0A                                         |.|
--- RX 10 B (+812 ms) --
+-- RX 9 B (+812 ms) --
 [10:23:42.315] TX  41 54 0D                                   |AT.|
 ```
 
+> 稿面先写的是 `-- RX 10 B --`，批 A 落地实测改口为 **9 B**：那一批是 `+WDT: 1\r\n`＝**9** 个字节，折出的两行
+> 内容是前 8 字节与末尾那个 `0A`（`2B 57 44 54 3A 20 31 0D` 数得出来是 8 格，稿面那句把 8+1 报成了 10）。
+> 分隔行报的是**这一批**的字节数，不是这一屏的行数——判据住在 `utest_session_monitor_format` 的
+> `a_run_that_ends_on_a_line_break_is_followed_by_its_separator`。
+
 ### 13.4 判据面
 
-- `utest_session_monitor_format`（既有 31 案 ⇒ 预计 **37 案**）：边界档关掉时**逐字符与今天相同**（这是 F25 那条
+- `utest_session_monitor_format`（既有 31 案 ⇒ 落地 **39 案**，批 A +8；稿面先写的是「预计 37 案」，§13.8 按实数认账）：边界档关掉时**逐字符与今天相同**（这是 F25 那条
   假绿教训的正面判据：同一份料、两档行数必然不等，且关掉就是原样）；自然行界处插一行、行中到达不插（F23 那一例
   15+3 字节给出一条完整设备行 + 一条分隔行，不是两条）；同向连续两 run 各一条（D45②）；Δ 毫秒三档（有前批／
   同毫秒 `+0 ms`／环内第一条无 Δ）；`clear()` 后首条无 Δ（D48①）；`monitor_row_count()` 与 `monitor_rows()`
   在边界档下同档相等（F24 恒等式扩展）；分隔行长度恒 ≤ 56 格（F27 的硬界，用最长方向名与最大字节数做边界值）。
-- `itest_session_monitor_panel`（既有 26 案 ⇒ 预计 **29 案**）：第四枚开关在开关行里画得出且点得动；开档后屏上
+- `itest_session_monitor_panel`（既有 26 案 ⇒ 落地 **31 案**，批 B +5、批 C 往既有腿里补两枚取色断言不加案；稿面先写的是「预计 29 案」）：第四枚开关在开关行里画得出且点得动；开档后屏上
   出现 `-- RX 4 B --` 这类行而标题行字节计数不变；关档后那类行整批消失（同一份料、只翻开关）；边界档开启时
   复制／导出交出的文本里有分隔行（D49）。
-- 装配层：第四枚 Hook 与词条（面板局部开关的短语走 `session.monitor.toggle.boundary`，两档各一枚 key，
-  551 ⇒ **553**）按源码审查＋走查担保，理由仍是裁决 7.83 那段不进 runner。
+- 装配层：**零新 Hook、零行改动**（稿面先写的是「第四枚 Hook」，批 B 落地改口——边界档换的是**行种类**，
+  料源仍是既有那七条腿交上来的同一份快照，面板自己就能判，不需要装配层再报一件事）。新增的只有面板局部
+  开关那句短语 `session.monitor.toggle.boundary`（两档各一枚 key，551 ⇒ **552**）。装配层既然未改，
+  本段的担保方式仍是源码审查＋走查，理由仍是裁决 7.83 那段不进 runner。
 
 ### 13.5 代价
 
@@ -969,3 +976,60 @@ run 条数那么多行**：256 KiB 环在最坏档（每条 8 字节 run）下�
 2. 让一条长设备行被读块切成两段（同一行分两个 read 到达）：边界档开启时它**仍是一段**，中间没有分隔行（D44① 的代价上屏）。
 3. 边界档开启后把历史翻到环头，再点复制：带出去的那份文本与屏上一致，含分隔行（D49），且窗口回看深度减半这件事
    在屏上不是悄悄发生的（行区仍然翻得到底）。
+
+### 13.8 结项读数与变异自证（2026-10-26，批 C）
+
+**读数**（Windows / MSVC 14.51 + Ninja，`build/` Debug 档）：`cmake --build build --parallel 14` 通过（含
+`src/main.cpp` 与 `Borealis.exe` 链接）；`ctest --test-dir build -E etest_ -j 14` **124/124**（112.26 s；本通道注册总数
+**128**，与 PLAN §8 那句「127/131」的差是 **Linux 通道多编的三套 POSIX-only 件**，不是用例少了）；无头 runner
+**1576 案 / 1573 绿 / 3 红**，三条红案全在 `etest_libsecret_credential_store`（Windows 无 secret-service）；门禁
+`check_display_literals.py` **PASS**（263 源文件零引号中文、两档 **552** 键对称——本期只加一枚 key）、
+`check_agents_size.py` **PASS**。案数增量按批次认账：批 A `utest_session_monitor_format` 31→**39**（+8）、批 B
+`itest_session_monitor_panel` 26→**31**（+5），合 **+13**（1563→**1576**）；批 C 只往既有那条新腿里补了两枚取色断言，
+不加案。
+
+**十一则变异**（每条注入后清 `build/**/*.ilk` 重建、跑定向 ctest、按内存里那份原文逐字节回写，并以
+`git diff --exit-code src assets` 复核为 clean）：
+
+| # | 注入点 | 缺陷形态 | 指名红案 |
+|:---|:---|:---|:---|
+| M1 | 折算件里分隔行的自然行界闸门整段取消 | 每个 run 结束都插一条 ⇒ 行中到达也在屏上说「这是两条」（D44① 被推翻） | `utest.a_device_line_split_across_runs_gets_one_separator_only_at_its_end`＋`itest` 的同名腿（2 案） |
+| M2 | `if (boundary.has_delta)` 取反 | 环内首条带 `(+0 ms)`、有前批的反而不带 Δ（D47① 的带 Δ 形态反了） | `utest` 6 案（`a_run_that_ends_on_a_line_break_is_followed_by_its_separator`／`a_separator_stays_within_the_card_width_at_its_worst_shape`／`consecutive_runs_of_the_same_direction_each_get_a_separator`／`the_delta_is_read_against_the_previous_run_in_the_ring`／`the_dump_carries_the_separators_because_the_screen_has_them`／`a_device_line_split_across_runs_...`）＋`itest` 五条边界腿（**11 案**） |
+| M3 | 计数侧的 `consume_boundary` 不再 `++count` | `monitor_row_count` 与折带窗口不等（F24 恒等式破） | `utest.the_row_count_and_the_window_slices_hold_with_separators_on`＋`itest` 五条边界腿（6 案） |
+| M4 | 窗口侧的边界消费者绕过 `index >= first_row` | 折带窗口**之前**的分隔行照样挤进窗口，屏上不是那 96 行 | `utest` 同 M3 那一案＋冻结／暂停两条腿（3 案） |
+| M5 | `make_options()` 把 `boundary_rows` 写死 `false` | 开关是个假闸：翻档什么都不换 | `itest` 五条边界腿（5 案） |
+| M6 | `on_boundary_changed()` 里去掉 `rebase_rows_ = true` | 暂停中翻档沿用旧行号、跳到另一段历史（D46① 的停更腿） | `itest.switching_the_boundary_toggle_while_paused_rebases_to_the_tail_of_this_source`（1 案，靠的正是 62 字节宽行那枚形状差） |
+| M7 | `on_boundary_changed()` 里**只**去掉 `frozen_ = false` | **全绿**——弱变异，见下面实证① | — |
+| M7b | 同一条腿整块 `if (frozen_) { ... }` 拿掉 | 冻结中翻档既不解冻也不重排，沿旧行号看另一段历史 | `itest.switching_the_boundary_toggle_while_frozen_returns_to_the_tail_of_this_source`（1 案） |
+| M8 | 头文件里 `boundary_rows_` 成员初值改 `true` | 缺省档开（D46① 那句「缺省关」） | **21 案**（既有各腿都按「今天这张脸」断言，缺省一变全线红） |
+| M9 | 边界行上色分支的条件加一枚永不成立等式（分支整段不可达） | **全绿**——当时无判据腿，见下面实证② | — |
+| M9b | 分隔行那格由 `chrome.text_dim` 换成 `chrome.text` | 分隔行与正文同色，屏上分不出哪句是边界（D47① 的上色口径） | `itest.boundary_switch_is_the_fourth_toggle_and_rewrites_the_rows`（1 案，靠的正是批 C 补进去的那两枚取色断言） |
+
+**两条「变异没红」的实证**（与 §11.7 那条「用例假绿」、§12.8 那条「等价变异」同族——三条合起来是同一句纪律的三面）：
+
+① **M7 是弱变异而不是等价变异**：同一条腿里还有 `skip_geometry_once_ = true`，下一帧 `tick()` 的
+`now_frozen = skip_geometry_once_ ? false : compute_frozen()` 会替它把冻结解掉，于是「翻档即解冻」在缺陷形态下**依然成立**。
+把它升级为整块拿掉（M7b）才第一次成为可证的回归。判据：**删一行不红不等于这行没用**——先问「同一条腿里还有谁在做这件事」，
+再决定注入点。
+② **M9 当时是无判据腿**：`kind == Boundary` 那一格只换颜色与格数，而本件的断言全在行表与派发链上，没有取色判据。批 C 补的是
+**树上那一格的取色**（`au::Text` 公有继承 `TextProps`，读到的 `text_color` 就是绘制用的那份）而**不是像素**——按坐标取像素会把
+排版改动误报成功能回归，这条与本文件头注的口径一致。补完后 M9b 恰红那一案，于是 §13.4 的落地改口是：分隔行的**显示口径**
+（整句次要色）自此有自动化证人，§13.7 第 1 条走查只需再看「好不好看」，不必再确认「有没有上色」。
+
+**性能读数**（一次性探针 `/O2 /MD`，只编折算件那一件加它的两条依赖腿；口径同四期那条探针读数——裁决 **7.164**，
+`/MDd` 那批被 debug heap 放大约 11 倍，不作数）：
+
+| 料源档 | 开档行数 off→on | `monitor_row_count` | 96 行尾窗 | 全折（复制／导出腿） |
+|:---|:---|:---|:---|:---|
+| 满环最坏档 32768 条 × 8 B | 32768 → **65536** | 1144 → 1162 µs | 1264 → 1396 µs | 14.56 → 22.48 ms |
+| 常见档 6553 条 × 41 B | 39318 → **45871** | 380 → 383 µs | 524 → 576 µs | 10.07 → 11.63 ms |
+| 小料源 200 条 × 41 B | 1200 → **1400** | 12.1 → 15.2 µs | 28.4 → 29.1 µs | 0.31 → 0.36 ms |
+
+读数口径：每帧走的是「只计数 + 折 96 行尾窗」那两条腿，最坏档合计 **2.56 ms ≪ 16.7 ms**，且只在环变化或翻档时发生
+⇒ 不触 AGENTS §4.5 第 25 条；全折与 `monitor_dump_text` 落在点击派发而非 `tick()`（三期裁决 7.162④ 同一条口径），
+最坏档那条 **+54%** 的代价发生在「按一下复制」那一下。§13.5 那句「回看深度减半」按登记在册，由 §13.7 第 3 条上屏。
+
+**本期无新增框架缺口**（G45／G46／G47／G48 在册不变：边界档全在应用侧可组合面，`RowScanner` 本来就是这一件自己的机器）。
+**装配层担保**（裁决 7.83 的反面）：六期三批（`9c42c27`／`a33f47d`／本笔）**全程 `src/main.cpp` 零改动**（D46① 落地改口的那条：零新 Hook），面板与折算件都在
+runner 内 ⇒ 本期可证面全在自动化里，缺的只有 §13.7 那三条真机走查（会话锁屏吞 `SendInput`，裁决 7.31①）⇒
+**本棒不称 CONN.05「可用」**（§4.4 第 33 条）。
