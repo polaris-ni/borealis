@@ -57,6 +57,8 @@ add_library(borealis_core STATIC
         term/width.cpp
         term/terminal.cpp
         grid/storage.cpp
+        session/bell.cpp
+        session/bell_audio.cpp
         session/clipboard_outbox.cpp
         session/damage_queue.cpp
         session/notification_outbox.cpp

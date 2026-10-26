@@ -209,8 +209,11 @@ namespace {
                                {"truncate", "wrap"},
                                ConsumerStatus::Absent,
                                EffectLevel::NextSession));
-    catalog.push_back(dropdown(
-        "terminal.bell", SettingsPage::Terminal, {"off", "visual", "audible"}, ConsumerStatus::Absent, EffectLevel::Immediate));
+    catalog.push_back(dropdown("terminal.bell",
+                               SettingsPage::Terminal,
+                               {"off", "visual", "audible"},
+                               ConsumerStatus::Wired,
+                               EffectLevel::Immediate));
     // 装载侧对编码只判类型（会话编码腿按名字建解码器，见 `term/codec.h`），下拉里的六个名字是
     // **建议项**：面板不得据此硬校验，否则「先接 GB18030 串口」这类取值在面板里存不进去。
     // 映射不到的名字回落 UTF-8 并留 WARN 痕，拼错的值不能让会话直接失明。

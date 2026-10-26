@@ -37,6 +37,7 @@
 #include "borealis/config/store.h"
 #include "borealis/config/themes.h"
 #include "borealis/diag/crash_report.h"
+#include "borealis/session/bell.h"
 #include "borealis/session/clipboard_outbox.h"
 #include "borealis/session/notification_outbox.h"
 #include "borealis/session/session.h"
@@ -68,6 +69,7 @@
 #include "config/schema_names.h"  // chrome_theme_tag：落盘名 → 解算函数的唯一读点（PREF.01）
 #include "config/shortcut_overrides.h"
 #include "config/window_geometry_store.h"
+#include "session/bell_audio.h"
 #include "config/workspace_store.h"
 #include "platform/credential_store.h"
 #include "platform/crash_handler.h"
@@ -578,6 +580,26 @@ auto main(int argc, char **argv) -> int {
     // （面板保存、快照回滚、配置导入），其余 `replace()` 调用只搬档案 / 隧道 / 密钥目录那几张表。
     auto sync_clipboard_gate = [&]() -> void {
         clipboard_gate.set_policy(settings.terminal.clipboard_read);
+    };
+    // BEL 呈现（`SPEC.FEAT.WS.04`，裁决 7.159）：策略是纯逻辑件，设备是单独的可听出口。设备按需
+    // 才建：缺省视觉档不启动音频设备线程，「只看角标」的用户不为一个不存在的铃声付启动开销。
+    // `decide` 与 `ring` 都在帧边界主线程调用，与下方角标同一条排帧纪律。
+    borealis::session::BellPolicy bell_policy;
+    std::unique_ptr<borealis::session::BellAudio> bell_audio;
+    // 起手即按落盘档预建：可听档用户的第一条 BEL 不该等设备起转（设备线程初始化要几十毫秒，
+    // 铃声会晚于角标）。建不出来（无设备 / 框架未编音频）不拦启动——`ring` 自己静默降级并只
+    // 留一条 WARN，铃声不是会话事件的失败点。
+    if (settings.terminal.bell == borealis::config::BellMode::Audible) {
+        bell_audio = std::make_unique<borealis::session::BellAudio>();
+    }
+    // 运行期从视觉档改到可听档时，首声铃在这里懒建设备；此后复用同一台。失败也不回填——下一
+    // 条 BEL 会再试一次构造，而构造只做一次设备探测，代价有界（与「投不出去不再重试」的通知腿
+    // 不同：这里的失败多半是「设备晚到」，再试是合理的）。
+    auto ring_bell = [&]() -> void {
+        if (!bell_audio) {
+            bell_audio = std::make_unique<borealis::session::BellAudio>();
+        }
+        static_cast<void>(bell_audio->ring());
     };
     // 「已记住的同域」名单（`SPEC.FEAT.INTERACT.05` 判据 4／稿 D9①）：全 app 一份，声明紧挨 `store`
     // 因而同样**几乎最后析构**——视口只持观察指针，名单本体不会先于控件消散。它与 `clipboard_gate`
@@ -4798,7 +4820,8 @@ auto main(int argc, char **argv) -> int {
                       &keys_panel, &logging_state_probe, &add_logging_command, &logging_command_shows,
                       &show_log_notice, &startup_mutex, &startup_queue, &apply_startup_request,
                       &frame_bytes, &reply_wire, &credential_prompt, &restore_waiting_for_secret,
-                      &restore_secret_sink, &tab_kind, &crash_facts, &monitor_panel]() -> void {
+                      &restore_secret_sink, &tab_kind, &crash_facts, &monitor_panel, &bell_policy,
+                      &ring_bell]() -> void {
         // 恢复的凭据挂起兜底（`SPEC.FEAT.WS.11` 批 5-C）：问句被**静默关掉**（Esc、搬窗时
         // `set_overlay_host` 的 close、宿主散了）不会回调 `on_cancel`，而那个缺口会让泵永远停在
         // 「等一个不会来的答案」上。帧边界是唯一能看见「框已经不在了」的地方：认领并中止余下重放，
@@ -4865,9 +4888,22 @@ auto main(int argc, char **argv) -> int {
                     show_log_notice("session.log.alert.write_failed", {}, {});
                 }
 
-                // BEL 事件传给 TabStrip（`SPEC.FEAT.WS.04`）：取走即清零，不会被下一帧重复点亮
+                // BEL 事件（`SPEC.FEAT.WS.04`，裁决 7.159）：档位逐次现读，改档即时生效。取走即清零，
+                // 不会被下一帧重复处置。节流只吞铃声、不吞角标：后台标签响过哪几格不能丢，而多格同时
+                // 响时全局只出一声（`BellPolicy` 的 200 ms 窗口）。
                 if (tag_session->take_bell_triggered()) {
-                    owner.tab_strip.mark_bell_triggered(tab_id);
+                    switch (bell_policy.decide(settings.terminal.bell,
+                                               std::chrono::steady_clock::now())) {
+                        case borealis::session::BellAction::None:
+                            break;
+                        case borealis::session::BellAction::Badge:
+                            owner.tab_strip.mark_bell_triggered(tab_id);
+                            break;
+                        case borealis::session::BellAction::BadgeAndTone:
+                            owner.tab_strip.mark_bell_triggered(tab_id);
+                            ring_bell();
+                            break;
+                    }
                 }
 
                 // 有新的网格更新（damage）即标记活动（`SPEC.FEAT.WS.04`）

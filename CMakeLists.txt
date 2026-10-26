@@ -27,6 +27,11 @@ set(AURORA_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 set(AURORA_ENABLE_CLANG_FORMAT OFF CACHE BOOL "" FORCE)
 set(AURORA_ENABLE_CLANG_TIDY OFF CACHE BOOL "" FORCE)
 set(AURORA_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+# 可听铃声（`SPEC.FEAT.WS.04`，裁决 7.159）：框架音频图默认不编（`AURORA_ENABLE_AUDIO` 的
+# 缺省是 OFF），本仓的 `terminal.bell = audible` 档要靠它。不编时框架的音频节点仍在、只是永远
+# 静默，铃声腿会静默降级而**不报编译错**——那种「档位看起来生效、实际没声音」的失败方式只能靠
+# 这一行避免。后端由框架按平台自选（Windows WASAPI / Linux ALSA 运行期 dlopen），本仓不指定。
+set(AURORA_ENABLE_AUDIO ON CACHE BOOL "" FORCE)
 
 add_subdirectory("${BOREALIS_AURORA_DIR}" "${CMAKE_BINARY_DIR}/aurora")
 
