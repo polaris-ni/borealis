@@ -7,7 +7,7 @@
 // 最小服务器：真 KEX、真加密、真通道多路复用，测试只多一条 loopback 连接。
 //
 // 线程与生命周期：
-//   - 受理线程用 `select` 分片等监听 fd，`ssh_bind_accept_fd` 之后把 session 交给
+//   - 受理线程按 100 ms 分片等监听句柄可读，`ssh_bind_accept_fd` 之后把 session 交给
 //     新的工作线程（libssh 会话不跨线程）；
 //   - 工作线程先 `ssh_handle_key_exchange`，再把 session 挂到自己的 `ssh_event` 上，
 //     每 10 ms 一拍；认证/开通道/PTY/shell 全走 server callbacks；
@@ -15,9 +15,13 @@
 //   - 析构：置停止位 → join 受理线程 → shutdown 各连接 → join 工作线程（dopoll 每拍
 //     查停止位）→ 释放 session/通道 → 释放 bind（bind 拥有导入的主机密钥）。
 //
-// 平台边界：POSIX 腿（select/getsockname/shutdown）。Windows 腿待真机——MSVC 构建档的
-// WITH_SERVER 未验证，故本文件在 Win32 下只留空实现；消费它的用例按 `itest_posix_`
-// 前缀只在 POSIX 构建（cmake/BorealisTests.cmake 的同名过滤）。
+// 平台边界：裸 socket 只出现在文件内的**接缝**里（`select`/`WSAPoll`、`close`/
+// `closesocket`、`fcntl(O_NONBLOCK)`/`ioctlsocket(FIONBIO)`、`MSG_NOSIGNAL` 一档 Winsock
+// 根本没有），接缝之外的核心两通道编同一份。句柄类型取 libssh 自己的 `socket_t`
+// （POSIX＝`int`、Win32＝`SOCKET`），无效哨兵取同一库的 `SSH_INVALID_SOCKET`（POSIX 档
+// 就是 `-1`，与本文件登记时的写法逐位同值）。接缝留在本文件而不是用
+// `platform::TcpListener`：后者按裁决 7.96 只给「受理后的流」，接口上没有 fd getter，
+// 而 `ssh_bind_accept_fd` 收的正是裸句柄——测试设施不该为它扩生产 API 面。
 // ============================================================
 
 #include "fake_ssh_server.h"
@@ -25,14 +29,26 @@
 #include <atomic>
 #include <array>
 #include <chrono>
+#include <cstdint>
+#include <cstring>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
-#ifndef _WIN32
+#ifdef _WIN32
+
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+
+#include <windows.h>
+
+#include <ws2tcpip.h>
+
+#else
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -45,6 +61,8 @@
 #include <cerrno>
 #include <cstdint>
 
+#endif  // _WIN32
+
 #include <libssh/callbacks.h>
 #include <libssh/libssh.h>
 #include <libssh/server.h>
@@ -53,8 +71,8 @@ namespace borealis::testing {
 
 namespace {
 
-/// @brief 受理线程的 select 分片：也是析构叫停延迟的上界。
-constexpr long kAcceptSliceUs = 100000;
+/// @brief 受理线程的分片（毫秒）：也是析构叫停延迟的上界。
+constexpr int kAcceptSliceMs = 100;
 
 /// @brief 工作线程的事件轮询分片：决定 `end_shell()`／析构叫停的延迟上界。
 constexpr int kPollSliceMs = 10;
@@ -62,13 +80,256 @@ constexpr int kPollSliceMs = 10;
 /// @brief 跳板腿：连转发目的地（永远是本机 loopback 上的另一台假服务器）的等待上界。
 constexpr int kForwardConnectTimeoutMs = 2000;
 
-/// @brief 跳板腿：把一段字节全量写进目的地句柄（吞掉部分写与 EINTR）。
+/// @brief 监听点：句柄 + 内核择定的端口（`getsockname` 取不到时 port 记 `-1`，
+///        `ok()` 因此为假——监听起了却报不出端口，对本设施就是失败）。
+struct Listener {
+    socket_t fd{SSH_INVALID_SOCKET};
+    int port{0};
+};
+
+/// @brief `read_peer()` 的分档。None＝「这一拍没货」（含被信号打断与暂态无数据），
+///        工作线程下一拍再看；Closed＝目的地有序收摊；Error＝硬错（复位、连不上）。
+///        后两档在核心里同一段处理：给客户端的转发通道回 EOF 并收掉目的地句柄。
+enum class PeerReadOutcome : std::uint8_t { Data, None, Closed, Error };
+
+struct PeerRead {
+    PeerReadOutcome outcome{PeerReadOutcome::Error};
+    std::size_t bytes{0};
+};
+
+#ifdef _WIN32
+
+// ---- Winsock 腿 --------------------------------------------------------------
+// 与 `src/platform/win/tcp.cpp` 同形的那几处（WSAStartup 守卫、`closesocket`、
+// `WSAPoll`、`ioctlsocket`）刻意照抄而非复用该 TU：那是生产代码的平台腿，
+// 接缝在 `platform/` 之外没有可复用的公共入口（`TcpStream` 不吐句柄）。
+
+/// @brief 进程级 WSAStartup 守卫。本设施不经装配层启动，生产腿的那次初始化可能压根
+///        没跑到；`WSACleanup` 不调（随进程退出由 OS 回收），与生产腿口径一致。
+class WinsockInit {
+  public:
+    WinsockInit() {
+        WSADATA data{};
+        ok_ = ::WSAStartup(MAKEWORD(2, 2), &data) == 0;
+    }
+    [[nodiscard]] auto ok() const -> bool { return ok_; }
+
+  private:
+    bool ok_{false};
+};
+
+[[nodiscard]] auto winsock_ready() -> bool {
+    static WinsockInit init;
+    return init.ok();
+}
+
+auto close_socket(socket_t fd) -> void {
+    if (fd != SSH_INVALID_SOCKET) {
+        static_cast<void>(::closesocket(fd));
+    }
+}
+
+auto shutdown_both(socket_t fd) -> void {
+    if (fd != SSH_INVALID_SOCKET) {
+        static_cast<void>(::shutdown(fd, SD_BOTH));
+    }
+}
+
+[[nodiscard]] auto accept_one(socket_t listener) -> socket_t {
+    return ::accept(listener, nullptr, nullptr);
+}
+
+/// @brief 分片等句柄可读。Winsock 的 `select` 只认 `fd_set`（要自己填），`WSAPoll` 直接
+///        收毫秒且没有 `fd+1` 那个参数——本腿取后者，语义与 POSIX 腿的 `select` 一致。
+[[nodiscard]] auto wait_readable(socket_t fd, int timeout_ms) -> bool {
+    WSAPOLLFD event{fd, static_cast<SHORT>(POLLRDNORM), 0};
+    const auto ready = ::WSAPoll(&event, 1, timeout_ms);
+    if (ready > 0) {
+        return true;
+    }
+    if (ready < 0 && ::WSAGetLastError() == WSAEINTR) {
+        return false;  // 被中断＝这一拍没货，调用方回到停止位检查。
+    }
+    return false;
+}
+
+[[nodiscard]] auto wait_writable(socket_t fd, int timeout_ms) -> bool {
+    WSAPOLLFD event{fd, static_cast<SHORT>(POLLWRNORM), 0};
+    return ::WSAPoll(&event, 1, timeout_ms) > 0;
+}
+
+/// @brief 跳板腿：把一段字节全量写进目的地句柄（吞掉部分写；Winsock 没有 SIGPIPE，
+///        故 POSIX 腿那枚 `MSG_NOSIGNAL` 在本腿不存在，标志位给 0）。
 ///        @return false＝目的地收摊或出错，这条转发通道到头了。
-[[nodiscard]] auto send_all(int fd, std::string_view bytes) -> bool {
+[[nodiscard]] auto send_all(socket_t fd, std::string_view bytes) -> bool {
     std::size_t offset = 0;
     while (offset < bytes.size()) {
-        const auto sent =
-            ::send(fd, bytes.data() + offset, bytes.size() - offset, MSG_NOSIGNAL);
+        const auto remaining = static_cast<int>(bytes.size() - offset);
+        const auto sent = ::send(fd, bytes.data() + offset, remaining, 0);
+        if (sent > 0) {
+            offset += static_cast<std::size_t>(sent);
+            continue;
+        }
+        if (sent < 0 && ::WSAGetLastError() == WSAEINTR) {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
+/// @brief 跳板腿：连到客户端要求的目的地（仅 IPv4 字面量；转发目的在本仓证人里恒为
+///        127.0.0.1 上的另一台假服务器）。失败回 `SSH_INVALID_SOCKET`。
+[[nodiscard]] auto connect_to(const char *address, int port) -> socket_t {
+    if (!winsock_ready()) {
+        return SSH_INVALID_SOCKET;
+    }
+    const auto fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == SSH_INVALID_SOCKET) {
+        return SSH_INVALID_SOCKET;
+    }
+    sockaddr_in target{};
+    target.sin_family = AF_INET;
+    target.sin_port = htons(static_cast<u_short>(port));
+    if (::InetPtonA(AF_INET, address, &target.sin_addr) != 1) {
+        close_socket(fd);
+        return SSH_INVALID_SOCKET;
+    }
+    // 非阻塞 connect + 写就绪：拿得到「连不上」而不是「卡住这台工作线程」。
+    // Winsock 没有 `fcntl(O_NONBLOCK)`，等价入口是 `ioctlsocket(FIONBIO, 1)`。
+    auto nonblocking = static_cast<unsigned long>(1);
+    static_cast<void>(::ioctlsocket(fd, FIONBIO, &nonblocking));
+    const int rc = ::connect(fd, reinterpret_cast<const sockaddr *>(&target),
+                             static_cast<int>(sizeof(target)));
+    auto connected = rc == 0;
+    if (!connected && ::WSAGetLastError() != WSAEWOULDBLOCK) {
+        close_socket(fd);
+        return SSH_INVALID_SOCKET;
+    }
+    if (!connected) {
+        connected = wait_writable(fd, kForwardConnectTimeoutMs);
+        if (connected) {
+            auto so_error = int{0};
+            auto length = int{sizeof(so_error)};
+            static_cast<void>(::getsockopt(fd, SOL_SOCKET, SO_ERROR,
+                                          reinterpret_cast<char *>(&so_error), &length));
+            connected = so_error == 0;
+        }
+    }
+    if (!connected) {
+        close_socket(fd);
+        return SSH_INVALID_SOCKET;
+    }
+    // 交回阻塞语义：`read_peer()` 用 `WSAPoll` 判可读之后才 `recv`（与 POSIX 腿同一档）。
+    nonblocking = 0;
+    static_cast<void>(::ioctlsocket(fd, FIONBIO, &nonblocking));
+    return fd;
+}
+
+/// @brief 跳板腿：目的地 → 转发通道这一向的单拍读（先 0 超时探一下，绝不阻塞工作线程）。
+[[nodiscard]] auto read_peer(socket_t fd, std::span<char> out) -> PeerRead {
+    if (out.empty()) {
+        return {PeerReadOutcome::None, 0};
+    }
+    WSAPOLLFD event{fd, static_cast<SHORT>(POLLRDNORM), 0};
+    if (::WSAPoll(&event, 1, 0) <= 0) {
+        return {PeerReadOutcome::None, 0};
+    }
+    const auto got = ::recv(fd, out.data(), static_cast<int>(out.size()), 0);
+    if (got > 0) {
+        return {PeerReadOutcome::Data, static_cast<std::size_t>(got)};
+    }
+    if (got == 0) {
+        return {PeerReadOutcome::Closed, 0};
+    }
+    const auto code = ::WSAGetLastError();
+    if (code == WSAEWOULDBLOCK || code == WSAEINTR) {
+        return {PeerReadOutcome::None, 0};
+    }
+    return {PeerReadOutcome::Error, 0};
+}
+
+[[nodiscard]] auto open_loopback_listener() -> Listener {
+    if (!winsock_ready()) {
+        return {};
+    }
+    const auto fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == SSH_INVALID_SOCKET) {
+        return {};
+    }
+    // 本仓 Win32 侧监听点的既有口径（`src/platform/win/tcp.cpp`）：`SO_EXCLUSIVEADDRUSE`
+    // 而不是 `SO_REUSEADDR`——后者在 Windows 上允许别的进程抢走同一地址。端口 0 由内核
+    // 择定，两台假服务器撞不上号；设不上也不拦，让 bind 自己给结论。
+    const auto exclusive = int{1};
+    static_cast<void>(::setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                                   reinterpret_cast<const char *>(&exclusive),
+                                   sizeof(exclusive)));
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = 0;
+    if (::bind(fd, reinterpret_cast<sockaddr *>(&address), static_cast<int>(sizeof(address))) !=
+        0) {
+        close_socket(fd);
+        return {};
+    }
+    if (::listen(fd, 8) != 0) {
+        close_socket(fd);
+        return {};
+    }
+    auto length = int{sizeof(address)};
+    if (::getsockname(fd, reinterpret_cast<sockaddr *>(&address), &length) != 0) {
+        return {fd, -1};
+    }
+    return {fd, static_cast<int>(ntohs(address.sin_port))};
+}
+
+#else  // !_WIN32
+
+// ---- POSIX 腿（登记时的原文，逐字节行为不变）--------------------------------
+
+auto close_socket(socket_t fd) -> void {
+    if (fd >= 0) {
+        static_cast<void>(::close(fd));
+    }
+}
+
+auto shutdown_both(socket_t fd) -> void {
+    if (fd >= 0) {
+        static_cast<void>(::shutdown(fd, SHUT_RDWR));
+    }
+}
+
+[[nodiscard]] auto accept_one(socket_t listener) -> socket_t {
+    return ::accept(listener, nullptr, nullptr);
+}
+
+[[nodiscard]] auto wait_readable(socket_t fd, int timeout_ms) -> bool {
+    fd_set readable;
+    FD_ZERO(&readable);
+    FD_SET(fd, &readable);
+    timeval slice{};
+    slice.tv_sec = timeout_ms / 1000;
+    slice.tv_usec = (timeout_ms % 1000) * 1000;
+    return ::select(fd + 1, &readable, nullptr, nullptr, &slice) > 0;
+}
+
+[[nodiscard]] auto wait_writable(socket_t fd, int timeout_ms) -> bool {
+    fd_set writable;
+    FD_ZERO(&writable);
+    FD_SET(fd, &writable);
+    timeval slice{};
+    slice.tv_sec = timeout_ms / 1000;
+    slice.tv_usec = (timeout_ms % 1000) * 1000;
+    return ::select(fd + 1, nullptr, &writable, nullptr, &slice) > 0;
+}
+
+/// @brief 跳板腿：把一段字节全量写进目的地句柄（吞掉部分写与 EINTR）。
+///        @return false＝目的地收摊或出错，这条转发通道到头了。
+[[nodiscard]] auto send_all(socket_t fd, std::string_view bytes) -> bool {
+    std::size_t offset = 0;
+    while (offset < bytes.size()) {
+        const auto sent = ::send(fd, bytes.data() + offset, bytes.size() - offset, MSG_NOSIGNAL);
         if (sent > 0) {
             offset += static_cast<std::size_t>(sent);
             continue;
@@ -82,53 +343,98 @@ constexpr int kForwardConnectTimeoutMs = 2000;
 }
 
 /// @brief 跳板腿：连到客户端要求的目的地（仅 IPv4 字面量；转发目的在本仓证人里恒为
-///        127.0.0.1 上的另一台假服务器）。失败回 -1。
-[[nodiscard]] auto connect_to(const char *address, int port) -> int {
+///        127.0.0.1 上的另一台假服务器）。失败回 `SSH_INVALID_SOCKET`。
+[[nodiscard]] auto connect_to(const char *address, int port) -> socket_t {
     const auto fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-        return -1;
+        return SSH_INVALID_SOCKET;
     }
     sockaddr_in target{};
     target.sin_family = AF_INET;
     target.sin_port = htons(static_cast<uint16_t>(port));
     if (::inet_pton(AF_INET, address, &target.sin_addr) != 1) {
         ::close(fd);
-        return -1;
+        return SSH_INVALID_SOCKET;
     }
     // 非阻塞 connect + `select` 写就绪：拿得到「连不上」而不是「卡住这台工作线程」。
     const auto flags = ::fcntl(fd, F_GETFL, 0);
     static_cast<void>(::fcntl(fd, F_SETFL, flags | O_NONBLOCK));
-    const int rc = ::connect(fd, reinterpret_cast<const sockaddr *>(&target),
-                             static_cast<socklen_t>(sizeof(target)));
+    const int rc =
+        ::connect(fd, reinterpret_cast<const sockaddr *>(&target), static_cast<socklen_t>(sizeof(target)));
     auto connected = rc == 0;
     if (!connected && errno != EINPROGRESS) {
         ::close(fd);
-        return -1;
+        return SSH_INVALID_SOCKET;
     }
     if (!connected) {
-        fd_set writable;
-        FD_ZERO(&writable);
-        FD_SET(fd, &writable);
-        timeval timeout{};
-        timeout.tv_sec = kForwardConnectTimeoutMs / 1000;
-        timeout.tv_usec = (kForwardConnectTimeoutMs % 1000) * 1000;
-        connected = ::select(fd + 1, nullptr, &writable, nullptr, &timeout) == 1;
+        connected = wait_writable(fd, kForwardConnectTimeoutMs);
         if (connected) {
             auto so_error = int{0};
             auto length = static_cast<socklen_t>(sizeof(so_error));
-            static_cast<void>(
-                ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &length));
+            static_cast<void>(::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &length));
             connected = so_error == 0;
         }
     }
     if (!connected) {
         ::close(fd);
-        return -1;
+        return SSH_INVALID_SOCKET;
     }
-    // 交回阻塞语义：`service_forwarded()` 用 `poll` 判可读之后才 `recv`。
+    // 交回阻塞语义：`read_peer()` 用 `poll` 判可读之后才 `recv`。
     static_cast<void>(::fcntl(fd, F_SETFL, flags));
     return fd;
 }
+
+/// @brief 跳板腿：目的地 → 转发通道这一向的单拍读（先 0 超时探一下，绝不阻塞工作线程）。
+[[nodiscard]] auto read_peer(socket_t fd, std::span<char> out) -> PeerRead {
+    if (out.empty()) {
+        return {PeerReadOutcome::None, 0};
+    }
+    pollfd events{fd, static_cast<short>(POLLIN), 0};
+    const auto ready = ::poll(&events, 1, 0);
+    if (ready <= 0 || (events.revents & (POLLIN | POLLHUP | POLLERR)) == 0) {
+        return {PeerReadOutcome::None, 0};
+    }
+    const auto got = ::recv(fd, out.data(), out.size(), MSG_DONTWAIT);
+    if (got > 0) {
+        return {PeerReadOutcome::Data, static_cast<std::size_t>(got)};
+    }
+    if (got == 0) {
+        return {PeerReadOutcome::Closed, 0};
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+        return {PeerReadOutcome::None, 0};
+    }
+    return {PeerReadOutcome::Error, 0};
+}
+
+[[nodiscard]] auto open_loopback_listener() -> Listener {
+    const auto fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return {};
+    }
+    const auto reuse = int{1};
+    static_cast<void>(
+        ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)));
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = 0;
+    if (::bind(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) < 0) {
+        ::close(fd);
+        return {};
+    }
+    if (::listen(fd, 8) < 0) {
+        ::close(fd);
+        return {};
+    }
+    auto length = socklen_t{sizeof(address)};
+    if (::getsockname(fd, reinterpret_cast<sockaddr *>(&address), &length) != 0) {
+        return {fd, -1};
+    }
+    return {fd, static_cast<int>(ntohs(address.sin_port))};
+}
+
+#endif  // _WIN32
 
 }  // namespace
 
@@ -145,7 +451,7 @@ struct FakeSshServer::Impl {
         bool shell_open{false};
         bool agent{false};   ///< 反向 auth-agent 通道：只记录收到的应答，不回显。
         bool forward{false}; ///< `direct-tcpip` 通道：字节搬到 peer_fd，不记账、不回显。
-        int peer_fd{-1};     ///< forward 通道对上的真实 TCP 目的地句柄（跳板腿）。
+        socket_t peer_fd{SSH_INVALID_SOCKET}; ///< forward 通道对上的真实 TCP 目的地句柄（跳板腿）。
         bool closed{false};  ///< 已收到关闭（判定「整条连接是否收摊」用）。
         int index{-1};       ///< session 通道的打开次序（逐通道 PTY 尺寸表的下标）。
     };
@@ -155,7 +461,7 @@ struct FakeSshServer::Impl {
         Impl *impl{nullptr};
         ssh_session session{nullptr};
         ssh_event event{nullptr};
-        int fd{-1};
+        socket_t fd{SSH_INVALID_SOCKET};
         std::vector<std::unique_ptr<ChannelState>> channels{};
         std::size_t outbox_cursor{0};
         std::atomic<bool> end_requested{false};
@@ -215,7 +521,7 @@ struct FakeSshServer::Impl {
     FakeSshServerOptions options;
 
     ssh_bind bind{nullptr};
-    int listen_fd{-1};
+    socket_t listen_fd{SSH_INVALID_SOCKET};
     int port{0};
 
     std::atomic<bool> stopping{false};
@@ -274,7 +580,7 @@ auto FakeSshServer::Impl::on_data(ssh_session /*session*/, ssh_channel channel, 
     if (state.forward) {
         // 跳板腿：客户端往转发通道写的字节就是下一跳（或目标）的 SSH 报文，原样送到对面。
         // 写不进去＝目的地收摊，通道就此到尽头（`service_forwarded()` 那侧对称处理）。
-        if (state.peer_fd >= 0) {
+        if (state.peer_fd != SSH_INVALID_SOCKET) {
             static_cast<void>(send_all(state.peer_fd, text));
         }
         return static_cast<int>(len);
@@ -334,9 +640,9 @@ auto FakeSshServer::Impl::on_channel_close(ssh_session /*session*/, ssh_channel 
     // 反向 agent 通道与转发通道关掉都不代表这条连接的 session 收摊（客户端换拨时会先收火；
     // 跳板腿的转发通道更是「一条链路上的一根管子」，收它不等于收连接）。
     if (state.agent || state.forward) {
-        if (state.peer_fd >= 0) {
-            ::close(state.peer_fd);
-            state.peer_fd = -1;
+        if (state.peer_fd != SSH_INVALID_SOCKET) {
+            close_socket(state.peer_fd);
+            state.peer_fd = SSH_INVALID_SOCKET;
         }
         return;
     }
@@ -412,12 +718,12 @@ auto FakeSshServer::Impl::on_direct_tcpip_open(ssh_session session,
         return nullptr;  // 一台普通服务器不该代收转发；libssh 据此回 channel open failed。
     }
     const auto peer_fd = connect_to(destination_address, destination_port);
-    if (peer_fd < 0) {
+    if (peer_fd == SSH_INVALID_SOCKET) {
         return nullptr;  // 目的地连不上＝这台跳板拒绝这条转发（与真 sshd 同形）。
     }
     auto *channel = ssh_channel_new(session);
     if (channel == nullptr) {
-        ::close(peer_fd);
+        close_socket(peer_fd);
         return nullptr;
     }
 
@@ -486,34 +792,26 @@ auto FakeSshServer::Impl::maybe_open_agent(Worker &worker) -> void {
 
 auto FakeSshServer::Impl::service_forwarded(Worker &worker) -> void {
     // 目的地 → 转发通道这一向。`ssh_event` 只盯 libssh 的 socket，不认识我们替客户端
-    // 连出去的第二条 TCP，故目的地侧的回流只能每拍自己扫一遍（非阻塞 poll，0 超时）。
+    // 连出去的第二条 TCP，故目的地侧的回流只能每拍自己扫一遍（0 超时探读，两腿同一档）。
     auto scratch = std::array<char, 4096>{};
     for (auto &state : worker.channels) {
-        if (!state->forward || state->channel == nullptr || state->peer_fd < 0) {
+        if (!state->forward || state->channel == nullptr || state->peer_fd == SSH_INVALID_SOCKET) {
             continue;
         }
-        pollfd events{state->peer_fd, static_cast<short>(POLLIN), 0};
-        const auto ready = ::poll(&events, 1, 0);
-        if (ready < 0 && errno == EINTR) {
-            continue;
-        }
-        if (ready <= 0 || (events.revents & (POLLIN | POLLHUP | POLLERR)) == 0) {
-            continue;
-        }
-        const auto got = ::recv(state->peer_fd, scratch.data(), scratch.size(), MSG_DONTWAIT);
-        if (got > 0) {
+        const auto got = read_peer(state->peer_fd, scratch);
+        if (got.outcome == PeerReadOutcome::Data) {
             static_cast<void>(ssh_channel_write(state->channel, scratch.data(),
-                                                static_cast<uint32_t>(got)));
+                                                static_cast<uint32_t>(got.bytes)));
             continue;
         }
-        if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+        if (got.outcome == PeerReadOutcome::None) {
             continue;
         }
-        // 0＝目的地收摊，<0 且非暂态＝连不上或已断：这条管子给客户端回 EOF，
+        // Closed＝目的地有序收摊，Error＝连不上或已复位：这条管子给客户端回 EOF，
         // 让对端的 libssh 会话按正常断链收尾（跳板腿的证人也靠这一步收敛）。
         static_cast<void>(ssh_channel_send_eof(state->channel));
-        ::close(state->peer_fd);
-        state->peer_fd = -1;
+        close_socket(state->peer_fd);
+        state->peer_fd = SSH_INVALID_SOCKET;
     }
 }
 
@@ -543,17 +841,11 @@ auto FakeSshServer::Impl::start() -> bool {
 
 auto FakeSshServer::Impl::accept_loop() -> void {
     while (!stopping.load()) {
-        fd_set readable;
-        FD_ZERO(&readable);
-        FD_SET(listen_fd, &readable);
-        timeval slice{};
-        slice.tv_usec = kAcceptSliceUs;
-        const auto ready = ::select(listen_fd + 1, &readable, nullptr, nullptr, &slice);
-        if (ready <= 0) {
-            continue;  // 超时或被信号打断：回到停止位检查。
+        if (!wait_readable(listen_fd, kAcceptSliceMs)) {
+            continue;  // 超时或被中断：回到停止位检查。
         }
-        const auto fd = ::accept(listen_fd, nullptr, nullptr);
-        if (fd < 0) {
+        const auto fd = accept_one(listen_fd);
+        if (fd == SSH_INVALID_SOCKET) {
             continue;
         }
         auto *session = ssh_new();
@@ -561,7 +853,7 @@ auto FakeSshServer::Impl::accept_loop() -> void {
             if (session != nullptr) {
                 ssh_free(session);
             }
-            ::close(fd);
+            close_socket(fd);
             continue;
         }
         note_connection();
@@ -612,9 +904,9 @@ auto FakeSshServer::Impl::serve(const std::shared_ptr<Worker> &worker) -> void {
 
     // 通道先于回调表释放（libssh 存的是回调表指针），会话最后释放。
     for (auto &state : worker->channels) {
-        if (state->peer_fd >= 0) {
-            ::close(state->peer_fd);  // 替客户端连出去的目的地句柄归本服务器收。
-            state->peer_fd = -1;
+        if (state->peer_fd != SSH_INVALID_SOCKET) {
+            close_socket(state->peer_fd);  // 替客户端连出去的目的地句柄归本服务器收。
+            state->peer_fd = SSH_INVALID_SOCKET;
         }
         if (state->channel != nullptr) {
             static_cast<void>(ssh_channel_close(state->channel));
@@ -664,15 +956,15 @@ auto FakeSshServer::Impl::stop() -> void {
     if (acceptor.joinable()) {
         acceptor.join();  // select 分片 100 ms，故最多等一片。
     }
-    if (listen_fd >= 0) {
-        ::close(listen_fd);
-        listen_fd = -1;
+    if (listen_fd != SSH_INVALID_SOCKET) {
+        close_socket(listen_fd);
+        listen_fd = SSH_INVALID_SOCKET;
     }
     {
         const std::lock_guard lock{workers_mutex};
         for (auto &worker : workers) {
-            if (worker->fd >= 0) {
-                ::shutdown(worker->fd, SHUT_RDWR);  // 叫停还卡在 dopoll 上的工作线程。
+            if (worker->fd != SSH_INVALID_SOCKET) {
+                shutdown_both(worker->fd);  // 叫停还卡在 dopoll 上的工作线程。
             }
         }
     }
@@ -760,39 +1052,18 @@ FakeSshServer::FakeSshServer(FakeSshServerOptions options)
         return;
     }
     // ---- 监听点：自带 socket（端口 0 由内核择定），accept 后交给 ssh_bind ----
-    impl_->listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (impl_->listen_fd < 0) {
+    const auto listener = open_loopback_listener();
+    impl_->listen_fd = listener.fd;
+    impl_->port = listener.port;
+    if (impl_->listen_fd == SSH_INVALID_SOCKET) {
         return;
-    }
-    const auto reuse = int{1};
-    static_cast<void>(
-        ::setsockopt(impl_->listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)));
-    sockaddr_in address{};
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    address.sin_port = 0;
-    if (::bind(impl_->listen_fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) < 0) {
-        ::close(impl_->listen_fd);
-        impl_->listen_fd = -1;
-        return;
-    }
-    if (::listen(impl_->listen_fd, 8) < 0) {
-        ::close(impl_->listen_fd);
-        impl_->listen_fd = -1;
-        return;
-    }
-    auto length = socklen_t{sizeof(address)};
-    if (::getsockname(impl_->listen_fd, reinterpret_cast<sockaddr *>(&address), &length) == 0) {
-        impl_->port = ntohs(address.sin_port);
-    } else {
-        impl_->port = -1;
     }
     impl_->acceptor = std::thread([impl = impl_.get()] { impl->accept_loop(); });
 }
 
 FakeSshServer::~FakeSshServer() = default;
 
-auto FakeSshServer::ok() const -> bool { return impl_->listen_fd >= 0 && impl_->port > 0; }
+auto FakeSshServer::ok() const -> bool { return impl_->listen_fd != SSH_INVALID_SOCKET && impl_->port > 0; }
 
 auto FakeSshServer::port() const -> int { return impl_->port; }
 
@@ -884,8 +1155,8 @@ auto FakeSshServer::end_shell() -> void {
 auto FakeSshServer::drop_connections() -> void {
     const std::lock_guard lock{impl_->workers_mutex};
     for (auto &worker : impl_->workers) {
-        if (worker->fd >= 0) {
-            ::shutdown(worker->fd, SHUT_RDWR);
+        if (worker->fd != SSH_INVALID_SOCKET) {
+            shutdown_both(worker->fd);
         }
     }
 }
@@ -912,78 +1183,3 @@ auto fake_ssh_profile(int port, std::string user) -> borealis::conn::SshProfile 
 }
 
 }  // namespace borealis::testing
-
-#else  // _WIN32
-
-// TODO(SPEC.FEAT.CONN.02): 补 Win32 腿的进程内假 SSH 服务器。本设施用 POSIX
-// select/getsockname/shutdown；MSVC 构建档的 libssh WITH_SERVER 与 Winsock 半截
-// 均未验证，故先留空实现保证构建面完整，消费用例按 `itest_posix_` 前缀排除。
-
-namespace borealis::testing {
-
-struct FakeSshServer::Impl {};
-
-FakeSshServer::FakeSshServer(FakeSshServerOptions) : impl_{std::make_unique<Impl>()} {}
-
-FakeSshServer::~FakeSshServer() = default;
-
-auto FakeSshServer::ok() const -> bool { return false; }
-
-auto FakeSshServer::port() const -> int { return 0; }
-
-auto FakeSshServer::accepted_connections() const -> std::size_t { return 0; }
-
-auto FakeSshServer::session_channels() const -> std::size_t { return 0; }
-
-auto FakeSshServer::auth_attempts() const -> std::size_t { return 0; }
-
-auto FakeSshServer::pty_requests() const -> std::size_t { return 0; }
-
-auto FakeSshServer::shell_requests() const -> std::size_t { return 0; }
-
-auto FakeSshServer::last_pty_columns() const -> int { return 0; }
-
-auto FakeSshServer::last_pty_rows() const -> int { return 0; }
-
-auto FakeSshServer::received_text() const -> std::string { return {}; }
-
-auto FakeSshServer::agent_forward_requests() const -> std::size_t { return 0; }
-
-auto FakeSshServer::agent_channels() const -> std::size_t { return 0; }
-
-auto FakeSshServer::agent_received_text() const -> std::string { return {}; }
-
-auto FakeSshServer::direct_tcpip_requests() const -> std::size_t { return 0; }
-
-auto FakeSshServer::forwarded_destinations() const -> std::vector<std::string> { return {}; }
-
-auto FakeSshServer::send_more(std::string_view) -> void {}
-
-auto FakeSshServer::end_shell() -> void {}
-
-auto FakeSshServer::drop_connections() -> void {}
-
-auto wait_until(const std::function<bool()> &predicate, int timeout_ms) -> bool {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (predicate()) {
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-    return predicate();
-}
-
-auto fake_ssh_profile(int port, std::string user) -> borealis::conn::SshProfile {
-    auto profile = borealis::conn::SshProfile{};
-    profile.host = "127.0.0.1";
-    profile.port = port;
-    profile.user = std::move(user);
-    profile.auth_method = "password";
-    profile.known_hosts_policy = borealis::conn::KnownHostsPolicy::No;
-    return profile;
-}
-
-}  // namespace borealis::testing
-
-#endif  // !_WIN32
