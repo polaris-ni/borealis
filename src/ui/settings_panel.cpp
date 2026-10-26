@@ -616,6 +616,14 @@ auto SettingsPanel::select_page(SettingsPage page) -> void {
     }
 }
 
+auto SettingsPanel::refresh_chrome() -> void {
+    // 面板关着就没有「旧色板建出来的卡片」可换，直接空操作：调用方（装配层）排下一帧时面板可能已被
+    // 用户关掉，这一层判断留给本件，装配层不必先探 `is_open()` 再排。
+    if (open_) {
+        rebuild_overlay();
+    }
+}
+
 auto SettingsPanel::visible_rows() const -> std::vector<VisibleRow> {
     std::vector<VisibleRow> out;
     out.reserve(rows_.size());

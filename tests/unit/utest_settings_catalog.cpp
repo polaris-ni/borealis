@@ -27,6 +27,7 @@
 #include "borealis/config/store.h"
 #include "borealis/ui/palette.h"
 #include "borealis/ui/settings_catalog.h"
+#include "config/schema_names.h"  // chrome_theme_tag：装配层喂给解算函数的落盘名读点
 #include "framework/aurora_test.h"
 
 namespace borealis::test_cases::utest_settings_catalog {
@@ -345,6 +346,16 @@ AURORA_TEST_CASE(chrome_theme_row_is_a_wired_immediate_choice) {
     const std::vector<std::string> kThemeNames{"system", "dark", "light"};
     AURORA_TEST_CHECK_MSG(control->choices == kThemeNames,
                           "chrome theme choices drifted: [" + join(control->choices) + "]");
+    // 落盘名的**运行期读点**（`schema_names.h` 的 `chrome_theme_tag`）：装配层把这一串喂给
+    // `resolve_chrome_scheme()`，故它与下拉候选必须逐字一致——两处各列一份名字就会在某一档上分叉。
+    using borealis::config::ChromeTheme;
+    const ChromeTheme kThemeChoices[]{ChromeTheme::System, ChromeTheme::Dark, ChromeTheme::Light};
+    AURORA_TEST_REQUIRE_EQ(control->choices.size(), std::size(kThemeChoices));
+    for (std::size_t index = 0; index < std::size(kThemeChoices); ++index) {
+        AURORA_TEST_CHECK_MSG(std::string{borealis::config::chrome_theme_tag(kThemeChoices[index])}
+                                  == control->choices[index],
+                              "chrome theme tag drifted at choice[" + std::to_string(index) + "]");
+    }
     // 缺省跟随系统：现有用户升级后不会在浅色桌面上继续看到一块固定黑面板（稿 D1 的交付内容）。
     AURORA_TEST_CHECK_TRUE(Settings{}.appearance.chrome_theme == config::ChromeTheme::System);
 }

@@ -147,4 +147,14 @@ inline constexpr std::array<EnumName, 3> kCursorShapeNames{{
     return name_of(kInterfaceLanguageNames, static_cast<std::int64_t>(language));
 }
 
+/// @brief 界面明暗档 → `resolve_chrome_scheme()` 吃的落盘名（`SPEC.FEAT.PREF.01`）。
+///
+/// 与 `language_tag()` 同一条「落盘名与运行期查找键同源」的分工：装配层不该自己把三档折成
+/// `"system"` / `"dark"` / `"light"` 再喂给解算函数，那会让装填侧与解算侧各列一份名字。
+/// @param choice 明暗档。
+/// @return 逐字等于落盘名；表里没有时为空串（三档都在表上，故取不到空）。
+[[nodiscard]] inline auto chrome_theme_tag(ChromeTheme choice) -> std::string_view {
+    return name_of(kChromeThemeNames, static_cast<std::int64_t>(choice));
+}
+
 }  // namespace borealis::config

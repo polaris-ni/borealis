@@ -65,6 +65,7 @@
 #include "conn/ssh_shared.h"
 #include "conn/telnet_connection.h"
 #include "conn/tunnel_client.h"
+#include "config/schema_names.h"  // chrome_theme_tag：落盘名 → 解算函数的唯一读点（PREF.01）
 #include "config/shortcut_overrides.h"
 #include "config/window_geometry_store.h"
 #include "config/workspace_store.h"
@@ -611,6 +612,12 @@ auto main(int argc, char **argv) -> int {
     // 就是这条不变量的用户可见半边。装填把整份 bin（两档都在）读进目录，选中的那一档定成缺省档与
     // `settings_locale()`（i18n v2 改形：该稿 D4 的「只装选定那一档」被「全语言合一」取代）。
     borealis::ui::install_settings_strings(settings.appearance.language);
+    // 外壳明暗档的启动解算（`SPEC.FEAT.PREF.01` 稿 §3 第 1 步）：必须排在任何控件构造之前——标签栏与
+    // 分屏缝隙的 `on_paint` 每次重绘现读活动档，首帧即取到；而设置面板的控件在**构建期**取定色值，
+    // 晚一步解算就是「先按暗档建好面板、用户打开才发现是亮的」。`system` 档在这里读一次 OS 偏好，
+    // 此后系统侧的变化由下面那条 1 s 轮询补齐（框架没有 app 级变更通知，缺口 G45）。
+    borealis::ui::set_chrome_scheme(borealis::ui::resolve_chrome_scheme(
+        borealis::config::chrome_theme_tag(settings.appearance.chrome_theme), aurora::os_color_scheme()));
 
     // 建窗之前的两道校验（稿 §5.4）：档案可解析、动作与档案类型相容。任一不符即退出 2，不建窗、
     // 不启动 shell——用户敲错一个字母时不该看见一扇空窗口。档案表读的是**内存值**，与首实例执行
@@ -2017,13 +2024,19 @@ auto main(int argc, char **argv) -> int {
         rebuild_root_children(window, tab_workspaces);
     };
 
+    // 活动档主题的共享状态（稿 §3 第 1／2 步）：每扇窗的 `ThemeScope` 共用这一枚，换档只 `set()` 一次
+    // 就让**已有**窗口在下一帧整体重渲，不必逐窗找 `ThemeScope` 改值。声明排在首扇窗的场景之前，
+    // 生命周期随装配层到进程尾；`shared_ptr` 同时被各窗的 ThemeScope 持有，故不靠这里的变量续命。
+    auto chrome_theme_state =
+        std::make_shared<aurora::State<aurora::Theme>>(borealis::ui::settings_chrome_theme());
     // 场景根的造法按窗一份（稿 §2）：chrome 主题挂浮层宿主外面那一层，面板与后续界面件读同一份
     // `Theme`，而它**刻意不随终端主题联动**（裁决 7.52 的 S5① / N6：切配色主题时整窗跟着变会让用户
     // 以为丢了设置）。第二扇窗必须拿到**自己**的一枚 Scene：`Application::open_window` 收的是场景本体
-    // 而不是引用，两扇窗共用一棵树就是把同一批控件挂到两个宿主上。
-    auto make_window_scene = [](WorkspaceWindow &window) -> au::Scene {
+    // 而不是引用，两扇窗共用一棵树就是把同一批控件挂到两个宿主上。主题值本身是**共享**的：换档正是
+    // 靠各窗 ThemeScope 观察同一枚 `State` 才会一处处同时生效。
+    auto make_window_scene = [chrome_theme_state](WorkspaceWindow &window) -> au::Scene {
         auto chrome = std::make_shared<au::ThemeScope>(
-            borealis::ui::settings_chrome_theme(),
+            chrome_theme_state,
             aurora::Node{std::static_pointer_cast<au::Widget>(window.overlay_host)});
         // 语言档的注入腿（`SPEC.FEAT.PREF.05` 稿 F19）：绘制侧的 `Text`／`Button` 读的是**环境里的
         // `Locale`**，没有注入就按 `Locale{}`（＝`en`）查表。i18n v2 之后这是**硬要求**而不是保险：
@@ -2271,6 +2284,47 @@ auto main(int argc, char **argv) -> int {
     // 而面板是 app 级单实例、宿主会随搬窗变（稿 D6）。与 `wizard_ref` 同一形态——先声明闭包、构造完再
     // 赋值，钩子跑起来时读到的永远是那一枚已经建好的面板。
     borealis::ui::SettingsPanel *settings_panel = nullptr;
+    // 换肤的唯一执行腿（`SPEC.FEAT.PREF.01` 稿 §3 第 4 条）：面板保存后的广播与跟随系统的轮询都收口
+    // 到这里，G45 补上后的框架通知也接这一处。「同值不动作」的短路是判据的一部分而不只是省一次重绘：
+    // 轮询每秒都算出同一个档，不短路就会每秒 `set()` 一次主题、每秒叫醒全部窗口。
+    auto apply_chrome_scheme = [&app, &chrome_theme_state, &workspace_windows, &settings_panel](
+                                   borealis::ui::ChromeScheme scheme) -> void {
+        if (scheme == borealis::ui::chrome_scheme()) {
+            return;
+        }
+        borealis::ui::set_chrome_scheme(scheme);
+        chrome_theme_state->set(borealis::ui::chrome_theme(scheme));
+        // 逐窗叫醒：`Application::request_wake_all()` 是私有腿（公共面只有各窗自己的 surface）。
+        // 主题变化已把子树标脏，这里补的是「帧循环正睡在某个 surface 上、等不到下一次事件」那一档；
+        // 调度器那条轮询本身也是一次唤醒源，但广播腿来自点击事件、不保证紧跟一帧渲染。
+        for (const std::unique_ptr<WorkspaceWindow> &window : workspace_windows) {
+            if (window->surface != nullptr) {
+                window->surface->request_wake();
+            }
+        }
+        // 面板的控件色值构建期取定，换档必须重建浮层才换色；但这条腿可能正跑在面板自己的按钮回调里
+        // （保存即换档），当场 `remove_overlay()` 会撤掉**正在派发**的控件（G34 那一族时序），故排到
+        // 下一帧调度器。面板届时已被用户关掉时 `refresh_chrome()` 自己空操作。
+        static_cast<void>(
+            app.scheduler().set_timeout(au::Scheduler::Duration::zero(), [&settings_panel]() -> void {
+                if (settings_panel != nullptr) {
+                    settings_panel->refresh_chrome();
+                }
+            }));
+    };
+    // 跟随系统的替代腿（缺口 G45）：框架把 Win32 `WM_SETTINGCHANGE` 只送到 `WindowHost` 内部（改的是
+    // 它自己的默认根主题），公共 API 没有「系统明暗变了」的应用级回调。本仓以 1 s 轮询代替：只在配置
+    // 选择 `system` 时读 OS（注册表查询按框架口径本就不缓存），解算结果与活动档相同则被上面短路，
+    // 静止期每秒只多一次读表 + 一次比较。G45 任务书补上后删掉这段，改接通知回调即可。
+    static_cast<void>(app.scheduler().set_interval(
+        std::chrono::milliseconds(1000), [&store, &apply_chrome_scheme]() -> void {
+            const borealis::config::ChromeTheme choice = store.settings().appearance.chrome_theme;
+            if (choice != borealis::config::ChromeTheme::System) {
+                return;
+            }
+            apply_chrome_scheme(borealis::ui::resolve_chrome_scheme(
+                borealis::config::chrome_theme_tag(choice), aurora::os_color_scheme()));
+        }));
     // 面板的三条接缝都在装配层兑现：装载取 `Store` 的当前配置，落盘走 `apply_form` + `replace()`，
     // 广播把刚落盘的配置重新折算成外观包与交互项交回视口（`SPEC.FEAT.PREF.02` 的「即时生效」腿）。
     borealis::ui::SettingsPanel::Hooks hooks;
@@ -2282,9 +2336,13 @@ auto main(int argc, char **argv) -> int {
         sync_clipboard_gate();
         return reason;
     };
-    hooks.broadcast = [&tab_workspaces, &workspace_windows, &store,
-                       &catalog](const borealis::ui::SettingsForm &form) -> void {
+    hooks.broadcast = [&tab_workspaces, &workspace_windows, &store, &catalog,
+                       &apply_chrome_scheme](const borealis::ui::SettingsForm &form) -> void {
         const borealis::config::Settings next = borealis::config::apply_form(form, store.settings());
+        // 外壳明暗档先落地（稿 §3 第 2 步）：本函数跑在面板按钮回调里，换肤只改活动档与共享主题状态，
+        // 面板自身的重建已由 `apply_chrome_scheme` 排到下一帧，这里不必也不该重入面板。
+        apply_chrome_scheme(borealis::ui::resolve_chrome_scheme(
+            borealis::config::chrome_theme_tag(next.appearance.chrome_theme), aurora::os_color_scheme()));
         // 广播到**每一扇窗的当前标签**的所有视口（一格一会话之后仍是「工作区里可能有多个 pane」）。
         // 为什么按窗而不是按落点窗：设置页是应用级单实例（稿 D6），这一条腿的语义是「刚落盘的配置即时
         // 生效」，而生效面天然是全部可见的工作现场——把它按 tracker 解析成「最近被碰过的那一扇」就变成

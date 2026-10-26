@@ -394,6 +394,13 @@ public:
     /// @param page 目标页。
     auto select_page(SettingsPage page) -> void;
 
+    /// @brief 外壳明暗档变了之后重建浮层，让面板自己的控件换成新色板（`SPEC.FEAT.PREF.01` 稿 §3）。
+    ///
+    /// 控件的色值在构建期取定，换档只改活动档不会让已建好的卡片变色，故必须整块重建。**不得**在
+    /// 面板自己的回调派发栈里直接调用（换档可能正是保存按钮触发的）：当场摘浮层会把正在派发的控件
+    /// 从宿主上撤走（G34 那一族时序）。装配层排到下一帧调度器再交到这里；面板已关则空操作。
+    auto refresh_chrome() -> void;
+
     /// @brief 当前页。
     [[nodiscard]] auto current_page() const noexcept -> SettingsPage {
         return page_;

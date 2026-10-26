@@ -653,6 +653,29 @@ AURORA_TEST_CASE(the_page_row_table_is_the_catalog_intersection_in_order) {
     AURORA_TEST_CHECK_EQ(total, borealis::ui::settings_catalog().size());
 }
 
+AURORA_TEST_CASE(refreshing_chrome_rebuilds_an_open_panel_and_keeps_its_page) {
+    // PREF.01 稿 §3 第 4 步：换肤那一条腿把面板重建排到下一帧。本件守三件事：①关着时是空操作
+    // ——装配层的回调可能在用户已经关掉面板之后才跑到；②开着时重建后仍开着、页不回到缺省（整块
+    // 重建不是「关掉再开」）；③重建后的行序仍照表，重建不是把旧页的内容搬过去。
+    borealis::ui::install_settings_strings();
+    StoreProbe probe;
+    au::Node root;
+    std::shared_ptr<au::Widget> base;
+    std::shared_ptr<au::OverlayHost> host = make_host(base, root);
+    au::ShortcutRegistry shortcuts;
+    SettingsPanel panel{*host, shortcuts, probe.hooks()};
+
+    panel.refresh_chrome();
+    AURORA_TEST_CHECK_FALSE(panel.is_open());
+
+    panel.open();
+    panel.select_page(SettingsPage::Terminal);
+    panel.refresh_chrome();
+    AURORA_TEST_CHECK_TRUE(panel.is_open());
+    AURORA_TEST_CHECK_TRUE(panel.current_page() == SettingsPage::Terminal);
+    check_key_sequence("rows after a chrome refresh", drawn_keys(panel), catalog_keys(SettingsPage::Terminal));
+}
+
 AURORA_TEST_CASE(unloaded_and_mistyped_keys_are_dropped_not_drawn) {
     borealis::ui::install_settings_strings();
     StoreProbe probe;
