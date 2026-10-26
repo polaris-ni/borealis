@@ -664,9 +664,10 @@ AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
     // 含 WS.05 的自动重连三键已随实现批 3 接线（装配层搬运 + 浮层两态），TERM.09 的
     // `terminal.encoding` 也随编码腿接线（会话构造期按名建解码器），串口七键（`SPEC.FEAT.CONN.05`
     // 裁决 7.110 D3①/D4①）随批 3 的向导默认值灌入接线，CONN.11 的日志三键（`session_logging` /
-    // `session_log_dir` / `session_log_pattern`）随裁决 7.116 的批 2 接线，故本行停在 19：
-    // 少的那几条正是已接线的，再往回跳就是某个消费方被摘掉了而面板还留着控件。
-    AURORA_TEST_CHECK_EQ(rows_with_consumer(ConsumerStatus::Absent).size(), 19U);
+    // `session_log_dir` / `session_log_pattern`）随裁决 7.116 的批 2 接线，WS.04 的 `terminal.bell`
+    // 随可听铃声落地（裁决 7.159：帧边界按档点角标 / 响铃），故本行停在 18：少的那几条正是已接线的，
+    // 再往回跳就是某个消费方被摘掉了而面板还留着控件。
+    AURORA_TEST_CHECK_EQ(rows_with_consumer(ConsumerStatus::Absent).size(), 18U);
 }
 
 }  // namespace borealis::test_cases::utest_settings_catalog

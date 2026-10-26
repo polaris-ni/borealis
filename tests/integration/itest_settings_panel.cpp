@@ -2151,7 +2151,7 @@ AURORA_TEST_CASE(clicking_an_open_dropdown_option_in_its_own_extra_hit_box_commi
     panel->select_page(SettingsPage::Terminal);
     h.render();
     // 认行：终端页只有 `terminal.ambiguous_width` 是两档下拉（`paste_newlines` / `right_click` 各三档，
-    // 而 `long_line` / `bell` 因未接线只画只读摘要、根本不出 `Dropdown`）。
+    // `long_line` 因未接线只画只读摘要，而 `bell` 随可听铃声接线后也是三档下拉——裁决 7.159）。
     const HitSpot spot = h.find_first("Dropdown", 40.0F, [](au::Widget *widget) -> bool {
         const auto *dropdown = dynamic_cast<au::Dropdown *>(widget);
         return dropdown != nullptr && dropdown->option_count() == 2U;
