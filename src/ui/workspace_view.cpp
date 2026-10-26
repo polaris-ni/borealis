@@ -10,16 +10,15 @@
 #include "aurora/event/focus.h"
 #include "borealis/term/keymap.h"
 
+#include "settings_panel.h"  // settings_chrome
+
 namespace borealis::ui {
 
 namespace {
 
-/// @brief chrome 色是**固定 token** 而非主题档（裁决 7.25 N6）：主题只换 pane **内部**的底色与字色，
-///        把手、缝隙与焦点描边恒为此三色。`PaletteSpec` 里没有 accent 槽，故这里是文件内常量而不是
-///        色板的某一档。
-constexpr aurora::Color kChrome{0x21, 0x22, 0x2C};  ///< 分屏底：缝隙与把手两侧的空带
-constexpr aurora::Color kLine2{0x4D, 0x4F, 0x63};   ///< 把手静止态
-constexpr aurora::Color kAccent{0xBD, 0x93, 0xF9};  ///< 把手 hover / 拖拽态与焦点 pane 描边
+/// 缝隙、把手与描边取 `settings_chrome()`（`SPEC.FEAT.PREF.01` 稿 D6）：主题只换 pane **内部**的底色与
+/// 字色，外壳色跟着 chrome 明暗档走（裁决 7.25 N6 的「不随终端主题」边界不变，只是活动档从恒暗变成
+/// 可亮）。`PaletteSpec` 里没有 accent 槽，故这三色从来不属于终端调色板。
 
 constexpr double kDividerHitDp = 8.0;      ///< 把手命中区宽，同时是布局留位（`LayoutSpec::divider_dp`）
 constexpr double kHandleLengthDp = 32.0;   ///< 把手中段视觉长
@@ -81,8 +80,9 @@ auto paint_focus_ring(aurora::Painter &p, const aurora::Rect &bounds, const Rect
         Rect{.x = box.x, .y = box.y, .width = kFocusRingDp, .height = box.height},
         Rect{.x = box.x + box.width - kFocusRingDp, .y = box.y, .width = kFocusRingDp, .height = box.height},
     };
+    const aurora::Color accent = settings_chrome().accent;
     for (const Rect &edge : edges) {
-        p.fill_rect(global_frame(bounds, edge), kAccent);
+        p.fill_rect(global_frame(bounds, edge), accent);
     }
 }
 
@@ -92,18 +92,19 @@ auto paint_focus_ring(aurora::Painter &p, const aurora::Rect &bounds, const Rect
 /// 20 dp 图标也不值得为它接一条字体回退链；无头像素判据因此稳定。
 auto paint_zoom_badge(aurora::Painter &p, const aurora::Rect &bounds, const Rect &pane, bool collapse)
     -> void {
+    const SettingsChrome chrome = settings_chrome();
     const double x = pane.x + pane.width - kZoomBadgeInsetDp - kZoomBadgeDp;
     const double y = pane.y + kZoomBadgeInsetDp;
     const Rect plate{.x = x, .y = y, .width = kZoomBadgeDp, .height = kZoomBadgeDp};
-    p.fill_rounded_rect(global_frame(bounds, plate), static_cast<float>(kZoomBadgeRadiusDp), kChrome);
+    p.fill_rounded_rect(global_frame(bounds, plate), static_cast<float>(kZoomBadgeRadiusDp), chrome.card_bg);
 
     const double gx = x + (kZoomBadgeDp - kZoomGlyphDp) / 2.0;
     const double gy = y + (kZoomBadgeDp - kZoomGlyphDp) / 2.0;
     const auto pt = [gx, gy](double lx, double ly) -> aurora::Point {
         return aurora::Point{.x = static_cast<float>(gx + lx), .y = static_cast<float>(gy + ly)};
     };
-    const auto line = [&p, &pt](double ax, double ay, double bx, double by) -> void {
-        p.draw_line(pt(ax, ay), pt(bx, by), kZoomGlyphStrokeDp, kAccent);
+    const auto line = [&p, &pt, &chrome](double ax, double ay, double bx, double by) -> void {
+        p.draw_line(pt(ax, ay), pt(bx, by), kZoomGlyphStrokeDp, chrome.accent);
     };
     const double g = kZoomGlyphDp;
     if (!collapse) {
@@ -424,7 +425,8 @@ auto WorkspaceView::min_pane_dp() const -> double {
 
 auto WorkspaceView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, const aurora::BuildContext &ctx)
     -> void {
-    p.fill_rect(bounds, kChrome);
+    const SettingsChrome chrome = settings_chrome();
+    p.fill_rect(bounds, chrome.card_bg);
     if (!zoomed_.has_value()) {
         Container::on_paint(p, bounds, ctx);
     } else {
@@ -443,7 +445,7 @@ auto WorkspaceView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, con
     const std::optional<DividerKey> lit = dragging_.has_value() ? dragging_ : hovered_;
     for (const PaneDivider &divider : layout_.dividers) {
         const DividerKey key{.container = divider.container, .slot = divider.slot};
-        paint_handle(p, bounds, divider, (lit.has_value() && *lit == key) ? kAccent : kLine2);
+        paint_handle(p, bounds, divider, (lit.has_value() && *lit == key) ? chrome.accent : chrome.card_line);
     }
     // 只有分屏态画描边：单叶工作区没有「哪一格是焦点」这个问题（判据 11）；缩放 pane 的边界就是
     // 窗口边，描边不携带「哪一格是焦点」的信息（D6）。

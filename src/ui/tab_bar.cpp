@@ -17,6 +17,7 @@
 #include "borealis/term/utf8.h"
 
 #include "connection_glyph.h"  // 类型图标的唯一字形表（与侧栏同一处，`SPEC.FEAT.WS.04`）
+#include "settings_panel.h"    // settings_chrome（同 `connection_sidebar.cpp` 的先例：chrome 表的公共读点）
 
 namespace borealis::ui {
 
@@ -156,16 +157,14 @@ auto TabBarWidget::on_layout(const au::Constraints &c, const au::BuildContext &c
 }
 
 auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::BuildContext &ctx) -> void {
-    // 标签栏背景（chrome 色，不随主题）
-    const au::Color bar_bg{33, 34, 44, 255};  // #21222C
-    p.fill_rect(bounds, bar_bg);
+    // 外壳色随 chrome 明暗档现取（`SPEC.FEAT.PREF.01` 稿 D6）：每次重绘读一次，建树时不定色；仍**不**随
+    // 终端主题联动（稿 D8 与裁决 7.52 的 S5① 同一条边界）。
+    const SettingsChrome chrome = settings_chrome();
+
+    p.fill_rect(bounds, chrome.card_bg);
 
     au::Font font;
     font.size_pt = 13.0F;
-
-    const au::Color accent{98, 114, 164, 255};     // dracula cyan-ish
-    const au::Color text_unselected{139, 141, 152, 255};  // gray
-    const au::Color text_selected{248, 248, 242, 255};    // white
 
     float x = bounds.origin.x - scroll_offset_;
     for (std::size_t i = 0; i < cached_tabs_.size(); ++i) {
@@ -177,25 +176,23 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
 
         // 选中态背景 + 下划线
         if (tab.is_selected) {
-            const au::Color selected_bg{40, 42, 54, 255};  // #282A36
-            p.fill_rect(tab_box, selected_bg);
+            p.fill_rect(tab_box, chrome.control_bg);
             // 2 dp 下划线
             const au::Rect underline{
                 .origin = au::Point{.x = tab_box.origin.x, .y = tab_box.origin.y + bar_height_ - 2.0F},
                 .size = au::Size{.width = w, .height = 2.0F}};
-            p.fill_rect(underline, accent);
+            p.fill_rect(underline, chrome.accent);
         }
 
-        // hover 态背景
+        // hover 态背景：选中底再压暗一档（`Color::shaded` 是框架对 hover/pressed 的统一派生法），两套色板
+        // 同一条式子——亮档因此是比选中底略深的灰，暗档是栏底与选中底之间的一档。
         if (hovered_tab_id_ == tab.id && !tab.is_selected) {
-            const au::Color hover_bg{68, 71, 90, 255};  // #44475A
-            p.fill_rect(tab_box, hover_bg);
+            p.fill_rect(tab_box, chrome.control_bg.shaded(0.9F));
         }
 
-        // 拖拽占位：半透明
+        // 拖拽占位：正文色的低透明度盖层。跟着 `text` 走而不是写死白色——亮档正文近黑，白色盖层会看不见。
         if (drag_.has_value() && drag_->dragged_id == tab.id && drag_->is_dragging) {
-            const au::Color drag_overlay{255, 255, 255, 64};
-            p.fill_rect(tab_box, drag_overlay);
+            p.fill_rect(tab_box, au::Color{chrome.text.r, chrome.text.g, chrome.text.b, 64});
         }
 
         // 文本（截断到可用宽度）
@@ -203,7 +200,7 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         const float text_max_width =
             w - 24.0F - slot_width - (tab.has_close_button ? close_zone_ : 0.0F);
         const auto display = truncate_name(tab.display_name, text_max_width, font);
-        const au::Color text_color = tab.is_selected ? text_selected : text_unselected;
+        const au::Color text_color = tab.is_selected ? chrome.text : chrome.text_dim;
         const au::Rect text_box{
             .origin = au::Point{.x = tab_box.origin.x + 12.0F + slot_width, .y = tab_box.origin.y + 14.0F},
             .size = au::Size{.width = text_max_width, .height = bar_height_ - 28.0F}};
@@ -226,32 +223,30 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
                 .origin = au::Point{.x = tab_box.origin.x + w - close_zone_ + 4.0F,
                                     .y = tab_box.origin.y + 13.0F},
                 .size = au::Size{.width = 12.0F, .height = 16.0F}};
-            const au::Color close_color = hovered_tab_id_ == tab.id ? accent : text_unselected;
+            const au::Color close_color = hovered_tab_id_ == tab.id ? chrome.accent : chrome.text_dim;
             p.draw_text(close_box, "×", font, close_color);
         }
 
         // BEL 角标（铃铛图标，`SPEC.FEAT.WS.04`）
         if (tab.bell_triggered) {
-            const au::Color bell_color{255, 85, 85, 255};  // 红色警示色
             const auto bell_pos = au::Point{
                 .x = tab_box.origin.x + w - 6.0F,
                 .y = tab_box.origin.y + 6.0F};
             const au::Rect bell_dot{
                 .origin = bell_pos,
                 .size = au::Size{.width = 6.0F, .height = 6.0F}};
-            p.fill_rect(bell_dot, bell_color);
+            p.fill_rect(bell_dot, chrome.danger);
         }
 
         // 活动高亮指示器（小圆点在标签左上角，`SPEC.FEAT.WS.04`）
         if (tab.has_activity && !tab.is_selected) {
-            const au::Color activity_color{80, 250, 123, 255};  // dracula green
             const auto activity_pos = au::Point{
                 .x = tab_box.origin.x + 4.0F,
                 .y = tab_box.origin.y + 4.0F};
             const au::Rect activity_dot{
                 .origin = activity_pos,
                 .size = au::Size{.width = 4.0F, .height = 4.0F}};
-            p.fill_rect(activity_dot, activity_color);
+            p.fill_rect(activity_dot, chrome.success);
         }
 
         // 断线/退出角标（`SPEC.FEAT.WS.04`）：右下角一枚**空心**方框。
@@ -260,12 +255,11 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         // 的格子里打字时正该看见它已退出。空心描边 + 落在右下，与右上角的实心铃铛在位置和形状两档都
         // 不撞，两枚同格出现时各自可判。
         if (tab.exited) {
-            const au::Color exit_color{255, 184, 108, 255};  // amber
             const au::Rect exit_ring{
                 .origin = au::Point{.x = tab_box.origin.x + w - 8.0F,
                                     .y = tab_box.origin.y + bar_height_ - 12.0F},
                 .size = au::Size{.width = 6.0F, .height = 6.0F}};
-            p.draw_rect(exit_ring, exit_color);
+            p.draw_rect(exit_ring, chrome.warning);
         }
 
         // 拖拽落点导引线
@@ -282,7 +276,7 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         .origin = au::Point{.x = bounds.origin.x + bounds.size.width - 32.0F,
                             .y = bounds.origin.y + 13.0F},
         .size = au::Size{.width = 16.0F, .height = 16.0F}};
-    p.draw_text(add_button, "+", font, text_unselected);
+    p.draw_text(add_button, "+", font, chrome.text_dim);
 }
 
 auto TabBarWidget::on_pointer_event(au::MouseEvent &e) -> void {

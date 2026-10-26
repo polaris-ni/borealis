@@ -6,9 +6,10 @@
 // `ui::SettingsForm`，搬运来自 `config::form_entries()` / `config::apply_form()`（由装配层经
 // `Hooks` 兑现）。本件只做三件事：**排版、把控件回调接到表单、把表单结果接到落盘与广播**。
 //
-// chrome 色值是本文件内常量的唯一一份，`settings_chrome_theme()` 由同一批常量合成，装配层给
-// 场景根装的 `ThemeScope` 取的也是它——界面配色因此不会散成第二处（`workspace_view.cpp` 那三个
-// 文件内常量是把手与描边用的，与本表不同用途，本棒不并表也不重构，见裁决 7.56 的代价段）。
+// chrome 的两套亮/暗色板是 `chrome_palette()` 那一处常量，`settings_chrome_theme()` 由同一批常量
+// 合成，装配层给场景根装的 `ThemeScope` 取的也是它——界面配色因此不会散成第二处。`tab_bar.cpp` 与
+// `workspace_view.cpp` 自 `SPEC.FEAT.PREF.01`（稿 D6）起经 `settings_chrome()` 读同一张表，原先各自
+// 写死的暗色常量已撤回（裁决 7.56 的代价段记的那笔「不同用途不并表」至此已清）。
 // ============================================================
 
 #include "settings_panel.h"
@@ -54,8 +55,8 @@ namespace {
 
 // ---- chrome 色值（S5①：界面配色不随终端主题联动；`SPEC.FEAT.PREF.01` 起分亮/暗两档）----
 //
-// 两套色板是全仓唯一一张表（`codespec/UI_CHROME.draft.md` §1）：面板 154 处、标签栏与分屏的固定色
-// 都从这里读。`text_dim` 暗档由 `#627280` 提亮到 `#8A8FA3`——旧值对卡片底只有 3.19:1，不达 WCAG AA
+// 两套色板是全仓唯一一张表（`codespec/UI_CHROME.draft.md` §1）：本文件的面板、标签栏与分屏缝隙都从
+// 这里读。`text_dim` 暗档由 `#627280` 提亮到 `#8A8FA3`——旧值对卡片底只有 3.19:1，不达 WCAG AA
 // （稿 D7），`utest_chrome_palette` 按同一算式守这条下界。
 constexpr SettingsChrome kDarkChrome{
     .window_bg = aurora::Color{0x18, 0x19, 0x21},
