@@ -3,7 +3,7 @@
 /// 测试说明: 会话层的读侧接线（字节 → 解码 → 状态机 → 网格 → 脏行提交）与写侧通道
 ///           （文本编码下发、**行尾折算**、尺寸下发、DSR/DA1 应答回写、OSC 52 读方向应答）、
 ///           **原始字节采集的两笔记痕**（RX 取解码前的原始批、TX 取折算后的那一份、两条线程共一环、
-///           未武装即没有环）、OSC 消费产物
+///           未武装即没有环）、**实际生效编码腿名的会话侧取值**（监视卡文本档的取腿口径，稿 §11 D28）、OSC 消费产物
 ///           的会话侧取值（标题 / 工作目录 / 超链接 / 剪贴板待写合并 / 命令块快照）、帧唤醒句柄的
 ///           注入与唤醒时机（含「连接生死那一次唤醒独立于批量输入有没有产出提交」这一条
 ///           `SPEC.FEAT.WS.05` 的例外，与「块表变化也唤醒」，以及 `SPEC.FEAT.WS.03` 唤醒腿
@@ -30,6 +30,7 @@
 #include "borealis/grid/storage.h"
 #include "borealis/session/clipboard_outbox.h"
 #include "borealis/session/session.h"
+#include "borealis/term/codec.h"
 #include "borealis/term/keymap.h"
 #include "borealis/term/paste.h"
 #include "borealis/term/terminal.h"
@@ -553,6 +554,36 @@ AURORA_TEST_CASE(parse_stats_travel_the_chain_for_the_debug_panel) {
     const auto stats = fixture.session->parse_stats();
     AURORA_TEST_CHECK_EQ(stats.ignored, std::uint64_t{2});
     AURORA_TEST_CHECK_EQ(stats.cancelled, std::uint64_t{1});
+}
+
+/// @brief 监视卡文本档的取腿透传（`SPEC.FEAT.CONN.05` 四期稿 §11 D28①）。
+///
+/// 面板不自己算编码：它问会话「你在跑哪条腿」。这条判据守的是两件事——名字是**构造期折好的腿名**
+/// （映射不到的 `GB2312` 报 UTF-8，与真正在解码的那只手同源，裁决 7.104 D6②），以及这个名字喂回
+/// `make_session_decoder` 后与终端网格解出同一个字（否则「卡上的文本」与「屏上的文本」会分叉）。
+AURORA_TEST_CASE(encoding_name_reports_the_leg_the_session_actually_runs) {
+    auto gb = make_encoded_session(borealis::term::SessionEncoding{.name = "GB18030"});
+    AURORA_TEST_CHECK_EQ(gb.session->encoding_name(), "GB18030");
+    gb.connection->deliver("\xD6\xD0");  // GB18030 的「中」：终端侧解成 U+4E2D
+    static_cast<void>(drain_all(*gb.session));
+    AURORA_TEST_CHECK_EQ(code_point_at(gb, 0, 0), U'\x4E2D');
+    // 面板拿同一个名字另起一只解码器，解出的码点与网格一致——腿名与腿不会分叉。
+    auto decoder = borealis::term::make_session_decoder(gb.session->encoding_name());
+    class Collector final : public borealis::term::CodePointSink {
+      public:
+        auto on_code_point(char32_t cp) -> void override { code_points.push_back(cp); }
+        std::u32string code_points;
+    } collector;
+    const std::vector<std::byte> han{std::byte{0xD6}, std::byte{0xD0}};
+    decoder->feed(han, collector);
+    decoder->finish(collector);
+    AURORA_TEST_REQUIRE_EQ(collector.code_points.size(), 1U);
+    AURORA_TEST_CHECK_EQ(static_cast<std::uint32_t>(collector.code_points.front()),
+                         std::uint32_t{U'\x4E2D'});
+
+    // 映射不到的配置名回落 UTF-8 腿（`codec.h` 那条口径）：getter 报的是回落之后的那条，不是原样串。
+    auto typo = make_encoded_session(borealis::term::SessionEncoding{.name = "GB2312"});
+    AURORA_TEST_CHECK_EQ(typo.session->encoding_name(), "UTF-8");
 }
 
 AURORA_TEST_CASE(alive_tracks_the_connection) {

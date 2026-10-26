@@ -7,6 +7,9 @@
 // 断点状态机只有一枚旗标 `awaiting_lf`：CR 收口一条行但**先不落笔**，等下一个字节判它是
 // CRLF（同一条断点，一个换行）还是新行的开头。这与 `session::fold_to_plain_text` 里那枚
 // `newline_after_cr_` 同形（裁决 7.116 D3①），两处都源于 F10 那条实测：真流里 CR 与 LF 成对是常态。
+//
+// 四期（稿 §11）加的是**行内容**的第二种形态而不是第二台机器：`RowScanner` 只认字节，
+// 文本档换的只是「一段字节 → `dump`」那一步（`build_dump` ↔ 解码后折文本）与每行的字节预算。
 // ============================================================
 
 #include "serial_monitor_format.h"
@@ -17,9 +20,14 @@
 #include <cstring>
 #include <ctime>
 #include <limits>
+#include <memory>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
+
+#include "borealis/term/codec.h"
+#include "borealis/term/utf8.h"
 
 namespace borealis::ui {
 namespace {
@@ -68,8 +76,41 @@ auto append_hex_pair(std::string &out, std::byte value) -> void {
     return dump;
 }
 
-/// @brief 选项里的每行字节数：0 档回落缺省（与一期 `monitor_rows` 同一口径）。
+/// @brief 文本档的码点接收端：码点 → 追加进 `text`（稿 §11 D29 的三条形态口径只写在这里）。
+///
+/// 判定吃**码点值**而不是字节值：解码之后才有「这一格是不是一条控制码」这个问题可言，同一份字节在
+/// GB18030 里是汉字、在 UTF-8 里可能是非法序列，按字节判会把中文档整屏折成点。
+class RowTextSink final : public term::CodePointSink {
+  public:
+    auto on_code_point(char32_t cp) -> void override {
+        if (cp == U'\r' || cp == U'\n') {
+            return;  // 断点归 `RowScanner` 判：跟着行尾进来的那两个字节在文本面上不出现（D29）
+        }
+        if (cp <= 0x1FU || (cp >= 0x7FU && cp <= 0x9FU)) {
+            text += '.';  // C0／DEL／C1 与十六进制尾栏同一条口径（D29①）
+            return;
+        }
+        // 含 U+FFFD：编码不匹配是真信号不是噪声，原样上屏（走查 §11.6 第 4 条读的就是它）。
+        static_cast<void>(term::append_utf8(cp, text));
+    }
+
+    std::string text{};  ///< 已折出的那一段文本（`dump` 的前导两空格由调用方补）。
+};
+
+/// @brief 只吞不吐的接收端：窗口之前的字节要过解码器推状态，但不建字符串。
+class DiscardSink final : public term::CodePointSink {
+  public:
+    auto on_code_point(char32_t) -> void override {}
+};
+
+/// @brief 选项里的一行字节预算：hex 档吃 `bytes_per_row`（0 档回落缺省），文本档吃固定预算。
+///
+/// 文本档刻意**按字节**而不是按码点切（稿 D27）：`monitor_row_count` 因此不需要解码就能给出真实总行数，
+/// 两档共用一台扫描器这条纪律才不破——按码点切就必须先解完整段才知道行落在哪。
 [[nodiscard]] auto effective_bytes_per_row(const MonitorRowOptions &options) -> std::size_t {
+    if (options.view == MonitorView::Text) {
+        return kMonitorTextRowBytes;
+    }
     return options.bytes_per_row == 0U ? kMonitorBytesPerRow : options.bytes_per_row;
 }
 
@@ -153,6 +194,12 @@ class RowScanner {
             flush_line();
         }
     }
+
+    /// @brief 消费者是否说了「停」（窗口折满即真）。
+    ///
+    /// 文本档据此判要不要给解码器收尾：只有**扫到料源尽头**的那一次才有「末尾挂着半字序列」这件事，
+    /// 中途停扫的那份料源本来就没折完，收尾反而会在窗口末行多造一个替换字符。
+    [[nodiscard]] auto aborted() const noexcept -> bool { return aborted_; }
 
   private:
     /// @brief 行首才定方向与时刻：行内分格与跨 run 续行都沿用行首那一份（D6①）。
@@ -271,6 +318,13 @@ auto monitor_row_window(const std::vector<session::RawRun> &runs, const MonitorR
         return {};
     }
     const std::size_t bytes_per_row = effective_bytes_per_row(options);
+    const bool text_view = options.view == MonitorView::Text;
+    // 每份料源新建一枚解码器，**不复用会话那只活的 `decoder_`**（稿 D28）：它与读线程共锁、状态已被
+    // 线上流消耗，把显示挂在解码进度上会让两次重建给出不同结果。`make_session_decoder` 恒回非空
+    // （映射不到回落 UTF-8 腿），故下面的解引用不需要判空。代价是每次重建开合一次 iconv 句柄
+    // （实测 ~160 ns，见 `codec.h` 发送侧那条同族口径），缺省 UTF-8 腿连句柄都不开。
+    auto decoder = text_view ? term::make_session_decoder(options.encoding) : nullptr;
+    auto discard_sink = DiscardSink{};
     auto rows = std::vector<MonitorRow>{};
     // 窗口通常是一屏多一点（面板取 96 行）；reserve 只按这个量级给，不按 max_rows。
     rows.reserve(std::min<std::size_t>(max_rows, 128U));
@@ -281,7 +335,13 @@ auto monitor_row_window(const std::vector<session::RawRun> &runs, const MonitorR
     auto has_cached_prefix = false;
     auto consume = [&](session::RawDirection direction, std::int64_t timestamp_ms,
                        std::span<const std::byte> bytes) -> bool {
-        if (index >= first_row && rows.size() < max_rows) {
+        const bool in_window = index >= first_row && rows.size() < max_rows;
+        if (text_view && !in_window) {
+            // 窗口之前的字节仍要过一遍解码器：多字节序列可能被 96 字节的预算切在行界上，跳过那几行
+            // 就等于让窗口首行少半个字（稿 D31 认下的那条成本，hex 档没有它）。
+            decoder->feed(bytes, discard_sink);
+        }
+        if (in_window) {
             auto prefix = std::string{};
             if (options.timestamp_prefix) {
                 if (!has_cached_prefix || cached_timestamp_ms != timestamp_ms) {
@@ -296,7 +356,14 @@ auto monitor_row_window(const std::vector<session::RawRun> &runs, const MonitorR
             row.timestamp_prefix = std::move(prefix);
             row.direction_label =
                 direction == session::RawDirection::Received ? "RX" : "TX";
-            row.dump = build_dump(bytes, bytes_per_row);
+            if (text_view) {
+                auto sink = RowTextSink{};
+                decoder->feed(bytes, sink);
+                row.dump = "  ";
+                row.dump += std::move(sink.text);
+            } else {
+                row.dump = build_dump(bytes, bytes_per_row);
+            }
             rows.push_back(std::move(row));
         }
         ++index;
@@ -307,6 +374,13 @@ auto monitor_row_window(const std::vector<session::RawRun> &runs, const MonitorR
         scanner.feed(run);
     }
     scanner.finish();
+    if (text_view && !scanner.aborted() && !rows.empty()) {
+        // 料源末尾那段挂起的半字序列按替换字符收尾，落在最后一行上：头注口径 ⑵ 在文本面的落地——
+        // 环里存着却不显示的字节等于说谎。收不住的情形只有「中途停扫」，那一支上面已排除。
+        auto sink = RowTextSink{};
+        decoder->finish(sink);
+        rows.back().dump += std::move(sink.text);
+    }
     return rows;
 }
 
@@ -323,7 +397,9 @@ auto monitor_dump_text(const std::vector<session::RawRun> &runs, const MonitorRo
     // 是满环那 ≈1.8 MB 行文本（F7 换算）加同量拼接串，发生在一次显式点击而不是热路径，可接受。
     const auto rows = monitor_rows(runs, options);
     auto out = std::string{};
-    out.reserve(rows.size() * 56U);  // 54 字符缺省档（稿 §2 的算术）+ 分隔符，只为少几次扩容。
+    // 每行 56 字符＝十六进制缺省档（稿 §2 的算术）+ 分隔符；文本档一行可到百余字符，但这一格只是
+    // 少几次扩容的提示，按哪个档都不影响结果。
+    out.reserve(rows.size() * 56U);
     auto first = true;
     for (const auto &row : rows) {
         // 分隔符按「是不是第一条」判，而不是按「串目前空不空」判：`row_text()` 现在恒非空，但那条

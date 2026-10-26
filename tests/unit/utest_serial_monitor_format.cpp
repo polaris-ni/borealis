@@ -6,6 +6,10 @@
 ///           设备行仍是同一段（F10 实测 15 + 3 那一例）、时间戳开关与毫秒零填充、每行字节数档；
 ///           三期再加交出去的串形（稿 §10.2 D19①）：逐行 `row_text` 以单个 `\n` 相连且末尾不带换行、
 ///           行数与逐行内容与全折逐条相等、空环即空串。
+///           四期再加文本视图（稿 §11 D26–D31）：同一台行机器换行内容——断点四口径在文本档同判据、
+///           96 字节预算与行首的方向/时刻沿用、不可打印码点折 `.` 而 U+FFFD 原样上屏、非 UTF-8 腿
+///           （GB18030）解出中文、被预算切断的多字节序列不在前一行产出、计数与折行在两档仍恒等、
+///           `monitor_dump_text` 跟当前视图档走。
 ///           面板那侧的开关联动与留痕上屏属 itest_serial_monitor_panel（批 3）。
 
 #include "ui/serial_monitor_format.h"
@@ -409,6 +413,139 @@ AURORA_TEST_CASE(an_empty_ring_dumps_an_empty_string) {
     // 一个字节都没有的 run 不占行：拼接件与全折同口径（稿 §2 的行形态里没有「空行」这一档）。
     AURORA_TEST_CHECK_TRUE(
         ui::monitor_dump_text(std::vector{received("")}, ui::MonitorRowOptions{}).empty());
+}
+
+// ------------------------------------------------------------
+// 四期（稿 §11 D26–D31）：文本视图——换的是行内容，不是行机器
+// ------------------------------------------------------------
+
+namespace {
+
+/// @brief 文本档的选项：时间戳前缀关掉，好让断言只吃行内容那一段。
+/// @param encoding 解码档名；取 `term::resolve_encoding_name` 那一面的六条腿名之一。
+[[nodiscard]] auto text_options(std::string_view encoding = "UTF-8") -> ui::MonitorRowOptions {
+    return ui::MonitorRowOptions{.timestamp_prefix = false, .view = ui::MonitorView::Text,
+                                 .encoding = std::string{encoding}};
+}
+
+/// @brief 一串**任意字节**的接收料：长度由字面量的数组维度给出，故 `\0` 之后的字节不会被隐式求长吞掉。
+template <std::size_t N>
+[[nodiscard]] auto raw(const char (&text)[N]) -> session::RawRun {
+    return run(session::RawDirection::Received, 0, std::string_view{text, N - 1U});
+}
+
+}  // namespace
+
+AURORA_TEST_CASE(text_view_breaks_lines_on_the_same_four_rules) {
+    // 四条行边界口径（CRLF 一条断点／孤立 CR 一条断点／跨 run 续行／末尾不完整行上屏）在文本档
+    // 与十六进制档同判据——因为行机器只有一台，文本档只换了「一段字节 → 一行字」那一步（稿 D27①）。
+    const auto rows = ui::monitor_rows(std::vector{received("A\r\nB\rC"), received("def")}, text_options());
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 3U);
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[0]), "RX  A");
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[1]), "RX  B");
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[2]), "RX  Cdef");  // 跨 run 的那一段仍是一行
+}
+
+AURORA_TEST_CASE(text_view_chunks_on_ninety_six_bytes_and_keeps_the_rows_head_run) {
+    // 文本档不吃 `bytes_per_row`：预算恒为 `kMonitorTextRowBytes`（稿 D27①）。一条 200 字节的设备行
+    // 拆成 96 + 96 + 10，三个分格行都沿用**这条设备行行首**那条 run 的方向与时刻（D6①：续行不另取，
+    // 跨 run 也一样）——只有真正的行尾才让下一格换一份头。
+    const auto runs = std::vector{run(session::RawDirection::Transmitted, local_epoch_ms(1, 2, 3, 4),
+                                      std::string(100U, 'a')),
+                                  run(session::RawDirection::Received, local_epoch_ms(1, 2, 6, 0),
+                                      std::string(100U, 'b') + "\r\n"),
+                                  run(session::RawDirection::Received, local_epoch_ms(1, 2, 9, 0), "Z")};
+    const auto options = ui::MonitorRowOptions{.bytes_per_row = 8U, .view = ui::MonitorView::Text};
+    const auto rows = ui::monitor_rows(runs, options);
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 4U);
+    AURORA_TEST_CHECK_EQ(rows[0].dump.size(), 2U + ui::kMonitorTextRowBytes);
+    AURORA_TEST_CHECK_EQ(rows[1].dump.size(), 2U + ui::kMonitorTextRowBytes);
+    // 尾格只有 8 个 `b`：那条 CRLF 是断点，不占文本面的一格（稿 D29）。
+    AURORA_TEST_CHECK_EQ(rows[2].dump.size(), 2U + 8U);
+    AURORA_TEST_CHECK_EQ(rows[3].dump, "  Z");
+    for (std::size_t index = 0U; index < 3U; ++index) {
+        AURORA_TEST_CHECK_EQ(rows[index].direction_label, "TX");
+        AURORA_TEST_CHECK_EQ(rows[index].timestamp_prefix, "[01:02:03.004] ");
+    }
+    AURORA_TEST_CHECK_EQ(rows[3].direction_label, "RX");
+    AURORA_TEST_CHECK_EQ(rows[3].timestamp_prefix, "[01:02:09.000] ");
+}
+
+AURORA_TEST_CASE(text_view_folds_control_code_points_to_a_dot_but_keeps_the_replacement) {
+    // 稿 D29①：判定吃**码点值**而不是字节值——C0／DEL／C1 折一个 `.`（与十六进制尾栏同一条口径），
+    // 而 U+FFFD 原样上屏：「这批字节在该编码下不成立」是真信号，画成看不见就等于说谎。
+    const auto rows = ui::monitor_rows(std::vector{raw("a\x00\x1B\x7F\xE4\xB8\xAD")}, text_options());
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 1U);
+    AURORA_TEST_CHECK_EQ(rows[0].dump, "  a...\xE4\xB8\xAD");
+}
+
+AURORA_TEST_CASE(text_view_decodes_a_non_utf8_leg) {
+    // GB18030 的「中」「文」＝ D6D0 CEC4（取自 `utest_codec` 的 iconv 实测，不是表记忆）。
+    const auto as_gb = ui::monitor_rows(std::vector{raw("\xD6\xD0\xCE\xC4\r\n")}, text_options("GB18030"));
+    AURORA_TEST_REQUIRE_EQ(as_gb.size(), 1U);
+    AURORA_TEST_CHECK_EQ(as_gb[0].dump, "  \xE4\xB8\xAD\xE6\x96\x87");
+    // 同一份字节在 UTF-8 腿下逐字节非法：四枚替换字符原样上屏，而不是解成中文——档位真的在生效。
+    const auto as_utf8 = ui::monitor_rows(std::vector{raw("\xD6\xD0\xCE\xC4\r\n")}, text_options());
+    AURORA_TEST_REQUIRE_EQ(as_utf8.size(), 1U);
+    AURORA_TEST_CHECK_EQ(as_utf8[0].dump, "  \xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD");
+}
+
+AURORA_TEST_CASE(a_multibyte_sequence_cut_on_the_budget_boundary_is_not_emitted_early) {
+    // 96 字节的预算可以切在任何一处，包括一个多字节序列中间。解码器的状态跨行保留，故前一行**不**产出
+    // 半个字（那会是一屏莫名其妙的替换字符），后一行拿到整字（稿 D27① 的代价面）。
+    const auto runs = std::vector{received(std::string(95U, 'a') + "\xE4"), received("\xB8\xADx")};
+    const auto rows = ui::monitor_rows(runs, text_options());
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 2U);
+    AURORA_TEST_CHECK_EQ(rows[0].dump, "  " + std::string(95U, 'a'));
+    AURORA_TEST_CHECK_EQ(rows[1].dump, "  \xE4\xB8\xADx");
+}
+
+AURORA_TEST_CASE(an_incomplete_trailing_sequence_still_shows_on_the_last_row) {
+    // 料源尽头挂着半截序列：按替换字符收尾落到最后一行——环里存着却不显示的字节等于说谎（头注口径 ⑵
+    // 在文本面的落地）。中途停扫的那一次**不**收尾：那份料源本来就没折完。
+    const auto runs = std::vector{received("A\r\n"), received("B\xE4")};
+    const auto rows = ui::monitor_rows(runs, text_options());
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 2U);
+    AURORA_TEST_CHECK_EQ(rows[1].dump, "  B\xEF\xBF\xBD");
+    const auto window = ui::monitor_row_window(runs, text_options(), 0U, 1U);
+    AURORA_TEST_REQUIRE_EQ(window.size(), 1U);
+    AURORA_TEST_CHECK_EQ(window[0].dump, "  A");  // 没有多出来的那枚替换字符
+}
+
+AURORA_TEST_CASE(the_row_count_needs_no_decoding_and_matches_the_fold_in_text_view) {
+    // 预算按字节 ⇒ 计数不需要解码（稿 D27① 换来的那条对称性）：两档同判据、编码档也同判据。
+    const auto runs = std::vector{received("OK\r\n"), received(std::string(200U, 'x') + "\r\n"),
+                                  run(session::RawDirection::Transmitted, 0, "AT")};
+    const auto gb = text_options("GB18030");
+    AURORA_TEST_REQUIRE_EQ(ui::monitor_row_count(runs, gb), 5U);
+    AURORA_TEST_CHECK_EQ(ui::monitor_row_count(runs, gb), ui::monitor_rows(runs, gb).size());
+    AURORA_TEST_CHECK_EQ(ui::monitor_row_window(runs, gb, 0U, 999U).size(), 5U);
+    AURORA_TEST_CHECK_EQ(ui::monitor_row_count(runs, gb), ui::monitor_row_count(runs, text_options()));
+    // 窗口切片同样落在同一套行号上（面板的 `LazyList` 总行数就靠这条恒等式）。
+    AURORA_TEST_CHECK_EQ(ui::monitor_row_window(runs, gb, 1U, 2U).size(), 2U);
+    AURORA_TEST_CHECK_TRUE(ui::monitor_row_window(runs, gb, 5U, 2U).empty());
+}
+
+AURORA_TEST_CASE(the_dump_follows_the_current_view_mode) {
+    const auto runs =
+        std::vector{received("OK\r\n"), run(session::RawDirection::Transmitted, 0, "AT\r\n")};
+    // 复制／导出跟当前视图档（稿 D30①）：文本档交出去的就是那一屏文本，行内不再有 hex 段与尾栏。
+    AURORA_TEST_CHECK_EQ(ui::monitor_dump_text(runs, text_options()), "RX  OK\nTX  AT");
+    const auto no_stamp = ui::MonitorRowOptions{.timestamp_prefix = false};
+    // 十六进制档交出去的仍是 hex 段与尾栏——视图换了，带走的那一份跟着换（稿 D19① 的口径不动）。
+    AURORA_TEST_CHECK_EQ(ui::monitor_dump_text(runs, no_stamp),
+                         expected_line("", "RX", "4F 4B 0D 0A", 4U, "OK..") + "\n" +
+                             expected_line("", "TX", "41 54 0D 0A", 4U, "AT.."));
+}
+
+AURORA_TEST_CASE(an_unmapped_encoding_name_decodes_as_utf8) {
+    // 装配层给的档名映射不到（或那条 Hook 缺席、交回空串）时不崩、不空屏：走 `make_session_decoder`
+    // 那条既有的 UTF-8 回落，与终端侧同一个口径（稿 D28）。
+    for (const auto *name : {"NO-SUCH-ENC", ""}) {
+        const auto rows = ui::monitor_rows(std::vector{received("OK\r\n")}, text_options(name));
+        AURORA_TEST_REQUIRE_EQ(rows.size(), 1U);
+        AURORA_TEST_CHECK_EQ(rows[0].dump, "  OK");
+    }
 }
 
 }  // namespace borealis::test_cases::utest_serial_monitor_format

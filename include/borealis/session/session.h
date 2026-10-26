@@ -301,6 +301,16 @@ class Session final : public ConnectionEvents, public term::ResponseSink {
     /// 「这一会话此刻是否在采」也只读这一处，面板侧不再另存第二份旗标（与 `logging_enabled` 同一条理由）。
     [[nodiscard]] auto raw_tap() const -> std::shared_ptr<RawTap>;
 
+    /// @brief 本会话构造期折好的**实际生效编码腿名**（`SPEC.FEAT.CONN.05` 四期稿 §11 D28①）。
+    ///
+    /// 监视卡文本档的解码腿由此而来，而不是让装配层再算一次当前设置：编码是「建会话那一刻」取一次的
+    /// 构造期值（`SPEC.FEAT.TERM.09` 的生效档口径），改过设置之后按现值去解历史字节就是拿错的钥匙开旧的锁。
+    /// 交的是 `encoding_leg_` 而不是 `encoding_.name`——那张别名表已把映射不到的名字（如 `GB2312`）折成
+    /// 真正在跑的腿，与 `decoder_` 同源（裁决 7.104 D6②同口径），故卡上解出的文本与终端里看到的不会分叉。
+    /// 构造期写定、此后不变，指向静态存储期，故无锁读、`noexcept`。
+    /// @return 六条腿之一的展示名；恒非空。
+    [[nodiscard]] auto encoding_name() const noexcept -> std::string_view { return encoding_leg_; }
+
   private:
     /// @brief 连接读线程回调：解码 → 喂状态机 → 产出脏行提交。
     auto on_bytes(std::span<const std::byte> bytes) -> void override;

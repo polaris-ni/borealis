@@ -20,6 +20,10 @@
 //       下一次重建就自动把它并回同一段——`snapshot()` 是 latest-value，没有游标也就不会漏。
 //   ⑶ 尾栏只承 ASCII 可打印区（0x20–0x7E），其余字节一律一个 `.`；十六进制正文一律大写字母。
 //       可见文案里除了 `RX`／`TX` 两个字母不出中文（面板上的措辞一律走 `settings_label(key)`）。
+//
+// 四期（稿 §11）在同一台机器上加了第二种**行内容**形态：`MonitorRowOptions::view` 取 `Text` 时，
+// `dump` 装的是按会话编码解码后的文本（`bytes_per_row` 让给 `kMonitorTextRowBytes` 那枚字节预算）。
+// 断点、跨 run 拼接、不完整尾行这些行边界口径两档共用一份——变的只是「一段字节怎么变成一行字」。
 // ============================================================
 
 #include <cstddef>
@@ -38,12 +42,27 @@ namespace borealis::ui {
 /// 要 946 dp，等于在 960 dp 的窗里盖住整个终端，故否掉（D5③）。
 inline constexpr std::size_t kMonitorBytesPerRow = 8;
 
+/// @brief 文本档每行的**字节**预算（稿 §11 D27）。
+///
+/// 刻意按字节而不是按码点切：`monitor_row_count()` 因此不需要解码就能给出真实总行数，两档共用同一台
+/// 扫描器这一条纪律才不破（按码点切就必须先解完整段才知道行落在哪）。可见宽度上也合适——GB18030 的
+/// 汉字两字节、等宽面上占两格，ASCII 一字节占一格，96 字节两档都≈96 格＝594 dp 那格卡宽。
+inline constexpr std::size_t kMonitorTextRowBytes = 96;
+
+/// @brief 行形态档（稿 §11 D26）：同一份料源的两种显示形状，面板局部量，不是设置键。
+enum class MonitorView : std::uint8_t {
+    Hex,   ///< 缺省档：每行 `bytes_per_row` 字节的十六进制段 + ASCII 尾栏。
+    Text,  ///< 文本档：按会话编码解码后的文本，CR/LF 只作断点，其余不可打印码点一个 `.`（D29）。
+};
+
 /// @brief 行折算的选项。
 ///
-/// 两枚都是**面板局部量**（D9①：零新设置键），重启回到这里写的缺省档。
+/// 三枚都是**面板局部量**（D9①：零新设置键），重启回到这里写的缺省档。
 struct MonitorRowOptions {
-    std::size_t bytes_per_row = kMonitorBytesPerRow;  ///< 0 视作缺省档，不另立「无字节」形态。
+    std::size_t bytes_per_row = kMonitorBytesPerRow;  ///< 0 视作缺省档，不另立「无字节」形态；文本档不吃这一格。
     bool timestamp_prefix = true;                     ///< 关掉即不折前缀（也不调 `localtime`）。
+    MonitorView view = MonitorView::Hex;              ///< 文本档时 `dump` 装的是解码文本（稿 D26／D27）。
+    std::string encoding{"UTF-8"};                    ///< 文本档的解码档名；取**实际生效腿**名（稿 D28）。
 };
 
 /// @brief 一条显示行。
@@ -55,7 +74,7 @@ struct MonitorRow {
     session::RawDirection direction = session::RawDirection::Received;  ///< 强调色只吃这一枚字段。
     std::string timestamp_prefix;  ///< `[HH:MM:SS.mmm] `（含尾随空格）；开关关掉时为空串。
     std::string direction_label;   ///< `"RX"` ／ `"TX"`（恒 2 字符）。
-    std::string dump;              ///< 两空格 + 十六进制段 + 两空格 + `|ASCII|`。
+    std::string dump;              ///< 十六进制档＝两空格 + 十六进制段 + 两空格 + `|ASCII|`；文本档＝两空格 + 解码文本。
 
     /// @brief 逐字段相等（面板状态泵的 diff 基准：`tick()` 拿它判「这一帧要不要重建行区」）。
     ///
@@ -72,7 +91,8 @@ struct MonitorRow {
 /// （稿 §9.3：一期那条 `monitor_rows` 也改走同一台扫描器，四条行边界口径只写一遍）。
 /// 面板用它给 `LazyList` 一个真实的总行数，而不必把 256 KiB 环折成三万多条字符串。
 /// @param runs `RawTap::snapshot()` 的产物，须是到达序（最旧在前）。
-/// @param options 每行字节数（0 视作缺省档）；时间戳档不影响计数。
+/// @param options 视图档与每行字节数（0 视作缺省档）；时间戳档与编码档不影响计数——文本档的预算按字节，
+///        故这一条不需要解码就能给出真实总行数（稿 D27 换来的那条对称性）。
 /// @return 显示行总数；空环即 0。
 [[nodiscard]] auto monitor_row_count(const std::vector<session::RawRun> &runs,
                                      const MonitorRowOptions &options) -> std::size_t;
@@ -82,7 +102,7 @@ struct MonitorRow {
 /// 冻结回看时面板只折当前窗口（稿 §9.2 D11①），比全折省下 `环形总行数 × 0.239 µs`（F5）。
 /// 窗口之前与之后的行只推进计数、不建字符串；窗口内每行的形态与全折逐字符一致。
 /// @param runs `RawTap::snapshot()` 的产物，须是到达序（最旧在前）。
-/// @param options 每行字节数与时间戳档。
+/// @param options 视图档、每行字节数、时间戳档与编码档。
 /// @param first_row 窗口首行的全局行号；越过总行数即返回空表。
 /// @param max_rows 窗口行数上限；0 即返回空表。超尾自动截短。
 /// @return 窗口内的行表，顺序与环内字节顺序一致。
@@ -95,7 +115,7 @@ struct MonitorRow {
 /// 一条行的方向与时刻取**该行首字节所在的那个 run**（D6①：run 级单点时间戳，续行不另取）；
 /// 一条长行按每行字节数切成多行，最后一条可以不完整。
 /// @param runs `RawTap::snapshot()` 的产物，须是到达序（最旧在前）。
-/// @param options 每行字节数与时间戳档。
+/// @param options 视图档、每行字节数、时间戳档与编码档。
 /// @return 显示行表，顺序与环内字节顺序一致；输入为空即返回空表（面板据此画「等待数据」）。
 [[nodiscard]] auto monitor_rows(const std::vector<session::RawRun> &runs,
                                 const MonitorRowOptions &options) -> std::vector<MonitorRow>;
@@ -106,7 +126,7 @@ struct MonitorRow {
 /// 自己在末尾补一个 `\n`（文本档惯例）。口径与屏面**同源**——同一台扫描器、同一份 `MonitorRowOptions`，
 /// 故文件里的每一行都能在屏上逐字符找到；本件不另造第二台格式化机器（D19③ 的否决理由）。
 /// @param runs `RawTap::snapshot()` 的产物，须是到达序（最旧在前）。
-/// @param options 每行字节数与时间戳档——与画这一屏用的是同一份档（稿 D19①）。
+/// @param options 视图档、每行字节数、时间戳档与编码档——与画这一屏用的是同一份档（稿 D19①／D30①）。
 /// @return 行文本；输入为空即返回空串（调用方据此整条不跑，见稿 D21①）。
 [[nodiscard]] auto monitor_dump_text(const std::vector<session::RawRun> &runs,
                                      const MonitorRowOptions &options) -> std::string;
