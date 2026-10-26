@@ -44,6 +44,7 @@
 
 #include "conn/serial_model.h"
 #include "schema_names.h"
+#include "shortcut_overrides.h"
 
 namespace borealis::config {
 namespace {
@@ -979,7 +980,11 @@ enum class CredentialProjection : std::uint8_t {
 /// @brief 读快捷键域。
 [[nodiscard]] auto read_shortcuts(ScopeReader &scope, const Settings &defaults) -> ShortcutsSettings {
     ShortcutsSettings shortcuts{};
-    shortcuts.overrides = scope.command_overrides("overrides", defaults.shortcuts.overrides);
+    // 旧命令 id 在读侧折成现 id（`SPEC.FEAT.CONN.05` 五期稿 D39③）：折叠点只能有一个，而它必须排在
+    // 重放与只读表**上游**——只在重放里改名，表里那一行照样是孤儿行，用户看到的是「键位没生效」。
+    // 回滚与导入共用这一条读腿，故三份来源一并覆盖；下一次落盘写出的就是现 id，旧行就此消失。
+    shortcuts.overrides = migrate_shortcut_overrides(
+        scope.command_overrides("overrides", defaults.shortcuts.overrides));
     scope.collect_unknown();
     return shortcuts;
 }

@@ -801,7 +801,7 @@ MobaXterm 的会话日志都按连接分类而不限串口），Wireshark 更是
 | **D36** | 入口判据 | ① 「这一格有活会话即开得出卡」，四型全开；② 只再开 SSH／Telnet 两型（远程才谈得上「线上字节」）；③ 继续挂起 | **①**。②把本地 PTY 排除在外是错的——ConPTY 的 RX 正是**转义序列的原始现场**，本仓调试 VT 链路时最想看的就那一份（F16）；③的成本不是工作量而是**一张已经通用的机制被入口切掉四分之三**，§7 那条「非串口不武装零成本」的顾虑已被 F17 证明与类型无关 |
 | **D37** | 绑定单位 | ① 保持标签级；② 改成**开卡那一刻的焦点格**（`PaneId`）；③ 跟着焦点实时切换 | **②**。会话与本地规格本来就是按格存的（F19），标签级绑定在 SSH／Telnet／本地的分屏标签上会给出「字节来自焦点格、身份来自 tab 档案」的错配；串口因结构上不能分屏（同一张表里只有一份档案）在②下**语义不变**。③被否：卡跟着焦点跑会让「我在看哪一格」这件事随每次点击漂移，而环是**那一格独占**的（每格一份 `RawTap`），实时跟随等于每换一次焦点就换一份历史 |
 | **D38** | 标题那格的身份串怎么折 | ① 面板自己按型 if-else；② 新建公共纯逻辑件 `ui::monitor_binding`，输入 `{kind, device_path, host, port, user, command_line}`，输出 target 半串，装配层只做「取料 + 现读」；③ 直接借用标签条那套名字折法 | **②**。①把四型的显示口径写进 `src/main.cpp`（裁决 7.83 那段**不进 runner、没有自动化证人**）；③的名字来自档案名／OSC 标题／手动重命名三来源优先级（`appearance.tab_name_priority`），语义是「这一格叫什么」而不是「这一格连的是谁」，两者混用会让「改名」与「换设备」在卡上看起来是同一件事。模板仍用既有那枚 `{name} · {path}`，只换 path 那半的折法。<br>②的折法四档（判据面 §12.4）：Serial＝`device_path`；SSH＝`[user@]host[:port]`，**缺省端口 22 省略**（F21 的跳链口径）；Telnet＝`host[:port]`，缺省 23 省略；Local＝`command_line`，空串则整格 target 不画（不伪造「本地终端」这种第二来源的名字）。`user` 为空时不写前导 `@`——与跳链规范化那条已裁形态同值 |
-| **D39** | 改名范围（代码面 / 词条 / 命令 id） | ① 都不改，只改行为；② 只改上屏文案；③ **三件一起改**：类与文件 `serial_monitor_*`→`session_monitor_*`、词条族 `serial.monitor.*`→`session.monitor.*`、命令 id `serial.monitor.toggle`→`session.monitor.toggle`（**带旧 id 迁移**） | **③**。①留下「SSH 标签的卡标题写着『串口监视』」这种当面说谎的上屏文案，是最坏的一档；②只改文案就让词条 key 与代码名继续对不上，而本仓 i18n 的纪律恰恰是「key 就是路径、表外不许有引号中文」（`src/ui/settings_i18n.h` 头注①②）。旧 id 迁移按 F20 做成 `shortcut_overrides` 侧的一张一次性改名表（`serial.monitor.toggle`→`session.monitor.toggle`），理由与代价：没有它，用户自绑的键位会变成只读表里的孤儿行并且**从此不再触发任何东西**——那是静默失效而不是可见降级。历史文档（本稿 §10／§11 与裁决 7.149／7.158／7.162／7.164）里的旧路径**不回填**，只在本节留这张映射，供旧引用对照：`src/ui/serial_monitor_panel.{h,cpp}`→`src/ui/session_monitor_panel.{h,cpp}`、`src/ui/serial_monitor_format.{h,cpp}`→`src/ui/session_monitor_format.{h,cpp}`、`tests/unit/utest_serial_monitor_format.cpp`→`utest_session_monitor_format.cpp`、`tests/integration/itest_serial_monitor_panel.cpp`→`itest_session_monitor_panel.cpp`、`ui::SerialMonitorPanel`→`ui::SessionMonitorPanel` |
+| **D39** | 改名范围（代码面 / 词条 / 命令 id） | ① 都不改，只改行为；② 只改上屏文案；③ **三件一起改**：类与文件 `serial_monitor_*`→`session_monitor_*`、词条族 `serial.monitor.*`→`session.monitor.*`、命令 id `serial.monitor.toggle`→`session.monitor.toggle`（**带旧 id 迁移**） | **③**。①留下「SSH 标签的卡标题写着『串口监视』」这种当面说谎的上屏文案，是最坏的一档；②只改文案就让词条 key 与代码名继续对不上，而本仓 i18n 的纪律恰恰是「key 就是路径、表外不许有引号中文」（`src/ui/settings_i18n.h` 头注①②）。旧 id 迁移按 F20 做成 `shortcut_overrides` 侧的一张一次性改名表（`serial.monitor.toggle`→`session.monitor.toggle`），理由与代价：没有它，用户自绑的键位会变成只读表里的孤儿行并且**从此不再触发任何东西**——那是静默失效而不是可见降级。**折叠点取读侧**（`src/config/store.cpp::read_shortcuts` 那唯一一处调用），不是重放侧：表本体住 `config/shortcut_overrides.{h,cpp}`，但只在重放里改名的话，孤儿行那条判据吃的正是读回来的那张原始表，用户照样看得见旧行；读侧一折，重放、只读表、下一次落盘三份下游同时一致。冲突取**现 id 胜出**（用户显式写过现名就是当下意图），且分两趟做而不是就地换键，以免结果随 `std::map` 的键序而变。历史文档（本稿 §10／§11 与裁决 7.149／7.158／7.162／7.164）里的旧路径**不回填**，只在本节留这张映射，供旧引用对照：`src/ui/serial_monitor_panel.{h,cpp}`→`src/ui/session_monitor_panel.{h,cpp}`、`src/ui/serial_monitor_format.{h,cpp}`→`src/ui/session_monitor_format.{h,cpp}`、`tests/unit/utest_serial_monitor_format.cpp`→`utest_session_monitor_format.cpp`、`tests/integration/itest_serial_monitor_panel.cpp`→`itest_session_monitor_panel.cpp`、`ui::SerialMonitorPanel`→`ui::SessionMonitorPanel` |
 | **D40** | 分屏标签的多格监视 | ① 一窗一张卡、绑焦点格（现状的延伸）；② 每格一张卡；③ 一张卡可切格 | **①**。②要动面板族那张「一窗一面板」的生存期账（`retarget_panel`／`retire_panel` 与按窗 `MountedOverlay`），③要新增一格「切格」的选择器与它的派发判据；两者都不改变「看到的是那一格自己的环」这一事实，而本期需求只要「入口别再切掉四分之三」。②③登记为在册不做（§12.6） |
 | **D41** | 零成本那句口径 | ① 原样保留「非串口会话零成本」；② 改判为「未开卡的会话零成本」并同步改 `raw_tap.h` 头注与本稿 §5 | **②**。F17 的因果从来是「未武装」而不是「非串口」；四型入口落地后①那句就成了与代码运行时不符的文档（§4.2 第 12 条）。**行为不变**：武装仍只发生在开卡那一刻 |
 | **D42** | 文案四改 | title `串口监视`→`字节监视`、command `串口十六进制监视`→`字节监视`、`not_serial`→`not_monitorable`（`当前标签没有可监视的会话`）、privacy 那句 `原始设备字节`→`原始会话字节` | 四枚都改。title／command 用同一个词是刻意的：面板标题与命令面板那行说的是同一张卡，两个名字才是新造的混乱；英文档随之 `Serial monitor`→`Byte monitor`、`Serial hex traffic monitor`→`Byte monitor`。对话框标题 `Export serial monitor dump`→`Export session byte dump`（ASCII 字面量，在 `main.cpp` 里，不受覆盖闸约束） |
@@ -817,7 +817,10 @@ MobaXterm 的会话日志都按连接分类而不限串口），Wireshark 更是
 
 - `utest_monitor_binding`（新，纯逻辑，脱离 GUI）：四型各一档的 target 折法逐字符断言；SSH 缺省端口 22 省略而
   2222 写出；`user` 空不写前导 `@`；Telnet 缺省 23 省略；Local 空 `command_line` 回空串（调用方据此整格不画）；
-  未知／默认构造回空串；旧命令 id 迁移表那一支独立案（`serial.monitor.toggle` 折成新 id，表外 id 原样透传）。
+  未知／默认构造回空串。
+- `utest_shortcut_overrides`（既有 4 案 ⇒ **8 案**）：旧命令 id 折叠四支——折成新 id 且组合键文本逐字节
+  不动、表外 id 原样透传（含空表）、新旧同现时**现 id 胜出**、以及端到端那一支（同一份旧覆盖：不折叠就是
+  `unknown_command`＝静默失效，折叠后重放命中新命令且旧缺省键不再命中）。
 - `itest_session_monitor_panel`（改名后的既有 25 案）：仍全绿——本期**不改面板**，改的是装配层交进来的
   `binding_label`；新增一条**卡与格同生死**的腿：焦点格散掉后标题那格整格不画（既有 `binding` 案的形态复用）。
 - 装配层（`src/main.cpp`，不进 runner，裁决 7.83）：四型分流与取料按源码审查＋走查担保，判据因此**刻意**
@@ -825,7 +828,7 @@ MobaXterm 的会话日志都按连接分类而不限串口），Wireshark 更是
 
 ### 12.5 代价
 
-改名一笔动 6 个文件的路径、2 个类名、19 枚词条 key（两档各一份）与 1 枚命令 id；id 迁移表是新增的第二份
+改名一笔动 6 个文件的路径、2 个类名、20 枚词条 key（两档各一份，实测 `grep -c`）与 1 枚命令 id；id 迁移表是新增的第二份
 「谁覆盖谁」知识，被 F20 那条孤儿行读数逼出来，不做就要接受静默失效。`session.monitor.*` 这个前缀与设置键
 的落盘点号路径同族而**不是**设置键（面板短语，`SPEC.FEAT.PREF.05` 的表外词条族），覆盖闸继续按「表外文件
 零引号中文」判。

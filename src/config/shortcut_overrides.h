@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================
-// 启动重放快捷键覆盖表（src/config/shortcut_overrides.h，私有头）
+// 启动重放快捷键覆盖表与旧命令 id 折叠（src/config/shortcut_overrides.h，私有头）
 // ------------------------------------------------------------
 // `SPEC.FEAT.PREF.04` 的装配腿（框架侧任务书 `codespec/FRAMEWORK_TASK_PREF04.md` §5）：把
 // `config::ShortcutsSettings::overrides`（命令 id → `KeyCombo::to_string()` 形态的组合键文本）
@@ -14,6 +14,11 @@
 //   用户可手改的文件，一条写错不该拦住启动，也不该静默失效。
 // - **解析只走框架公共面**：文本 → 键位的反向解析用 `KeyCombo::from`（与 `to_string()` 同源），
 //   本仓不自造第二真值源（裁决 7.72、AGENTS.md §5 第 2 条）。
+//
+// 命令 id 改名（`SPEC.FEAT.CONN.05` 五期稿 D39③）由本文件的 `migrate_shortcut_overrides` 兜住：
+// 覆盖表是用户可手改、且会跨版本留存的持久件，旧 id 不折叠就是**静默失效**（键位还在文件里，但
+// 注册表查无此命令，只读表画成孤儿行、什么也不再触发）。折叠点取**读侧**而不是重放侧，因为孤儿行
+// 那条判据吃的正是读回来的那张表——只在重放里改名，表里那一行照样是孤儿。
 //
 // 线程：只在启动期主线程用一次（装配层在 `bind_shortcuts` 之前调用）。
 // ============================================================
@@ -47,5 +52,16 @@ struct ShortcutReplayReport {
 auto replay_shortcut_overrides(au::CommandRegistry &commands,
                                const std::map<std::string, std::string> &overrides)
     -> ShortcutReplayReport;
+
+/// @brief 把落盘覆盖表里的旧命令 id 折成现 id（一次性改名表见实现里的 `kLegacyCommandIds`）。
+///
+/// 三条口径：
+/// - **表外 id 原样透传**，本件不判断它是否注册——那是重放侧 `unknown_command` 的账。
+/// - **新旧同现时现 id 胜出**：用户既然显式写过现名，那一行就是当下意图；旧行丢弃并留痕。
+/// - **不改写组合键文本**，只改键。折叠后的表下一次落盘自然写出现 id，旧行就此消失。
+/// @param stored 读回来的命令 id → 组合键文本。
+/// @return 折叠后的同一张表；无旧 id 时与入参逐键相等。
+auto migrate_shortcut_overrides(const std::map<std::string, std::string> &stored)
+    -> std::map<std::string, std::string>;
 
 }  // namespace borealis::config
