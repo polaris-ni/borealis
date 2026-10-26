@@ -4,6 +4,21 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.161（2026-10-26）**`SPEC.FEAT.WS.03` 第二条关窗入口 `workspace.close_window` 落地：入口等价收成公共判据件，闸门与命令同调一处（裁决 7.161；本地提交 `9a25241`（两件与 4 案 + 装配段）→ 文档回写（本笔））**
+
+**动机**：稿 D3 推荐档把关窗写成**两条入口**并列，批 3-B 只落了 `workspace.new_window`，关窗那条只剩 OS 关闭钮，欠项登记在 `WS03_MULTI_WINDOW.draft.md` §23⑸。2026-10-23 随 G44 回货落地的确认闸门因此只有一条腿可问。本棒补第二条入口，而它一落就把一条此前不可能遇到的口径摆到台面上，必须当场定死：同一个动作换了发起方式，后果不能变。本仓已有同族反例（关标签会弹确认、点 × 静默带走会话），不能再造一条。
+
+**落地形态**：
+
+- **判据收成公共纯逻辑件**：`ui::window_close_disposition(发起方, 本窗有无活会话)` → `AskUser` / `CloseNow`（`include/borealis/ui/window_close.h` + `src/ui/window_close.cpp`，头里不含框架类型 ⇒ 脱离 GUI 单测，§4.4 第 20 条）。真值表 2×3 全枚举：无活会话那一行三条入口一律 `CloseNow`；有活会话那一行 `OsCloseButton` 与 `UserCommand` 同为 `AskUser`，`AppInitiated` 恒 `CloseNow`。业界同档按已取到的原文立据——Windows Terminal 文档把 "clicking the `X` button **or using the `closeWindow` command**" 并列成同一件事；其 `confirmBeforeClosing` 的取值与缺省本次未从官方文档取到，**未验证**、不引用。
+- **三档发起方而非直接照框架三分类**：命令入口在框架眼里同样是 `Programmatic`，与「用户答过『关』之后的那一次重试」同源。照来源直映要么两条都不问，要么把退出序卡在一个没人能答、甚至没有窗口可挂的框上。装配层因此做一次显式折档（`OperatingSystem` → `OsCloseButton`，`Programmatic` 与 `PolicyCascade` → `AppInitiated`），命令入口自己带 `UserCommand`。
+- **装配段一份判据、一份框**：`main.cpp` 里原闸门闭包拆成三件同局部的东西——窗级活会话折法 `window_has_live_session`（只汇总，逐标签仍复用关标签那枚 `has_live_session`）、按窗确认框 `ask_window_close`、命令落点 `request_close_window`；闸门与命令各取其一，判据与框都不复制第二份（命令吃闸门那一只 `window_close_confirm`，不为新入口另造第二只）。命令经 `command_window()`（`ui::ActiveWindowTracker`）取落点窗，取不到只留一条 INFO。
+- **两处刻意不做**：**不登记缺省键**——`Ctrl+Shift+W` 在分屏保留键表里一直是 `ClosePane`（裁决 7.141），抢过来要动既有键位表与冲突判定，而需求没要求程序化关窗入口带键；要键的用户经 `SPEC.FEAT.PREF.04` 的可重绑面自己绑。**不加配置键**——沿用上一棒 §3 那句「不加『以后不再询问』」，`utest_settings_catalog` 的未接线计数因此**保持 18 不变**；先落盘就重演 7.159⑦ 刚摘掉的「画了控件、能改能落盘、无消费方」。
+
+**验收读数**：`cmake --build --preset msvc --parallel` 通过（含 `src/main.cpp` 与 `Borealis.exe` 链接，上一棒 2026-10-23 那次只走过 linux 预设 ⇒ 关窗确认自此有 Windows 主通道读数）；`ctest --preset msvc -E etest_ -j 16` **123/123 全绿**（基线 122，+1 套件）；`borealis_test_runner` 全跑 **1517 案 / 1514 绿**（基线 1513/1510，+4 案＝`utest_window_close`），三红仍是 Windows 无 libsecret 的 `etest_libsecret_credential_store`。四案＝全表逐格钉住、两条用户入口逐位等价（承重）、`AppInitiated` 不问、无活会话一律放行。三则变异各指名打红、逐字节回改后复绿：M1 把 `UserCommand` 并入 `AppInitiated` ⇒ 全表案 + 等价案红（「键盘入口不再问」的形状）；M2 摘掉 `AppInitiated` 豁免支 ⇒ 全表案 + `app_initiated_closes_without_asking_even_with_live_sessions` 红（答过一次的关窗被再问一遍）；M3 置空中文档标签 ⇒ `itest_settings_panel.every_catalog_key_resolves_to_a_display_label` 红并点名 `workspace.action.close_window`，其余 64 案绿。另取到一条**构建期**证人：整枚删中文档那把键时 `gen_i18n` 直接报错停建 ⇒ 中英键集相等不靠用例维持。
+
+**边界与不称可用**：`src/main.cpp` 不编入 runner（裁决 7.83）⇒ 命令登记、`command_window()` 落点、确认框本体与答「关」之后的那一跳**无自动化证人**，只有源码审查＋真机走查担保；`WS03_MULTI_WINDOW.draft.md` §9 第 8 条因此新增两项（面板关有活会话的窗要弹框、面板关空闲窗不弹框），连同既有的六条真机走查一起做掉之前**不称「可用」**（§4.4 第 33 条）。关最后一扇窗不设「别关」的闸，框架缺省 `ExitPolicy::LastWindowClosed` 让它等于退出——与点 × 关最后一扇同形。**本棒无新增框架缺口**（G42 仍部分闭合、G45／G46／G47 在册不变）。观察项登记不顺手补：`workspace.action.new_window` 至今仍不在 `itest_settings_panel` 的表外点名圈里（批 3-B 的漏项）。
+
 ## v0.160（2026-10-26）**`SPEC.FEAT.WS.12` Quick Terminal 批 1：依赖现状按读源重列，真缺口两条登记为 G47，贴边折算与显隐状态机先行落码（裁决 7.160；本地提交 `2623c2e`（稿面与任务书）→ `0d45b43`（两件与 13 案）→ 文档回写（本笔））**
 
 **动机**：PLAN 观察池挂着的那句「无边框贴边窗口形态未落」是 2026-10-02 的口径，本次对 Aurora 活动分支逐口读源后**部分推翻**——无边框（`WindowStyle::frameless`）、工作区枚举（`app::list_displays()` 给物理像素 `work_area` + `scale_factor`）、贴边几何自算今天全可用，OS 全局热键更早在 7.29③ 就已闭合；真正没有公共入口的只有**运行期显隐**与**运行期置顶**两口：`Win32Host` 构造尾部那一次 `ShowWindow` / `SetWindowPos(HWND_TOPMOST)` 之后，`Surface` 面上只剩 `raise()` 与 `focus_window()`，二者都不改可见性。夹取不是缺口（工作区可读，属产品策略）。
