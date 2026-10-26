@@ -596,7 +596,8 @@ S13② 同口径），其余四枚都在面板里消费，故不进 `itest_setti
 
 - **缺省文件名**：`SPEC.FEAT.CONN.11` 那边有 `session-<tab>-<epoch>.log` 的合成规则，本卡交给用户在保存框里
   命名。**实测（2026-10-26 读 Aurora 活动分支 `include/aurora/app/file_dialog.h`）**：`Options` 只有
-  `title` / `initial_dir` / `filters` 三格，**没有**「建议文件名」这一格 ⇒ 本棒不做缺省名，缺口登记见 §10.8。
+  `title` / `initial_dir` / `filters` 三格，**没有**「建议文件名」这一格 ⇒ 本棒不做缺省名；该格已登记成框架缺口
+  **G48** 并出任务书 `codespec/FRAMEWORK_TASK_FILEDIALOG_NAME.md`（裁决 **7.163**），回货后本卡接线面见该任务书 §4。
 - **过滤后再导出**（只导出某个方向／某个时间区间）：与「文本视图」「搜索」同属一棒，先有过滤再谈按过滤导出。
 - **原始字节导出**（`.bin`，不经 hex 折算）：与本期的「同一台折算件」判据相冲，是另一种产品形态（Wireshark 的
   `Export Packet Bytes`），需要单独的口径与单独的走查。在册。
@@ -612,7 +613,10 @@ S13② 同口径），其余四枚都在面板里消费，故不进 `itest_setti
 1. **`aurora::file_dialog::Options` 无「建议文件名」字段**（实测同上：只有 `title` / `initial_dir` / `filters`）。
    业界（Wireshark、Eltima、浏览器另存为）都会预填一个与内容同源的缺省名，用户改一下即可；本仓替身＝把命名
    完全交给用户，代价是每次导出都要手打一个有意义的名字。框架侧建议：`Options::suggested_name`
-   （Win32 `IFileDialog::SetFileName`、GTK/自绘那两条腿各有现成接缝）。**不阻塞本棒**，故先按候选登记。
+   （Win32 `IFileDialog::SetFileName`、GTK/自绘那两条腿各有现成接缝）。**不阻塞本棒** ⇒ 已按裁决 **7.163** 登记成
+   缺口 **G48**（附录 A.2），可派发任务书 `codespec/FRAMEWORK_TASK_FILEDIALOG_NAME.md`：§1 三腿能力清册（含那条
+   「两腿早有接缝、只差一格」的实测）、§2 字段口径与可选的 `default_extension`、§3 五条回货判据（含非 ASCII 名
+   逐字节到达，对应本稿 F15）、§4 本仓接线面（`picked_save_path` 加第三形参 + 缺省名形态）。
 
 ### 10.9 批 C 结项读数（2026-10-26，AGENTS §4.4 第 22 条的变异自证）
 
