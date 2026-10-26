@@ -107,6 +107,14 @@ class RawTap final {
     /// @brief 累计丢弃字节数（逐出 + 整条拒收两档之和；>0 才上屏那句留痕，稿 §2）。
     [[nodiscard]] auto dropped_bytes() const -> std::size_t;
 
+    /// @brief 环状态的变更计数（单调递增；`record` 与 `clear` 任一次实际改动各推进一次）。
+    ///
+    /// 面板拿它当「这一帧要不要重折」的闸（稿 §9.2 D17①）：环满之后逐出与写入同量，
+    /// 「字节数 + run 条数」可以完全不变而内容已经整体前移——只有单调计数不会漏掉这种稳态。
+    /// 空片段（`record` 的早退路）不改环，故也不推进。
+    /// @return 自构造以来的变更次数。
+    [[nodiscard]] auto revision() const -> std::uint64_t;
+
     /// @brief 构造期定形的上限，此后只读（故不必加锁）。
     [[nodiscard]] auto max_bytes() const noexcept -> std::size_t { return max_bytes_; }
 
@@ -116,6 +124,7 @@ class RawTap final {
     std::size_t max_bytes_ = kMaxRawTapBytes;
     std::size_t held_bytes_ = 0;   ///< 不变量：恒 ≤ `max_bytes_`（拒收与逐出共同守住）。
     std::size_t dropped_bytes_ = 0;
+    std::uint64_t revision_ = 0;   ///< 任何可观测状态变化各推进一次（见 `revision()`）。
 };
 
 }  // namespace borealis::session

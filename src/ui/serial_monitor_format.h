@@ -66,7 +66,31 @@ struct MonitorRow {
 /// @brief 一行的完整串形：三段顺序拼接（`visible_rows()` 与逐字符断言都读它）。
 [[nodiscard]] auto row_text(const MonitorRow &row) -> std::string;
 
-/// @brief run 表 → 显示行表（纯函数：不持状态、不取时钟、不做 IO）。
+/// @brief 折行后的总行数（只计数、不建字符串）。
+///
+/// 与 `monitor_row_window()` 共用同一台扫描器，故「数出来的行数」与「折出来的行数」由结构保证相等
+/// （稿 §9.3：一期那条 `monitor_rows` 也改走同一台扫描器，四条行边界口径只写一遍）。
+/// 面板用它给 `LazyList` 一个真实的总行数，而不必把 256 KiB 环折成三万多条字符串。
+/// @param runs `RawTap::snapshot()` 的产物，须是到达序（最旧在前）。
+/// @param options 每行字节数（0 视作缺省档）；时间戳档不影响计数。
+/// @return 显示行总数；空环即 0。
+[[nodiscard]] auto monitor_row_count(const std::vector<session::RawRun> &runs,
+                                     const MonitorRowOptions &options) -> std::size_t;
+
+/// @brief 折出**一段**显示行：`[first_row, first_row + max_rows)`（纯函数）。
+///
+/// 冻结回看时面板只折当前窗口（稿 §9.2 D11①），比全折省下 `环形总行数 × 0.239 µs`（F5）。
+/// 窗口之前与之后的行只推进计数、不建字符串；窗口内每行的形态与全折逐字符一致。
+/// @param runs `RawTap::snapshot()` 的产物，须是到达序（最旧在前）。
+/// @param options 每行字节数与时间戳档。
+/// @param first_row 窗口首行的全局行号；越过总行数即返回空表。
+/// @param max_rows 窗口行数上限；0 即返回空表。超尾自动截短。
+/// @return 窗口内的行表，顺序与环内字节顺序一致。
+[[nodiscard]] auto monitor_row_window(const std::vector<session::RawRun> &runs,
+                                      const MonitorRowOptions &options, std::size_t first_row,
+                                      std::size_t max_rows) -> std::vector<MonitorRow>;
+
+/// @brief run 表 → 全部显示行（纯函数：不持状态、不取时钟、不做 IO）。
 ///
 /// 一条行的方向与时刻取**该行首字节所在的那个 run**（D6①：run 级单点时间戳，续行不另取）；
 /// 一条长行按每行字节数切成多行，最后一条可以不完整。

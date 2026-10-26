@@ -166,6 +166,37 @@ AURORA_TEST_CASE(a_snapshot_never_exceeds_the_ring_bound) {
     AURORA_TEST_CHECK_EQ(held_bytes + tap.dropped_bytes(), fed_bytes);
 }
 
+AURORA_TEST_CASE(revision_advances_on_every_observable_change) {
+    // 面板的「这一帧要不要重折」只认这枚计数（稿 §9.2 D17①）。空段不算变更——它连环都没进。
+    auto tap = session::RawTap{4};
+    const auto start = tap.revision();
+    note(tap, session::RawDirection::Received, 1, "");
+    AURORA_TEST_CHECK_EQ(tap.revision(), start);
+
+    note(tap, session::RawDirection::Received, 2, "AB");
+    const auto after_record = tap.revision();
+    AURORA_TEST_CHECK_GT(after_record, start);
+
+    note(tap, session::RawDirection::Received, 3, "0123456789");  // 整条超上限：只动丢弃累计
+    AURORA_TEST_CHECK_GT(tap.revision(), after_record);
+
+    const auto before_clear = tap.revision();
+    tap.clear();
+    AURORA_TEST_CHECK_GT(tap.revision(), before_clear);
+
+    // 环满后的稳态：逐出一条、写入一条，字节数与条数都可以不变，内容却已整体前移
+    // （D17① 否掉「字节数 + 条数」摘要的那条实测理由）。
+    auto steady = session::RawTap{4};
+    note(steady, session::RawDirection::Received, 1, "AAAA");
+    const auto held = steady.total_bytes();
+    const auto runs = steady.run_count();
+    const auto mark = steady.revision();
+    note(steady, session::RawDirection::Received, 2, "BBBB");
+    AURORA_TEST_CHECK_EQ(steady.total_bytes(), held);
+    AURORA_TEST_CHECK_EQ(steady.run_count(), runs);
+    AURORA_TEST_CHECK_GT(steady.revision(), mark);
+}
+
 AURORA_TEST_CASE(two_threads_recording_land_every_run_exactly_once) {
     AURORA_TEST_REQUIRE_THREADS();
     // 采集腿自有 mutex_、不借 Session::mutex_（稿 §5 第一条）：读线程与主线程各记自己那方向，

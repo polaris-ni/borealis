@@ -34,6 +34,7 @@ auto RawTap::record(RawDirection direction, std::int64_t timestamp_ms,
     if (bytes.size() > max_bytes_) {
         // 单段超上限：整条拒收并计丢弃。截一半留存就是伪造设备节奏（头注的口径 ⑵）。
         dropped_bytes_ += bytes.size();
+        ++revision_;
         return;
     }
     auto run = RawRun{};
@@ -48,6 +49,7 @@ auto RawTap::record(RawDirection direction, std::int64_t timestamp_ms,
         dropped_bytes_ += runs_.front().bytes.size();
         runs_.pop_front();
     }
+    ++revision_;
 }
 
 auto RawTap::snapshot() const -> std::vector<RawRun> {
@@ -60,6 +62,7 @@ auto RawTap::clear() -> void {
     runs_.clear();
     held_bytes_ = 0;
     dropped_bytes_ = 0;
+    ++revision_;
 }
 
 auto RawTap::total_bytes() const -> std::size_t {
@@ -75,6 +78,11 @@ auto RawTap::run_count() const -> std::size_t {
 auto RawTap::dropped_bytes() const -> std::size_t {
     std::lock_guard lock{mutex_};
     return dropped_bytes_;
+}
+
+auto RawTap::revision() const -> std::uint64_t {
+    std::lock_guard lock{mutex_};
+    return revision_;
 }
 
 }  // namespace borealis::session

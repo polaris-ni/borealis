@@ -243,4 +243,103 @@ AURORA_TEST_CASE(an_empty_ring_yields_no_rows_and_a_suspended_tail_is_not_droppe
     AURORA_TEST_CHECK_EQ(ui::row_text(rows[0]), expected_line("", "RX", "52 45 41 44 59", 5, "READY"));
 }
 
+AURORA_TEST_CASE(row_count_equals_the_full_fold_on_every_line_shape) {
+    // 计数与折行共用一台扫描器（稿 §9.3）：四条行边界口径只要有一处走岔，这两个数就会分家。
+    const auto shapes = std::vector<std::vector<session::RawRun>>{
+        {},
+        {received("")},
+        {received("A")},
+        {received("ABCDEFGH")},
+        {received("ABCDEFGHI")},
+        {received("AB\r\nCD\rEF")},
+        {received("AB\r"), received("\nCD")},
+        {received("\r\n\r\n")},
+        {received("0123456789abcdef0123456789abcdef")},
+        {run(session::RawDirection::Transmitted, 1, "AT"), run(session::RawDirection::Received, 2, "\r\n")},
+    };
+    for (const auto &runs : shapes) {
+        AURORA_TEST_CHECK_EQ(ui::monitor_row_count(runs, kOptions), ui::monitor_rows(runs, kOptions).size());
+    }
+    // 纯二进制（整段无行尾）按每行字节数切：256 KiB → 32768 行，这是环的上界（D4①）。
+    auto blob = session::RawRun{};
+    blob.bytes.assign(256U * 1024U, std::byte{0xAA});
+    AURORA_TEST_CHECK_EQ(ui::monitor_row_count(std::vector{blob}, kOptions), 32768U);
+}
+
+AURORA_TEST_CASE(row_window_is_a_slice_of_the_full_fold) {
+    auto runs = std::vector<session::RawRun>{};
+    for (int index = 0; index < 12; ++index) {
+        runs.push_back(run(session::RawDirection::Received, local_epoch_ms(10, 0, 0, index),
+                           "line-" + std::to_string(index) + "\r\n"));
+    }
+    const auto all = ui::monitor_rows(runs, kOptions);
+    const auto total = ui::monitor_row_count(runs, kOptions);
+    AURORA_TEST_REQUIRE_EQ(all.size(), total);
+    AURORA_TEST_CHECK_GT(total, 12U);  // 两位数的行号让每条设备行都是 2 格（9 字节 = 8 + 1）
+    for (std::size_t first = 0; first <= total; ++first) {
+        for (const std::size_t max : {0U, 1U, 5U, 96U}) {
+            const auto window = ui::monitor_row_window(runs, kOptions, first, max);
+            const std::size_t begin = std::min(first, total);
+            const std::size_t want = std::min(max, total - begin);
+            AURORA_TEST_REQUIRE_EQ(window.size(), want);
+            for (std::size_t offset = 0; offset < want; ++offset) {
+                // 逐字符相等：窗口折行与全折共用同一台扫描器，前缀缓存也不许改变字符串。
+                AURORA_TEST_CHECK_EQ(ui::row_text(window[offset]), ui::row_text(all[begin + offset]));
+            }
+        }
+    }
+}
+
+AURORA_TEST_CASE(a_window_past_the_end_or_of_zero_rows_is_empty) {
+    const auto runs = std::vector{received("hello")};
+    const auto total = ui::monitor_row_count(runs, kOptions);
+    AURORA_TEST_REQUIRE_EQ(total, 1U);
+    AURORA_TEST_CHECK_TRUE(ui::monitor_row_window(runs, kOptions, total, 8U).empty());
+    AURORA_TEST_CHECK_TRUE(ui::monitor_row_window(runs, kOptions, total + 5U, 8U).empty());
+    AURORA_TEST_CHECK_TRUE(ui::monitor_row_window(runs, kOptions, 0U, 0U).empty());
+    AURORA_TEST_CHECK_TRUE(ui::monitor_row_window(std::vector<session::RawRun>{}, kOptions, 0U, 8U).empty());
+    const auto clipped = ui::monitor_row_window(runs, kOptions, 0U, 8U);
+    AURORA_TEST_REQUIRE_EQ(clipped.size(), 1U);  // 超尾自动截短，不补空行
+}
+
+AURORA_TEST_CASE(a_window_inside_one_long_line_keeps_the_line_stamp_and_direction) {
+    // 冻结回看最常落在一条长行中间：窗口里每一格都挂**行首** run 的方向与时刻（D6①），
+    // 而不是窗口首字节所在的后继 run。
+    const auto runs = std::vector{
+        run(session::RawDirection::Transmitted, local_epoch_ms(12, 0, 0, 700), "abcdefghijklmnopqrstuvwxyz")};
+    AURORA_TEST_CHECK_EQ(ui::monitor_row_count(runs, kOptions), 4U);  // 26 = 8 + 8 + 8 + 2
+    const auto window = ui::monitor_row_window(runs, kOptions, 1U, 2U);
+    AURORA_TEST_REQUIRE_EQ(window.size(), 2U);
+    AURORA_TEST_CHECK_EQ(window[0].direction_label, "TX");
+    AURORA_TEST_CHECK_EQ(window[0].timestamp_prefix, "[12:00:00.700] ");
+    AURORA_TEST_CHECK_EQ(window[0].dump, "  69 6A 6B 6C 6D 6E 6F 70  |ijklmnop|");
+    AURORA_TEST_CHECK_EQ(window[1].dump, "  71 72 73 74 75 76 77 78  |qrstuvwx|");
+}
+
+AURORA_TEST_CASE(a_window_starting_mid_line_across_two_runs_keeps_the_first_runs_stamp) {
+    // F10 的 15 + 5 那一例取中段窗口：第二格的首字节已经落在第二个 run 里，但方向与时刻仍是行首
+    // （第一个 run）那一份——跨 run 的挂起尾段在窗口折行里也必须成立。
+    const auto runs =
+        std::vector{run(session::RawDirection::Received, local_epoch_ms(12, 0, 0, 100), "abcdefghijklmno"),
+                    run(session::RawDirection::Received, local_epoch_ms(12, 0, 0, 200), "pqr\r\n")};
+    const auto window = ui::monitor_row_window(runs, kOptions, 1U, 1U);
+    AURORA_TEST_REQUIRE_EQ(window.size(), 1U);
+    AURORA_TEST_CHECK_EQ(window[0].timestamp_prefix, "[12:00:00.100] ");
+    AURORA_TEST_CHECK_EQ(window[0].dump, "  69 6A 6B 6C 6D 6E 6F 70  |ijklmnop|");
+    // 窗口从第三格起：`qr\r\n` 这四个字节属于第二个 run，却仍是同一条设备行。
+    const auto tail = ui::monitor_row_window(runs, kOptions, 2U, 1U);
+    AURORA_TEST_REQUIRE_EQ(tail.size(), 1U);
+    AURORA_TEST_CHECK_EQ(tail[0].timestamp_prefix, "[12:00:00.100] ");
+    AURORA_TEST_CHECK_EQ(tail[0].dump, "  71 72 0D 0A              |qr..|");
+}
+
+AURORA_TEST_CASE(a_window_honours_the_bytes_per_row_override) {
+    const auto runs = std::vector{received("0123456789")};  // 10 字节 = 4 + 4 + 2
+    const auto options = ui::MonitorRowOptions{.bytes_per_row = 4, .timestamp_prefix = false};
+    AURORA_TEST_CHECK_EQ(ui::monitor_row_count(runs, options), 3U);
+    const auto window = ui::monitor_row_window(runs, options, 1U, 1U);
+    AURORA_TEST_REQUIRE_EQ(window.size(), 1U);
+    AURORA_TEST_CHECK_EQ(window[0].dump, "  34 35 36 37  |4567|");
+}
+
 }  // namespace borealis::test_cases::utest_serial_monitor_format
