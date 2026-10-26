@@ -5,12 +5,15 @@
 // 行表随环刷新、时间戳开关联动、暂停中不读环、清空是唯一止血、丢弃留痕上屏、绑定与常驻声明；
 // 二期（稿 §9）另四腿：历史超过折带窗口仍可回看、离底冻结与回底恢复、「回到最新」双解、冻结中清空；
 // 三期（稿 §10）再加六腿：复制交整环而不是窗口、导出先问路径再交同一份文本、取消与空环整条不跑、
-// 写盘失败上屏中性那句、暂停中导出的是这一屏、两枚按钮只在对应腿在场时画。
+// 写盘失败上屏中性那句、暂停中导出的是这一屏、两枚按钮只在对应腿在场时画；
+// 四期（稿 §11）再加六腿：第三枚开关真点即换行形态且拨回来是同一份料源、文本档复制交出去的是屏上
+// 那一份文本、解码腿按 hook 报的那条腿走、hook 缺席整条回落 UTF-8 不崩、冻结中换档回到这份料源的末尾、
+// 暂停中换档只重画不读环。
 // 驱动台形态照 itest_tunnel_panel 的 Harness（present_root 排真实布局 + hit_test_chain 取命中 +
 // EventDispatcher 发真事件），精简到本件用得到的那几条腿。
 //
-// 判据一律走面板交出的观测面（visible_rows / notice / timestamp_enabled / is_open），浮层树只用于
-// 「按钮与开关真点得到」这一条派发腿——行区重建会挪位置，按坐标断言会把排版改动误报成功能回归。
+// 判据一律走面板交出的观测面（visible_rows / notice / timestamp_enabled / text_view_enabled / is_open），
+// 浮层树只用于「按钮与开关真点得到」这一条派发腿——行区重建会挪位置，按坐标断言会把排版改动误报成功能回归。
 //
 // 「快照被问了几次」（`snapshot_calls`）是本件独有的证人：暂停这条腿的判据不是「画面没变」，而是
 // 「压根没去读环」——只看行表的话，「读了但算出同一份」与「没读」两种实现都给同一个读数。
@@ -52,13 +55,17 @@ namespace au = aurora;
 constexpr int kWindowWidth = 900;
 constexpr int kWindowHeight = 760;
 
-/// @brief 一帧环投影 + 绑定串 + 六条腿的调用留痕。
+/// @brief 一帧环投影 + 绑定串 + 七条腿的调用留痕。
 struct Probe {
     ui::SerialMonitorPanel::Snapshot snapshot{};
     std::string binding;
     std::size_t snapshot_calls = 0U;
     std::size_t clear_calls = 0U;
     std::size_t binding_calls = 0U;
+    // ---- 四期文本视图的解码腿（稿 §11 D28①）：交的是「那条会话构造期折好的腿名」 ----
+    std::string encoding = "UTF-8";    ///< 面板按它现造解码器；换会话即换值，改设置不换。
+    std::size_t encoding_calls = 0U;
+    bool provide_encoding_leg = true;  ///< 关掉即装配层没装这条腿：文本档该整条回落 UTF-8。
     // ---- 三期三条「取出去」腿（稿 §10.2 D22①）：面板只管交文本，成败由这里的返回值演 ----
     std::size_t copy_calls = 0U;
     std::size_t pick_calls = 0U;
@@ -91,6 +98,12 @@ struct Probe {
             ++binding_calls;
             return binding;
         };
+        if (provide_encoding_leg) {
+            out.encoding_name = [this]() -> std::string {
+                ++encoding_calls;
+                return encoding;
+            };
+        }
         if (provide_copy_leg) {
             out.copy_text = [this](std::string text) -> void {
                 ++copy_calls;
@@ -360,6 +373,26 @@ auto scroll_to_top(Harness &h, ui::SerialMonitorPanel &panel) -> void {
 /// @brief 第 index 行在不在交出去的文本里（`|R000..|` 那种直读尾栏）。
 [[nodiscard]] auto dump_shows_line(const std::string &text, int index) -> bool {
     return text.find("|" + line_tag(index) + "..|") != std::string::npos;
+}
+
+/// @brief 文本档那一行的正文段（`MonitorRow::dump`）：两空格 + 行号标签，没有竖线尾栏。
+///
+/// 换档后 `|R000..|` 那种锚点就不存在了（那是 hex 段的界），文本段的界是行尾本身（稿 §11.3）。
+[[nodiscard]] auto text_row_is(const ui::MonitorRow &row, int index) -> bool {
+    return row.dump == "  " + line_tag(index);
+}
+
+/// @brief 真点第三枚开关（文本视图，稿 D26①）并确认它翻了位。
+///
+/// 序号 3 是刻意的：集成用例按 `find("Switch", N)` 的树序取件，前两枚的序号不能因新增而挪位。
+auto toggle_text_view(Harness &h) -> void {
+    auto spot = h.find("Switch", 3);
+    AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr, "the text view switch is not reachable");
+    auto *sw = dynamic_cast<au::Switch *>(spot.widget);
+    AURORA_TEST_REQUIRE(sw != nullptr);
+    const bool before = sw->value();
+    h.click(spot);
+    AURORA_TEST_CHECK(sw->value() != before);
 }
 
 }  // namespace
@@ -967,6 +1000,172 @@ AURORA_TEST_CASE(a_new_run_clears_the_action_notice) {
     AURORA_TEST_CHECK(h.find_text(sentence).widget == nullptr);  // 那句真的从卡上消失了，不只是观测面变了。
     // 数据照常在走：那句消失不是「面板停了」。
     AURORA_TEST_CHECK_EQ(panel->visible_rows().size(), 3U);
+}
+
+// ------------------------------------------------------------
+// 判据⑭（稿 §11 D26①）：第三枚开关真点即换行形态，拨回来看的还是同一份料源
+// ------------------------------------------------------------
+AURORA_TEST_CASE(text_switch_rewrites_the_rows_and_a_round_trip_keeps_the_source) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 3);
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    AURORA_TEST_CHECK_FALSE(panel->text_view_enabled());  // 缺省关＝今天那档 hex（稿 D26①）。
+    // 第三枚的词条真在双语表里、且真画到了树上。判据取「非空」而不是「不等于键名」：缺键时
+    // `settings_label` 回退的是空串而非键（`settings_i18n.h` 文件头①），后者是永真的空转证人。
+    const std::string toggle_label = ui::settings_label("serial.monitor.toggle.text_view");
+    AURORA_TEST_REQUIRE_MSG(!toggle_label.empty(), "the text view switch has no vocabulary entry");
+    AURORA_TEST_REQUIRE_MSG(h.find_text(toggle_label).widget != nullptr,
+                            "the text view switch label is not drawn");
+    auto rows = panel->visible_rows();
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 3U);
+    AURORA_TEST_CHECK_TRUE(shows_line(rows, 0));
+
+    toggle_text_view(h);
+    h.tick(*panel);
+    AURORA_TEST_CHECK_TRUE(panel->text_view_enabled());
+    rows = panel->visible_rows();
+    // 一行 6 字节 < 文本档的字节预算 ⇒ 两档行数相同，变的只是行形态（一台扫描器，稿 D27①）。
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 3U);
+    for (int index = 0; index < 3; ++index) {
+        AURORA_TEST_CHECK_TRUE(text_row_is(rows[static_cast<std::size_t>(index)], index));
+    }
+    // 三枚开关各自独立：换视图档不动时间戳档，也不动方向那一格。
+    AURORA_TEST_CHECK_TRUE(has_prefix(rows));
+    AURORA_TEST_CHECK(rows[0].direction_label == "RX");
+
+    toggle_text_view(h);
+    h.tick(*panel);
+    AURORA_TEST_CHECK_FALSE(panel->text_view_enabled());
+    rows = panel->visible_rows();
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 3U);
+    AURORA_TEST_CHECK_TRUE(shows_line(rows, 2));  // 拨回来仍是 hex，且是**同一份**料源
+}
+
+// ------------------------------------------------------------
+// 判据⑮（稿 D30①）：文本档复制交出去的就是屏上那一份文本，不是 hex 段
+// ------------------------------------------------------------
+AURORA_TEST_CASE(the_text_view_copies_the_text_that_is_on_screen) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe = make_probe();
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    toggle_text_view(h);
+    h.tick(*panel);
+    auto copy_spot = h.find_button(ui::settings_label("serial.monitor.action.copy"));
+    AURORA_TEST_REQUIRE_MSG(copy_spot.widget != nullptr, "the copy button is not dispatch-reachable");
+    h.click(copy_spot);
+    h.tick(*panel);
+
+    AURORA_TEST_REQUIRE_EQ(probe.copy_calls, 1U);
+    const std::string &text = probe.copied_text;
+    AURORA_TEST_CHECK(text.find("4F 4B") == std::string::npos);  // 交出去的不是十六进制段
+    AURORA_TEST_CHECK(text.find("RX  OK") != std::string::npos);
+    // 同一台折算件、同一份显示档（D19①）：屏上每一行都在交出去的那一份里逐字符出现。
+    for (const auto &row : panel->visible_rows()) {
+        AURORA_TEST_CHECK(text.find(ui::row_text(row)) != std::string::npos);
+    }
+}
+
+// ------------------------------------------------------------
+// 判据⑯（稿 D28①）：解码腿取的是 hook 报的那条腿，不是装配层再算一次的现值
+// ------------------------------------------------------------
+AURORA_TEST_CASE(the_text_view_decodes_with_the_leg_the_hook_reports) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe = make_probe();
+    probe.encoding = "GB18030";
+    probe.record(make_run(session::RawDirection::Received, 1'700'000'004'000LL, "\xD6\xD0\xCE\xC4\r\n"));
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    const std::size_t calls_before = probe.encoding_calls;
+    toggle_text_view(h);
+    h.tick(*panel);
+    AURORA_TEST_CHECK(probe.encoding_calls > calls_before);  // 这条腿与绑定同路：每帧现取一次
+    const auto rows = panel->visible_rows();
+    AURORA_TEST_REQUIRE(!rows.empty());
+    // 面板把 hook 的值原样交给折算件：解出的是那两个汉字，不是四枚替换字符。
+    AURORA_TEST_CHECK_EQ(rows.back().dump, "  \xE4\xB8\xAD\xE6\x96\x87");
+}
+
+// ------------------------------------------------------------
+// 判据⑰（稿 §11.4）：装配层没装这条腿时不崩、不空屏，整条回落 UTF-8
+// ------------------------------------------------------------
+AURORA_TEST_CASE(the_text_view_falls_back_when_the_encoding_leg_is_absent) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe = make_probe();
+    probe.provide_encoding_leg = false;
+    probe.record(make_run(session::RawDirection::Received, 1'700'000'004'000LL, "\xD6\xD0\xCE\xC4\r\n"));
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    toggle_text_view(h);
+    h.tick(*panel);
+    AURORA_TEST_CHECK_TRUE(panel->is_open());
+    const auto rows = panel->visible_rows();
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 3U);
+    // 回落 UTF-8 ⇒ 那四个字节逐字节非法，四枚替换字符原样上屏（画成看不见就等于说谎，稿 D29）。
+    AURORA_TEST_CHECK_EQ(rows.back().dump,
+                         "  \xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD");
+}
+
+// ------------------------------------------------------------
+// 判据⑱（稿 D34）：冻结中换档＝回到这份料源的末尾，而不是沿旧行号跳去另一段历史
+// ------------------------------------------------------------
+AURORA_TEST_CASE(switching_the_view_while_frozen_returns_to_the_tail_of_this_source) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 80);
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    scroll_to_top(h, *panel);
+    AURORA_TEST_REQUIRE_TRUE(panel->frozen());
+    AURORA_TEST_REQUIRE_TRUE(row_is(panel->visible_rows().front(), 0));
+
+    toggle_text_view(h);
+    h.tick(*panel);
+    AURORA_TEST_CHECK_FALSE(panel->frozen());  // 换档即解除冻结（与「回到最新」同一条腿）
+    const auto rows = panel->visible_rows();
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 80U);  // 80 行 < 折带窗口，整份都在屏上
+    AURORA_TEST_CHECK_TRUE(text_row_is(rows.back(), 79));
+    AURORA_TEST_CHECK_TRUE(text_row_is(rows.front(), 0));
+    // 冻结提示与「回到最新」那枚跟着消失：不是只有观测面变了。
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.notice.frozen")).widget == nullptr);
+}
+
+// ------------------------------------------------------------
+// 判据⑲（稿 D14① 不动／D34）：暂停中换档只重画这一屏，压根不去读环
+// ------------------------------------------------------------
+AURORA_TEST_CASE(switching_the_view_while_paused_redraws_without_reading_the_ring) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 5);
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    auto pause_spot = h.find("Switch", 2);
+    AURORA_TEST_REQUIRE_MSG(pause_spot.widget != nullptr, "the pause switch is not reachable");
+    h.click(pause_spot);
+    h.tick(*panel);
+
+    const std::size_t calls_while_paused = probe.snapshot_calls;
+    toggle_text_view(h);
+    h.tick(*panel);
+    AURORA_TEST_CHECK_EQ(probe.snapshot_calls, calls_while_paused);  // 「别读新环」这条不放松
+    const auto rows = panel->visible_rows();
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 5U);
+    AURORA_TEST_CHECK_TRUE(text_row_is(rows.front(), 0));
+    AURORA_TEST_CHECK_TRUE(text_row_is(rows.back(), 4));
 }
 
 }  // namespace borealis::test_cases::itest_serial_monitor_panel
