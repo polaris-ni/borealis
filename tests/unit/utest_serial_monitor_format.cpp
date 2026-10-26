@@ -3,7 +3,9 @@
 /// 测试说明: 守住串口监视卡的行形态（稿 codespec/UI_SERIAL_MONITOR.draft.md §2／D5①／D6①）——
 ///           8 字节档那一行的逐字符串形（满格 54 字符）、十六进制段的大写与定宽补齐、尾栏只承
 ///           ASCII 可打印区其余一个 `.`、CR／LF／CRLF 各折一条断点、被切在两个 run 里的同一条
-///           设备行仍是同一段（F10 实测 15 + 3 那一例）、时间戳开关与毫秒零填充、每行字节数档。
+///           设备行仍是同一段（F10 实测 15 + 3 那一例）、时间戳开关与毫秒零填充、每行字节数档；
+///           三期再加交出去的串形（稿 §10.2 D19①）：逐行 `row_text` 以单个 `\n` 相连且末尾不带换行、
+///           行数与逐行内容与全折逐条相等、空环即空串。
 ///           面板那侧的开关联动与留痕上屏属 itest_serial_monitor_panel（批 3）。
 
 #include "ui/serial_monitor_format.h"
@@ -340,6 +342,73 @@ AURORA_TEST_CASE(a_window_honours_the_bytes_per_row_override) {
     const auto window = ui::monitor_row_window(runs, options, 1U, 1U);
     AURORA_TEST_REQUIRE_EQ(window.size(), 1U);
     AURORA_TEST_CHECK_EQ(window[0].dump, "  34 35 36 37  |4567|");
+}
+
+// ------------------------------------------------------------
+// 三期（稿 §10.2 D19①）：交出去的文本＝屏面文本的拼接，不第二台机器
+// ------------------------------------------------------------
+
+/// @brief 按 `\n` 切开并去掉结尾那一个空段（末行有换行时会多出一段，判据正是要它不多）。
+[[nodiscard]] auto split_lines(std::string_view text) -> std::vector<std::string> {
+    auto out = std::vector<std::string>{};
+    std::size_t start = 0U;
+    while (start <= text.size()) {
+        const std::size_t next = text.find('\n', start);
+        if (next == std::string_view::npos) {
+            out.emplace_back(text.substr(start));
+            break;
+        }
+        out.emplace_back(text.substr(start, next - start));
+        start = next + 1U;
+    }
+    if (!text.empty() && text.back() == '\n') {
+        out.pop_back();  // 只在**真的**带了结尾换行时才剪，好让「有没有多一个换行」成为可判的差。
+    }
+    return out;
+}
+
+AURORA_TEST_CASE(the_dump_joins_screen_rows_with_a_single_line_feed) {
+    const auto runs =
+        std::vector{received("OK\r\n"), run(session::RawDirection::Transmitted, 0, "AT\r\n")};
+    const auto options = ui::MonitorRowOptions{.bytes_per_row = 8, .timestamp_prefix = false};
+    const auto rows = ui::monitor_rows(runs, options);
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 2U);
+    const auto text = ui::monitor_dump_text(runs, options);
+    // 每一行就是屏上那一行，行间一个 `\n`，**末尾不带换行**（剪贴板要的形状，稿 D19①）。
+    AURORA_TEST_CHECK_EQ(text, ui::row_text(rows[0]) + "\n" + ui::row_text(rows[1]));
+    AURORA_TEST_CHECK_TRUE(text.back() != '\n');
+    AURORA_TEST_CHECK_EQ(split_lines(text).size(), 2U);
+}
+
+AURORA_TEST_CASE(the_dump_line_count_tracks_the_fold_on_every_line_shape) {
+    // 一条长 run 拆多行 + 一条被切在两个 run 里的设备行：拼接件只认 `monitor_rows()` 的产物，
+    // 所以行数与逐行内容都应与全折逐条相等（行边界口径没有第二处实现，这条是结构性的）。
+    const auto runs = std::vector{
+        received("0123456789ABCDEF"),   // 无行尾：按 8 字节档拆两行
+        received("tail\r\n"),           // 与上一条续成同一段设备行
+        run(session::RawDirection::Transmitted, 0, "AT+CT\r\n"),
+    };
+    const auto options = ui::MonitorRowOptions{.bytes_per_row = 8, .timestamp_prefix = true};
+    const auto rows = ui::monitor_rows(runs, options);
+    const auto text = ui::monitor_dump_text(runs, options);
+    const auto lines = split_lines(text);
+    AURORA_TEST_REQUIRE_EQ(lines.size(), rows.size());
+    for (std::size_t index = 0U; index < lines.size(); ++index) {
+        AURORA_TEST_CHECK_EQ(lines[index], ui::row_text(rows[index]));
+    }
+    // 时间戳档在拼接件里同样生效：开着时每行都以 `[` 起头，关掉就没有。
+    AURORA_TEST_CHECK_TRUE(text.size() > rows.size() * 15U);
+    const auto no_stamp = ui::monitor_dump_text(runs, ui::MonitorRowOptions{.timestamp_prefix = false});
+    AURORA_TEST_CHECK_TRUE(no_stamp.find('[') == std::string::npos);
+    AURORA_TEST_CHECK_EQ(split_lines(no_stamp).size(), rows.size());
+}
+
+AURORA_TEST_CASE(an_empty_ring_dumps_an_empty_string) {
+    const auto runs = std::vector<session::RawRun>{};
+    AURORA_TEST_CHECK_TRUE(ui::monitor_dump_text(runs, ui::MonitorRowOptions{}).empty());
+    // 一个字节都没有的 run 不占行：拼接件与全折同口径（稿 §2 的行形态里没有「空行」这一档）。
+    AURORA_TEST_CHECK_TRUE(
+        ui::monitor_dump_text(std::vector{received("")}, ui::MonitorRowOptions{}).empty());
 }
 
 }  // namespace borealis::test_cases::utest_serial_monitor_format

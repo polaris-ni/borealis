@@ -12,7 +12,8 @@
 // 而不是点击派发里。代价：拨档到看见最多差一帧（面板族里 `TunnelPanel::tick()` 同形）。
 //
 // 行文本在这里只存在一瞬间：环里存的是原始 run（D3①），本件折出的窗口只用于绘制；关掉浮层那些字符串
-// 就没了，不落盘、不进日志。
+// 就没了。三期之后「不落盘」这句话收窄成**本件不写盘**：只有用户在动作行点了「导出」并由装配腿落盘时才有
+// 文件出现（稿 §10.2 D22①／D24①），常驻那句声明也按同一口径改了口。
 // ============================================================
 
 #include "serial_monitor_panel.h"
@@ -25,6 +26,7 @@
 #include <vector>
 
 #include "aurora/core/json.h"
+#include "aurora/core/log.h"
 #include "aurora/widget/alignment.h"
 #include "aurora/widget/button.h"
 #include "aurora/widget/canvas.h"
@@ -197,9 +199,15 @@ auto SerialMonitorPanel::follow_frame() -> void {
     auto snapshot = read_snapshot();
     auto binding = hooks_.binding_label != nullptr ? hooks_.binding_label() : std::string{};
     const bool forced = rebuild_pending_;
-    if (!forced && snapshot.revision == seen_revision_ && snapshot.cap_bytes == cap_bytes_ &&
+    const bool ring_changed = snapshot.revision != seen_revision_;
+    if (!forced && !ring_changed && snapshot.cap_bytes == cap_bytes_ &&
         snapshot.dropped_bytes == dropped_bytes_ && binding == binding_) {
         return;  // D17①：环没变、档没动就零工作量（快照本身仍是一次 ≤ 256 KiB 拷贝，一期已有）。
+    }
+    if (ring_changed) {
+        // 稿 §10.3：「已复制到剪贴板／已导出到某路径」那句只跟到下一次数据变化为止——数据在往下走，
+        // 上一句动作的余音不该继续占着留痕区（清空那一条腿另走 `on_clear()`，不看 revision）。
+        feedback_.clear();
     }
     source_ = std::move(snapshot.runs);
     binding_ = std::move(binding);
@@ -218,7 +226,7 @@ auto SerialMonitorPanel::follow_frame() -> void {
     auto rows = monitor_row_window(source_, options, fold_first_row_, window);
     if (!forced && rows == painted_rows_ && binding_ == painted_binding_ &&
         ring_bytes_ == painted_ring_bytes_ && dropped_bytes_ == painted_dropped_bytes_ &&
-        cap_bytes_ == painted_cap_bytes_ && !painted_frozen_) {
+        cap_bytes_ == painted_cap_bytes_ && feedback_ == painted_feedback_ && !painted_frozen_) {
         return;  // revision 变了但画出来的东西没变（例如整条拒收只推进了丢弃数之外的状态）。
     }
     // 跟尾恒落底：把窗口内容高交给 `LazyList` 的待定偏移，首次布局后夹到可滚范围末端（D10① 的
@@ -280,6 +288,7 @@ auto SerialMonitorPanel::paint_rows(std::vector<MonitorRow> rows, float scroll_o
     painted_dropped_bytes_ = dropped_bytes_;
     painted_cap_bytes_ = cap_bytes_;
     painted_frozen_ = frozen_;
+    painted_feedback_ = feedback_;
     pending_scroll_offset_ = scroll_offset;
     rebuild_pending_ = false;
     refresh_overlay();
@@ -395,6 +404,27 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
                              node(std::static_pointer_cast<aurora::Widget>(std::move(pause_switch)))},
                          8.0F));
 
+    // ---- 动作行：把这一屏取出去（三期，稿 §10.2 D22①／§10.3）----
+    // 单开一行而不是挤进标题行：标题行已经载着标题、绑定、字节计数与清空／关闭，再加两枚会重犯隧道面板
+    // 那条实测教训（整组被挤出卡宽 ⇒ 派发链上点不到）。两枚都只在对应 Hook 在场时画——面板族同一条纪律：
+    // 不许因装配层没装某条腿而画出一枚点了没反应的钮。
+    {
+        auto actions = std::vector<aurora::Node>{};
+        if (hooks_.copy_text != nullptr) {
+            actions.push_back(node(make_button(settings_label("serial.monitor.action.copy"),
+                                               chrome.control_bg, chrome.text_dim, 48.0F,
+                                               [this]() -> void { on_copy(); }, chrome.card_line)));
+        }
+        if (hooks_.pick_export_path != nullptr && hooks_.export_text != nullptr) {
+            actions.push_back(node(make_button(settings_label("serial.monitor.action.export_file"),
+                                               chrome.control_bg, chrome.text_dim, 48.0F,
+                                               [this]() -> void { on_export(); }, chrome.card_line)));
+        }
+        if (!actions.empty()) {
+            children.push_back(row_of(std::move(actions), 8.0F));
+        }
+    }
+
     // ---- 冻结行：只有离底冻结时才在场（D13①：冻结必须可见，否则会被读成「设备停了」）----
     if (painted_frozen_) {
         children.push_back(row_of(std::vector<aurora::Node>{
@@ -444,6 +474,15 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
         children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(list))));
     }
 
+    // ---- 动作留痕行（稿 §10.3）：排在卡末，只在最近一次「取出去」之后在场 ----
+    // 画的是 `painted_feedback_` 而不是 `feedback_`：与其余各行同一口径——浮层那一份只由 `paint_rows()`
+    // 记账，动作腿当场改的是状态量，差一帧上屏（D8①／§4.5 第 25 条要的次序）。
+    if (!painted_feedback_.empty()) {
+        auto line = make_text(painted_feedback_, chrome.text_dim);
+        line->modifier.set(aurora::Modifier{}.fill_max_width());
+        children.push_back(node(std::move(line)));
+    }
+
     auto card = std::make_shared<aurora::Column>(aurora::ColumnProps{
         .children = std::move(children),
         .gap = 8.0F,
@@ -477,6 +516,7 @@ auto SerialMonitorPanel::on_clear() -> void {
     source_.clear();
     ring_bytes_ = 0U;
     dropped_bytes_ = 0U;
+    feedback_.clear();  // 清了环，上一句「已导出/已复制」说的就不是这一屏了（稿 §10.3）。
     total_rows_ = 0U;
     fold_first_row_ = 0U;
     // 清空回到空态：离底判据在旧列表上必然为真（它还停在原偏移），首帧先跳过几何（D14① 的次序）。
@@ -494,6 +534,49 @@ auto SerialMonitorPanel::on_latest() -> void {
     rebuild_pending_ = true;
 }
 
+auto SerialMonitorPanel::dump_text() const -> std::string {
+    // 料源是手里的 `source_`（稿 §10.2 D20①）而不是重读环：暂停/冻结时屏面没变，交出去的东西也不该变。
+    // 显示档取 `make_options()`——与画这一屏同一份，故文件/剪贴板里每一行都能在屏上逐字符找到（D19①）。
+    return monitor_dump_text(source_, make_options());
+}
+
+auto SerialMonitorPanel::on_copy() -> void {
+    const auto text = dump_text();
+    if (text.empty()) {
+        return;  // D21①：空环整条不跑——不碰剪贴板也不留痕，那句「等待数据」本来就在行区里说清了。
+    }
+    if (hooks_.copy_text != nullptr) {
+        hooks_.copy_text(text);
+    }
+    feedback_ = settings_label("serial.monitor.notice.copied", count_arg(total_rows_));
+    rebuild_pending_ = true;  // 留痕上屏排在下一帧：本件唯一的重建入口是 `tick()`（D8① 的纪律）。
+}
+
+auto SerialMonitorPanel::on_export() -> void {
+    // 三条接缝齐备是这枚按钮画出来的**前提**（`build_overlay()` 那侧的判据），故这里不再逐条问空——
+    // 与 `SettingsPanel::run_export()` 同一条口径。
+    const auto text = dump_text();
+    if (text.empty()) {
+        return;  // D21①：连对话框都不起——用户不该为一份空捕获挑文件名。
+    }
+    const std::string picked = hooks_.pick_export_path();
+    if (picked.empty()) {
+        return;  // 取消即整条不跑，**连留痕都不写**：上一句动作的话还在，说明这一次什么都没发生。
+    }
+    if (const auto reason = hooks_.export_text(picked, text); reason.has_value()) {
+        // 存储侧的原因是 ASCII 诊断串，只进日志；上屏的永远是那一句「屏面未变」（同 S13② 的备份行）。
+        AURORA_LOG_WARN("serial", "monitor export failed: ", *reason);
+        feedback_ = settings_label("serial.monitor.notice.export_failed");
+        rebuild_pending_ = true;
+        return;
+    }
+    // 路径是**取值**而不是字面量，故逐字上屏（`settings.config.exported` 同一条口径，裁决 7.76⑤）。
+    feedback_ =
+        settings_label("serial.monitor.notice.exported",
+                       {{"count", static_cast<std::int64_t>(total_rows_)}, {"path", picked}});
+    rebuild_pending_ = true;
+}
+
 auto SerialMonitorPanel::clear_state() -> void {
     if (overlay_index_.has_value() && host_ != nullptr) {
         host_->remove_overlay(*overlay_index_);
@@ -507,6 +590,8 @@ auto SerialMonitorPanel::clear_state() -> void {
     painted_dropped_bytes_ = 0U;
     painted_cap_bytes_ = 0U;
     painted_frozen_ = false;
+    painted_feedback_.clear();
+    feedback_.clear();
     source_.clear();
     ring_bytes_ = 0U;
     dropped_bytes_ = 0U;

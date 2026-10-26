@@ -100,6 +100,17 @@ struct MonitorRow {
 [[nodiscard]] auto monitor_rows(const std::vector<session::RawRun> &runs,
                                 const MonitorRowOptions &options) -> std::vector<MonitorRow>;
 
+/// @brief 全部显示行 → 一整份可交出去的文本（稿 §10.2 D19①：复制与导出共用的唯一串形）。
+///
+/// 逐行 `row_text()` 以 `\n` 相连、**结尾不带换行**：剪贴板要的就是这一串（尾随换行是噪声），写盘那一条腿
+/// 自己在末尾补一个 `\n`（文本档惯例）。口径与屏面**同源**——同一台扫描器、同一份 `MonitorRowOptions`，
+/// 故文件里的每一行都能在屏上逐字符找到；本件不另造第二台格式化机器（D19③ 的否决理由）。
+/// @param runs `RawTap::snapshot()` 的产物，须是到达序（最旧在前）。
+/// @param options 每行字节数与时间戳档——与画这一屏用的是同一份档（稿 D19①）。
+/// @return 行文本；输入为空即返回空串（调用方据此整条不跑，见稿 D21①）。
+[[nodiscard]] auto monitor_dump_text(const std::vector<session::RawRun> &runs,
+                                     const MonitorRowOptions &options) -> std::string;
+
 /// @brief epoch 毫秒 → `[HH:MM:SS.mmm] `（本地历法，含尾随空格）。
 ///
 /// 格式化只发生在面板重建那一次：F5 实测 `localtime` + `strftime` 是 0.204 µs／行、占一行折算的

@@ -316,4 +316,25 @@ auto monitor_rows(const std::vector<session::RawRun> &runs, const MonitorRowOpti
     return monitor_row_window(runs, options, 0U, std::numeric_limits<std::size_t>::max());
 }
 
+auto monitor_dump_text(const std::vector<session::RawRun> &runs, const MonitorRowOptions &options)
+    -> std::string {
+    // 交出去的文本＝屏面文本的拼接，一行不多一行不少（稿 §10.2 D19①）。这里**不**分块折窗口：
+    // `monitor_row_window` 每次都要从头扫，按窗口循环会把一次导出变成 O(行数²/窗口)；全折一次的峰值
+    // 是满环那 ≈1.8 MB 行文本（F7 换算）加同量拼接串，发生在一次显式点击而不是热路径，可接受。
+    const auto rows = monitor_rows(runs, options);
+    auto out = std::string{};
+    out.reserve(rows.size() * 56U);  // 54 字符缺省档（稿 §2 的算术）+ 分隔符，只为少几次扩容。
+    auto first = true;
+    for (const auto &row : rows) {
+        // 分隔符按「是不是第一条」判，而不是按「串目前空不空」判：`row_text()` 现在恒非空，但那条
+        // 事实不是本件的前提，行形态若哪天允许空串，第一条的空行不该被吞掉。
+        if (!first) {
+            out.push_back('\n');
+        }
+        first = false;
+        out += row_text(row);
+    }
+    return out;
+}
+
 }  // namespace borealis::ui

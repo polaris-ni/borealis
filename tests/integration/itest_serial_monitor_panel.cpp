@@ -3,7 +3,9 @@
 // ------------------------------------------------------------
 // `SPEC.FEAT.CONN.05` 两条延后子项的面板腿（UI_SERIAL_MONITOR.draft.md §6 批 3 那五行判据）：
 // 行表随环刷新、时间戳开关联动、暂停中不读环、清空是唯一止血、丢弃留痕上屏、绑定与常驻声明；
-// 二期（稿 §9）另四腿：历史超过折带窗口仍可回看、离底冻结与回底恢复、「回到最新」双解、冻结中清空。
+// 二期（稿 §9）另四腿：历史超过折带窗口仍可回看、离底冻结与回底恢复、「回到最新」双解、冻结中清空；
+// 三期（稿 §10）再加六腿：复制交整环而不是窗口、导出先问路径再交同一份文本、取消与空环整条不跑、
+// 写盘失败上屏中性那句、暂停中导出的是这一屏、两枚按钮只在对应腿在场时画。
 // 驱动台形态照 itest_tunnel_panel 的 Harness（present_root 排真实布局 + hit_test_chain 取命中 +
 // EventDispatcher 发真事件），精简到本件用得到的那几条腿。
 //
@@ -20,6 +22,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -49,13 +52,24 @@ namespace au = aurora;
 constexpr int kWindowWidth = 900;
 constexpr int kWindowHeight = 760;
 
-/// @brief 一帧环投影 + 绑定串 + 三条腿的调用留痕。
+/// @brief 一帧环投影 + 绑定串 + 六条腿的调用留痕。
 struct Probe {
     ui::SerialMonitorPanel::Snapshot snapshot{};
     std::string binding;
     std::size_t snapshot_calls = 0U;
     std::size_t clear_calls = 0U;
     std::size_t binding_calls = 0U;
+    // ---- 三期三条「取出去」腿（稿 §10.2 D22①）：面板只管交文本，成败由这里的返回值演 ----
+    std::size_t copy_calls = 0U;
+    std::size_t pick_calls = 0U;
+    std::size_t export_calls = 0U;
+    std::string copied_text;   ///< 交给剪贴板腿的那一份。
+    std::string export_path;   ///< 写盘腿收到的路径（＝`picked_path` 的现值）。
+    std::string exported_text;  ///< 写盘腿收到的文本（应与 `copied_text` 一字不差，稿 D19①）。
+    std::string picked_path = "D:/dumps/serial.txt";  ///< 空串＝用户在原生对话框里点了取消。
+    std::optional<std::string> export_reason;         ///< 有值＝装配腿那条写盘链失败。
+    bool provide_copy_leg = true;    ///< 关掉即「装配层没装这条腿」：那枚按钮不该画出来。
+    bool provide_export_leg = true;  ///< 同上，管 `pick_export_path` 与 `export_text` 两条。
 
     /// @brief 环里多一条 run：`revision` 是面板的早退基准（D17①），替身必须像 `RawTap` 一样每改必推。
     auto record(session::RawRun run) -> void {
@@ -77,6 +91,25 @@ struct Probe {
             ++binding_calls;
             return binding;
         };
+        if (provide_copy_leg) {
+            out.copy_text = [this](std::string text) -> void {
+                ++copy_calls;
+                copied_text = std::move(text);
+            };
+        }
+        if (provide_export_leg) {
+            out.pick_export_path = [this]() -> std::string {
+                ++pick_calls;
+                return picked_path;
+            };
+            out.export_text = [this](const std::string &path, std::string text)
+                -> std::optional<std::string> {
+                ++export_calls;
+                export_path = path;
+                exported_text = std::move(text);
+                return export_reason;
+            };
+        }
         return out;
     }
 };
@@ -306,6 +339,27 @@ auto scroll_to_top(Harness &h, ui::SerialMonitorPanel &panel) -> void {
     }
     h.tick(panel);
     h.tick(panel);
+}
+
+/// @brief 交出去的文本里有几行（按 `\n` 数，**不看**结尾有没有换行）。
+///
+/// 结尾多带一个换行就会多算出一行，正好被「与总行数相等」那条判据抓住——所以这里不给「末尾剪掉」的通融。
+[[nodiscard]] auto dump_line_count(const std::string &text) -> std::size_t {
+    if (text.empty()) {
+        return 0U;
+    }
+    std::size_t count = 1U;
+    for (const char ch : text) {
+        if (ch == '\n') {
+            ++count;
+        }
+    }
+    return count;
+}
+
+/// @brief 第 index 行在不在交出去的文本里（`|R000..|` 那种直读尾栏）。
+[[nodiscard]] auto dump_shows_line(const std::string &text, int index) -> bool {
+    return text.find("|" + line_tag(index) + "..|") != std::string::npos;
 }
 
 }  // namespace
@@ -697,6 +751,222 @@ AURORA_TEST_CASE(clear_from_a_frozen_view_lands_on_the_empty_state) {
     AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.empty")).widget != nullptr);
     AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.notice.frozen")).widget == nullptr);
     AURORA_TEST_CHECK(h.find_button(ui::settings_label("serial.monitor.action.latest")).widget == nullptr);
+}
+
+// 判据⑦（稿 §10.2 D19①／D21①／D22①）：复制把**整个环**交出去，而不是当前折带窗口
+// ------------------------------------------------------------
+AURORA_TEST_CASE(copy_hands_the_whole_ring_instead_of_the_fold_window) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 120);  // 超过 96 行折带窗口（D11①）：环头那 24 行不在屏上。
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+    AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 96U);
+    AURORA_TEST_REQUIRE_FALSE(shows_line(panel->visible_rows(), 0));
+
+    auto copy_spot = h.find_button(ui::settings_label("serial.monitor.action.copy"));
+    AURORA_TEST_REQUIRE_MSG(copy_spot.widget != nullptr, "the copy button is not dispatch-reachable");
+    h.click(copy_spot);
+    h.tick(*panel);
+
+    AURORA_TEST_CHECK_EQ(probe.copy_calls, 1U);
+    AURORA_TEST_CHECK_EQ(ui::monitor_row_count(probe.snapshot.runs, ui::MonitorRowOptions{}), 120U);
+    // 交出去的是整环那 120 行，含屏上没有的环头；末尾不多带一个换行（多带就会数出 121 行）。
+    AURORA_TEST_CHECK_EQ(dump_line_count(probe.copied_text), 120U);
+    AURORA_TEST_CHECK_TRUE(dump_shows_line(probe.copied_text, 0));
+    AURORA_TEST_CHECK_TRUE(dump_shows_line(probe.copied_text, 119));
+    AURORA_TEST_CHECK_EQ(probe.copied_text, panel->dump_text());
+    // 留痕那句当场出现（「复制了什么」不该让用户去粘贴板上验，业界同态）。
+    const auto sentence =
+        ui::settings_label("serial.monitor.notice.copied", {{"count", std::int64_t{120}}});
+    AURORA_TEST_CHECK_EQ(panel->feedback(), sentence);
+    AURORA_TEST_CHECK(h.find_text(sentence).widget != nullptr);
+}
+
+// ------------------------------------------------------------
+// 判据⑧（稿 §10.2 D22①／§10.3）：导出先问路径、再把**同一份文本**交给写盘腿
+// ------------------------------------------------------------
+AURORA_TEST_CASE(export_asks_a_path_then_hands_the_same_text) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 3);
+    probe.picked_path = "D:/dumps/serial.txt";
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    auto export_spot = h.find_button(ui::settings_label("serial.monitor.action.export_file"));
+    AURORA_TEST_REQUIRE_MSG(export_spot.widget != nullptr, "the export button is not dispatch-reachable");
+    h.click(export_spot);
+    h.tick(*panel);
+
+    AURORA_TEST_CHECK_EQ(probe.pick_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.export_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.export_path, probe.picked_path);
+    // 与剪贴板同一台折算件、同一份显示档：两条腿拿到的文本一字不差（D19① 的「不第二份真值」）。
+    AURORA_TEST_CHECK_EQ(dump_line_count(probe.exported_text), 3U);
+    AURORA_TEST_CHECK_EQ(probe.exported_text, panel->dump_text());
+    const auto sentence = ui::settings_label("serial.monitor.notice.exported",
+                                             {{"count", std::int64_t{3}},
+                                              {"path", probe.picked_path}});
+    AURORA_TEST_CHECK_EQ(panel->feedback(), sentence);
+    // 路径逐字上屏（取值而不是字面量，同 `settings.config.exported` 那条口径）。
+    AURORA_TEST_CHECK(h.find_text(sentence).widget != nullptr);
+}
+
+// ------------------------------------------------------------
+// 判据⑨（稿 §10.2 D21①＋`run_export` 那条口径）：取消与空环都整条不跑，连留痕都不写
+// ------------------------------------------------------------
+AURORA_TEST_CASE(cancelling_the_path_or_an_empty_ring_runs_neither_leg) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 2);
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    // 先留一句「已复制」，好让「取消导出什么都不改」这件事有证人。
+    auto copy_spot = h.find_button(ui::settings_label("serial.monitor.action.copy"));
+    AURORA_TEST_REQUIRE_MSG(copy_spot.widget != nullptr, "the copy button is not dispatch-reachable");
+    h.click(copy_spot);
+    h.tick(*panel);
+    const std::string copied_sentence = panel->feedback();
+    AURORA_TEST_REQUIRE(!copied_sentence.empty());
+
+    probe.picked_path.clear();  // 用户在原生保存框里点了取消。
+    auto export_spot = h.find_button(ui::settings_label("serial.monitor.action.export_file"));
+    AURORA_TEST_REQUIRE_MSG(export_spot.widget != nullptr, "the export button is not dispatch-reachable");
+    h.click(export_spot);
+    h.tick(*panel);
+    AURORA_TEST_CHECK_EQ(probe.export_calls, 0U);
+    AURORA_TEST_CHECK_EQ(panel->feedback(), copied_sentence);  // 上一句还在 ⇒ 这一次什么都没发生。
+
+    // 空环：两枚都点了都不该发起（不起对话框、不碰剪贴板、不留痕）。
+    auto clear_spot = h.find_button(ui::settings_label("serial.monitor.action.clear"));
+    AURORA_TEST_REQUIRE_MSG(clear_spot.widget != nullptr, "the clear button is not dispatch-reachable");
+    h.click(clear_spot);
+    h.tick(*panel);
+    AURORA_TEST_REQUIRE_TRUE(panel->visible_rows().empty());
+    AURORA_TEST_REQUIRE_TRUE(panel->dump_text().empty());
+    const std::size_t picks_before = probe.pick_calls;
+    const std::size_t copies_before = probe.copy_calls;
+    h.click(h.find_button(ui::settings_label("serial.monitor.action.copy")));
+    h.click(h.find_button(ui::settings_label("serial.monitor.action.export_file")));
+    h.tick(*panel);
+    AURORA_TEST_CHECK_EQ(probe.copy_calls, copies_before);
+    AURORA_TEST_CHECK_EQ(probe.pick_calls, picks_before);  // 连对话框都没替用户开一次。
+    AURORA_TEST_CHECK_TRUE(panel->feedback().empty());     // 清空把上一句动作的话一起带走。
+}
+
+// ------------------------------------------------------------
+// 判据⑩（稿 §10.2 D22①）：写盘腿回原因 ⇒ 上屏中性那句，屏面不动
+// ------------------------------------------------------------
+AURORA_TEST_CASE(a_failed_write_shows_the_neutral_sentence_and_keeps_the_screen) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 4);
+    probe.export_reason = std::string{"cannot open target"};  // ASCII 诊断串只进日志，不上屏。
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+    const auto rows_before = panel->visible_rows();
+
+    auto export_spot = h.find_button(ui::settings_label("serial.monitor.action.export_file"));
+    AURORA_TEST_REQUIRE_MSG(export_spot.widget != nullptr, "the export button is not dispatch-reachable");
+    h.click(export_spot);
+    h.tick(*panel);
+
+    AURORA_TEST_CHECK_EQ(probe.export_calls, 1U);
+    AURORA_TEST_CHECK_EQ(panel->visible_rows().size(), rows_before.size());
+    const auto sentence = ui::settings_label("serial.monitor.notice.export_failed");
+    AURORA_TEST_CHECK_EQ(panel->feedback(), sentence);
+    AURORA_TEST_CHECK(h.find_text(sentence).widget != nullptr);
+    AURORA_TEST_CHECK(h.find_text(probe.export_path).widget == nullptr);  // 失败那句不带路径。
+}
+
+// ------------------------------------------------------------
+// 判据⑪（稿 §10.2 D20①）：暂停中导出交的是**这一屏**，不是环里更新的字节
+// ------------------------------------------------------------
+AURORA_TEST_CASE(export_while_paused_hands_what_is_on_screen) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe = make_probe();  // 两条：OK / AT
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    auto pause_spot = h.find("Switch", 2);
+    AURORA_TEST_REQUIRE_MSG(pause_spot.widget != nullptr, "the pause switch is not dispatch-reachable");
+    h.click(pause_spot);
+    h.tick(*panel);
+    AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 2U);
+
+    probe.record(line_run(900, 1'700'000'009'000LL));  // 采集不停：环里多了一条，屏面不该动。
+    h.tick(*panel);
+    AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 2U);
+
+    auto export_spot = h.find_button(ui::settings_label("serial.monitor.action.export_file"));
+    AURORA_TEST_REQUIRE_MSG(export_spot.widget != nullptr, "the export button is not dispatch-reachable");
+    h.click(export_spot);
+    h.tick(*panel);
+    AURORA_TEST_CHECK_EQ(probe.export_calls, 1U);
+    AURORA_TEST_CHECK_EQ(dump_line_count(probe.exported_text), 2U);
+    AURORA_TEST_CHECK_FALSE(dump_shows_line(probe.exported_text, 900));  // 屏上没有的字节不进文件。
+}
+
+// ------------------------------------------------------------
+// 判据⑫（面板族纪律＋稿 D22①）：两枚按钮只在对应腿在场时画
+// ------------------------------------------------------------
+AURORA_TEST_CASE(the_take_out_buttons_appear_only_with_their_legs) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe = make_probe();
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+    AURORA_TEST_CHECK(
+        h.find_button(ui::settings_label("serial.monitor.action.copy")).widget != nullptr);
+    AURORA_TEST_CHECK(
+        h.find_button(ui::settings_label("serial.monitor.action.export_file")).widget != nullptr);
+    panel->close();
+    h.render();
+
+    probe.provide_copy_leg = false;
+    probe.provide_export_leg = false;
+    auto second = h.attach(probe);
+    h.open(*second);
+    AURORA_TEST_CHECK(
+        h.find_button(ui::settings_label("serial.monitor.action.copy")).widget == nullptr);
+    AURORA_TEST_CHECK(
+        h.find_button(ui::settings_label("serial.monitor.action.export_file")).widget == nullptr);
+    // 没装新腿时这张卡的其余部分照旧：清空与关闭两枚还在（一枚都不该跟着消失）。
+    AURORA_TEST_CHECK(
+        h.find_button(ui::settings_label("serial.monitor.action.clear")).widget != nullptr);
+}
+
+// ------------------------------------------------------------
+// 判据⑬（稿 §10.3）：动作那句让位给新数据——上一句余音不该一直挂着
+// ------------------------------------------------------------
+AURORA_TEST_CASE(a_new_run_clears_the_action_notice) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe = make_probe();
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    auto copy_spot = h.find_button(ui::settings_label("serial.monitor.action.copy"));
+    AURORA_TEST_REQUIRE_MSG(copy_spot.widget != nullptr, "the copy button is not dispatch-reachable");
+    h.click(copy_spot);
+    h.tick(*panel);
+    const std::string sentence = panel->feedback();
+    AURORA_TEST_REQUIRE(!sentence.empty());
+    AURORA_TEST_REQUIRE(h.find_text(sentence).widget != nullptr);
+
+    probe.record(make_run(session::RawDirection::Received, 1'700'000'007'000LL, "MORE\r\n"));
+    h.tick(*panel);
+    AURORA_TEST_CHECK_TRUE(panel->feedback().empty());
+    AURORA_TEST_CHECK(h.find_text(sentence).widget == nullptr);  // 那句真的从卡上消失了，不只是观测面变了。
+    // 数据照常在走：那句消失不是「面板停了」。
+    AURORA_TEST_CHECK_EQ(panel->visible_rows().size(), 3U);
 }
 
 }  // namespace borealis::test_cases::itest_serial_monitor_panel

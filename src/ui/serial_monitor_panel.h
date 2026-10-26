@@ -10,8 +10,9 @@
 // 常量，重启即回缺省档；二期的折带窗口是显示期常量，不是第二个上限）。
 //
 // **本件不认识 `Session`，也不认识串口**（隧道／密钥／SFTP 面板的同族纪律，AGENTS §4.5 第 23 条）：
-// 与装配层的全部接缝就是下面三条 Hooks——`snapshot` 交出环里现存的 run 表与累计丢弃字节、`clear` 交回
-// 本期唯一的止血动作、`binding_label` 交出绑定的档案名与设备路径。武装（`Session::enable_raw_tap()`）
+// 与装配层的全部接缝就是下面六条 Hooks——`snapshot` 交出环里现存的 run 表与累计丢弃字节、`clear` 交回
+// 本期唯一的止血动作、`binding_label` 交出绑定的档案名与设备路径，三期再加 `copy_text`／`pick_export_path`／
+// `export_text` 三条取出去的腿（稿 §10.2 D22①）。武装（`Session::enable_raw_tap()`）
 // 发生在命令腿，故本件不写环（除 `clear`），也不判断「这一格是不是串口」。
 //
 // 读法是 **latest-value**（稿 §5）：每帧问一次「环里现在有什么」，不做「本帧新增的 run」那种增量协议
@@ -24,8 +25,11 @@
 //      （`kMonitorVisibleRowCap` / `kMonitorTailBytes` / `tail_runs`）已删除（D18①）。
 //   ⑵ **上色与等宽**：`direction_label` 那一格吃强调色、其余两格正色（稿 §2：RX／TX 只以这两个字母与
 //      一列强调色区分），族名 `kDefaultMonospaceFamily`——行形态的算术只在这个族名下成立（F8／F9）。
-//   ⑶ **留痕**：丢弃计数 >0 才上屏那句「已丢弃 N 字节」，另有「不落盘」一句常驻（稿 §1 第一条安全口径）；
-//      冻结时另出「已暂停跟尾」与「回到最新」两枚（D13①），跟尾时都不出现。
+//   ⑶ **留痕**：丢弃计数 >0 才上屏那句「已丢弃 N 字节」，另有「只在显式导出时才写盘」那句常驻（稿 §1 第一条
+//      安全口径经 §10.2 D24① 改口）；冻结时另出「已暂停跟尾」与「回到最新」两枚（D13①），跟尾时都不出现。
+//   ⑷ **取出去**（三期，稿 §10）：标题行两枚按钮把 `source_` 按**当前显示档**整份折成文本
+//      （`monitor_dump_text`，D19①：与屏面同一台折算件，不另造第二份真值），再交三条 Hook 出去。空环
+//      整条不跑（D21①）；本件不碰剪贴板、不起对话框、不写盘（D22①，与 `SettingsPanel::run_export()` 同形）。
 //
 // 关面板**不摘环**（D7①）：`close()` 只收浮层，那条会话照留痕；重新打开看到的是历史，`清空` 才是归零。
 // 绑定由命令腿在「从关闭态打开」那一刻按当时的当前标签写下，之后不跟标签跑——看着 A 的时候切到 B，
@@ -101,6 +105,16 @@ class SerialMonitorPanel {
         std::function<void()> clear;
         /// @brief 绑定的档案名与设备路径（稿 §2 标题行那一格；空串＝绑定已失去身份）。
         std::function<std::string()> binding_label;
+        /// @brief 把整份行文本交给剪贴板（稿 §10.2 D22①）：本件不碰 OS、不判成败，那条腿在装配层
+        ///        （`ClipboardOutbox::write`，与 `keys_panel` 的一键复制同一入口）。
+        std::function<void(std::string text)> copy_text;
+        /// @brief 让用户点名一个要写出的文件；空串＝取消（同 `SettingsPanel::Hooks::pick_export_path`
+        ///        那条口径：取消与对话框起不来同值，整条不跑、连留痕都不写）。
+        std::function<std::string()> pick_export_path;
+        /// @brief 把文本写到用户点名的路径（稿 D22①／D23①：权限位与原子性在那条腿收）。
+        /// @return 空＝成功；否则 ASCII 失败原因——只进日志，上屏的是词条那句（同 `export_config`）。
+        std::function<std::optional<std::string>(const std::string &path, const std::string &text)>
+            export_text;
     };
 
     SerialMonitorPanel(class aurora::OverlayHost &host, Hooks hooks);
@@ -159,6 +173,16 @@ class SerialMonitorPanel {
     /// @brief 时间戳前缀档（观测面；缺省开，D6①）。
     [[nodiscard]] auto timestamp_enabled() const noexcept -> bool { return timestamp_prefix_; }
 
+    /// @brief 这一屏料源的整份行文本（三期观测面，稿 §10.2 D19①／D20①）。
+    ///
+    /// 与屏面同一份 `MonitorRowOptions`、同一台扫描器，故文件/剪贴板里每一行都能在屏上逐字符找到。
+    /// 料源是手里的 `source_` 而不是**按下那一刻重读的环**：暂停/冻结时屏面没变，交出去的东西也不该
+    /// 变（D20①）。空环即空串，两枚动作据此整条不跑（D21①）。
+    [[nodiscard]] auto dump_text() const -> std::string;
+
+    /// @brief 上一次「取出去」动作的留痕（观测面，稿 §10.3）：无即空串；收到新的环 revision 即消失。
+    [[nodiscard]] auto feedback() const -> std::string { return feedback_; }
+
   private:
     /// @brief 问一次环（Hook 缺席即空投影：本件不许因装配层没装某条腿而崩）。
     [[nodiscard]] auto read_snapshot() const -> Snapshot;
@@ -196,6 +220,8 @@ class SerialMonitorPanel {
     auto on_pause_changed(bool next) -> void;
     auto on_clear() -> void;
     auto on_latest() -> void;
+    auto on_copy() -> void;
+    auto on_export() -> void;
 
     auto clear_state() -> void;
 
@@ -219,10 +245,11 @@ class SerialMonitorPanel {
     std::size_t fold_first_row_ = 0U;   ///< 当前窗口首行在 `total_rows_` 里的行号。
     float pending_scroll_offset_ = 0.0F;  ///< 建树时交给 `LazyList` 的待定偏移（D10① 的落底/保位）。
 
-    std::vector<session::RawRun> source_{};  ///< 上次跟尾收下的整环 run 表：重折的唯一料源。
+    std::vector<session::RawRun> source_{};  ///< 上次跟尾收下的整环 run 表：重折与交出去的唯一料源（D20①）。
     std::size_t ring_bytes_ = 0U;            ///< 环里现存字节数（标题行那个计数）。
     std::size_t dropped_bytes_ = 0U;         ///< 累计丢弃字节（`notice()` 的那一句）。
     std::string binding_{};                  ///< 绑定的档案名与设备路径（现取 Hook 的落地副本）。
+    std::string feedback_{};                 ///< 上一次「取出去」动作的留痕（稿 §10.3；新的 revision 即清）。
 
     // ---- 上一帧真画出来的那份（diff 基准；与 `tunnel_panel`／`keys_panel` 同形）----
     std::vector<MonitorRow> painted_rows_{};
@@ -231,6 +258,7 @@ class SerialMonitorPanel {
     std::size_t painted_dropped_bytes_ = 0U;
     std::size_t painted_cap_bytes_ = 0U;
     bool painted_frozen_ = false;
+    std::string painted_feedback_{};
 };
 
 }  // namespace borealis::ui
