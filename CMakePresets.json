@@ -13,7 +13,8 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/overlay-ports"
       }
     },
     {
@@ -33,7 +34,8 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/overlay-ports"
       }
     },
     {
