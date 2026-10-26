@@ -4,6 +4,22 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.160（2026-10-26）**`SPEC.FEAT.WS.12` Quick Terminal 批 1：依赖现状按读源重列，真缺口两条登记为 G47，贴边折算与显隐状态机先行落码（裁决 7.160；本地提交 `2623c2e`（稿面与任务书）→ `0d45b43`（两件与 13 案）→ 文档回写（本笔））**
+
+**动机**：PLAN 观察池挂着的那句「无边框贴边窗口形态未落」是 2026-10-02 的口径，本次对 Aurora 活动分支逐口读源后**部分推翻**——无边框（`WindowStyle::frameless`）、工作区枚举（`app::list_displays()` 给物理像素 `work_area` + `scale_factor`）、贴边几何自算今天全可用，OS 全局热键更早在 7.29③ 就已闭合；真正没有公共入口的只有**运行期显隐**与**运行期置顶**两口：`Win32Host` 构造尾部那一次 `ShowWindow` / `SetWindowPos(HWND_TOPMOST)` 之后，`Surface` 面上只剩 `raise()` 与 `focus_window()`，二者都不改可见性。夹取不是缺口（工作区可读，属产品策略）。
+
+**落地形态**：
+
+- **只落「与缺口无关、且回货后不重写」的那半**：`ui::quake_target_rect()` 把「边缘 + 两向占比 + 工作区」折成落位矩形，`ui::QuakeToggle` 管显隐意图；装配腿（读设置 → 拼入参 → 发窗口令）整段挂 `TODO(SPEC.FEAT.WS.12)`。切这一刀的不变量是**今天能测的部分今天必须有证人**——否则回货后策略与装配一起沉进不编入 runner 的 `src/main.cpp`（裁决 7.83），届时两条腿都无人证。
+- **单位边界是核心口径（稿 D2）**：框架两口实现不同——`set_position` 直传 `SetWindowPos`（物理 px，注释与实现一致），`set_size` 先 `to_physical()` 再补非客户区（**逻辑 dp 客户区**，其头注释「物理像素外框」写反了，随 G47 §4 报框架）。于是 `QuakeTarget` 刻意输出混合单位（原点物理 px、尺寸逻辑 dp）把 `÷ scale_factor` 收进纯逻辑件：装配层自己换算就是本仓绘制侧 dp/px 混用坑的复现形态。
+- **状态机的存在理由只有竞争一条（稿 D6）**：本件发起的显隐紧接着必然产生一次失焦事件，照「失焦即隐」直读会把 quake 模式打回显示态——Tilix 的 quake 模式有此记录在案的上游故障（按热键隐藏后窗口自己弹回）。解法是**焦点过渡忽略窗**：有效意图一律置 `ignore_until = now + focus_settle`（缺省 250 ms，**经验量级、未实测**，做成构造参数），其间 `on_focus_lost` 恒出 `None`；比较取「严格小于才吞」，与 7.159③ 的铃脚节流同口径。意图随状态幂等输出，不做计数也不做时间去抖（稿 D8：加时间窗会吞掉「快速连按＝开-关-开」的正常意图）。
+- **刻意不加 `ui.quick_terminal.*` 配置键**：取值入口在装配腿，先落盘就重演上一棒（7.159⑦）刚摘掉的「画控件、能改能落盘、无消费方」形态；六处同步与装配腿同批到货。`utest_settings_catalog` 的未接线计数因此**保持 18 不变**。
+- **被否的代偿是 `Window::minimize()` 冒充隐藏**：任务栏留痕与还原动画是用户看得见的错误形态、还原腿依赖 `SetForegroundWindow` 对最小化窗口的顺带还原（本仓未实测，标推断）、G47 回货后整块要删（§4.1 第 3 条）。另一被否形态是「每次呼出重建窗口」（`open_window` 运行期建窗在框架自己的 `demo_multi_window.cpp` 确有先例），代价是会话与视口随窗重建、`ExitPolicy` 与隐藏窗关系要重定，只在任务书 §5 留作退路。
+
+**验收读数**：`cmake --build --preset msvc --parallel` 通过；`ctest --preset msvc -E etest_ -j 16` **122/122 全绿**（基线 121，+1 套件）；`borealis_test_runner` 全跑 **1513 案 / 1510 绿**（基线 1500/1497，+13 案），三红仍是 Windows 无 secret-service 的 `etest_libsecret_credential_store`。三则变异各指名打红、还原后复绿：M1 `Top` 档 `origin_y` 改成下沿算式 ⇒ 3 案红（贴顶与副屏原点那一组）；M2 摘掉 `on_hotkey` 的过渡窗置位 ⇒ `focus_lost_inside_the_settle_window_is_swallowed` 红（竞争判据的唯一证人）；M3 把 `scale` 钉成 1.0 ⇒ `size_is_logical_dp_while_origin_stays_physical` 红。
+
+**边界与不称可用**：**本批没有任何用户可见行为变化**——无新键、无新面板行、无装配接线，`ui::quake` 两件今天在全仓内**零调用方**，其价值以 G47 回货为前提；说「WS.12 已落」是错的，落的是可独立测的两件与一份重列过的依赖账。新增框架缺口 **G47**（运行期显隐 + 运行期置顶），另向框架报一条文档缺陷（`set_size` 单位注释）。真机走查 7 项（稿 §8）未做且当前**做不了**：G47 未回货即无 quake 形态可走查，锁屏会话下 `SendInput` 又静默失效（裁决 7.31①）——本条不替 WS.12 摘「可用」（§4.4 第 33 条）。在册延后：动画、透明度、逐 profile 绑定、「指针所在屏」（框架无当前指针落屏的查询面，若要做另立候选项）、与 `SPEC.FEAT.WS.03` 的 `ExitPolicy` 交互（隐藏窗口不该被算作「还有窗口」而令进程永不退出）。
+
 ## v0.159（2026-10-26）**`SPEC.FEAT.WS.04` 可听铃声（audible beep）结项：`terminal.bell` 三档自此有消费方，策略件与出声件分两件，本仓显式开 `AURORA_ENABLE_AUDIO`（裁决 7.159；本地提交＝代码笔 + 用例笔 + 文档笔）**
 
 **动机**：`terminal.bell` 是设置面板上少数「画了控件却没有消费方」的行之一——`settings_catalog` 里它标 `ConsumerStatus::Absent`，而 `main.cpp` 的 BEL 腿**无条件**点角标，选 `off` 也照样亮红点、选 `audible` 也永远没有声音。业界（Windows Terminal 的 `bellStyle` 缺省即 `audible`、`all`＝声音与任务栏闪烁并存、`none`＝两者全无；WezTerm / kitty 的可听档同样不摘视觉）没有「可听档去掉视觉」这一档，而 `config/settings.h` 的 `BellMode::Audible` 头注释本来就写死「视觉提示之外再发铃声」。本棒把这三档语义一次落齐。
