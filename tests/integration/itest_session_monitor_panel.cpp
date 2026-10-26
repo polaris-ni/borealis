@@ -632,6 +632,9 @@ AURORA_TEST_CASE(the_binding_cell_dies_with_the_focused_pane) {
     probe.binding.clear();
     h.tick(*panel);
     AURORA_TEST_CHECK(h.find_text(ssh_binding).widget == nullptr);
+    AURORA_TEST_CHECK(h.find_text("srv /dev/ttyUSB0").widget == nullptr);
+    // 空绑定不许折成一个兜底身份：卡片上出现的字符串只准来自装配层交进来的那一条腿。
+    AURORA_TEST_CHECK(h.find_text("unknown").widget == nullptr);
     AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.title")).widget != nullptr);
     AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.notice.privacy")).widget !=
                       nullptr);
