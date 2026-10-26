@@ -14,7 +14,8 @@
 - 需求：`SPEC.FEAT.CONN.03` §4 清册唯一明排期的功能棒——带跳档案在 SFTP 面板、隧道、密钥推送
   三条腿上与终端腿走**同一条跳链**，而不是按父稿 D6 拒拨。
 - 边界（本稿不碰）：逐跳口令的询问 UI（D8 既定「本期询问只覆盖目标」）；SFTP 面板会话复用
-  （CONN.02 另棒）；Win32 `make_hop_pair` 的 loopback 腿（D10，未编译，同批 4/5 边界）；
+  （CONN.02 另棒）；Win32 `make_hop_pair` 的 loopback 腿（D10，本稿出稿时未编译，2026-10-27
+  已在主通道编译并实测，见父稿 §6）；
   任何新 UI 件与新词条。
 
 ## 1 地基实测（F 表，全部读码取证）
@@ -23,7 +24,7 @@
   不交 seed）；`tunnel_client.cpp:352`（`run_loop` 每次重试在循环体内 dial，重试吃留存的
   `secret_` 副本）；`key_push.cpp:237`（`push_public_key`：纯逻辑闸先行，自开会话后 dial）。
   三处 profile 带跳时都落 `HopUnwired` 拒拨。
-- **F2 现形证人**：`itest_posix_ssh_proxy_jump.cpp:451` 的 E6 一案逐腿断言拒拨（sftp 回 false +
+- **F2 现形证人**：`itest_ssh_proxy_jump` 的 E6 一案逐腿断言拒拨（sftp 回 false +
   `SftpError::Network`；push 停 `PushStage::Dial`；Tunnel 到 `Failed`；且两台假服务器
   `accepted_connections()==0`）。同文件另有 dial 原语案
   `profile_with_jumps_without_seed_refuses_to_connect_directly` 与空链案
@@ -123,7 +124,7 @@
 - **key_push**：调用框内**局部**，同序：exec 腿跑完 → `ssh_free` → 链收口（声明序保证）。
 - 三腿的链都与消费者同 worker 线程（libssh 会话不跨线程，链头注既定）。
 
-### D7 证人翻正与新增（`itest_posix_ssh_proxy_jump.cpp`，复用既有假服务器台）
+### D7 证人翻正与新增（`itest_ssh_proxy_jump.cpp`，复用既有假服务器台）
 
 - E6 案 `sftp_tunnel_and_key_push_legs_refuse_a_profile_with_jumps` **改写为逐腿正向**：
   ⑴ SFTP 经 1 跳 connect 成功且 `list_directory` 见到假服务器摆的文件；⑵ Tunnel 经 1 跳到
@@ -184,8 +185,9 @@ submit_keys_push = 【实体】with_hop_secrets(ssh, secret, ⇒ keys_worker.sub
 
 ## 7 风险与未验证（如实登记）
 
-1. **Windows 全程未验证**：`make_hop_pair` 的 Win32 loopback 腿未编译（父稿 D10），三腿接链
-   在 MSVC 通道要等 Windows 机复核——与批 4/5 同一笔欠账，不新开。
+1. **Windows 已复核（2026-10-27）**：`make_hop_pair` 的 Win32 loopback 腿已编译并实测（父稿 D10
+   与 §6 首条），三腿接链在 MSVC＋Win32 主通道全绿——批 4/5 那笔「Windows 全程未验证」的欠账
+   就此收口；带跳三条的**真机走查**（真跳板＋真 sshd）仍是另一笔，不并入本条。
 2. 隧道重试持链：每次尝试一根链，退避前 `close()` 收口——`stop()` join 上界仍是「一个轮询拍
    + 一次建连超时」，链的逐跳建连超时叠加在**建连超时**里，最坏等待变长属预期（口径同终端腿）。
 3. 询问型+带跳的推送是两段异步串联（ask 回-call ⇒ hop 补齐回-call）：`pending_push` 的生命

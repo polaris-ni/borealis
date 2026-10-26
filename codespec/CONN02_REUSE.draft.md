@@ -253,7 +253,7 @@ io_loop:
 3. 两张算法表逐表不等（含一空一非空、两非空不同）。
 4. 秘密材料：都无＝等；同值＝等；异值＝不等；一有一无＝不等。
 
-### 7.2 真协议集成用例（新套件 `itest_posix_ssh_shared_connection`）
+### 7.2 真协议集成用例（新套件 `itest_ssh_shared_connection`）
 
 共用一台 `FakeSshServer`（banner 非空）与一枚 registry。判据：
 
@@ -302,7 +302,7 @@ io_loop:
 
 ## 10 交付分批
 
-1. **批 1**：`ssh_shared.{h,cpp}`（键、registry、共享会话、命令队列、退避环）+ `utest_ssh_session_key`；`SshConnection` 改薄适配器（单会话路径先跑通，既有 `itest_posix_ssh_connection` 五案全绿）。
+1. **批 1**：`ssh_shared.{h,cpp}`（键、registry、共享会话、命令队列、退避环）+ `utest_ssh_session_key`；`SshConnection` 改薄适配器（单会话路径先跑通，既有 `itest_ssh_connection` 五案全绿）。
 2. **批 2**：假服务器两处扩展 + 新集成套件十案。
 3. **批 3**：`src/main.cpp` 建 registry 并接线六条腿；全量构建与测试。
 4. **批 4**：变异自证、文档回写、分层提交。
@@ -312,6 +312,6 @@ io_loop:
 - **服务器 `MaxSessions`**：OpenSSH 缺省 10。超过时第 11 条通道 open 失败，按 D8 只收该标签并提示失败；本端不做排队或复用降级（需求未要求）。本沙箱的 libssh 假服务器不设上限，故这条只有推断／未验证。
 - **`stop_reconnect` 的连接级语义**：一个标签停止会停掉共享链路的重连（D5）。UI 文案不需要改，但用户可能在另一个标签里看到「已停止」；登记为共享链路的事实语义。
 - **共享会话不跨能力**：SFTP／隧道／密钥推送仍各自拨号，服务器侧仍会看到额外连接。需求原文只点名多标签终端。
-- **Win32／MSVC 未编译验证**；真机 OpenSSH 与真 agent 签名链仍未验（沿用裁决 7.146 的证人边界）。
+- **Win32／MSVC 已编译并实测**（2026-10-27：`itest_ssh_shared_connection` 十案在 Win32 主通道全绿，agent 转发那一案按平台缺件跳过）；真机 OpenSSH 与真 agent 签名链仍未验（沿用裁决 7.146 的证人边界）。
 - **`restart` 的语义微调**：链路活着时「重启」变成「在共享链路上换一条新通道」；链路已死时仍是一条新 TCP。对用户可观察的结果一致（新 shell），但服务器侧不再有第二条第登录记录。
 - **无 keepalive**：空闲会话被中间设备掐断仍不可知；即便共享，也不会因为多个标签而更容易发现。

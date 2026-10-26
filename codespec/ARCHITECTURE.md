@@ -15,7 +15,7 @@ Borealis 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨�
 ### 1.2 接入方式
 
 - Aurora 经 `add_subdirectory(../aurora)` 走源码树接入，**不复制其源码进本仓**。
-- 本仓自有三方依赖（如 SSH 传输栈）经 `find_package` + vcpkg 获取（裁决 7.12），不 vendor 源码进仓。本机实测（2026-10-09）：`VCPKG_ROOT` 指同级 `../vcpkg`，manifest 锁 `libssh` 0.12.0；未设该环境变量时按无 vcpkg 构建，受影响的只有 SSH 传输腿。Linux 侧链接与运行已实测通过（裁决 7.94），**Windows/MSVC triplet 尚未验证**。
+- 本仓自有三方依赖（如 SSH 传输栈）经 `find_package` + vcpkg 获取（裁决 7.12），不 vendor 源码进仓。本机实测（2026-10-27）：工具链＝VS 自带的 vcpkg（`CMAKE_TOOLCHAIN_FILE` 落在 `VC/vcpkg/scripts/buildsystems/vcpkg.cmake`，triplet `x64-windows`），manifest 锁 `libssh` **0.12.2**——上游 registry 只到 0.12.0，故本仓带一枚 overlay 端口 `overlay-ports/libssh`（官方 tarball 与 SHA512 校验原样保留，只换版本号与哈希），经缓存变量 `VCPKG_OVERLAY_PORTS` 在 `msvc`／`linux` 两预设里供给；拿不到 overlay 时 configure **直接失败**（`no version database entry for libssh at 0.12.2`），是 fail-closed 而不是静默回落旧版。registry 追平 ≥0.12.2 之日即删该目录并把 `builtin-baseline` 前移（裁决 7.167）。未设 vcpkg 环境时按无 vcpkg 构建，受影响的只有 SSH 传输腿。Linux 侧链接与运行已实测通过（裁决 7.94），Windows/MSVC triplet 亦已实测（2026-10-27：三件 SSH 集成套件在 Win32 主通道全绿）。
 - UI 层**只使用 Aurora 公共 API**；不私改渲染路径（`SPECIFICATIONS.md` §3.3 第 1 条）。
 
 ### 1.3 命名
