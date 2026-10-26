@@ -14,6 +14,8 @@
 // 六期（稿 §13）再加五腿：第四枚开关在开关行里画得出且点得动（同一条 `find` 也就是卡宽没溢出的证人）、
 // 开档上屏的分隔行只落在自然行界上（跨 run 的那条设备行整条只有一条）、字节计数与料源都不因翻档而变、
 // 复制／`dump_text` 交出的文本带着分隔行（D49①）、停更两态下翻档各走自己的腿（冻结即回尾、暂停只重排）。
+// 分隔行「整句走次要色」那条口径（D47①）的证人取的是**树上那一格的取色**而不是像素：行表里的 `kind`
+// 说得出「这一行是分隔行」，说不出它有没有按那个口径上色——批 C 的变异自证正是靠这条断言把上色腿钉住的。
 // 驱动台形态照 itest_tunnel_panel 的 Harness（present_root 排真实布局 + hit_test_chain 取命中 +
 // EventDispatcher 发真事件），精简到本件用得到的那几条腿。
 //
@@ -48,6 +50,7 @@
 #include "../../src/ui/session_monitor_format.h"
 #include "../../src/ui/session_monitor_panel.h"
 #include "../../src/ui/settings_i18n.h"
+#include "../../src/ui/settings_panel.h"  // settings_chrome（分隔行取色的判据，itest_url_link 同一条私有头口径）
 
 namespace borealis::test_cases::itest_session_monitor_panel {
 
@@ -454,6 +457,19 @@ auto toggle_boundary(Harness &h) -> void {
     return std::any_of(rows.begin(), rows.end(), [&text](const ui::MonitorRow &row) -> bool {
         return row.kind == ui::MonitorRowKind::Boundary && row.dump == text;
     });
+}
+
+/// @brief 卡上那一格文字的取色（`au::Text` 公有继承 `TextProps`，读到的就是绘制用的那份色）。
+///
+/// 分隔行「整句画成次要色」是稿 §13 D47① 的显示口径，而行表里的 `kind` 只说得出「这一行是分隔行」，
+/// 说不出它有没有按那个口径上色——批 C 的变异自证实测到「把 `chrome.text_dim` 换成 `chrome.text`」
+/// 全绿（那条上色腿当时无判据）。故取色判据落在树上的那一格，而不是观测面。
+[[nodiscard]] auto text_color_of(Harness &h, const std::string &label) -> au::Color {
+    const auto spot = h.find_text(label);
+    AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr, "that text cell is not on the card");
+    const auto *text = dynamic_cast<const au::Text *>(spot.widget);
+    AURORA_TEST_REQUIRE_MSG(text != nullptr, "the hit is not a text cell");
+    return text->text_color.value_or(au::Color{});
 }
 
 }  // namespace
@@ -1331,6 +1347,10 @@ AURORA_TEST_CASE(boundary_switch_is_the_fourth_toggle_and_rewrites_the_rows) {
                                 ui::settings_label("session.monitor.bytes", {{"count", std::int64_t{8}}}))
                                 .widget != nullptr,
                             "the header byte count moved with the boundary toggle");
+    // 上色口径（稿 §13 D47①）：分隔行整句走次要色，正文行那格 dump 仍是正文档——这条是批 C 补的判据。
+    const auto chrome = ui::settings_chrome();
+    AURORA_TEST_CHECK_TRUE(text_color_of(h, rows[1].dump) == chrome.text_dim);
+    AURORA_TEST_CHECK_TRUE(text_color_of(h, rows[0].dump) == chrome.text);
 
     toggle_boundary(h);
     h.tick(*panel);
