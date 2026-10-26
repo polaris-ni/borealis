@@ -166,6 +166,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -193,29 +194,61 @@ namespace borealis::ui {
 
 class SettingsPreview;  ///< 卡片底部那条横条的本体（`settings_preview.h`），本件只持其所有权。
 
-/// @brief 本仓缺省 chrome 的那几档色值（面板卡片与搜索浮层条体共用一份表）。
+/// @brief 界面 chrome 的生效明暗档（`SPEC.FEAT.PREF.01` 稿 D1）。
+///
+/// 与终端配色**不是**一件事（稿 D8）：`appearance.theme` 换的是终端内容那 16 格，本档换的是窗口外壳。
+enum class ChromeScheme : std::uint8_t { Dark, Light };
+
+/// @brief 本仓 chrome 的全部色值（面板、标签栏、搜索浮层与分屏缝隙共用一份表）。
 ///
 /// 判据文 `codespec/UI_SEARCH.draft.md` 的 A1-h 把浮层条体钉在「与设置面板同一条 S5 口径」上——
-/// 条内文本、输入框底、chip 选中档一律从那张缺省 chrome 表取，于是这张表必须是**一个可取的量**
+/// 条内文本、输入框底、chip 选中档一律从这张 chrome 表取，于是这张表必须是**一个可取的量**
 /// 而不是 `settings_panel.cpp` 的文件内常量；否则浮层要么 include 那个 cpp 够不着的头、要么在自己
-/// 文件里再列一遍同样的七个十六进制数（第二真值源，裁决 7.46② 避开的那一型）。
+/// 文件里再列一遍同样的十六进制数（第二真值源，裁决 7.46② 避开的那一型）。
+/// 色值表本体只有 `chrome_palette()` 一处（`codespec/UI_CHROME.draft.md` §1）。
 struct SettingsChrome {
-    aurora::Color window_bg{};   ///< 场景根底色（同时是 `accent` 档上的前景色，即 ThemeScope 的 on_primary）。
-    aurora::Color card_bg{};     ///< 卡片底 / 浮层条体底。
-    aurora::Color card_line{};   ///< 卡片描边 / 控件描边。
-    aurora::Color accent{};      ///< 选中档（chip 的开档底、聚焦描边、主按钮）。
+    aurora::Color window_bg{};   ///< 场景根底色 / 面板外框。
+    aurora::Color card_bg{};     ///< 卡片底 / 浮层条体底 / 标签栏底。
+    aurora::Color nav_bg{};      ///< 设置页左导航列底（比卡片暗一档，分出两栏）。
+    aurora::Color card_line{};   ///< 卡片描边 / 行区分隔线 / 控件描边。
+    aurora::Color control_bg{};  ///< 输入类控件底与次级按钮底（chip 的关档底、选中标签底）。
     aurora::Color text{};        ///< 正文。
-    aurora::Color text_dim{};    ///< 副标题、占位符、关档前景。
-    aurora::Color control_bg{};  ///< 输入类控件底与次级按钮底（chip 的关档底）。
+    aurora::Color text_dim{};    ///< 副标题、占位符、关档前景、未选标签。
+    aurora::Color accent{};      ///< 选中档（chip 的开档底、聚焦描边、主按钮、下划线）。
+    aurora::Color scrim{};       ///< 全屏遮罩（吃掉窗外点击，不挡内容）。
+    aurora::Color danger{};      ///< 语义警示：铃铛角标。
+    aurora::Color success{};     ///< 语义提示：活动角标。
+    aurora::Color warning{};     ///< 语义警示：退出 / 断线角标。
 };
 
-/// @brief 面板与浮层的 chrome 色值唯一来源（上面那张结构的现值）。
+/// @brief 两套 chrome 色板的唯一色值表（稿 §1 那两列；`utest_chrome_palette` 按同一张表断言）。
+[[nodiscard]] auto chrome_palette(ChromeScheme scheme) -> SettingsChrome;
+
+/// @brief 把配置里的三档选择解析成生效明暗（稿 D1 / D4）。
+/// @param choice 落盘值 `system` / `dark` / `light`；空串与域外值按 `system` 处置。
+/// @param os 系统明暗读数（`aurora::os_color_scheme()`）。
+///
+/// `system` 且系统不表态（`Unspecified`）一律回暗——「暗色优先」的兜底（稿 D1）。
+[[nodiscard]] auto resolve_chrome_scheme(std::string_view choice, aurora::ColorScheme os) -> ChromeScheme;
+
+/// @brief 当前活动档（主线程单线程状态，稿 D3；`set_chrome_scheme()` 之前恒为暗档）。
+[[nodiscard]] auto chrome_scheme() -> ChromeScheme;
+
+/// @brief 换活动档：此后 `settings_chrome()` / `settings_chrome_theme()` 读新档。
+///
+/// 只改活动档与随后的色值读点；整树重排重绘与每窗 `ThemeScope` 的换主题由装配层收口（稿 D3）。
+auto set_chrome_scheme(ChromeScheme scheme) -> void;
+
+/// @brief 指定档位对应的 `aurora::Theme`（场景根 `ThemeScope` 的取值，稿 D6）。
+[[nodiscard]] auto chrome_theme(ChromeScheme scheme) -> aurora::Theme;
+
+/// @brief 活动档的 chrome 色值（面板、标签栏、分屏三处绘制与装配层共用的唯一读点）。
 [[nodiscard]] auto settings_chrome() -> SettingsChrome;
 
-/// @brief 面板 chrome 的色值唯一来源，同时是装配层给场景根那层 `ThemeScope` 的主题。
+/// @brief 活动档的 chrome 主题，装配层给场景根那层 `ThemeScope` 装的就是它。
 ///
 /// 刻意**不随终端主题联动**（裁决 7.52 的 S5① / N6：终端配色与界面配色是两件事，切主题时整窗
-/// 跟着变会让用户以为丢了设置）。面板内联色与本函数取自同一批文件内常量，故全仓只有一份 chrome 色值。
+/// 跟着变会让用户以为丢了设置）。两档来自同一张 `chrome_palette()` 表，故全仓只有一份 chrome 色值。
 [[nodiscard]] auto settings_chrome_theme() -> aurora::Theme;
 
 /// @brief 设置面板：挂在场景根浮层宿主上的全屏浮层（S1），装载一份表单副本并就地编辑（S3①）。

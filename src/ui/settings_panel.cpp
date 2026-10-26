@@ -52,16 +52,47 @@
 namespace borealis::ui {
 namespace {
 
-// ---- chrome 色值（S5①：界面配色不随终端主题联动）----
-constexpr aurora::Color kScrim{0, 0, 0, 0x99};             ///< 全屏遮罩：不挡内容但吃掉窗外点击。
-constexpr aurora::Color kWindowBg{0x18, 0x19, 0x21};       ///< 场景根底色（ThemeScope 的 background）。
-constexpr aurora::Color kCardBg{0x21, 0x22, 0x2C};         ///< 卡片底。
-constexpr aurora::Color kNavBg{0x1B, 0x1C, 0x24};          ///< 左导航列底（比卡片暗一档，分出两栏）。
-constexpr aurora::Color kCardLine{0x4D, 0x4F, 0x63};       ///< 卡片描边与行区分隔线。
-constexpr aurora::Color kAccent{0xBD, 0x93, 0xF9};         ///< 选中页与主按钮。
-constexpr aurora::Color kText{0xF8, 0xF8, 0xF2};           ///< 正文。
-constexpr aurora::Color kTextDim{0x62, 0x72, 0x80};        ///< 角标、副标题、组顶说明，与不可编辑行（只读表）的行名。
-constexpr aurora::Color kControlBg{0x28, 0x2A, 0x36};      ///< 输入类控件底与次级按钮底。
+// ---- chrome 色值（S5①：界面配色不随终端主题联动；`SPEC.FEAT.PREF.01` 起分亮/暗两档）----
+//
+// 两套色板是全仓唯一一张表（`codespec/UI_CHROME.draft.md` §1）：面板 154 处、标签栏与分屏的固定色
+// 都从这里读。`text_dim` 暗档由 `#627280` 提亮到 `#8A8FA3`——旧值对卡片底只有 3.19:1，不达 WCAG AA
+// （稿 D7），`utest_chrome_palette` 按同一算式守这条下界。
+constexpr SettingsChrome kDarkChrome{
+    .window_bg = aurora::Color{0x18, 0x19, 0x21},
+    .card_bg = aurora::Color{0x21, 0x22, 0x2C},
+    .nav_bg = aurora::Color{0x1B, 0x1C, 0x24},
+    .card_line = aurora::Color{0x4D, 0x4F, 0x63},
+    .control_bg = aurora::Color{0x28, 0x2A, 0x36},
+    .text = aurora::Color{0xF8, 0xF8, 0xF2},
+    .text_dim = aurora::Color{0x8A, 0x8F, 0xA3},
+    .accent = aurora::Color{0xBD, 0x93, 0xF9},
+    .scrim = aurora::Color{0, 0, 0, 0x99},
+    .danger = aurora::Color{0xFF, 0x55, 0x55},
+    .success = aurora::Color{0x50, 0xFA, 0x7B},
+    .warning = aurora::Color{0xFF, 0xB8, 0x6C},
+};
+constexpr SettingsChrome kLightChrome{
+    .window_bg = aurora::Color{0xF4, 0xF4, 0xF7},
+    .card_bg = aurora::Color{0xFF, 0xFF, 0xFF},
+    .nav_bg = aurora::Color{0xEA, 0xEA, 0xF0},
+    .card_line = aurora::Color{0xD4, 0xD5, 0xDE},
+    .control_bg = aurora::Color{0xEC, 0xED, 0xF3},
+    .text = aurora::Color{0x1C, 0x1D, 0x26},
+    .text_dim = aurora::Color{0x5A, 0x5D, 0x6E},
+    .accent = aurora::Color{0x7C, 0x3A, 0xED},
+    .scrim = aurora::Color{0, 0, 0, 0x66},
+    .danger = aurora::Color{0xC6, 0x28, 0x28},
+    .success = aurora::Color{0x15, 0x80, 0x3D},
+    .warning = aurora::Color{0xB4, 0x53, 0x09},
+};
+
+/// 活动档（主线程单线程状态，稿 D3）：装配层解析之前恒为暗，与旧观感一致。
+ChromeScheme g_chrome_scheme = ChromeScheme::Dark;
+
+/// 活动色板的**引用**读点：绘制闭包因此每次重绘都取当前档，而不是把建树时的颜色刻进控件。
+[[nodiscard]] auto chrome() -> const SettingsChrome & {
+    return g_chrome_scheme == ChromeScheme::Light ? kLightChrome : kDarkChrome;
+}
 
 constexpr float kRowExtentDp = 56.0F;   ///< 行高（判据文 §1 不另立控件高度，故只在排版处出现一次）。
 constexpr float kNavWidthDp = 200.0F;   ///< 左导航宽（判据文 §1）。
@@ -377,7 +408,7 @@ constexpr GroupNote kGroupNotes[] = {
 };
 
 [[nodiscard]] auto make_group_note(const std::string &text) -> aurora::Node {
-    auto note = make_text(text, kTextDim);
+    auto note = make_text(text, chrome().text_dim);
     note.widget().modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
         .left = 16.0F, .top = 4.0F, .right = 16.0F, .bottom = 4.0F}));
     return note;
@@ -391,9 +422,9 @@ constexpr GroupNote kGroupNotes[] = {
     -> std::shared_ptr<aurora::Button> {
     return std::make_shared<aurora::Button>(aurora::ButtonProps{
         .label = settings_text(label_key),
-        .color = pressed ? kAccent : kControlBg,
-        .on_color = pressed ? kWindowBg : kText,
-        .border_color = kCardLine,
+        .color = pressed ? chrome().accent : chrome().control_bg,
+        .on_color = pressed ? chrome().window_bg : chrome().text,
+        .border_color = chrome().card_line,
         .border_width = 1.0F,
     });
 }
@@ -419,27 +450,50 @@ constexpr GroupNote kGroupNotes[] = {
 
 }  // namespace
 
+auto chrome_palette(ChromeScheme scheme) -> SettingsChrome {
+    return scheme == ChromeScheme::Light ? kLightChrome : kDarkChrome;
+}
+
+auto resolve_chrome_scheme(std::string_view choice, aurora::ColorScheme os) -> ChromeScheme {
+    if (choice == "light") {
+        return ChromeScheme::Light;
+    }
+    if (choice == "dark") {
+        return ChromeScheme::Dark;
+    }
+    // `system`、空串与域外值走同一条：跟随系统；系统不表态则暗色优先（稿 D1 / D4 的兜底）。
+    return os == aurora::ColorScheme::Light ? ChromeScheme::Light : ChromeScheme::Dark;
+}
+
+auto chrome_scheme() -> ChromeScheme {
+    return g_chrome_scheme;
+}
+
+auto set_chrome_scheme(ChromeScheme scheme) -> void {
+    g_chrome_scheme = scheme;
+}
+
+auto chrome_theme(ChromeScheme scheme) -> aurora::Theme {
+    // 只覆写本套 chrome 消费的四个色角色（`surface`/`on_surface` 承接旧 `background`/`text`）；
+    // 其余角色沿用亮色基准——本主题挂在局部 `ThemeScope` 上，未被读到的角色不上屏。
+    // `on_primary` 分档（稿 D6）：暗档深字压浅紫，亮档白字压深紫。
+    const SettingsChrome &palette = scheme == ChromeScheme::Light ? kLightChrome : kDarkChrome;
+    aurora::ColorRoles roles = aurora::ColorRoles::light();
+    roles.primary = palette.accent;
+    roles.on_primary = scheme == ChromeScheme::Light ? palette.card_bg : palette.window_bg;
+    roles.surface = palette.window_bg;
+    roles.on_surface = palette.text;
+    aurora::Theme theme{.roles = roles};
+    theme.scheme = scheme == ChromeScheme::Light ? aurora::ColorScheme::Light : aurora::ColorScheme::Dark;
+    return theme;
+}
+
 auto settings_chrome() -> SettingsChrome {
-    return SettingsChrome{
-        .window_bg = kWindowBg,
-        .card_bg = kCardBg,
-        .card_line = kCardLine,
-        .accent = kAccent,
-        .text = kText,
-        .text_dim = kTextDim,
-        .control_bg = kControlBg,
-    };
+    return chrome();
 }
 
 auto settings_chrome_theme() -> aurora::Theme {
-    // 只覆写本套 chrome 消费的四个色角色（`surface`/`on_surface` 承接旧 `background`/`text`）；
-    // 其余角色沿用亮色基准——本主题挂在局部 `ThemeScope` 上，未被读到的角色不上屏。
-    aurora::ColorRoles roles = aurora::ColorRoles::light();
-    roles.primary = kAccent;
-    roles.on_primary = kWindowBg;
-    roles.surface = kWindowBg;
-    roles.on_surface = kText;
-    return aurora::Theme{.roles = roles};
+    return chrome_theme(chrome_scheme());
 }
 
 SettingsPanel::SettingsPanel(aurora::OverlayHost &host, aurora::ShortcutRegistry &shortcuts, Hooks hooks)
@@ -797,7 +851,7 @@ auto SettingsPanel::rebuild_overlay() -> void {
 
     // 遮罩层：`Canvas` 的自动尺寸会夹到 100×100，故必须 fill_max_size 才铺满整窗（裁决 7.56⑤）。
     auto scrim = std::make_shared<aurora::Canvas>([](aurora::Painter &painter, const aurora::Rect &bounds) -> void {
-        painter.fill_rect(bounds, kScrim);
+        painter.fill_rect(bounds, chrome().scrim);
     });
     scrim->modifier.set(aurora::Modifier{}.fill_max_size().clickable([this]() -> void {
         // A4-c：候选浮层开着时，第一次「浮层之外」的点击只关浮层。遮罩在浮层之下，本闭包跑起来时用户点的
@@ -831,8 +885,8 @@ auto SettingsPanel::build_card() -> aurora::Node {
                                             SettingsPage::Shortcuts}) {
                 auto props = aurora::ButtonProps{};
                 props.label = settings_text(page_title_key(page));
-                props.color = page == page_ ? kAccent : kNavBg;
-                props.on_color = page == page_ ? kWindowBg : kText;
+                props.color = page == page_ ? chrome().accent : chrome().nav_bg;
+                props.on_color = page == page_ ? chrome().window_bg : chrome().text;
                 props.corner_radius = 0.0F;
                 props.min_width = kNavWidthDp;
                 props.border_width = 0.0F;
@@ -845,7 +899,7 @@ auto SettingsPanel::build_card() -> aurora::Node {
                 .children = std::move(nav),
                 .gap = 2.0F,
             });
-            nav_column->modifier.set(aurora::Modifier{}.width(kNavWidthDp).fill_max_height().background(kNavBg));
+            nav_column->modifier.set(aurora::Modifier{}.width(kNavWidthDp).fill_max_height().background(chrome().nav_bg));
 
             // 行区是 `Scroll` + `Column` 而不是 `LazyList`：后者的 `item_extent` 是**全局**固定行高，
             // 而外观页的四类专用区段（主题卡 / 16 格色板 / 字体族 / 回退链）各自要占多行高度。
@@ -887,16 +941,16 @@ auto SettingsPanel::build_card() -> aurora::Node {
             });
             body->modifier.set(aurora::Modifier{}.fill_max_width().expand());
 
-            auto title = make_text(settings_label("settings.title"), kText);
+            auto title = make_text(settings_label("settings.title"), chrome().text);
             title.widget().modifier.set(aurora::Modifier{}.expand());  // 标题吃掉剩余宽度，副标题与按钮靠右
-            auto subtitle = make_text(settings_label("settings.subtitle"), kTextDim);
+            auto subtitle = make_text(settings_label("settings.subtitle"), chrome().text_dim);
             subtitle.widget().modifier.set(aurora::Modifier{}.width(kStatusWidthDp));
 
             auto close_button = std::make_shared<aurora::Button>(aurora::ButtonProps{
                 .label = settings_text("settings.close"),
-                .color = kControlBg,
-                .on_color = kText,
-                .border_color = kCardLine,
+                .color = chrome().control_bg,
+                .on_color = chrome().text,
+                .border_color = chrome().card_line,
                 .border_width = 1.0F,
             });
             close_button->set_on_click([this]() -> void { close(); });
@@ -945,7 +999,7 @@ auto SettingsPanel::build_card() -> aurora::Node {
                 // 动作留痕那一行：**没有动作时也画**（空文本），否则每次动作都会让卡片内容整体下移一格，
                 // 而用户正要点的那一枚按钮会跑位。
                 auto notice = std::make_shared<aurora::Text>(
-                    aurora::TextProps{.content = config_notice_text_, .text_color = kTextDim});
+                    aurora::TextProps{.content = config_notice_text_, .text_color = chrome().text_dim});
                 notice->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
                     .left = 16.0F, .top = 0.0F, .right = 16.0F, .bottom = 4.0F}));
                 config_notice_ = notice;
@@ -965,8 +1019,8 @@ auto SettingsPanel::build_card() -> aurora::Node {
                 .children = std::move(card_children),
                 .gap = 0.0F,
             });
-            card->modifier.set(aurora::Modifier{}.size(width, height).background(kCardBg, 8.0F).border(
-                1.0F, kCardLine));
+            card->modifier.set(aurora::Modifier{}.size(width, height).background(chrome().card_bg, 8.0F).border(
+                1.0F, chrome().card_line));
             // 状态列指针在这里登记（`build_row` 已把每行的状态列建好），故本处**不得**再清空——
             // 行区改全量实例化之后，构建与这段代码在同一次布局里先后发生，倒空就把刚登记的指针抹掉了。
             return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(card))};
@@ -1012,11 +1066,11 @@ auto SettingsPanel::build_row(std::size_t ordinal) -> aurora::Node {
 auto SettingsPanel::build_header(std::size_t ordinal, const SettingsControl &control, bool editable)
     -> std::pair<aurora::Node, aurora::Node> {
     auto label = std::make_shared<aurora::Text>(
-        aurora::TextProps{.content = settings_text(control.key), .text_color = editable ? kText : kTextDim});
+        aurora::TextProps{.content = settings_text(control.key), .text_color = editable ? chrome().text : chrome().text_dim});
     label->modifier.set(aurora::Modifier{}.expand());
 
     auto status = std::make_shared<aurora::Text>(aurora::TextProps{
-        .content = badge_text(control), .text_color = kTextDim, .text_align = aurora::TextAlign::Right});
+        .content = badge_text(control), .text_color = chrome().text_dim, .text_align = aurora::TextAlign::Right});
     status->modifier.set(aurora::Modifier{}.width(kStatusWidthDp));
     if (ordinal < status_texts_.size()) {
         status_texts_[ordinal] = status;  // 条目构建器只在序号有效时才登记指针
@@ -1056,8 +1110,8 @@ auto SettingsPanel::build_theme_section(std::size_t ordinal) -> aurora::Node {
 
         auto card_label = std::make_shared<aurora::Text>(
             aurora::TextProps{.content = name, .text_color = theme_choices_[index].name == current_theme_name()
-                                                       ? kText
-                                                       : kTextDim});
+                                                       ? chrome().text
+                                                       : chrome().text_dim});
         // 卡名落在下沿那一档：画布的样例四格在上半部、分隔线在中线，名字不能压到它们。
         card_label->modifier.set(aurora::Modifier{}.padding(
             aurora::EdgeInsets{.left = 10.0F, .top = 36.0F, .right = 0.0F, .bottom = 0.0F}));
@@ -1139,13 +1193,13 @@ auto SettingsPanel::build_swatch_section(std::size_t ordinal) -> aurora::Node {
     // 编辑器行：A2-a 要「点一格 → 下方给出该格 HEX 输入、当前值与恢复主题默认」，这里给的是**同一个**
     // 常驻输入框换指向（文件头③）。它与通用 HEX 行共用一套着色与失焦才提交的口径（S14）。
     auto editor = std::make_shared<BlurCommitText>();
-    editor->set_background(kControlBg);
-    editor->set_focused_background(kControlBg);
-    editor->set_border_color(kCardLine);
-    editor->set_focused_border_color(kAccent);
-    editor->set_text_color(kText);
-    editor->set_cursor_color(kText);
-    editor->set_placeholder_color(kTextDim);
+    editor->set_background(chrome().control_bg);
+    editor->set_focused_background(chrome().control_bg);
+    editor->set_border_color(chrome().card_line);
+    editor->set_focused_border_color(chrome().accent);
+    editor->set_text_color(chrome().text);
+    editor->set_cursor_color(chrome().text);
+    editor->set_placeholder_color(chrome().text_dim);
     editor->set_on_submit([this](const std::string &text) -> void {
         commit_slot(kPaletteKey, selected_swatch_, text);
     });
@@ -1158,15 +1212,15 @@ auto SettingsPanel::build_swatch_section(std::size_t ordinal) -> aurora::Node {
 
     auto reset = std::make_shared<aurora::Button>(aurora::ButtonProps{
         .label = settings_text("settings.action.theme_default"),
-        .color = kControlBg,
-        .on_color = kText,
-        .border_color = kCardLine,
+        .color = chrome().control_bg,
+        .on_color = chrome().text,
+        .border_color = chrome().card_line,
         .border_width = 1.0F,
     });
     reset->set_on_click([this]() -> void { reset_swatch_to_theme_default(); });
     // 主题名不在候选表里时没有「主题默认」可恢复：按钮禁用（框架的禁用态降级绘制并忽略点击），
     // 而不是留一个点了没反应的按钮（S9 / D3-a 同口径）。
-    reset->set_disabled_colors(kControlBg, kTextDim);
+    reset->set_disabled_colors(chrome().control_bg, chrome().text_dim);
     reset->set_enabled(theme_baseline() != nullptr);
     swatch_reset_button_ = reset;
 
@@ -1196,9 +1250,9 @@ auto SettingsPanel::build_family_section(std::size_t ordinal) -> aurora::Node {
     auto [label, status] = build_header(ordinal, control, true);
 
     auto button = std::make_shared<aurora::Button>(aurora::ButtonProps{
-        .color = kControlBg,
-        .on_color = kText,
-        .border_color = kCardLine,
+        .color = chrome().control_bg,
+        .on_color = chrome().text,
+        .border_color = chrome().card_line,
         .border_width = 1.0F,
         .min_width = kFontButtonWidthDp,
     });
@@ -1228,7 +1282,7 @@ auto SettingsPanel::build_family_section(std::size_t ordinal) -> aurora::Node {
 
     // 留痕行：A4-b 要的是字体行**下方**那一条独立留痕。`Configured` 档写空串而不撤掉这一行（文件头②的
     // 代价：这一行恒占高度，换来「不用 `show` 翻转、因此不需要补布局脏」）。
-    auto notice = std::make_shared<aurora::Text>(aurora::TextProps{.content = std::string{}, .text_color = kTextDim});
+    auto notice = std::make_shared<aurora::Text>(aurora::TextProps{.content = std::string{}, .text_color = chrome().text_dim});
     notice->modifier.set(aurora::Modifier{}.fill_max_width());
     font_notice_ = notice;
 
@@ -1245,7 +1299,7 @@ auto SettingsPanel::build_family_section(std::size_t ordinal) -> aurora::Node {
 
 auto SettingsPanel::paint_theme_card(aurora::Painter &painter, const aurora::Rect &box, std::size_t index)
     const -> void {
-    painter.fill_rounded_rect(box, 6.0F, kControlBg);
+    painter.fill_rounded_rect(box, 6.0F, chrome().control_bg);
     if (index >= theme_choices_.size()) {
         return;
     }
@@ -1257,16 +1311,16 @@ auto SettingsPanel::paint_theme_card(aurora::Painter &painter, const aurora::Rec
                           to_color(samples[i]));
     }
     painter.draw_line(aurora::Point{box.origin.x + 10.0F, box.origin.y + 30.0F},
-                      aurora::Point{box.right() - 10.0F, box.origin.y + 30.0F}, 1.0F, kCardLine);
+                      aurora::Point{box.right() - 10.0F, box.origin.y + 30.0F}, 1.0F, chrome().card_line);
 
     const bool selected = theme_choices_[index].name == current_theme_name();
-    painter.draw_rounded_border(box, 6.0F, selected ? 2.0F : 1.0F, selected ? kAccent : kCardLine);
+    painter.draw_rounded_border(box, 6.0F, selected ? 2.0F : 1.0F, selected ? chrome().accent : chrome().card_line);
     if (selected) {
         // A1-a 的「选中卡在右下角给勾」：三条折线一个拐，画在卡名那一档的右端。
         painter.stroke_polyline(std::vector<aurora::Point>{aurora::Point{box.right() - 18.0F, box.bottom() - 16.0F},
                                                            aurora::Point{box.right() - 14.0F, box.bottom() - 12.0F},
                                                            aurora::Point{box.right() - 6.0F, box.bottom() - 22.0F}},
-                                2.0F, kAccent);
+                                2.0F, chrome().accent);
     }
 }
 
@@ -1276,7 +1330,7 @@ auto SettingsPanel::paint_swatch(aurora::Painter &painter, const aurora::Rect &b
     const RgbaColor color = slot < table.size() ? table[slot] : RgbaColor{};
     painter.fill_rounded_rect(box, 3.0F, to_color(color));
     if (slot == selected_swatch_) {
-        painter.draw_rounded_border(box, 3.0F, 2.0F, kAccent);
+        painter.draw_rounded_border(box, 3.0F, 2.0F, chrome().accent);
     }
 }
 
@@ -1305,9 +1359,9 @@ auto SettingsPanel::build_chain_section(std::size_t ordinal) -> aurora::Node {
             const std::size_t i = static_cast<std::size_t>(index);
             const std::size_t count = chain_items_ == nullptr ? 0U : chain_items_->get().size();
 
-            auto ordinal_text = make_text(std::to_string(i + 1U), kTextDim);
+            auto ordinal_text = make_text(std::to_string(i + 1U), chrome().text_dim);
             ordinal_text.widget().modifier.set(aurora::Modifier{}.width(kChainOrdinalWidthDp));
-            auto name_text = make_text(family, kText);
+            auto name_text = make_text(family, chrome().text);
             name_text.widget().modifier.set(aurora::Modifier{}.expand());
 
             // 三枚按钮全部落在手柄带之左：`set_drag_handle(true)` 让列表把右侧 48 dp 收作自己的
@@ -1315,15 +1369,15 @@ auto SettingsPanel::build_chain_section(std::size_t ordinal) -> aurora::Node {
             const auto make_arrow = [this](std::string_view key, bool enabled,
                                            std::function<void()> action) -> std::shared_ptr<aurora::Button> {
                 auto button = std::make_shared<aurora::Button>(aurora::ButtonProps{
-                    .color = kControlBg,
-                    .on_color = kText,
+                    .color = chrome().control_bg,
+                    .on_color = chrome().text,
                     .corner_radius = 3.0F,
-                    .border_color = kCardLine,
+                    .border_color = chrome().card_line,
                     .border_width = 1.0F,
                     .min_width = kChainButtonWidthDp,
                 });
                 button->label = settings_text(key);
-                button->set_disabled_colors(kControlBg, kTextDim);
+                button->set_disabled_colors(chrome().control_bg, chrome().text_dim);
                 button->set_enabled(enabled);
                 button->set_on_click(std::move(action));
                 button->modifier.set(aurora::Modifier{}.width(kChainButtonWidthDp));
@@ -1373,13 +1427,13 @@ auto SettingsPanel::build_chain_section(std::size_t ordinal) -> aurora::Node {
     // 过滤框：普通 `TextInput` 而不是 `BlurCommitText`——它的内容**永不进表单**（文件头「添加族」段），
     // 失焦提交反而会把一串族名当成配置值写进去。
     chain_filter_ = std::make_shared<aurora::TextInput>();
-    chain_filter_->set_background(kControlBg);
-    chain_filter_->set_focused_background(kControlBg);
-    chain_filter_->set_border_color(kCardLine);
-    chain_filter_->set_focused_border_color(kAccent);
-    chain_filter_->set_text_color(kText);
-    chain_filter_->set_cursor_color(kText);
-    chain_filter_->set_placeholder_color(kTextDim);
+    chain_filter_->set_background(chrome().control_bg);
+    chain_filter_->set_focused_background(chrome().control_bg);
+    chain_filter_->set_border_color(chrome().card_line);
+    chain_filter_->set_focused_border_color(chrome().accent);
+    chain_filter_->set_text_color(chrome().text);
+    chain_filter_->set_cursor_color(chrome().text);
+    chain_filter_->set_placeholder_color(chrome().text_dim);
     chain_filter_->set_placeholder(settings_label("settings.chain.filter"));
     chain_filter_->set_on_changed([this](const std::string &text) -> void {
         chain_filter_text_ = text;
@@ -1394,13 +1448,13 @@ auto SettingsPanel::build_chain_section(std::size_t ordinal) -> aurora::Node {
     candidate_nodes.reserve(kChainCandidateRows);
     for (std::size_t slot = 0; slot < kChainCandidateRows; ++slot) {
         auto button = std::make_shared<aurora::Button>(aurora::ButtonProps{
-            .color = kControlBg,
-            .on_color = kText,
+            .color = chrome().control_bg,
+            .on_color = chrome().text,
             .corner_radius = 3.0F,
-            .border_color = kCardLine,
+            .border_color = chrome().card_line,
             .border_width = 1.0F,
         });
-        button->set_disabled_colors(kControlBg, kTextDim);
+        button->set_disabled_colors(chrome().control_bg, chrome().text_dim);
         button->set_on_click([this, slot]() -> void {
             if (slot < candidate_names_.size() && !candidate_names_[slot].empty()) {
                 append_chain_family(candidate_names_[slot]);
@@ -1415,7 +1469,7 @@ auto SettingsPanel::build_chain_section(std::size_t ordinal) -> aurora::Node {
     auto pool = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(candidate_nodes), .gap = 4.0F});
     pool->modifier.set(aurora::Modifier{}.fill_max_width());
 
-    chain_hint_ = std::make_shared<aurora::Text>(aurora::TextProps{.content = std::string{}, .text_color = kTextDim});
+    chain_hint_ = std::make_shared<aurora::Text>(aurora::TextProps{.content = std::string{}, .text_color = chrome().text_dim});
     chain_hint_->modifier.set(aurora::Modifier{}.fill_max_width());
 
     std::vector<aurora::Node> children;
@@ -1446,7 +1500,7 @@ auto SettingsPanel::paint_chain_handle(aurora::Painter &painter, const aurora::R
     const float left = box.origin.x + (box.size.width - kDotWidthDp) * 0.5F;
     for (std::size_t row = 0; row < 3U; ++row) {
         const float y = top + (kDotHeightDp + kDotGapDp) * static_cast<float>(row);
-        painter.fill_rect(aurora::Rect{aurora::Point{left, y}, aurora::Size{kDotWidthDp, kDotHeightDp}}, kTextDim);
+        painter.fill_rect(aurora::Rect{aurora::Point{left, y}, aurora::Size{kDotWidthDp, kDotHeightDp}}, chrome().text_dim);
     }
 }
 
@@ -1490,15 +1544,15 @@ auto SettingsPanel::build_shortcuts_section(std::size_t ordinal) -> aurora::Node
                                        : aurora::Modifier{}.expand());
         return cell;
     };
-    // 列名行与数据行同尺寸、只差一档亮度（`kTextDim` 正是角标那一档），故排版量只有一份。
+    // 列名行与数据行同尺寸、只差一档亮度（`text_dim` 正是角标那一档），故排版量只有一份。
     const auto make_line = [&make_cell](bool heading, std::string title, std::string category,
                                         std::string binding, std::string note) -> aurora::Node {
-        const aurora::Color value = heading ? kTextDim : kText;
+        const aurora::Color value = heading ? chrome().text_dim : chrome().text;
         auto line = std::make_shared<aurora::Row>(aurora::RowProps{
             .children = {make_cell(std::move(title), value, 0.0F),
                          make_cell(std::move(category), value, kShortcutCategoryWidthDp),
                          make_cell(std::move(binding), value, kShortcutBindingWidthDp),
-                         make_cell(std::move(note), kTextDim, kShortcutNoteWidthDp)},
+                         make_cell(std::move(note), chrome().text_dim, kShortcutNoteWidthDp)},
             .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
             .gap = 12.0F,
         });
@@ -1522,9 +1576,9 @@ auto SettingsPanel::build_shortcuts_section(std::size_t ordinal) -> aurora::Node
         // 每行四列 + 编辑按钮
         auto edit_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
             .label = settings_label("settings.action.edit"),
-            .color = kControlBg,
-            .on_color = kText,
-            .border_color = kCardLine,
+            .color = chrome().control_bg,
+            .on_color = chrome().text,
+            .border_color = chrome().card_line,
             .border_width = 1.0F,
             .min_width = 56.0F,
         });
@@ -1533,10 +1587,10 @@ auto SettingsPanel::build_shortcuts_section(std::size_t ordinal) -> aurora::Node
         });
         shortcut_edit_buttons_.push_back(edit_btn);
         
-        auto title_cell = make_cell(row.title, kText, 0.0F);
-        auto category_cell = make_cell(row.category, kText, kShortcutCategoryWidthDp);
-        auto binding_cell = make_cell(binding, kText, kShortcutBindingWidthDp);
-        auto note_cell = make_cell(note, kTextDim, kShortcutNoteWidthDp);
+        auto title_cell = make_cell(row.title, chrome().text, 0.0F);
+        auto category_cell = make_cell(row.category, chrome().text, kShortcutCategoryWidthDp);
+        auto binding_cell = make_cell(binding, chrome().text, kShortcutBindingWidthDp);
+        auto note_cell = make_cell(note, chrome().text_dim, kShortcutNoteWidthDp);
         
         auto row_node = std::make_shared<aurora::Row>(aurora::RowProps{
             .children = {std::move(title_cell),
@@ -1563,9 +1617,9 @@ auto SettingsPanel::build_shortcuts_section(std::size_t ordinal) -> aurora::Node
     // 「恢复默认」按钮：清空所有覆盖，回到注册表的 default_binding
     auto restore_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
         .label = settings_label("settings.action.restore_defaults"),
-        .color = kControlBg,
-        .on_color = kText,
-        .border_color = kCardLine,
+        .color = chrome().control_bg,
+        .on_color = chrome().text,
+        .border_color = chrome().card_line,
         .border_width = 1.0F,
         .min_width = 120.0F,
     });
@@ -1598,10 +1652,10 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
                 // 行高 56 dp 扣掉上下各 8 dp 内边距后给子项的是**紧约束 40 dp**，而开关的滑块直径按
                 // 自身盒高算（`bounds.height − 2×inset`），不锁高度就会被拉成 36 dp 的白饼、轨道只剩两侧细边。
                 sw->modifier.set(aurora::Modifier{}.height(24.0F));
-                sw->set_active_color(kAccent);
-                sw->set_inactive_color(kControlBg);
-                sw->set_border(kCardLine, 1.0F);
-                sw->set_thumb_color(kText);
+                sw->set_active_color(chrome().accent);
+                sw->set_inactive_color(chrome().control_bg);
+                sw->set_border(chrome().card_line, 1.0F);
+                sw->set_thumb_color(chrome().text);
                 sw->set_on_changed(
                     [this, key](bool next) -> void { commit(key, FormValue::boolean(next)); });
                 return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(sw))};
@@ -1618,10 +1672,10 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
                 }
                 auto spin = std::make_shared<aurora::SpinBox>(
                     initial, control.numeric.min, control.numeric.max, step);
-                spin->set_background(kControlBg);
-                spin->set_border_color(kCardLine);
-                spin->set_text_color(kText);
-                spin->set_arrow_color(kTextDim);
+                spin->set_background(chrome().control_bg);
+                spin->set_border_color(chrome().card_line);
+                spin->set_text_color(chrome().text);
+                spin->set_arrow_color(chrome().text_dim);
                 spin->set_suffix(control.unit);
                 spin->set_decimals(step < 1.0 ? 1 : 0);
                 spin->set_on_change([this, key, integral = control.domain == ValueDomain::Integral](double next) -> void {
@@ -1640,11 +1694,11 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
                     }
                 }
                 auto box = std::make_shared<aurora::Dropdown>(control.choices, initial);
-                box->set_box_color(kControlBg);
-                box->set_border_color(kCardLine);
-                box->set_text_color(kText);
-                box->set_arrow_color(kTextDim);
-                box->set_accent_color(kAccent);
+                box->set_box_color(chrome().control_bg);
+                box->set_border_color(chrome().card_line);
+                box->set_text_color(chrome().text);
+                box->set_arrow_color(chrome().text_dim);
+                box->set_accent_color(chrome().accent);
                 box->set_on_change([this, key, choices = control.choices](int index) -> void {
                     if (index >= 0 && static_cast<std::size_t>(index) < choices.size()) {
                         commit(key, FormValue::text(choices[static_cast<std::size_t>(index)]));
@@ -1657,15 +1711,15 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
             case ControlKind::TextInput: {
                 auto box = std::make_shared<BlurCommitText>();
                 box->set_value(form_value_as_text(value));
-                box->set_background(kControlBg);
+                box->set_background(chrome().control_bg);
                 // 框架的聚焦态底色缺省是近白 {245,248,255}，而本件文本色近白：不显式给就聚焦即白底白字，
                 // 故聚焦态只靠描边分档。
-                box->set_focused_background(kControlBg);
-                box->set_border_color(kCardLine);
-                box->set_focused_border_color(kAccent);
-                box->set_text_color(kText);
-                box->set_cursor_color(kText);
-                box->set_placeholder_color(kTextDim);
+                box->set_focused_background(chrome().control_bg);
+                box->set_border_color(chrome().card_line);
+                box->set_focused_border_color(chrome().accent);
+                box->set_text_color(chrome().text);
+                box->set_cursor_color(chrome().text);
+                box->set_placeholder_color(chrome().text_dim);
                 if (control.kind == ControlKind::OptionalHexInput) {
                     box->set_placeholder(settings_label("settings.action.unset"));
                 }
@@ -1681,9 +1735,9 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
                     // 只有这个按钮把槽位置成未配。
                     auto unset = std::make_shared<aurora::Button>(aurora::ButtonProps{
                         .label = settings_text("settings.action.unset"),
-                        .color = kControlBg,
-                        .on_color = kText,
-                        .border_color = kCardLine,
+                        .color = chrome().control_bg,
+                        .on_color = chrome().text,
+                        .border_color = chrome().card_line,
                         .border_width = 1.0F,
                         .min_width = 72.0F,
                     });
@@ -1706,7 +1760,7 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
         }
     }
     // 占位行：如实显示当前值，不给一个「点了没反应」的控件（S9 / D3-a 的同一口径）。
-    return make_text(value_summary(control), kTextDim);
+    return make_text(value_summary(control), chrome().text_dim);
 }
 
 auto SettingsPanel::after_commit(std::string_view key, const SettingsControl &control, CommitIssue issue) -> void {
@@ -1906,7 +1960,7 @@ auto SettingsPanel::refresh_palette_views() -> void {
     }
     for (std::size_t i = 0; i < theme_labels_.size(); ++i) {
         const bool selected = i < theme_choices_.size() && theme_choices_[i].name == current;
-        theme_labels_[i]->color(selected ? kText : kTextDim);
+        theme_labels_[i]->color(selected ? chrome().text : chrome().text_dim);
         theme_labels_[i]->mark_needs_paint();
     }
     if (swatch_reset_button_ != nullptr) {
@@ -2148,8 +2202,8 @@ auto SettingsPanel::open_family_popup(aurora::Point anchor) -> void {
     for (const std::string &family : choices) {
         auto item = std::make_shared<aurora::Button>(aurora::ButtonProps{
             .label = family,
-            .color = kControlBg,
-            .on_color = kText,
+            .color = chrome().control_bg,
+            .on_color = chrome().text,
             .corner_radius = 0.0F,  // 相邻条目要拼成一块整板（与视口右键菜单同口径）
             .min_width = kFontPopupWidthDp,
         });
@@ -2169,8 +2223,8 @@ auto SettingsPanel::open_family_popup(aurora::Point anchor) -> void {
     viewport->modifier.set(aurora::Modifier{}
                                .width(kFontPopupWidthDp)
                                .height(kFontItemHeightDp * std::min(choices.size(), kFontPopupVisibleRows))
-                               .background(kControlBg)
-                               .border(1.0F, kCardLine));
+                               .background(chrome().control_bg)
+                               .border(1.0F, chrome().card_line));
 
     // 同一只 `Popup` 跨开合复用：每次打开都按**当前**表单重建候选（置顶那档随配置值走）。
     if (font_popup_ == nullptr) {
@@ -2331,10 +2385,10 @@ auto SettingsPanel::open_binding_dialog(const std::string &command_id, std::size
     // 建对话框：标题 + 输入框 + 冲突提示 + 确定/取消按钮
     if (binding_dialog_ == nullptr) {
         binding_input_ = std::make_shared<aurora::TextInput>();
-        binding_input_->set_background(kControlBg);
-        binding_input_->set_border_color(kCardLine);
-        binding_input_->set_focused_border_color(kAccent);
-        binding_input_->set_text_color(kText);
+        binding_input_->set_background(chrome().control_bg);
+        binding_input_->set_border_color(chrome().card_line);
+        binding_input_->set_focused_border_color(chrome().accent);
+        binding_input_->set_text_color(chrome().text);
         binding_input_->modifier.set(aurora::Modifier{}.width(280.0F));
         
         // 冲突提示文本
@@ -2346,8 +2400,8 @@ auto SettingsPanel::open_binding_dialog(const std::string &command_id, std::size
         // 确定按钮
         auto ok_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
             .label = settings_label("settings.action.confirm"),
-            .color = kAccent,
-            .on_color = kText,
+            .color = chrome().accent,
+            .on_color = chrome().text,
             .min_width = 80.0F,
         });
         ok_btn->set_on_click([this]() -> void {
@@ -2359,16 +2413,16 @@ auto SettingsPanel::open_binding_dialog(const std::string &command_id, std::size
         // 取消按钮
         auto cancel_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
             .label = settings_label("settings.action.cancel"),
-            .color = kControlBg,
-            .on_color = kText,
-            .border_color = kCardLine,
+            .color = chrome().control_bg,
+            .on_color = chrome().text,
+            .border_color = chrome().card_line,
             .border_width = 1.0F,
             .min_width = 80.0F,
         });
         cancel_btn->set_on_click([this]() -> void { close_binding_dialog(); });
         
         // 对话框内容：标题 + 输入框 + 冲突提示 + 按钮行
-        auto title_text = make_text(settings_label("settings.shortcut.edit_title"), kText);
+        auto title_text = make_text(settings_label("settings.shortcut.edit_title"), chrome().text);
         auto button_row = std::make_shared<aurora::Row>(aurora::RowProps{
             .children = {
                 aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(ok_btn))},
@@ -2393,8 +2447,8 @@ auto SettingsPanel::open_binding_dialog(const std::string &command_id, std::size
         // 读数：卡片内一处留白 → 链尾是行区 `Scroll` 而非本对话框）。按裁决 7.61③ 的口径，可点语义
         // 必须落在绘制者身上，故吸收与底色都挂在画这张卡片的那一位自己身上，而不另铺一层透明板。
         content->modifier.set(aurora::Modifier{}.padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
-                                             .background(kCardBg, 8.0F)
-                                             .border(1.0F, kCardLine)
+                                             .background(chrome().card_bg, 8.0F)
+                                             .border(1.0F, chrome().card_line)
                                              .clickable([]() -> void {}));
         
         binding_dialog_ = std::make_shared<aurora::Dialog>(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(content))});
@@ -2664,12 +2718,12 @@ auto SettingsPanel::build_snapshot_section() -> std::vector<aurora::Node> {
 
     std::vector<aurora::Node> children;
 
-    auto note = make_text(settings_label("settings.snapshot.note"), kTextDim);
+    auto note = make_text(settings_label("settings.snapshot.note"), chrome().text_dim);
     note.widget().modifier.set(aurora::Modifier{}.fill_max_width());
     children.push_back(std::move(note));
 
     if (snapshots_.empty()) {
-        auto empty = make_text(settings_label("settings.snapshot.empty"), kTextDim);
+        auto empty = make_text(settings_label("settings.snapshot.empty"), chrome().text_dim);
         empty.widget().modifier.set(aurora::Modifier{}.fill_max_width());
         children.push_back(std::move(empty));
     }
@@ -2678,16 +2732,16 @@ auto SettingsPanel::build_snapshot_section() -> std::vector<aurora::Node> {
     // （存储侧按 (epoch, seq) 降序），本件不重排也不截断——「新的在前、至多 N 份」是存储侧的判据。
     for (std::size_t index = 0; index < snapshots_.size(); ++index) {
         const SnapshotEntry &entry = snapshots_[index];
-        auto name = make_text(snapshot_name_text(entry.path), kText);
+        auto name = make_text(snapshot_name_text(entry.path), chrome().text);
         name.widget().modifier.set(aurora::Modifier{}.expand());
-        auto size = make_text(snapshot_size_text(entry.size_bytes), kTextDim);
+        auto size = make_text(snapshot_size_text(entry.size_bytes), chrome().text_dim);
         size.widget().modifier.set(aurora::Modifier{}.width(kSnapshotSizeWidthDp));
 
         auto rollback = std::make_shared<aurora::Button>(aurora::ButtonProps{
             .label = settings_label("settings.snapshot.rollback"),
-            .color = kControlBg,
-            .on_color = kText,
-            .border_color = kCardLine,
+            .color = chrome().control_bg,
+            .on_color = chrome().text,
+            .border_color = chrome().card_line,
             .border_width = 1.0F,
             .min_width = 56.0F,
         });
@@ -2706,9 +2760,9 @@ auto SettingsPanel::build_snapshot_section() -> std::vector<aurora::Node> {
 
     auto back = std::make_shared<aurora::Button>(aurora::ButtonProps{
         .label = settings_label("settings.config.back"),
-        .color = kControlBg,
-        .on_color = kText,
-        .border_color = kCardLine,
+        .color = chrome().control_bg,
+        .on_color = chrome().text,
+        .border_color = chrome().card_line,
         .border_width = 1.0F,
         .min_width = 72.0F,
     });
