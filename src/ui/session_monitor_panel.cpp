@@ -1,5 +1,5 @@
 // ============================================================
-// 串口十六进制收发监视面板实现（src/ui/session_monitor_panel.cpp）
+// 字节监视面板实现（src/ui/session_monitor_panel.cpp）
 // ------------------------------------------------------------
 // 形态对照设计稿 `codespec/UI_SERIAL_MONITOR.draft.md` 的标号（§2 那张屏面表 + 二期 §9.2 的 D10～D18）：
 // 640 dp 停靠卡片（D5①，54 字符/行）、两枚面板局部开关（D6①／D7①）、清空与关闭（D7①：清空是唯一的
@@ -383,9 +383,9 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
     const auto chrome = settings_chrome();
     auto children = std::vector<aurora::Node>{};
 
-    // ---- 标题行：串口监视 + 绑定（档案名与设备路径）+ 字节计数 + 清空 + 关闭 ----
+    // ---- 标题行：字节监视 + 绑定（档案名与连接目标）+ 字节计数 + 清空 + 关闭 ----
     // 与隧道面板同一条实测教训：标题不抓 fill_max_width，否则计数与两枚按钮整组被挤出卡宽（派发链上
-    // 点不到）。绑定失去身份（标签散了／非串口）就整格不画，而不是画一句「未知」。
+    // 点不到）。绑定失去身份（标签或焦点格散了）就整格不画，而不是画一句「未知」。
     auto header_children = std::vector<aurora::Node>{
         node(make_text(settings_label("session.monitor.title"), chrome.text))};
     if (!painted_binding_.empty()) {

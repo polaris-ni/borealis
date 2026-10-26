@@ -1,5 +1,5 @@
 // ============================================================
-// 串口监视面板集成用例（tests/integration/itest_session_monitor_panel.cpp）
+// 字节监视面板集成用例（tests/integration/itest_session_monitor_panel.cpp）
 // ------------------------------------------------------------
 // `SPEC.FEAT.CONN.05` 两条延后子项的面板腿（UI_SERIAL_MONITOR.draft.md §6 批 3 那五行判据）：
 // 行表随环刷新、时间戳开关联动、暂停中不读环、清空是唯一止血、丢弃留痕上屏、绑定与常驻声明；
@@ -592,7 +592,7 @@ AURORA_TEST_CASE(binding_follows_the_identity_and_the_disclaimer_stays) {
     auto privacy_spot = h.find_text(ui::settings_label("session.monitor.notice.privacy"));
     AURORA_TEST_REQUIRE_MSG(privacy_spot.widget != nullptr, "the never-persist note is not drawn");
 
-    // 绑定失去身份（标签散了／非串口）就整格不画，而不是画一句「未知」；卡片其余部分照旧。
+    // 绑定失去身份（标签或焦点格散了）就整格不画，而不是画一句「未知」；卡片其余部分照旧。
     probe.binding.clear();
     h.tick(*panel);
     AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.title")).widget != nullptr);
@@ -600,6 +600,42 @@ AURORA_TEST_CASE(binding_follows_the_identity_and_the_disclaimer_stays) {
     // 标题行的字节计数走的是词条，两档都有模板（覆盖闸之外唯一的一条同源判据）。
     AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.bytes", {{"count", std::int64_t{8}}}))
                           .widget != nullptr);
+}
+
+// ------------------------------------------------------------
+// 判据（五期稿 §12.4 新增「卡与格同生死」）：入口从串口一型扩到四型后，绑定那格的料按**开卡那一刻的
+// 焦点格**去取（稿 D37），于是「那一格散了」成了失身份的第二条原因（原先只有「标签散了」一条）。
+// 面板侧的判据因此与型无关，只剩两条：装配层交回空串即整格不画；交回的串是 `COM1` 还是
+// `ops@build.example:2222` 都不改变卡片其余部分——「换型不换卡」是四型入口敢不改本件的前提。
+// ------------------------------------------------------------
+AURORA_TEST_CASE(the_binding_cell_dies_with_the_focused_pane) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe = make_probe();  // 缺省那格是串口形态：`档案名 设备路径`
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+    AURORA_TEST_REQUIRE_MSG(h.find_text(probe.binding).widget != nullptr,
+                            "the serial-shaped binding is not drawn");
+
+    // 换型：同一张卡、同一个位置，装配层按 `tab_kind` 现读到 SSH 那一档的 target 半串（稿 D38②）。
+    // 本件不该为此认得任何型——这条判据红了就说明四型的显示口径漏进了面板（裁决 7.83 的反面）。
+    const std::string ssh_binding = "srv ops@build.example:2222";
+    probe.binding = ssh_binding;
+    h.tick(*panel);
+    AURORA_TEST_CHECK(h.find_text(ssh_binding).widget != nullptr);
+    AURORA_TEST_CHECK(h.find_text("srv /dev/ttyUSB0").widget == nullptr);
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.notice.privacy")).widget !=
+                      nullptr);
+
+    // 焦点格散了而标签还在：装配层交回空串，于是整格不画（不写「未知」也不伪造一个身份），
+    // 卡片其余部分照旧——这一支是「卡与格同生死」在面板侧唯一能看到的那半。
+    probe.binding.clear();
+    h.tick(*panel);
+    AURORA_TEST_CHECK(h.find_text(ssh_binding).widget == nullptr);
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.title")).widget != nullptr);
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.notice.privacy")).widget !=
+                      nullptr);
+    AURORA_TEST_CHECK(!panel->visible_rows().empty());  // 环还是那条环：散格不牵连行区
 }
 
 // ------------------------------------------------------------

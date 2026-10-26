@@ -49,6 +49,7 @@
 #include "borealis/term/width.h"
 #include "borealis/ui/broadcast.h"
 #include "borealis/ui/font_choice.h"
+#include "borealis/ui/monitor_binding.h"
 #include "borealis/ui/osc7.h"
 #include "borealis/ui/shortcuts_table.h"
 #include "borealis/ui/settings_form.h"
@@ -4392,13 +4393,16 @@ auto main(int argc, char **argv) -> int {
     };
     app.commands().add(std::move(set_serial_baud));
 
-    // ---- 串口十六进制收发监视（`SPEC.FEAT.CONN.05` 的两条延后子项，稿 UI_SERIAL_MONITOR §4 批 3）----
+    // ---- 字节监视卡（`SPEC.FEAT.CONN.05` 的两条延后子项，稿 UI_SERIAL_MONITOR §4 批 3；五期稿 D36
+    // 把入口从串口一型扩到四型）----
     //
-    // 绑定在「从关闭态打开」那一刻按当时的落点标签写下（稿 D8①：面板不跟标签跑——看着 A 的时候切到 B，
-    // 屏面不该自己换内容），之后每帧只经这两枚句柄读那条会话的环。
+    // 绑定在「从关闭态打开」那一刻按当时的落点标签**与焦点格**写下（稿 D8①：面板不跟标签跑——看着 A
+    // 的时候切到 B，屏面不该自己换内容；稿 D37：格同理，切焦点不换环），之后每帧只经这几枚句柄读那
+    // 一格的环与身份料。
     // `weak_ptr` 而不是 `shared_ptr`：面板不许为了让已关掉的标签还能「回看历史」而把整条会话（含平台腿与
     // 读线程）留在内存里——会话散了即取不到环，卡上是空态，标题那格因失去身份而整格不画。
     std::optional<borealis::ui::TabId> monitor_tab{};
+    std::optional<borealis::ui::PaneId> monitor_pane{};
     std::weak_ptr<borealis::session::Session> monitor_session{};
     auto monitor_tap = [&monitor_session]() -> std::shared_ptr<borealis::session::RawTap> {
         const auto session = monitor_session.lock();
@@ -4426,32 +4430,75 @@ auto main(int argc, char **argv) -> int {
             tap->clear();  // 本期唯一的止血手段（D7①）：关面板与关标签都不清屏
         }
     };
-    // 标题那格的绑定＝档案名 · 设备路径，两条都**现读**那两张表（档案改名、重启换设备路径都在里面），
-    // 本层不另存第三份。取不到档案名（quick connect 那类没档案身份的标签）就只留设备路径。
-    monitor_hooks.binding_label = [&monitor_tab, &serial_by_tab, &tab_profile_id,
-                                   &store]() -> std::string {
-        if (!monitor_tab.has_value()) {
+    // 标题那格的绑定＝档案名 · 连接目标，两条都**现读**（档案改名、重启换设备路径、换端口都在里面），
+    // 本层不另存第三份。取不到档案名（quick connect 那类没档案身份的标签）就只留目标半串。
+    // 五期（稿 D37）：绑定单位是**开卡那一刻的焦点格**——会话与本地规格都按 `PaneId` 存，标签级绑定在
+    // 分屏标签上会给出「字节来自这一格、身份来自那个标签」的错配。判「卡还连着谁」因此是先看那一格
+    // 的会话还在不在（散了即整格不画），再按 `tab_kind` 从四张表里取那一型的料（D36）。
+    monitor_hooks.binding_label =
+        [&monitor_tab, &monitor_pane, &tab_workspaces, &tab_kind, &serial_by_tab, &ssh_profile_by_tab,
+         &telnet_by_tab, &tab_profile_id, &store]() -> std::string {
+        if (!monitor_tab.has_value() || !monitor_pane.has_value()) {
             return {};
         }
-        const auto bound = serial_by_tab.find(monitor_tab.value());
-        if (bound == serial_by_tab.end()) {
-            return {};  // 标签散了／这一格不是串口：绑定失去身份
+        const auto held = tab_workspaces.find(monitor_tab.value());
+        if (held == tab_workspaces.end() ||
+            held->second.sessions_by_pane.find(monitor_pane.value()) == held->second.sessions_by_pane.end()) {
+            return {};  // 标签或那一格散了：绑定失去身份（卡与格同生死）
         }
-        const std::string &path = bound->second.profile.device_path;
+        const auto kind = tab_kind.find(monitor_tab.value());
+        if (kind == tab_kind.end()) {
+            return {};
+        }
+        // 取料纪律照采集腿（稿 F15）：四型的料分别挂在 `TabId` 那三张表和按 `PaneId` 存的本地规格上，
+        // 查不到就留空 optional，由折算件回空串——「这一格散了」与「这一型本来不挂标签级档案」都表达为
+        // 空，不造第二份「未知设备」的假身份。
+        borealis::ui::MonitorBindingSource source;
+        source.kind = kind->second;
+        switch (kind->second) {
+            case borealis::conn::ConnectionType::Serial:
+                if (const auto found = serial_by_tab.find(monitor_tab.value());
+                    found != serial_by_tab.end()) {
+                    source.serial = found->second.profile;
+                }
+                break;
+            case borealis::conn::ConnectionType::Ssh:
+                if (const auto found = ssh_profile_by_tab.find(monitor_tab.value());
+                    found != ssh_profile_by_tab.end()) {
+                    source.ssh = found->second;
+                }
+                break;
+            case borealis::conn::ConnectionType::Telnet:
+                if (const auto found = telnet_by_tab.find(monitor_tab.value());
+                    found != telnet_by_tab.end()) {
+                    source.telnet = found->second;
+                }
+                break;
+            case borealis::conn::ConnectionType::Local:
+                if (const auto found = held->second.local_specs_by_pane.find(monitor_pane.value());
+                    found != held->second.local_specs_by_pane.end()) {
+                    source.local = found->second;
+                }
+                break;
+        }
+        const std::string target = borealis::ui::monitor_binding_target(source);
+        if (target.empty()) {
+            return {};
+        }
         std::string name;
-        if (const auto held = tab_profile_id.find(monitor_tab.value()); held != tab_profile_id.end()) {
+        if (const auto id = tab_profile_id.find(monitor_tab.value()); id != tab_profile_id.end()) {
             for (const auto &candidate : store.settings().profiles) {
-                if (candidate.id == held->second) {
+                if (candidate.id == id->second) {
                     name = candidate.name;
                     break;
                 }
             }
         }
         if (name.empty()) {
-            return path;
+            return target;
         }
         return borealis::ui::settings_label("session.monitor.binding",
-                                           {{"name", name}, {"path", path}});
+                                           {{"name", name}, {"path", target}});
     };
     // 文本视图的解码腿（稿 §11 D28①）：交的是那条会话**构造期折好的实际生效腿名**，不是设置现值——
     // 编码是建会话那一刻取一次的构造期值（`SPEC.FEAT.TERM.09`），改过设置再按现值去解历史字节就是拿错的
@@ -4474,7 +4521,7 @@ auto main(int argc, char **argv) -> int {
         borealis::session::ClipboardOutbox::write(text);
     };
     monitor_hooks.pick_export_path = []() -> std::string {
-        return picked_save_path("Export serial monitor dump", {{"Text", {"*.txt"}}});
+        return picked_save_path("Export session byte dump", {{"Text", {"*.txt"}}});
     };
     monitor_hooks.export_text = [](const std::string &path, const std::string &text)
         -> std::optional<std::string> { return write_private_dump(path, text); };
@@ -4490,17 +4537,19 @@ auto main(int argc, char **argv) -> int {
         show_serial_baud_frame(au::alert(title, message, [dialog]() -> void { dialog->close(); }));
     };
 
-    // `session.monitor.toggle` 命令（稿 D8①）：分流判据与重启、热改波特率那两条同源——「当前标签在
-    // `serial_by_tab` 里有没有身份」。非串口只留一句话，**不武装任何采集**（未武装的会话在采集点判一次
-    // 指针就走，这是 §5 那条「非串口会话零成本」的落地）。同一条命令再按一次是关闭：关闭既不停采集
-    // 也不清环，重开看到的就是刚才那一段（D7①）。
+    // `session.monitor.toggle` 命令（稿 D8① + 五期 D36）：分流判据从「当前标签在 `serial_by_tab` 里有没有
+    // 身份」改成「**这一格有没有会话**」——四型的会话都是 `Session`，采集腿（`RawTap`）本来就不分型，把入口
+    // 卡在串口一张表上等于把一张通用的机制切掉四分之三（稿 F16／D36①）。开卡只留一句话给真的没有会话的
+    // 落点（空标签、连接尚未建立的中间态），**不武装任何采集**（未武装的会话在采集点判一次指针就走，这是
+    // §5 那条「未开卡的会话零成本」的落地，稿 D41：因果是「未武装」而不是「非串口」）。同一条命令再按一次
+    // 是关闭：关闭既不停采集也不清环，重开看到的就是刚才那一段（D7①）。
     au::Command toggle_session_monitor;
     toggle_session_monitor.id = "session.monitor.toggle";
     toggle_session_monitor.title = borealis::ui::settings_label("session.monitor.command");
     toggle_session_monitor.category = "terminal";
     toggle_session_monitor.action =
-        [&monitor_panel, &monitor_tab, &monitor_session, &retarget_panel, &command_tab_id,
-         &focused_pane_session, &serial_by_tab, &show_monitor_notice]() -> void {
+        [&monitor_panel, &monitor_tab, &monitor_pane, &monitor_session, &retarget_panel, &command_tab_id,
+         &focused_pane_session, &focused_pane_of, &show_monitor_notice]() -> void {
         retarget_panel(monitor_panel);  // 搬窗（稿 D6，本件是面板族第八只）：先挂到发起命令那一扇
         if (monitor_panel.is_open()) {
             monitor_panel.toggle();
@@ -4509,12 +4558,15 @@ auto main(int argc, char **argv) -> int {
         const std::optional<borealis::ui::TabId> target = command_tab_id();
         const auto session =
             target.has_value() ? focused_pane_session(target.value()) : nullptr;
-        if (session == nullptr || !target.has_value() ||
-            serial_by_tab.find(target.value()) == serial_by_tab.end()) {
-            show_monitor_notice("session.monitor.not_serial");
+        // 格号现取一次并**存下来**（稿 D37）：`focused_pane_of` 在标签或工作区不存在时回 0，那正是
+        // 「这一格无从属」的形态，与 `session == nullptr` 同一条 fail-closed 分支。
+        const borealis::ui::PaneId pane = target.has_value() ? focused_pane_of(target.value()) : 0U;
+        if (session == nullptr || !target.has_value() || pane == 0U) {
+            show_monitor_notice("session.monitor.not_monitorable");
             return;
         }
         monitor_tab = target;
+        monitor_pane = pane;  // 绑定单位是这一刻的焦点格（稿 D37），不是标签
         monitor_session = session;
         static_cast<void>(session->enable_raw_tap());  // 幂等：重开看到的是历史而不是空白
         monitor_panel.open();

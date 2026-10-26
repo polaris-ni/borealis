@@ -1,6 +1,6 @@
 /// 测试类型: unit
 /// 目标单元: src/ui/session_monitor_format.{h,cpp}（无 au:: 类型）纯折算件
-/// 测试说明: 守住串口监视卡的行形态（稿 codespec/UI_SERIAL_MONITOR.draft.md §2／D5①／D6①）——
+/// 测试说明: 守住字节监视卡的行形态（稿 codespec/UI_SERIAL_MONITOR.draft.md §2／D5①／D6①）——
 ///           8 字节档那一行的逐字符串形（满格 54 字符）、十六进制段的大写与定宽补齐、尾栏只承
 ///           ASCII 可打印区其余一个 `.`、CR／LF／CRLF 各折一条断点、被切在两个 run 里的同一条
 ///           设备行仍是同一段（F10 实测 15 + 3 那一例）、时间戳开关与毫秒零填充、每行字节数档；

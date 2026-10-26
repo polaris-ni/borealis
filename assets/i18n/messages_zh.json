@@ -456,9 +456,9 @@
         }
       }
     },
-    "session.monitor.command": "串口十六进制监视",
+    "session.monitor.command": "字节监视",
     "session.monitor.empty": "等待数据",
-    "session.monitor.not_serial": "当前标签不是串口会话",
+    "session.monitor.not_monitorable": "当前标签没有可监视的会话",
     "session.monitor.notice.copied": "已复制 {count, plural, other {{count} 行}}到剪贴板",
     "@session.monitor.notice.copied": {
       "placeholders": {
@@ -491,11 +491,11 @@
       }
     },
     "session.monitor.notice.frozen": "已暂停跟尾（向上翻看时不追加新数据）",
-    "session.monitor.notice.privacy": "本面板只在内存留痕，只有你显式导出时才会写盘；导出的文件是原始设备字节，可能含口令",
+    "session.monitor.notice.privacy": "本面板只在内存留痕，只有你显式导出时才会写盘；导出的文件是原始会话字节，可能含口令",
     "session.monitor.toggle.pause": "暂停刷新",
     "session.monitor.toggle.text_view": "文本视图",
     "session.monitor.toggle.timestamp": "时间戳前缀",
-    "session.monitor.title": "串口监视",
+    "session.monitor.title": "字节监视",
     "session.reconnect.countdown": "{seconds} 秒后自动重试",
     "@session.reconnect.countdown": {
       "placeholders": {

@@ -79,6 +79,7 @@ add_library(borealis_core STATIC
         ui/grid_size_debounce.cpp
         ui/keys_format.cpp
         ui/keys_panel.cpp
+        ui/monitor_binding.cpp
         ui/osc7.cpp
         ui/palette.cpp
         ui/pane_tree.cpp

@@ -1,5 +1,5 @@
 // ============================================================
-// 串口监视卡的行折算纯逻辑件实现（src/ui/session_monitor_format.cpp）
+// 字节监视卡的行折算纯逻辑件实现（src/ui/session_monitor_format.cpp）
 // ------------------------------------------------------------
 // 两个纯函数：`monitor_rows`（run 表 → 行表）与 `monitor_timestamp_prefix`（毫秒 → 前缀）。
 // 行形态的算术写在头注与稿 §2，这里只兑现它；断言住在 `utest_session_monitor_format`。
@@ -116,7 +116,7 @@ class DiscardSink final : public term::CodePointSink {
 
 /// @brief 从 `from` 起找最近的 CR 或 LF（找不到就是 `size`）。
 ///
-/// 用 `memchr` 而不是逐字节比较：二进制段（整段没有行尾）是串口监视最常见的料，
+/// 用 `memchr` 而不是逐字节比较：二进制段（整段没有行尾）是本卡最常见的料，
 /// 一次向量化扫描比逐字节分支快一个量级；行尾之后的逐字节处理只发生在真正的断点处。
 [[nodiscard]] auto next_line_break(const std::byte *data, std::size_t from, std::size_t size) -> std::size_t {
     const void *const cr = std::memchr(data + from, '\r', size - from);

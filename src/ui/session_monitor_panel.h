@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================
-// 串口十六进制收发监视面板（src/ui/session_monitor_panel.h）
+// 字节监视面板（src/ui/session_monitor_panel.h）
 // ------------------------------------------------------------
 // `SPEC.FEAT.CONN.05` 那条延后子项「可选十六进制收发视图与行首时间戳前缀」的界面腿，形态由设计稿
 // `codespec/UI_SERIAL_MONITOR.draft.md` 的 D1①／D5①／D6①／D7①／D8①／D9①（二期再叠 D10～D18）定形：
@@ -9,12 +9,13 @@
 // （时间戳前缀缺省开、暂停刷新缺省关、文本视图缺省关＝稿 §11 D26①）、一枚清空、丢弃计数上屏，
 // 零新设置键（D9①：环上限仍是文件级常量，重启即回缺省档；二期的折带窗口是显示期常量，不是第二个上限）。
 //
-// **本件不认识 `Session`，也不认识串口**（隧道／密钥／SFTP 面板的同族纪律，AGENTS §4.5 第 23 条）：
+// **本件不认识 `Session`，也不认识连接类型**（五期把入口扩到四型，本件的形状与型无关；隧道／密钥／SFTP
+// 面板的同族纪律，AGENTS §4.5 第 23 条）：
 // 与装配层的接缝就是下面七条 Hooks——`snapshot` 交出环里现存的 run 表与累计丢弃字节、`clear` 交回
-// 本期唯一的止血动作、`binding_label` 交出绑定的档案名与设备路径、`encoding_name` 交出那条会话**构造期
+// 本期唯一的止血动作、`binding_label` 交出绑定的档案名与连接目标、`encoding_name` 交出那条会话**构造期
 // 折好的实际生效编码腿**（稿 D28：文本档解码用，缺席或映射不到即回落 UTF-8），三期再加 `copy_text`／
 // `pick_export_path`／`export_text` 三条取出去的腿（稿 §10.2 D22①）。武装（`Session::enable_raw_tap()`）
-// 发生在命令腿，故本件不写环（除 `clear`），也不判断「这一格是不是串口」。
+// 发生在命令腿，故本件不写环（除 `clear`），也不判断「这一格是哪一型」。
 //
 // 读法是 **latest-value**（稿 §5）：每帧问一次「环里现在有什么」，不做「本帧新增的 run」那种增量协议
 // ——游标一旦与暂停／清空交错就会说出「少了半屏」。
@@ -83,7 +84,7 @@ inline constexpr std::size_t kMonitorFoldMarginRows = 16U;
 /// @brief 判定「离开底部」的容差（dp）：浮点夹取与布局取整都会让贴底差一丁点。
 inline constexpr float kMonitorBottomTolerance = 0.5F;
 
-/// @brief 串口十六进制收发监视卡（面板族第八只瞬态浮层）。
+/// @brief 字节监视卡（面板族第八只瞬态浮层）。
 class SessionMonitorPanel {
   public:
     /// @brief 一帧的环投影（稿 §4 那句「`snapshot`（取 run 表 + 丢弃数）」的返回形态）。
