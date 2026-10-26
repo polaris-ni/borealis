@@ -1,32 +1,35 @@
 // ============================================================
 // 串口十六进制收发监视面板实现（src/ui/serial_monitor_panel.cpp）
 // ------------------------------------------------------------
-// 形态对照设计稿 `codespec/UI_SERIAL_MONITOR.draft.md` 的标号（§2 那张屏面表）：640 dp 停靠卡片
-// （D5①，54 字符/行）、两枚面板局部开关（D6①／D7①）、清空与关闭（D7①：清空是本期唯一的止血动作）、
-// 丢弃留痕（D4①）、不落盘声明（§1 第一条安全口径）、等宽行区（F8／F9）。
+// 形态对照设计稿 `codespec/UI_SERIAL_MONITOR.draft.md` 的标号（§2 那张屏面表 + 二期 §9.2 的 D10～D18）：
+// 640 dp 停靠卡片（D5①，54 字符/行）、两枚面板局部开关（D6①／D7①）、清空与关闭（D7①：清空是唯一的
+// 止血动作）、丢弃留痕（D4①）、不落盘声明（§1 第一条安全口径）、等宽行区（F8／F9）。
 //
-// 三条动作腿（时间戳档、暂停档、清空）**只改状态、不当场重建**：重建唯一发生在 `tick()`，于是
-// 「事件回调里不做长计算」（AGENTS §4.5 第 25 条）在本件是结构性的而不是约定——一帧的代价上限就是
-// F5 那一句（24 行 ≈ 6 µs），而它落在帧边界而不是点击派发里。代价：拨档到看见最多差一帧（面板族里
-// `TunnelPanel::tick()` 同形）。
+// 二期把行区换成 `LazyList`（D10①）：环里存着整段历史，面板只折当前 96 行窗口（D11①）；只有贴底才
+// 跟尾，离开底部即冻结且绝不自动吸回（D12①）。三条动作腿（时间戳档、暂停档、清空／回到最新）**只改
+// 状态、不当场重建**：重建唯一发生在 `tick()`，于是「事件回调里不做长计算」（AGENTS §4.5 第 25 条）在
+// 本件是结构性的而不是约定——一帧的代价上限是「数行一次 + 折 96 行」（≈ 23 µs，F5），而它落在帧边界
+// 而不是点击派发里。代价：拨档到看见最多差一帧（面板族里 `TunnelPanel::tick()` 同形）。
 //
-// 行文本在这里只存在一瞬间：环里存的是原始 run（D3①），本件收的是**截过尾**的那一段（头注
-// `kMonitorTailBytes`），折出的行表只用于 diff 与绘制；关掉浮层那些字符串就没了，不落盘、不进日志。
+// 行文本在这里只存在一瞬间：环里存的是原始 run（D3①），本件折出的窗口只用于绘制；关掉浮层那些字符串
+// 就没了，不落盘、不进日志。
 // ============================================================
 
 #include "serial_monitor_panel.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "aurora/core/json.h"
 #include "aurora/widget/alignment.h"
 #include "aurora/widget/button.h"
 #include "aurora/widget/canvas.h"
 #include "aurora/widget/containers.h"
-#include "aurora/widget/scroll.h"
+#include "aurora/widget/lazy_list.h"
 #include "aurora/widget/stack.h"
 #include "aurora/widget/switch.h"
 #include "aurora/widget/text.h"
@@ -90,45 +93,6 @@ namespace {
     return {{"count", static_cast<std::int64_t>(value)}};
 }
 
-/// @brief 从环尾取至多 `budget` 个字节，**整条 run 为单位**，只可能切开最旧那一条。
-///
-/// 截在 run 边界之内而不是之外，是为了让预算这件事有上界：串口一次突发可以是 32 KiB 一个 run
-/// （稿 F3／F10），只按条取就会把 32 KiB 全折成 4096 行再丢掉 4072 行。被切开的那条头部字节本来
-/// 就落在「最近若干行」之外，方向与时刻仍取该 run 的那一个点（D6① 的 run 级单点时间戳）。
-[[nodiscard]] auto tail_runs(const std::vector<session::RawRun> &runs, std::size_t budget)
-    -> std::vector<session::RawRun> {
-    std::size_t held = 0U;
-    for (const auto &run : runs) {
-        held += run.bytes.size();
-    }
-    if (held <= budget) {
-        return runs;
-    }
-    std::size_t skip = held - budget;
-    auto kept = std::vector<session::RawRun>{};
-    kept.reserve(runs.size());
-    for (const auto &run : runs) {
-        if (skip >= run.bytes.size()) {
-            skip -= run.bytes.size();
-            continue;
-        }
-        if (skip > 0U) {
-            auto sliced = session::RawRun{
-                .direction = run.direction,
-                .timestamp_ms = run.timestamp_ms,
-                .bytes = std::vector<std::byte>(run.bytes.begin() +
-                                                    static_cast<std::ptrdiff_t>(skip),
-                                                run.bytes.end()),
-            };
-            skip = 0U;
-            kept.push_back(std::move(sliced));
-            continue;
-        }
-        kept.push_back(run);
-    }
-    return kept;
-}
-
 }  // namespace
 
 SerialMonitorPanel::SerialMonitorPanel(aurora::OverlayHost &host, Hooks hooks)
@@ -151,10 +115,15 @@ SerialMonitorPanel::~SerialMonitorPanel() {
 auto SerialMonitorPanel::open() -> void {
     if (open_) {
         // 已开着：只跟一帧数。命令重复唤起不该把浮层拆了重挂（面板族同款口径，`TunnelPanel::open()`）。
-        apply(read_snapshot());
+        tick();
         return;
     }
-    apply(read_snapshot());  // 先折一次，让首帧就有内容与计数，而不是空态加一句「等一下」。
+    // 首帧就有内容与计数，而不是空态加一句「等一下」。`open_` 仍为 false，故 `paint_rows()` 里的
+    // `refresh_overlay()` 空转，真正挂浮层的是下面这一句。
+    frozen_ = false;
+    skip_geometry_once_ = true;
+    rebuild_pending_ = true;
+    follow_frame();
     open_ = true;
     install_overlay();
 }
@@ -170,76 +139,173 @@ auto SerialMonitorPanel::tick() -> void {
     if (!open_) {
         return;  // 没开就没有泵的事：环照人写，本件不在场时零成本（D7① 的常驻代价在会话侧）。
     }
-    if (!paused_) {
-        apply(read_snapshot());
+    // 「回到最新」/清空：旧列表还停在离底位置，直接判几何会把刚落到底的画面判回冻结（D14① 的落地次序）。
+    const bool now_frozen = skip_geometry_once_ ? false : compute_frozen();
+    skip_geometry_once_ = false;
+    if (now_frozen != frozen_) {
+        frozen_ = now_frozen;
+        rebuild_pending_ = true;  // 提示行与「回到最新」只在帧边界增删（D13①）
+    }
+    if (paused_) {
+        if (rebuild_pending_) {
+            rebuild_current_view();  // 暂停中改了档或清了环：按手里的窗口重画，不读新数据。
+        }
         return;
     }
-    if (repaint_pending_) {
-        maybe_refresh();  // 暂停中改了显示档或清了环：按已有的那段字节重画，不读新数据。
+    if (frozen_) {
+        if (rebuild_pending_) {
+            rebuild_current_view();
+        } else {
+            slide_frozen_window();
+        }
+        return;
     }
+    follow_frame();
 }
 
 auto SerialMonitorPanel::read_snapshot() const -> Snapshot {
     return hooks_.snapshot != nullptr ? hooks_.snapshot() : Snapshot{};
 }
 
-auto SerialMonitorPanel::apply(const Snapshot &snapshot) -> void {
-    source_ = tail_runs(snapshot.runs, kMonitorTailBytes);
-    ring_bytes_ = 0U;
-    for (const auto &run : snapshot.runs) {
-        ring_bytes_ += run.bytes.size();  // 标题那枚计数说的是**环里现存**的字节，不是画出来的那 192 个。
-    }
-    dropped_bytes_ = snapshot.dropped_bytes;
-    binding_ = hooks_.binding_label != nullptr ? hooks_.binding_label() : std::string{};
-    maybe_refresh();
-}
-
-auto SerialMonitorPanel::maybe_refresh() -> void {
-    repaint_pending_ = false;
-    const auto rows = fold_source();
-    if (rows == painted_rows_ && binding_ == painted_binding_ && ring_bytes_ == painted_ring_bytes_ &&
-        dropped_bytes_ == painted_dropped_bytes_) {
-        return;  // 逐字段相等就不重建（F14 那条状态泵纪律）。
-    }
-    painted_rows_ = rows;
-    painted_binding_ = binding_;
-    painted_ring_bytes_ = ring_bytes_;
-    painted_dropped_bytes_ = dropped_bytes_;
-    refresh_overlay();
-}
-
-auto SerialMonitorPanel::fold_source() const -> std::vector<MonitorRow> {
-    const auto options = MonitorRowOptions{
+auto SerialMonitorPanel::make_options() const -> MonitorRowOptions {
+    return MonitorRowOptions{
         .bytes_per_row = kMonitorBytesPerRow,
         .timestamp_prefix = timestamp_prefix_,
     };
-    auto rows = monitor_rows(source_, options);
-    if (rows.size() > kMonitorVisibleRowCap) {
-        // 留最后若干行：行区是跟尾视图，最旧那些行画了也在屏外（稿 §7 的「滚动回溯在册」）。
-        rows.erase(rows.begin(),
-                   rows.begin() + static_cast<std::ptrdiff_t>(rows.size() - kMonitorVisibleRowCap));
+}
+
+auto SerialMonitorPanel::compute_frozen() const -> bool {
+    if (list_ == nullptr) {
+        return false;
     }
-    return rows;
+    const float max = list_->max_scroll_offset();
+    if (max <= 0.0F) {
+        // 未布局或内容不足一屏：一律视为跟尾（D12① 的「max == 0」一条），否则每次重建后第一帧都会
+        // 误判成「离底」。
+        return false;
+    }
+    const bool at_bottom = list_->scroll_offset() >= max - kMonitorBottomTolerance;
+    // 只有「窗口底就是环底」时，滚到窗口底才算回到最新；窗口还可以下滑时，滚到窗口底只是继续下翻。
+    return !(at_bottom && window_covers_ring_end());
+}
+
+auto SerialMonitorPanel::window_covers_ring_end() const -> bool {
+    return fold_first_row_ + painted_rows_.size() >= total_rows_;
+}
+
+auto SerialMonitorPanel::follow_frame() -> void {
+    auto snapshot = read_snapshot();
+    auto binding = hooks_.binding_label != nullptr ? hooks_.binding_label() : std::string{};
+    const bool forced = rebuild_pending_;
+    if (!forced && snapshot.revision == seen_revision_ && snapshot.cap_bytes == cap_bytes_ &&
+        snapshot.dropped_bytes == dropped_bytes_ && binding == binding_) {
+        return;  // D17①：环没变、档没动就零工作量（快照本身仍是一次 ≤ 256 KiB 拷贝，一期已有）。
+    }
+    source_ = std::move(snapshot.runs);
+    binding_ = std::move(binding);
+    ring_bytes_ = 0U;
+    for (const auto &run : source_) {
+        ring_bytes_ += run.bytes.size();
+    }
+    dropped_bytes_ = snapshot.dropped_bytes;
+    seen_revision_ = snapshot.revision;
+    cap_bytes_ = snapshot.cap_bytes;
+
+    const auto options = make_options();
+    total_rows_ = monitor_row_count(source_, options);
+    const auto window = std::min(total_rows_, kMonitorFoldWindowRows);
+    fold_first_row_ = total_rows_ - window;
+    auto rows = monitor_row_window(source_, options, fold_first_row_, window);
+    if (!forced && rows == painted_rows_ && binding_ == painted_binding_ &&
+        ring_bytes_ == painted_ring_bytes_ && dropped_bytes_ == painted_dropped_bytes_ &&
+        cap_bytes_ == painted_cap_bytes_ && !painted_frozen_) {
+        return;  // revision 变了但画出来的东西没变（例如整条拒收只推进了丢弃数之外的状态）。
+    }
+    // 跟尾恒落底：把窗口内容高交给 `LazyList` 的待定偏移，首次布局后夹到可滚范围末端（D10① 的
+    // 「无锚定到末尾入口」替身，见稿 §9.7 第 2 条）。
+    const auto offset = static_cast<float>(rows.size()) * kMonitorRowExtent;
+    paint_rows(std::move(rows), offset);
+}
+
+auto SerialMonitorPanel::rebuild_current_view() -> void {
+    const auto options = make_options();
+    const auto available = total_rows_ > fold_first_row_ ? total_rows_ - fold_first_row_ : 0U;
+    const auto window = std::min(available, kMonitorFoldWindowRows);
+    auto rows = monitor_row_window(source_, options, fold_first_row_, window);
+    // 冻结/暂停要保住用户当前读到的那一屏：新列表不继承旧偏移，故把旧偏移原样交给待定偏移。
+    const auto offset = list_ != nullptr ? list_->scroll_offset() : 0.0F;
+    paint_rows(std::move(rows), offset);
+}
+
+auto SerialMonitorPanel::slide_frozen_window() -> void {
+    if (list_ == nullptr || total_rows_ == 0U || painted_rows_.empty()) {
+        return;
+    }
+    const auto [first, last] = list_->visible_range();
+    const auto first_row = static_cast<std::size_t>(std::max(first, 0));
+    const auto last_row = static_cast<std::size_t>(std::max(last, 0));
+    const auto window_rows = painted_rows_.size();
+    const bool near_top = first_row < kMonitorFoldEdgeRows;
+    const bool near_bottom = last_row + kMonitorFoldEdgeRows > window_rows;
+    if (!near_top && !near_bottom) {
+        return;  // 可见区还在折带中段：不重折（D12① 的「只在滚出折带时重折」）。
+    }
+    if (near_top && fold_first_row_ == 0U) {
+        return;  // 已在环头，再往上没有料。
+    }
+    // 以可见首行为锚，窗口上方留 `kMonitorFoldMarginRows` 行缓存；窗口贴住环头/环尾时自然夹住。
+    const auto anchor = fold_first_row_ + first_row;
+    const auto want = anchor > kMonitorFoldMarginRows ? anchor - kMonitorFoldMarginRows : 0U;
+    const auto max_first =
+        total_rows_ > kMonitorFoldWindowRows ? total_rows_ - kMonitorFoldWindowRows : 0U;
+    const auto next_first = std::min(want, max_first);
+    if (next_first == fold_first_row_) {
+        return;
+    }
+    const auto offset = list_->scroll_offset();
+    const auto options = make_options();
+    const auto next_window = std::min(total_rows_ - next_first, kMonitorFoldWindowRows);
+    auto rows = monitor_row_window(source_, options, next_first, next_window);
+    // 窗口首行变了 k 行，原偏移同向减去 k × 行高：屏上首行不动（D12① 的「保持偏移」）。
+    const auto delta_rows = static_cast<float>(next_first) - static_cast<float>(fold_first_row_);
+    const auto next_offset = std::max(0.0F, offset - (delta_rows * kMonitorRowExtent));
+    fold_first_row_ = next_first;
+    paint_rows(std::move(rows), next_offset);
+}
+
+auto SerialMonitorPanel::paint_rows(std::vector<MonitorRow> rows, float scroll_offset) -> void {
+    painted_rows_ = std::move(rows);
+    painted_binding_ = binding_;
+    painted_ring_bytes_ = ring_bytes_;
+    painted_dropped_bytes_ = dropped_bytes_;
+    painted_cap_bytes_ = cap_bytes_;
+    painted_frozen_ = frozen_;
+    pending_scroll_offset_ = scroll_offset;
+    rebuild_pending_ = false;
+    refresh_overlay();
 }
 
 auto SerialMonitorPanel::visible_rows() const -> std::vector<MonitorRow> {
-    return fold_source();
+    return painted_rows_;
 }
 
 auto SerialMonitorPanel::notice() const -> std::string {
     if (dropped_bytes_ == 0U) {
         return {};
     }
-    // 丢弃必须上屏：不报这一句，「环里最早那行」就会被当成「设备最早发的那行」（D4①）。
+    // 丢弃必须上屏：不报这一句，「环里最早那行」就会被当成「设备最早发的那行」（D4①）。上限读快照
+    // 带出的现值（D16①）——换档后这一句自己跟着走，不在面板里写死第二份。
+    const auto cap_kib = (cap_bytes_ + 1023U) / 1024U;
     return settings_label("serial.monitor.notice.dropped",
                           {{"count", static_cast<std::int64_t>(dropped_bytes_)},
-                           {"cap", static_cast<std::int64_t>(session::kMaxRawTapBytes / 1024U)}});
+                           {"cap", static_cast<std::int64_t>(cap_kib)}});
 }
 
 auto SerialMonitorPanel::install_overlay() -> void {
     if (!open_ || host_ == nullptr) {
         return;
     }
+    list_.reset();  // 旧行区随旧层一起死；这里只是把句柄交还给新一帧。
     const auto chrome = settings_chrome();
     auto mask = std::make_shared<aurora::Canvas>([c = chrome](aurora::Painter &painter,
                                                               const aurora::Rect &box) -> void {
@@ -263,6 +329,7 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
     }
     host_->remove_overlay(*overlay_index_);
     overlay_index_.reset();
+    list_.reset();  // 先松手再拆树：否则 LazyList 会在父节点已摘除后仍被别人持有（框架告警）。
     dialog_.reset();
     install_overlay();
 }
@@ -328,6 +395,18 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
                              node(std::static_pointer_cast<aurora::Widget>(std::move(pause_switch)))},
                          8.0F));
 
+    // ---- 冻结行：只有离底冻结时才在场（D13①：冻结必须可见，否则会被读成「设备停了」）----
+    if (painted_frozen_) {
+        children.push_back(row_of(std::vector<aurora::Node>{
+                                     node(make_text(settings_label("serial.monitor.notice.frozen"),
+                                                    chrome.text_dim)),
+                                     node(make_button(settings_label("serial.monitor.action.latest"),
+                                                      chrome.control_bg, chrome.text_dim, 72.0F,
+                                                      [this]() -> void { on_latest(); },
+                                                      chrome.card_line))},
+                                 8.0F));
+    }
+
     // ---- 留痕行：丢弃那句（只在 >0 时）+「不落盘」那句（常驻）----
     const auto dropped = notice();
     if (!dropped.empty()) {
@@ -339,20 +418,31 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
     privacy->modifier.set(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::move(privacy)));
 
-    // ---- 行区：每行一条 8 字节转储（等宽族，稿 F8／F9）----
-    auto rows_column = std::make_shared<aurora::Column>(aurora::ColumnProps{.gap = 2.0F});
-    for (const auto &row : painted_rows_) {
-        rows_column->add(build_row(row));
-    }
+    // ---- 行区：`LazyList` 虚拟化（D10①），只实例化可见窗口；条目内容按折出的窗口快照闭包 ----
     if (painted_rows_.empty()) {
-        rows_column->add(node(make_text(settings_label("serial.monitor.empty"), chrome.text_dim)));
+        auto empty = make_text(settings_label("serial.monitor.empty"), chrome.text_dim);
+        empty->modifier.set(aurora::Modifier{}.fill_max_width().expand());
+        children.push_back(node(std::move(empty)));
+    } else {
+        // 条目 builder 捕获**这一份**窗口（共享只读），而不是回头读 `painted_rows_`：浮层存活期间
+        // 窗口若被下一页替换，已实例化条目与后进来条目才不会一半新一半旧（框架无条目刷新 API，
+        // 见稿 §9.7 第 1 条）。
+        auto window = std::make_shared<const std::vector<MonitorRow>>(painted_rows_);
+        auto list = std::make_shared<aurora::LazyList>(
+            static_cast<int>(painted_rows_.size()),
+            [this, window](int index) -> aurora::Node {
+                return build_row((*window)[static_cast<std::size_t>(index)]);
+            },
+            kMonitorRowExtent);
+        list->set_cache_extent(200.0F);
+        list->modifier.set(aurora::Modifier{}.fill_max_width().expand());
+        // 落位：跟尾给内容高（布局后夹到末尾），冻结/暂停给原偏移（同一窗口坐标）。
+        auto props = aurora::Json::object();
+        props.set("scroll_offset", pending_scroll_offset_);
+        list->deserialize_props(props);
+        list_ = list;
+        children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(list))));
     }
-    auto scroll = std::make_shared<aurora::Scroll>(aurora::ScrollProps{
-        .child = node(std::static_pointer_cast<aurora::Widget>(std::move(rows_column))),
-        .step = 32.0F,
-    });
-    scroll->modifier.set(aurora::Modifier{}.fill_max_width().expand());
-    children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(scroll))));
 
     auto card = std::make_shared<aurora::Column>(aurora::ColumnProps{
         .children = std::move(children),
@@ -370,7 +460,7 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
 
 auto SerialMonitorPanel::on_timestamp_changed(bool next) -> void {
     timestamp_prefix_ = next;
-    repaint_pending_ = true;  // 重建排在下一帧；`visible_rows()` 已经吃到新档（头注那条代价）。
+    rebuild_pending_ = true;  // 重建排在下一帧（头注那条代价）。
 }
 
 auto SerialMonitorPanel::on_pause_changed(bool next) -> void {
@@ -387,7 +477,21 @@ auto SerialMonitorPanel::on_clear() -> void {
     source_.clear();
     ring_bytes_ = 0U;
     dropped_bytes_ = 0U;
-    repaint_pending_ = true;
+    total_rows_ = 0U;
+    fold_first_row_ = 0U;
+    // 清空回到空态：离底判据在旧列表上必然为真（它还停在原偏移），首帧先跳过几何（D14① 的次序）。
+    frozen_ = false;
+    skip_geometry_once_ = true;
+    rebuild_pending_ = true;
+}
+
+auto SerialMonitorPanel::on_latest() -> void {
+    // 「回到最新」在语义上就是「我要看最新的」：顺手解暂停与冻结（D14①），并让下一帧直接重读环。
+    // 这里不读环、不重建——回调里不做长计算的纪律与其余动作腿同。
+    paused_ = false;
+    frozen_ = false;
+    skip_geometry_once_ = true;
+    rebuild_pending_ = true;
 }
 
 auto SerialMonitorPanel::clear_state() -> void {
@@ -395,16 +499,26 @@ auto SerialMonitorPanel::clear_state() -> void {
         host_->remove_overlay(*overlay_index_);
         overlay_index_.reset();
     }
+    list_.reset();  // 先松手再拆树（与 `refresh_overlay` 同一条次序）。
     dialog_.reset();
     painted_rows_.clear();
     painted_binding_.clear();
     painted_ring_bytes_ = 0U;
     painted_dropped_bytes_ = 0U;
+    painted_cap_bytes_ = 0U;
+    painted_frozen_ = false;
     source_.clear();
     ring_bytes_ = 0U;
     dropped_bytes_ = 0U;
     binding_.clear();
-    repaint_pending_ = false;
+    seen_revision_ = 0U;
+    cap_bytes_ = session::kMaxRawTapBytes;
+    total_rows_ = 0U;
+    fold_first_row_ = 0U;
+    pending_scroll_offset_ = 0.0F;
+    frozen_ = false;
+    rebuild_pending_ = false;
+    skip_geometry_once_ = false;
     open_ = false;
 }
 

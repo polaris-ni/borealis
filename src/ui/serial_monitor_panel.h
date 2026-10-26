@@ -4,10 +4,10 @@
 // 串口十六进制收发监视面板（src/ui/serial_monitor_panel.h）
 // ------------------------------------------------------------
 // `SPEC.FEAT.CONN.05` 那条延后子项「可选十六进制收发视图与行首时间戳前缀」的界面腿，形态由设计稿
-// `codespec/UI_SERIAL_MONITOR.draft.md` 的 D1①／D5①／D6①／D7①／D8①／D9① 定形：左侧 **640 dp** 停靠
-// 卡片（8 字节/行 = 54 字符，14 pt 等宽单格 11 dp ⇒ 594 dp；16 字节档要 946 dp，等于在 960 dp 的窗里
-// 盖住整个终端）、两枚**面板局部**开关（时间戳前缀缺省开、暂停刷新缺省关）、一枚清空、丢弃计数上屏，
-// 零新设置键（D9①：环上限与显示行上限都是文件级常量，重启即回缺省档）。
+// `codespec/UI_SERIAL_MONITOR.draft.md` 的 D1①／D5①／D6①／D7①／D8①／D9①（二期再叠 D10～D18）定形：
+// 左侧 **640 dp** 停靠卡片（8 字节/行 = 54 字符，14 pt 等宽单格 11 dp ⇒ 594 dp）、两枚**面板局部**开关
+// （时间戳前缀缺省开、暂停刷新缺省关）、一枚清空、丢弃计数上屏，零新设置键（D9①：环上限仍是文件级
+// 常量，重启即回缺省档；二期的折带窗口是显示期常量，不是第二个上限）。
 //
 // **本件不认识 `Session`，也不认识串口**（隧道／密钥／SFTP 面板的同族纪律，AGENTS §4.5 第 23 条）：
 // 与装配层的全部接缝就是下面三条 Hooks——`snapshot` 交出环里现存的 run 表与累计丢弃字节、`clear` 交回
@@ -17,14 +17,15 @@
 // 读法是 **latest-value**（稿 §5）：每帧问一次「环里现在有什么」，不做「本帧新增的 run」那种增量协议
 // ——游标一旦与暂停／清空交错就会说出「少了半屏」。
 //
-// 显示期只做三件事（稿 §2／§5）：
-//   ⑴ **截尾**：只把环尾 `kMonitorTailBytes` 那一段字节交给折算件，再留最后 `kMonitorVisibleRowCap`
-//      行。256 KiB 的环全折是 32768 行，而 640 dp 高的窗里画得下的只有二十几行——画出去也得靠滚动
-//      才看得见，跟尾视图停在半屏旧数据上更糟（稿 §7 那条「滚动回溯在册」的同一件事）。
+// 显示期只做三件事（稿 §2／§9.2～§9.4）：
+//   ⑴ **折窗口**：环里存着整段历史，行区是 `LazyList`（D10①），但面板只折**当前 96 行窗口**
+//      （D11①）：跟尾时窗口恒为环尾 96 行；用户往上翻离开底部即冻结（D12①），此时不读环，
+//      只在可见区逼近折带边缘时以可见首行为锚重折并保持偏移。一期的截尾三件
+//      （`kMonitorVisibleRowCap` / `kMonitorTailBytes` / `tail_runs`）已删除（D18①）。
 //   ⑵ **上色与等宽**：`direction_label` 那一格吃强调色、其余两格正色（稿 §2：RX／TX 只以这两个字母与
 //      一列强调色区分），族名 `kDefaultMonospaceFamily`——行形态的算术只在这个族名下成立（F8／F9）。
-//   ⑶ **留痕**：丢弃计数 >0 才上屏那句「已丢弃 N 字节」，另有一句「本面板不落盘」常驻（稿 §1 第一条
-//      安全口径：设备流量可能含口令回显，不持久化是代价而不是缺陷）。
+//   ⑶ **留痕**：丢弃计数 >0 才上屏那句「已丢弃 N 字节」，另有「不落盘」一句常驻（稿 §1 第一条安全口径）；
+//      冻结时另出「已暂停跟尾」与「回到最新」两枚（D13①），跟尾时都不出现。
 //
 // 关面板**不摘环**（D7①）：`close()` 只收浮层，那条会话照留痕；重新打开看到的是历史，`清空` 才是归零。
 // 绑定由命令腿在「从关闭态打开」那一刻按当时的当前标签写下，之后不跟标签跑——看着 A 的时候切到 B，
@@ -34,6 +35,7 @@
 // ============================================================
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -46,20 +48,35 @@
 #include "borealis/session/raw_tap.h"
 #include "serial_monitor_format.h"
 
+namespace aurora {
+class LazyList;  ///< 私有头只持句柄：滚动物件在建树期现造，定义留在 .cpp（D10①）。
+}  // namespace aurora
+
 namespace borealis::ui {
 
-/// @brief 行区一次画出的行数上限（稿 §5：只折「最后可见的那几十行」）。
+/// @brief 行区每行的固定高度（dp，稿 D15①）。
 ///
-/// 取 24 而不是 60：14 pt 行高约 20 dp，960×640 dp 的缺省窗里扣掉标题行、开关行与两行留痕，行区容得下
-/// 的就是二十几行（F8 的换算）。超出这一档的行不折、不画，也就不进帧预算。
-inline constexpr std::size_t kMonitorVisibleRowCap = 24U;
+/// 14 pt 等宽单格高约 19 dp（F8），余 1 dp 作行距；`LazyList::item_extent` 只支持固定行高，而二期所有行
+/// 仍是单行等宽，故这枚常量同时是「一屏能看几行」与滚轮几何的唯一来源（缺省窗约 17 行）。
+inline constexpr float kMonitorRowExtent = 20.0F;
 
-/// @brief 折行前从环尾取走的字节预算。
+/// @brief 折带一次折多少行（稿 D11①）。
 ///
-/// `行数上限 × 每行字节数` 是**下界保证**而非上界：环尾只要有这么些字节，折出来就恒 ≥ 上限行数
-/// （二进制段没有行尾时 8 字节恰好一行），不够这么多才画得出少于上限的一屏。截断只发生在 **run 边界**，
-/// 故不会出现半个字节；一条设备行可能被截在中间，那是「只显示最近若干行」这条在册代价的必然形态。
-inline constexpr std::size_t kMonitorTailBytes = kMonitorVisibleRowCap * kMonitorBytesPerRow;
+/// 视口约 17 行 + `cache_extent` 200 dp ≈ 10 行 × 两侧，再留余量：96 行在滚出折带之前足够读几屏，
+/// 又把「折一次」压到约 23 µs（F5）。窗口之前/之后的行只计数、不建字符串。
+inline constexpr std::size_t kMonitorFoldWindowRows = 96U;
+
+/// @brief 可见区离折带边缘不足这么多行就重折（稿 §9.4）。
+inline constexpr std::size_t kMonitorFoldEdgeRows = 4U;
+
+/// @brief 重折时在可见首行之上留的行数。
+///
+/// 必须大于「`cache_extent` 折成的行数（200 dp ÷ 20 dp = 10）+ 折带边缘 4 行」，否则重折后可见区
+/// （含缓存）仍贴在折带顶上，下一帧又判一次「逼近边缘」，窗口会在没有用户输入时自己往回滑。
+inline constexpr std::size_t kMonitorFoldMarginRows = 16U;
+
+/// @brief 判定「离开底部」的容差（dp）：浮点夹取与布局取整都会让贴底差一丁点。
+inline constexpr float kMonitorBottomTolerance = 0.5F;
 
 /// @brief 串口十六进制收发监视卡（面板族第八只瞬态浮层）。
 class SerialMonitorPanel {
@@ -68,6 +85,11 @@ class SerialMonitorPanel {
     struct Snapshot {
         std::vector<session::RawRun> runs;  ///< 到达序（最旧在前）；未武装、绑定已散即空表。
         std::size_t dropped_bytes = 0U;     ///< 逐出 + 整条拒收之和；>0 才上屏那句留痕。
+        /// @brief 环的单调变更计数（D17①）：环满后逐出与写入同量，字节数/条数摘要判不出「有新数据」。
+        ///        装配层须**先读 revision 再取 runs**：反序时两次读之间的写入会让新数据被当成旧帧skip 掉。
+        std::uint64_t revision = 0U;
+        /// @brief 环的现值上限（D16①）：留痕那句的「环上限 N KiB」直接读它，不在面板里写死第二份。
+        std::size_t cap_bytes = session::kMaxRawTapBytes;
     };
 
     /// @brief 与装配层的全部接缝（struct-of-回调，同 `TunnelPanel::Hooks` 形态）。
@@ -113,20 +135,23 @@ class SerialMonitorPanel {
         return open_;
     }
 
-    /// @brief 帧驱动（装配层 `on_frame` 调用，F14 那套状态泵）：读环、行表有变才重建。
+    /// @brief 帧驱动（装配层 `on_frame` 调用，F14 那套状态泵）：几何判冻结、跟尾读环、窗口重折。
     ///
-    /// 暂停态不读环——画面停在按下那枚开关的那一刻，环照人在后面写（稿 §1「面板动作」里
-    /// 「刷新（自动跟帧）／暂停」就是这一条腿）。暂停中改了时间戳档或按了清空，仍补一次重画：
-    /// 「别刷屏」不该变成「改档看不见」。
+    /// 三条闸的次序（稿 §9.4）：①「回到最新」/清空后的首帧跳过几何判据（旧列表仍在离底位置，
+    /// 直接判会把刚落到底的画面判回冻结）；②暂停态不读环——画面停在按下那枚开关的那一刻，环照人
+    /// 在后面写；③冻结态不读环、不重建，只在可见区逼近折带边缘时滑窗。重建仍只在这里发生。
     auto tick() -> void;
 
-    /// @brief 当前该画的行（观测面：由 `source_` 与两枚显示档折出，判据比这份而不读浮层树）。
+    /// @brief 当前该画的行（观测面：当前折出的窗口，不是整环）。
     ///
-    /// 与浮层那一份同源，故拨开关后立刻就能读出无前缀的行，而不必等一帧——真正的重建排在下一帧，
-    /// 那才是「回调里不做长计算」（§4.5 第 25 条）要的次序。
+    /// 与浮层那一份同源，但它只在 `tick()` 里随重建更新：拨开关后要等下一帧才读到新档——「回调里不做
+    /// 长计算」（§4.5 第 25 条）要的正是这个次序。跟尾时是环尾至多 96 行。
     [[nodiscard]] auto visible_rows() const -> std::vector<MonitorRow>;
 
-    /// @brief 丢弃留痕（观测面）：有丢弃才是那句「已丢弃 N 字节（环上限 256 KiB）」，无即空串。
+    /// @brief 是否已离底冻结（观测面，D12①）：冻结时行区不追加新数据，提示行与「回到最新」在场。
+    [[nodiscard]] auto frozen() const noexcept -> bool { return frozen_; }
+
+    /// @brief 丢弃留痕（观测面）：有丢弃才是那句「已丢弃 N 字节（环上限 N KiB）」，无即空串。
     ///
     /// 「不落盘」那句声明不走这一格：它恒在卡上（常驻一行），集成用例按显示串在派发链上找它。
     [[nodiscard]] auto notice() const -> std::string;
@@ -138,19 +163,31 @@ class SerialMonitorPanel {
     /// @brief 问一次环（Hook 缺席即空投影：本件不许因装配层没装某条腿而崩）。
     [[nodiscard]] auto read_snapshot() const -> Snapshot;
 
-    /// @brief 收一帧环投影进本件状态（截尾 + 计数 + 绑定），再判要不要重建。
-    auto apply(const Snapshot &snapshot) -> void;
+    /// @brief 当前显示档（两枚档都在这里汇合；窗口折行与整表折行同一口径）。
+    [[nodiscard]] auto make_options() const -> MonitorRowOptions;
 
-    /// @brief 行表／绑定／计数与上一帧画出的那份有差别时重建浮层（并清「待重画」旗标）。
-    auto maybe_refresh() -> void;
+    /// @brief 几何判冻结（D12①）：离底且不在环尾窗口的底端 ⇒ 冻结；未布局/不足一屏一律视为跟尾。
+    [[nodiscard]] auto compute_frozen() const -> bool;
 
-    /// @brief 用当前显示档把 `source_` 折成行表（行数截到上限）。
-    [[nodiscard]] auto fold_source() const -> std::vector<MonitorRow>;
+    /// @brief 当前窗口是否已抵环尾（只有「窗口底 == 环底」才允许由滚到底恢复跟尾）。
+    [[nodiscard]] auto window_covers_ring_end() const -> bool;
+
+    /// @brief 跟尾帧：revision／上限／丢弃／绑定未变且无待重画即早退（D17①）。
+    auto follow_frame() -> void;
+
+    /// @brief 暂停/冻结下的重画：按手里的 `source_` 重折当前窗口，不读环（D14①）。
+    auto rebuild_current_view() -> void;
+
+    /// @brief 冻结态滑窗：可见区（含缓存）逼近折带边缘时以可见首行为锚重折，并按行差平移偏移。
+    auto slide_frozen_window() -> void;
+
+    /// @brief 记下这份窗口并重建浮层（`scroll_offset` 同时是重建后的落位）。
+    auto paint_rows(std::vector<MonitorRow> rows, float scroll_offset) -> void;
 
     /// @brief 装（或重装）主卡片浮层：蒙版 + 卡片 + `Dialog` 一次造齐，记下宿主给的那枚序号。
     auto install_overlay() -> void;
 
-    /// @brief 摘掉当前那层再装一次（`open()` 之外的唯一重建入口；由 `maybe_refresh()` 调用）。
+    /// @brief 摘掉当前那层再装一次（唯一重建入口；由 `tick()` 的状态腿调用）。
     auto refresh_overlay() -> void;
     [[nodiscard]] auto build_overlay() -> std::shared_ptr<aurora::Column>;
     [[nodiscard]] auto build_row(const MonitorRow &row) -> aurora::Node;
@@ -158,6 +195,7 @@ class SerialMonitorPanel {
     auto on_timestamp_changed(bool next) -> void;
     auto on_pause_changed(bool next) -> void;
     auto on_clear() -> void;
+    auto on_latest() -> void;
 
     auto clear_state() -> void;
 
@@ -165,15 +203,24 @@ class SerialMonitorPanel {
     Hooks hooks_{};
     std::shared_ptr<aurora::Dialog> dialog_{};
     std::optional<std::size_t> overlay_index_{};
+    std::shared_ptr<aurora::LazyList> list_{};  ///< 当前浮层里的行区（重建即换新；观察滚动几何用）。
     bool open_ = false;
 
     // ---- 两枚面板局部量（D9①：零新设置键，重启回这里写的缺省档）----
     bool timestamp_prefix_ = true;  ///< 关掉即不折前缀，也不调 `localtime`（稿 D6④ 的那半代价）。
-    bool paused_ = false;           ///< 暂停＝不读环，仍可按显示档重画。
-    bool repaint_pending_ = false;  ///< 暂停中改了档或清了环：下一帧补一次重建。
+    bool paused_ = false;           ///< 暂停＝用户显式停更，仍可按显示档重画。
+    bool frozen_ = false;           ///< 冻结＝离底自动停更（D12①）；与暂停互相独立（D14①）。
+    bool rebuild_pending_ = false;  ///< 暂停/冻结中改了档、清了环或冻结边沿：下一帧补一次重建。
+    bool skip_geometry_once_ = false;  ///< 「回到最新」/清空之后的首帧不判几何（旧列表还在离底位置）。
 
-    std::vector<session::RawRun> source_{};  ///< 截尾后那段 run（≤ `kMonitorTailBytes`）：重折的唯一料源。
-    std::size_t ring_bytes_ = 0U;            ///< 环里现存字节数（标题行那个计数；含未画出的部分）。
+    std::uint64_t seen_revision_ = 0U;  ///< 上次收下的环 revision（D17① 的早退基准）。
+    std::size_t cap_bytes_ = session::kMaxRawTapBytes;  ///< 环现值上限（D16①；留痕那句的数）。
+    std::size_t total_rows_ = 0U;       ///< 当前快照折出的总行数（暂停/冻结时沿用上次的值）。
+    std::size_t fold_first_row_ = 0U;   ///< 当前窗口首行在 `total_rows_` 里的行号。
+    float pending_scroll_offset_ = 0.0F;  ///< 建树时交给 `LazyList` 的待定偏移（D10① 的落底/保位）。
+
+    std::vector<session::RawRun> source_{};  ///< 上次跟尾收下的整环 run 表：重折的唯一料源。
+    std::size_t ring_bytes_ = 0U;            ///< 环里现存字节数（标题行那个计数）。
     std::size_t dropped_bytes_ = 0U;         ///< 累计丢弃字节（`notice()` 的那一句）。
     std::string binding_{};                  ///< 绑定的档案名与设备路径（现取 Hook 的落地副本）。
 
@@ -182,6 +229,8 @@ class SerialMonitorPanel {
     std::string painted_binding_{};
     std::size_t painted_ring_bytes_ = 0U;
     std::size_t painted_dropped_bytes_ = 0U;
+    std::size_t painted_cap_bytes_ = 0U;
+    bool painted_frozen_ = false;
 };
 
 }  // namespace borealis::ui

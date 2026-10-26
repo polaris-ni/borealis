@@ -377,6 +377,7 @@
     "search.toggle_regex": "正则表达式",
     "serial.monitor.action.clear": "清空",
     "serial.monitor.action.close": "关闭",
+    "serial.monitor.action.latest": "回到最新",
     "serial.monitor.binding": "{name} · {path}",
     "@serial.monitor.binding": {
       "placeholders": {
@@ -410,6 +411,7 @@
         }
       }
     },
+    "serial.monitor.notice.frozen": "已暂停跟尾（向上翻看时不追加新数据）",
     "serial.monitor.notice.privacy": "本面板不落盘，数据随会话结束消失",
     "serial.monitor.toggle.pause": "暂停刷新",
     "serial.monitor.toggle.timestamp": "时间戳前缀",

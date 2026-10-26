@@ -2,7 +2,8 @@
 // 串口监视面板集成用例（tests/integration/itest_serial_monitor_panel.cpp）
 // ------------------------------------------------------------
 // `SPEC.FEAT.CONN.05` 两条延后子项的面板腿（UI_SERIAL_MONITOR.draft.md §6 批 3 那五行判据）：
-// 行表随环刷新、时间戳开关联动、暂停中不读环、清空是唯一止血、丢弃留痕上屏。
+// 行表随环刷新、时间戳开关联动、暂停中不读环、清空是唯一止血、丢弃留痕上屏、绑定与常驻声明；
+// 二期（稿 §9）另四腿：历史超过折带窗口仍可回看、离底冻结与回底恢复、「回到最新」双解、冻结中清空。
 // 驱动台形态照 itest_tunnel_panel 的 Harness（present_root 排真实布局 + hit_test_chain 取命中 +
 // EventDispatcher 发真事件），精简到本件用得到的那几条腿。
 //
@@ -14,17 +15,20 @@
 // ============================================================
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "aurora/aurora.h"
 #include "aurora/event/dispatcher.h"
 #include "aurora/event/focus.h"
 #include "aurora/widget/button.h"
+#include "aurora/widget/lazy_list.h"
 #include "aurora/widget/switch.h"
 #include "aurora/widget/text.h"
 #include "borealis/session/raw_tap.h"
@@ -45,13 +49,19 @@ namespace au = aurora;
 constexpr int kWindowWidth = 900;
 constexpr int kWindowHeight = 760;
 
-/// @brief 装配层替身：一帧环投影 + 绑定串 + 三条腿的调用留痕。
+/// @brief 一帧环投影 + 绑定串 + 三条腿的调用留痕。
 struct Probe {
     ui::SerialMonitorPanel::Snapshot snapshot{};
     std::string binding;
     std::size_t snapshot_calls = 0U;
     std::size_t clear_calls = 0U;
     std::size_t binding_calls = 0U;
+
+    /// @brief 环里多一条 run：`revision` 是面板的早退基准（D17①），替身必须像 `RawTap` 一样每改必推。
+    auto record(session::RawRun run) -> void {
+        snapshot.runs.push_back(std::move(run));
+        ++snapshot.revision;
+    }
 
     [[nodiscard]] auto hooks() -> ui::SerialMonitorPanel::Hooks {
         ui::SerialMonitorPanel::Hooks out;
@@ -86,6 +96,7 @@ struct Probe {
     Probe probe;
     probe.snapshot.runs = {make_run(session::RawDirection::Received, 1'700'000'000'000LL, "OK\r\n"),
                            make_run(session::RawDirection::Transmitted, 1'700'000'001'000LL, "AT\r\n")};
+    probe.snapshot.revision = 1U;  // 环里已有两条：revision 不能停在「空环」的 0。
     probe.binding = "srv /dev/ttyUSB0";
     return probe;
 }
@@ -211,7 +222,25 @@ class Harness {
         return host_->overlay_count();
     }
 
+    /// @brief 树里当前那只行区（行区每次重建都会换新对象，故每步现取，不缓存句柄）。
+    [[nodiscard]] auto find_list() -> au::LazyList * {
+        return const_cast<au::LazyList *>(find_list_in(root_.widget()));
+    }
+
   private:
+    [[nodiscard]] static auto find_list_in(const au::Widget &widget) -> const au::LazyList * {
+        if (const auto *list = dynamic_cast<const au::LazyList *>(&widget); list != nullptr) {
+            return list;
+        }
+        const au::LazyList *found = nullptr;
+        widget.for_each_child([&found](const au::Widget &child) -> void {
+            if (found == nullptr) {
+                found = find_list_in(child);
+            }
+        });
+        return found;
+    }
+
     [[nodiscard]] static auto make_window() -> au::Window {
         auto surface = std::make_unique<au::HeadlessSurface>();
         static_cast<void>(surface->begin_frame(kWindowWidth, kWindowHeight));
@@ -236,6 +265,49 @@ class Harness {
     return false;
 }
 
+/// @brief `R007` 这种三位零填充行标签：`line_run` 与行文本尾栏共用这一份，免得两边各拼一次。
+[[nodiscard]] auto line_tag(int index) -> std::string {
+    auto tag = std::string{"R"};
+    tag += static_cast<char>('0' + (index / 100) % 10);
+    tag += static_cast<char>('0' + (index / 10) % 10);
+    tag += static_cast<char>('0' + index % 10);
+    return tag;
+}
+
+/// @brief 一行 `R000\r\n`：折出来恰好一行，ASCII 尾栏是 `|R000..|`（行号可直读）。
+[[nodiscard]] auto line_run(int index, std::int64_t timestamp_ms) -> session::RawRun {
+    return make_run(session::RawDirection::Received, timestamp_ms, line_tag(index) + "\r\n");
+}
+
+auto append_lines(Probe &probe, int first, int count) -> void {
+    for (int index = first; index < first + count; ++index) {
+        probe.record(line_run(index, 1'700'000'000'000LL + index));
+    }
+}
+
+auto fill_lines(Probe &probe, int count) -> void { append_lines(probe, 0, count); }
+
+/// @brief 这一行是不是 `line_tag(index)`（比十六进制段好读的尾栏判据）。
+[[nodiscard]] auto row_is(const ui::MonitorRow &row, int index) -> bool {
+    return ui::row_text(row).find("|" + line_tag(index) + "..|") != std::string::npos;
+}
+
+/// @brief 行表里有没有这一行。
+[[nodiscard]] auto shows_line(const std::vector<ui::MonitorRow> &rows, int index) -> bool {
+    return std::any_of(rows.begin(), rows.end(), [index](const ui::MonitorRow &row) -> bool {
+        return row_is(row, index);
+    });
+}
+
+/// @brief 把行区滚到顶再排两帧：首帧判冻结并保位重画，次帧才按「可见首行 - 16 行」重折窗口。
+auto scroll_to_top(Harness &h, ui::SerialMonitorPanel &panel) -> void {
+    if (auto *list = h.find_list(); list != nullptr) {
+        list->set_scroll_offset(0.0F);
+    }
+    h.tick(panel);
+    h.tick(panel);
+}
+
 }  // namespace
 
 // ------------------------------------------------------------
@@ -257,7 +329,7 @@ AURORA_TEST_CASE(rows_follow_the_ring_across_ticks) {
     AURORA_TEST_CHECK(ui::row_text(rows[0]).find("|OK..|") != std::string::npos);
 
     // 环里多一条 run ⇒ 下一帧多一行（latest-value，不做增量游标）。
-    probe.snapshot.runs.push_back(make_run(session::RawDirection::Received, 1'700'000'002'000LL, "DONE\r\n"));
+    probe.record(make_run(session::RawDirection::Received, 1'700'000'002'000LL, "DONE\r\n"));
     h.tick(*panel);
     rows = panel->visible_rows();
     AURORA_TEST_REQUIRE_EQ(rows.size(), 3U);
@@ -266,7 +338,7 @@ AURORA_TEST_CASE(rows_follow_the_ring_across_ticks) {
     panel->close();
     h.render();
     const std::size_t calls_before = probe.snapshot_calls;
-    probe.snapshot.runs.push_back(make_run(session::RawDirection::Received, 1'700'000'003'000LL, "X"));
+    probe.record(make_run(session::RawDirection::Received, 1'700'000'003'000LL, "X"));
     panel->tick();
     AURORA_TEST_CHECK(!panel->is_open());
     AURORA_TEST_CHECK_EQ(probe.snapshot_calls, calls_before);
@@ -325,7 +397,7 @@ AURORA_TEST_CASE(pause_stops_reading_the_ring) {
 
     const std::size_t calls_while_painted = probe.snapshot_calls;
     const std::vector<ui::MonitorRow> frozen = panel->visible_rows();
-    probe.snapshot.runs.push_back(make_run(session::RawDirection::Received, 1'700'000'004'000LL, "MORE\r\n"));
+    probe.record(make_run(session::RawDirection::Received, 1'700'000'004'000LL, "MORE\r\n"));
     h.tick(*panel);
     // 「压根没去读环」而不是「读了但算出同一份」：这条断言把两种实现分开。
     AURORA_TEST_CHECK_EQ(probe.snapshot_calls, calls_while_painted);
@@ -415,6 +487,179 @@ AURORA_TEST_CASE(binding_follows_the_identity_and_the_disclaimer_stays) {
     // 标题行的字节计数走的是词条，两档都有模板（覆盖闸之外唯一的一条同源判据）。
     AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.bytes", {{"count", std::int64_t{8}}}))
                           .widget != nullptr);
+}
+
+// ------------------------------------------------------------
+// 判据⑦（稿 D11①／D12①）：200 行只折 96 行，往上翻能一路翻到环头；冻结中不读环
+// ------------------------------------------------------------
+AURORA_TEST_CASE(history_beyond_the_fold_window_is_reachable_by_scrolling_back) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 200);
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+    h.tick(*panel);  // 消化 open() 的「首帧不判几何」豁免，进入跟尾常态。
+
+    // 跟尾：窗口是环尾 96 行，落位在最底。
+    auto rows = panel->visible_rows();
+    AURORA_TEST_REQUIRE_EQ(rows.size(), ui::kMonitorFoldWindowRows);
+    AURORA_TEST_CHECK(row_is(rows.front(), 104));
+    AURORA_TEST_CHECK(row_is(rows.back(), 199));
+    auto *list = h.find_list();
+    AURORA_TEST_REQUIRE_MSG(list != nullptr, "the scrollable row area is not in the tree");
+    AURORA_TEST_REQUIRE(list->max_scroll_offset() > 0.0F);
+    AURORA_TEST_CHECK(list->scroll_offset() >= list->max_scroll_offset() - ui::kMonitorBottomTolerance);
+
+    // 往上翻一屏：首帧判冻结并保位重画，次帧以「可见首行 - 16 行」重折。重折后屏上首行不动——
+    // 窗口前移 16 行，偏移同步减 16 × 行高。
+    const std::size_t calls_at_bottom = probe.snapshot_calls;
+    scroll_to_top(h, *panel);
+    rows = panel->visible_rows();
+    AURORA_TEST_CHECK_TRUE(panel->frozen());
+    AURORA_TEST_CHECK(row_is(rows.front(), 88));  // 104 - kMonitorFoldMarginRows
+    list = h.find_list();
+    AURORA_TEST_REQUIRE(list != nullptr);
+    AURORA_TEST_CHECK(std::abs(list->scroll_offset() -
+                               static_cast<float>(ui::kMonitorFoldMarginRows) * ui::kMonitorRowExtent) <
+                      ui::kMonitorBottomTolerance);
+
+    // 一路翻到环头：每轮窗口再退 16 行。全程不读环（冻结就是「别动我这一屏」）。
+    for (int guard = 0; guard < 12 && !shows_line(panel->visible_rows(), 0); ++guard) {
+        scroll_to_top(h, *panel);
+    }
+    rows = panel->visible_rows();
+    AURORA_TEST_REQUIRE_EQ(rows.size(), ui::kMonitorFoldWindowRows);
+    AURORA_TEST_CHECK(row_is(rows.front(), 0));
+    AURORA_TEST_CHECK(row_is(rows.back(), 95));
+    AURORA_TEST_CHECK_EQ(probe.snapshot_calls, calls_at_bottom);
+
+    // 窗口已抵环头便不再滑：用户自己滚到 0 就看见第一条。
+    list = h.find_list();
+    AURORA_TEST_REQUIRE(list != nullptr);
+    list->set_scroll_offset(0.0F);
+    h.tick(*panel);
+    AURORA_TEST_CHECK(list->scroll_offset() == 0.0F);
+    AURORA_TEST_CHECK(row_is(panel->visible_rows().front(), 0));
+}
+
+// ------------------------------------------------------------
+// 判据⑧（稿 D12①／D13①）：离底即冻结且不自动吸回；滚回窗口底（窗口已抵环尾）才恢复跟尾
+// ------------------------------------------------------------
+AURORA_TEST_CASE(leaving_the_bottom_freezes_the_view_and_the_bottom_resumes_following) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 80);
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+    AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 80U);
+    AURORA_TEST_CHECK_FALSE(panel->frozen());
+
+    scroll_to_top(h, *panel);
+    AURORA_TEST_CHECK_TRUE(panel->frozen());
+    AURORA_TEST_REQUIRE_MSG(
+        h.find_text(ui::settings_label("serial.monitor.notice.frozen")).widget != nullptr,
+        "the freeze hint is not drawn");
+    AURORA_TEST_REQUIRE_MSG(
+        h.find_button(ui::settings_label("serial.monitor.action.latest")).widget != nullptr,
+        "the jump-to-latest button is not drawn");
+
+    // 冻结中环照人写：面板既不读，也不追加——「设备停了」与「你看的是旧屏」必须能区分。
+    const std::size_t calls_while_frozen = probe.snapshot_calls;
+    append_lines(probe, 80, 5);
+    h.tick(*panel);
+    h.tick(*panel);
+    AURORA_TEST_CHECK_EQ(probe.snapshot_calls, calls_while_frozen);
+    AURORA_TEST_CHECK_EQ(panel->visible_rows().size(), 80U);
+    AURORA_TEST_CHECK(row_is(panel->visible_rows().back(), 79));
+
+    // 滚回窗口底（窗口已抵环尾）＝用户确认「我要看最新的」：解冻并立刻补上积压的 5 行。
+    auto *list = h.find_list();
+    AURORA_TEST_REQUIRE(list != nullptr);
+    list->set_scroll_offset(list->max_scroll_offset());
+    h.tick(*panel);
+    AURORA_TEST_CHECK_FALSE(panel->frozen());
+    AURORA_TEST_CHECK(probe.snapshot_calls > calls_while_frozen);
+    AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 85U);
+    AURORA_TEST_CHECK(row_is(panel->visible_rows().back(), 84));
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.notice.frozen")).widget == nullptr);
+    AURORA_TEST_CHECK(h.find_button(ui::settings_label("serial.monitor.action.latest")).widget == nullptr);
+
+    // 恢复跟尾后新数据照常追加。
+    append_lines(probe, 85, 1);
+    h.tick(*panel);
+    AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 86U);
+    AURORA_TEST_CHECK(row_is(panel->visible_rows().back(), 85));
+}
+
+// ------------------------------------------------------------
+// 判据⑨（稿 D14①）：「回到最新」是冻结与暂停的共同出口——下一帧直接重读环并落底
+// ------------------------------------------------------------
+AURORA_TEST_CASE(jump_to_latest_clears_pause_and_freeze) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 80);
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    auto pause_spot = h.find("Switch", 2);
+    AURORA_TEST_REQUIRE_MSG(pause_spot.widget != nullptr, "the pause switch is not reachable");
+    h.click(pause_spot);
+    scroll_to_top(h, *panel);
+    AURORA_TEST_CHECK_TRUE(panel->frozen());
+
+    const std::size_t calls_while_stopped = probe.snapshot_calls;
+    append_lines(probe, 80, 5);
+    h.tick(*panel);
+    AURORA_TEST_CHECK_EQ(probe.snapshot_calls, calls_while_stopped);
+    AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 80U);
+
+    auto latest_spot = h.find_button(ui::settings_label("serial.monitor.action.latest"));
+    AURORA_TEST_REQUIRE_MSG(latest_spot.widget != nullptr,
+                            "the jump-to-latest button is not dispatch-reachable");
+    h.click(latest_spot);
+    h.tick(*panel);
+
+    AURORA_TEST_CHECK_FALSE(panel->frozen());
+    AURORA_TEST_CHECK(probe.snapshot_calls > calls_while_stopped);
+    AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 85U);
+    AURORA_TEST_CHECK(row_is(panel->visible_rows().back(), 84));
+    AURORA_TEST_CHECK(h.find_button(ui::settings_label("serial.monitor.action.latest")).widget == nullptr);
+    // 暂停开关被一起解掉（D14①：这两档说的是同一件事——「别停」）。
+    auto resumed = h.find("Switch", 2);
+    AURORA_TEST_REQUIRE(resumed.widget != nullptr);
+    auto *pause_switch = dynamic_cast<au::Switch *>(resumed.widget);
+    AURORA_TEST_REQUIRE(pause_switch != nullptr);
+    AURORA_TEST_CHECK_FALSE(pause_switch->value());
+}
+
+// ------------------------------------------------------------
+// 判据⑩（稿 D7①／D14①）：冻结中清空——唯一止血动作连冻结一起归零，落回空态
+// ------------------------------------------------------------
+AURORA_TEST_CASE(clear_from_a_frozen_view_lands_on_the_empty_state) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 80);
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+    scroll_to_top(h, *panel);
+    AURORA_TEST_REQUIRE(panel->frozen());
+    AURORA_TEST_REQUIRE(!panel->visible_rows().empty());
+
+    auto clear_spot = h.find_button(ui::settings_label("serial.monitor.action.clear"));
+    AURORA_TEST_REQUIRE_MSG(clear_spot.widget != nullptr, "the clear button is not dispatch-reachable");
+    h.click(clear_spot);
+    h.tick(*panel);
+
+    AURORA_TEST_CHECK_FALSE(panel->frozen());
+    AURORA_TEST_CHECK_TRUE(panel->visible_rows().empty());
+    AURORA_TEST_CHECK_EQ(probe.clear_calls, 1U);
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.empty")).widget != nullptr);
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.notice.frozen")).widget == nullptr);
+    AURORA_TEST_CHECK(h.find_button(ui::settings_label("serial.monitor.action.latest")).widget == nullptr);
 }
 
 }  // namespace borealis::test_cases::itest_serial_monitor_panel

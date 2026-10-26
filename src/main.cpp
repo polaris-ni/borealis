@@ -4334,9 +4334,14 @@ auto main(int argc, char **argv) -> int {
         if (tap == nullptr) {
             return {};
         }
+        // revision 先读、runs 后取（D17①）：反序时两次读之间的写入会让新数据被当成旧帧跳过。
+        const auto revision = tap->revision();
+        const auto cap_bytes = tap->max_bytes();
         return borealis::ui::SerialMonitorPanel::Snapshot{
             .runs = tap->snapshot(),
             .dropped_bytes = tap->dropped_bytes(),
+            .revision = revision,
+            .cap_bytes = cap_bytes,
         };
     };
     monitor_hooks.clear = [&monitor_tap]() -> void {
