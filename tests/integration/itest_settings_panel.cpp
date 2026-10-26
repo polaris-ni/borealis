@@ -563,11 +563,13 @@ AURORA_TEST_CASE(every_catalog_key_resolves_to_a_display_label) {
         covered.emplace_back(key);
     }
 
-    // 批 6（D11）从表外搬进来的那四枚：面板不画它们，消费点在装配层与终端视图，故它们进不了上面那条
-    // catalog 枚举，只能在这一侧点名——否则「界面消费的串都有词条」这条覆盖闸会漏掉自己刚扩的四枚。
+    // 批 6（D11）起从表外搬进来的那一圈：面板不画它们，消费点在装配层与终端视图，故它们进不了上面那条
+    // catalog 枚举，只能在这一侧点名——否则「界面消费的串都有词条」这条覆盖闸会漏掉表外新扩的每一枚。
+    // `workspace.action.close_window` 同档：命令标题写在 `main.cpp` 的命令登记里，而那里不进 runner
+    // （裁决 7.83），这条点名是它唯一的自动化证人。
     for (std::string_view key : {"tab.close_confirm.title", "tab.close_confirm.body",
                                  "terminal.paste_multiline.title", "terminal.paste_multiline.body",
-                                 "connections.type.local"}) {
+                                 "connections.type.local", "workspace.action.close_window"}) {
         AURORA_TEST_REQUIRE_MSG(borealis::ui::has_settings_string(key), std::string{key} + " missing");
         covered.emplace_back(key);
     }

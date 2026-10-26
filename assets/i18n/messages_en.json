@@ -537,6 +537,7 @@
     "tunnel.title": "Tunnels",
     "window.close_confirm.body": "This window still has running sessions, and closing it terminates them. Close it anyway?",
     "window.close_confirm.title": "Close the window",
+    "workspace.action.close_window": "Close window",
     "workspace.action.new_window": "New window",
     "workspace.action.toggle_fullscreen": "Toggle fullscreen",
     "workspace.broadcast.badge": "Broadcast B",

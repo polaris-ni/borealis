@@ -54,6 +54,7 @@
 #include "borealis/ui/tab_strip.h"
 #include "borealis/ui/closed_tab_stack.h"
 #include "borealis/ui/url.h"
+#include "borealis/ui/window_close.h"
 #include "borealis/ui/workspace_snapshot.h"
 #include "conn/key_model.h"
 #include "conn/key_push.h"
@@ -1343,6 +1344,11 @@ auto main(int argc, char **argv) -> int {
     // 首标签吃哪份料（`--profile` 的档案或 `--cwd` 的目录）由请求决定，先落一格缺省本地标签再补一条
     // 就成了两格。`open_new_window_request` 是它加 D1 缺省首标签的那一层壳。
     std::function<WorkspaceWindow *()> open_new_window;
+
+    // 「关闭这一扇窗」的请求（`SPEC.FEAT.WS.03` 稿 D3 的另一条入口）：命令面板那一格在登记段就要按
+    // 引用捕获它，而它的两条腿（窗级活会话折法、按窗确认框）与关窗闸门同源于后面那一段，故这里只声明。
+    // 与 `open_new_window_request` 同形态；缺钩即那条命令只占一格面板行、什么都不做。
+    std::function<void(WorkspaceWindow &)> request_close_window;
 
     // ---- 每格一会话的三条公共件（`SPEC.FEAT.WS.02`，稿 §3／§5）------------------------------
     //
@@ -4042,6 +4048,28 @@ auto main(int argc, char **argv) -> int {
     new_window.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(new_window));
 
+    // 关闭这一扇窗（`SPEC.FEAT.WS.03` 稿 D3 的另一条入口，裁决 7.161）：与上一条同形态——**只登记命令、
+    // 不登记 `default_binding`**。`Ctrl+Shift+W` 在分屏保留键表里一直是 `ClosePane`（稿 §23⑶ 的那处不符
+    // 就是这句），把关窗再绑一枚键要动的是既有键位表，需求没要求它，故键位留给用户自己绑
+    // （`SPEC.FEAT.PREF.04` 的可重绑面）。落点窗按稿 D7 取活动窗；判据与确认框与点 × 那条**同一条**，
+    // 所以这里的动作只是把窗交给 `request_close_window`——同一个动作不因发起方式是鼠标还是回车而少问一句。
+    au::Command close_window;
+    close_window.id = "workspace.close_window";
+    close_window.title = borealis::ui::settings_label("workspace.action.close_window");
+    close_window.category = "workspace";
+    close_window.action = [&command_window, &request_close_window]() -> void {
+        WorkspaceWindow *const resolved = command_window ? command_window() : nullptr;
+        if (resolved == nullptr) {
+            AURORA_LOG_INFO("main", "close window: there is no window to close");
+            return;
+        }
+        if (request_close_window) {
+            request_close_window(*resolved);
+        }
+    };
+    close_window.scope = au::ShortcutScope::Global;
+    app.commands().add(std::move(close_window));
+
     // 全屏切换（`SPEC.FEAT.WS.06`，判据文 §3 D1）：F11 在普通与全屏之间切换，ESC 不退出（避免与会话内 ESC 冲突）。
     au::Command toggle_fullscreen;
     toggle_fullscreen.id = "workspace.toggle_fullscreen";
@@ -5004,51 +5032,82 @@ auto main(int argc, char **argv) -> int {
         monitor_panel.tick();  // 串口监视行表随环刷新（稿 D6①；关着即空操作，暂停中不读环）
     });
 
-    // 关窗闸门（`SPEC.FEAT.WS.03` 稿 D4，G44 回货的接货腿）：用户点 × 时先问一句，可否决。
-    // 回 false 是**同步**答复——框架在 `on_frame` 之后、回收之前逐窗问一次（边沿闩），被否的窗
-    // 当帧继续渲染；确认框在回调里 `show()` 即当帧上屏。判据与关标签同源（`has_live_session`），
-    // 窗口级的折法是遍历本窗栏位再复用那一枚，不另立第二份「活会话」定义。
+    // 关窗的两条入口共用一段（`SPEC.FEAT.WS.03` 稿 D3／D4，裁决 7.161）：点 × 与命令面板那条
+    // 「关闭此窗」是同一次动作，于是窗级判据、确认框、答话之后的那一跳都只许有一份。
     //
-    // 来源只认 OS 关闭钮：本层 `close_window()`（含用户确认后那一次）与策略连带一律放行，
-    // 拿闸门挡自己发起的关闭会把退出序卡在一个没人能答的框上。取不到窗（已散／不归本层管）同样放行。
-    app.set_on_close_requested(
-        [&app, &window_of, &has_live_session](au::WindowId id, au::CloseRequestSource source) -> bool {
-            if (source != au::CloseRequestSource::OperatingSystem) {
+    // 窗级活会话只做**汇总**：任一标签活着即算活，而「这张标签活不活」仍取关标签那枚
+    // `has_live_session`——判据不复制第二份（确认稿 D2）。
+    auto window_has_live_session = [&has_live_session](WorkspaceWindow &window) -> bool {
+        for (const auto &tab : window.tab_strip.tabs()) {
+            if (has_live_session(tab.id)) {
                 return true;
             }
+        }
+        return false;
+    };
+
+    // 按窗一份的确认框（确认稿 D3）：与关标签那只分开——两件事可能同时发生，共用一只换 `content`
+    // 会把另一句问题覆盖掉。生存期跨 Show→答话，故由窗账目持有。答「关」走 `app.close_window()`：
+    // 程序化来源被闸门直接放行，帧末由既有撤账链收，本层不另写一条销毁路径（确认稿 D4）。
+    auto ask_window_close = [&app](WorkspaceWindow &window) -> void {
+        if (!window.window_close_confirm) {
+            window.window_close_confirm = std::make_shared<au::Dialog>();
+        }
+        if (!window.window_close_confirm_mounted) {
+            static_cast<void>(window.overlay_host->add_overlay(
+                aurora::Node{std::static_pointer_cast<au::Widget>(window.window_close_confirm)}));
+            window.window_close_confirm_mounted = true;
+        }
+        window.window_close_confirm->set_content(au::confirm(
+            borealis::ui::settings_label("window.close_confirm.title"),
+            borealis::ui::settings_label("window.close_confirm.body"),
+            [&app, id = window.id, dialog = window.window_close_confirm](bool accepted) -> void {
+                dialog->close();
+                if (accepted) {
+                    app.close_window(id);  // Programmatic：闸门直接放行，帧末走既有撤账链
+                }
+            }));
+        window.window_close_confirm->show();
+    };
+
+    // 命令面板那一格的落点：先折成处置，再决定弹框还是直接关。`UserCommand` 与闸门的
+    // `OperatingSystem` 在 `ui::window_close_disposition` 里同判据——这一条就是本棒存在的理由：
+    // 「同一个动作换个发起方式就少问一句」不能成立。
+    request_close_window = [&app, &window_has_live_session,
+                            &ask_window_close](WorkspaceWindow &window) -> void {
+        const auto disposition = borealis::ui::window_close_disposition(
+            borealis::ui::WindowCloseInitiator::UserCommand, window_has_live_session(window));
+        if (disposition == borealis::ui::WindowCloseDisposition::AskUser) {
+            ask_window_close(window);
+            return;
+        }
+        app.close_window(window.id);
+    };
+
+    // 关窗闸门（G44 回货的接货腿）：用户点 × 时先问一句，可否决。
+    // 回 false 是**同步**答复——框架在 `on_frame` 之后、回收之前逐窗问一次（边沿闩），被否的窗
+    // 当帧继续渲染；确认框在回调里 `show()` 即当帧上屏。
+    //
+    // 框架的三类来源折成本层的两档发起方：OS 关闭钮归 `OsCloseButton`，程序化（含确认后那一次）
+    // 与策略连带都归 `AppInitiated`——恒不问。拿闸门挡自己发起的关闭会把退出序卡在一个没人能答、
+    // 甚至没有窗口可挂的框上（确认稿 D1／任务书 m3）。命令面板那条不经这里：它没有向框架提关闭
+    // 请求，问与关都由上面 `request_close_window` 自己办。取不到窗（已散／不归本层管）同样放行。
+    app.set_on_close_requested(
+        [&window_of, &window_has_live_session,
+         &ask_window_close](au::WindowId id, au::CloseRequestSource source) -> bool {
+            const auto initiator = source == au::CloseRequestSource::OperatingSystem
+                                       ? borealis::ui::WindowCloseInitiator::OsCloseButton
+                                       : borealis::ui::WindowCloseInitiator::AppInitiated;
             WorkspaceWindow *const window = window_of(id);
             if (window == nullptr) {
                 return true;
             }
-            bool live = false;
-            for (const auto &tab : window->tab_strip.tabs()) {
-                if (has_live_session(tab.id)) {
-                    live = true;
-                    break;
-                }
+            if (borealis::ui::window_close_disposition(initiator, window_has_live_session(*window)) ==
+                borealis::ui::WindowCloseDisposition::AskUser) {
+                ask_window_close(*window);
+                return false;  // 撤销本次关闭；用户确认后那条程序化路径再进来
             }
-            if (!live) {
-                return true;  // 没有活会话：不必问，直接关
-            }
-            if (!window->window_close_confirm) {
-                window->window_close_confirm = std::make_shared<au::Dialog>();
-            }
-            if (!window->window_close_confirm_mounted) {
-                static_cast<void>(window->overlay_host->add_overlay(
-                    aurora::Node{std::static_pointer_cast<au::Widget>(window->window_close_confirm)}));
-                window->window_close_confirm_mounted = true;
-            }
-            window->window_close_confirm->set_content(au::confirm(
-                borealis::ui::settings_label("window.close_confirm.title"),
-                borealis::ui::settings_label("window.close_confirm.body"),
-                [&app, id, dialog = window->window_close_confirm](bool accepted) -> void {
-                    dialog->close();
-                    if (accepted) {
-                        app.close_window(id);  // Programmatic：闸门直接放行，帧末走既有撤账链
-                    }
-                }));
-            window->window_close_confirm->show();
-            return false;  // 撤销本次关闭；用户确认后那条程序化路径再进来
+            return true;  // 没有活会话，或本来就不该问：不必问，直接关
         });
 
     // 关窗撤账链（`SPEC.FEAT.WS.03` 稿 §6 批 4-B）：一扇窗被框架收走时，挂在它名下的账目必须一起撤

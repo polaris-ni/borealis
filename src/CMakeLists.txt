@@ -107,6 +107,7 @@ add_library(borealis_core STATIC
         ui/tunnel_format.cpp
         ui/tunnel_panel.cpp
         ui/url.cpp
+        ui/window_close.cpp
         ui/workspace_keys.cpp
         ui/workspace_snapshot.cpp
         ui/workspace_view.cpp)

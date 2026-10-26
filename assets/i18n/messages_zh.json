@@ -1003,6 +1003,7 @@
     "tunnel.title": "隧道",
     "window.close_confirm.body": "这扇窗口里还有正在运行的会话，关闭会终止它们。确定关闭吗？",
     "window.close_confirm.title": "关闭窗口",
+    "workspace.action.close_window": "关闭窗口",
     "workspace.action.new_window": "新建窗口",
     "workspace.action.toggle_fullscreen": "切换全屏",
     "workspace.broadcast.badge": "广播 B",
