@@ -4,6 +4,20 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.158（2026-10-26）**`SPEC.FEAT.CONN.05` 串口监视卡二期（滚动回溯与历史窗口）结项：`LazyList` 虚拟化＋离底冻结＋「回到最新」、行窗口折算与 `revision`、框架缺口 G46 出任务书（裁决 7.158；本地提交 `efe2019`（设计稿 §9 的 D10–D18）→ `fc83d62`（批 A：窗口折算＋变更计数）→ `b1a2bdd`（批 B：面板虚拟化与冻结）→ `d1f7202`（批 C：冻结翻页用例）→ 文档回写（本笔））**
+
+**动机**：一期监视卡只画最近 24 行、想看更早得先暂停，且「暂停」与「回看」被焊在一起。二期把顶棚拆掉：历史连续可读、只有贴底才跟尾、离底冻结且**绝不自动吸回**（业界一致把「往上翻被新输出拽回」当缺陷），回底是一枚随时可按的动作。采集腿的字节口径一字不动。
+
+**落地形态**：
+
+- **折算件与环（批 A）**：`monitor_row_count`／`monitor_row_window(runs, options, first_row, max_rows)`／`monitor_rows` 改成同一台 RowScanner 的三种投影（行边界/CRLF/挂起尾段/末尾不完整行只写一遍，计数与全折恒等由结构保证）；窗口之前的行只计数不建串。`RawTap` 增单调 `revision`（越限拒收、接受写入、`clear()` 各自增）与 `Snapshot.cap_bytes`；面板以 revision 做每帧早退——环满后逐出与写入同量时字节数/条数摘要判不出内容前移（D17①）。装配层**先读 revision/max_bytes、后取 snapshot/dropped_bytes**：并发写入只会多刷一帧，不会漏更新。
+- **面板（批 B）**：行区换 `LazyList`（固定 20 dp、96 行折带窗口），跟尾折环尾窗口并以 `deserialize_props({"scroll_offset": 行数×20})` 首帧落底；冻结判据＝`max > 0 && !(贴底 && 窗口覆盖环尾)`，暂停与冻结两枚独立量、任一为真都不读环；「回到最新」同时清两者（D14①），清空亦复位；冻结时只在可见区（含缓存）逼近折带边缘（余量 < 4 行）时以可见首行上溯 16 行为锚重折 96 行并平移偏移（16 > 缓存 10 + 边距 4），重折仍只在 `tick()` 帧边界。冻结态标题区出「已暂停跟尾」与「回到最新」两枚词条（双语各一份），跟尾态两者不画。
+- **结构缺口 G46**：Aurora `LazyList` 无条目内容刷新（`set_count` 保活、`set_item_builder` 只标脏、`on_layout` 复用 `live_`）、无布局前「锚到末尾」（`scroll_to*` 按布局前恒为 0 的 `max_scroll_offset()` 夹取，唯一通路是序列化面的 `pending_offset_`）、无偏移变更回调（`offset_signal()` 只有 `Effect` 订阅、`collect_signals` 为空）⇒ 本仓三处代偿（整卡重建、极大偏移 JSON、`tick()` 几何轮询）。任务书 `codespec/FRAMEWORK_TASK_LAZYLIST_SCROLL.md`，回货后删三处代偿。
+
+**验收读数**：`cmake --build --preset msvc --parallel` 通过；`ctest --preset msvc -E etest_ -j 16` **119/119 全绿**；`borealis_test_runner` 全跑 **1491 案 / 1488 绿**，三红均为 Windows 无 secret-service 的 `etest_libsecret_credential_store`（e2e 真后端面，不入 `-E etest_` 基线）。本棒 +12 案：`utest_serial_monitor_format` +6（18 案）、`utest_raw_tap` +1（10 案）、`itest_serial_monitor_panel` +5（11 案）。五则变异各有指名红案、逐字节 `cmp` 还原后复绿：M1 摘 16 行锚定余量 ⇒ 历史回看＋翻页两案红；M2 冻结判据去掉「窗口覆盖环尾」⇒ 翻页案红；M3 冻结粘滞 ⇒ 翻页＋离底两案红；M4 Latest 漏解暂停 ⇒ 双解案红；M5 清空漏豁免首帧几何 ⇒ 冻结清空案红。**实测订正稿面**：批 A 后一次性探针（MSVC `/O2`，满环 12000 行）计数 ≈95 µs、`window(0,96)` ≈19 µs、末尾 96 行 ≈136 µs；稿 §9.5 原写「≈23 µs」只覆盖折行段，偏差 6 倍，已按 §9.9 的复核条款回写实测值——跟尾帧真实成本 ≈230 µs + 快照 ≤5 µs（约一帧的 1.4%），成本随环长而非窗口走。
+
+**边界与不称可用**：真机走查未做（锁屏会话下 `SendInput` 静默失效，裁决 7.31①）——稿 §9.8 在册：滚轮步进与 20 dp 行高观感、「回到最新」出现/消失的边沿抖动需要人眼；环上限可调与两枚缺省档跨重启记忆（六处同步）、按会话编码解码的文本视图、导出/复制（撞 `SPEC.FEAT.CONN.11` 口径）、三型入口、逐字节时间戳与报文边界识别仍在册；面板族的换肤重建欠账同档。`src/main.cpp` 的取数次序不编入 runner（裁决 7.83）⇒ 源码审查＋走查担保。本条不替 CONN.05 摘「可用」（§4.4 第 33 条）。
+
 ## v0.157（2026-10-26）**`SPEC.FEAT.PREF.01` 亮/暗 chrome 适配结项：12 token 双色板、`appearance.chrome_theme` 三档、共享 `State<Theme>` 换肤与跟随系统轮询（裁决 7.157；本地提交 `a87571f`（设计稿）→ `c88d2be`（双色板与活动档）→ `9e8cb51`（配置键六处同步）→ `1b8e6a1`（标签栏与分屏去硬编码）→ `5f9c5f3`（装配接线）→ 文档回写（本笔））**
 
 **动机**：`SPEC.FEAT.PREF.01` 的预置配色腿与主题切换入口早已交付，剩下「UI 主题暗色优先、跟随 `ThemeScope`」的亮/暗半边一直挂在 PLAN 的 M2 行，理由是「无 light/dark 数据源、无配置键、不自行择一实现」。2026-10-26 复核推翻了前两条：Aurora 已有公共 `aurora::os_color_scheme()`（Win32 直读注册表、GTK 启发式、不缓存）。本棒按设计稿 `codespec/UI_CHROME.draft.md`（D1–D10 出稿时按「最优方案、不计工作量」自裁）一次收口。
