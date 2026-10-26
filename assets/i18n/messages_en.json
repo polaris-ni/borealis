@@ -278,6 +278,7 @@
     "session.monitor.notice.exported": "Exported {count, plural, one {{count} row} other {{count} rows}} to {path}",
     "session.monitor.notice.frozen": "Follow paused — scrolling up stops the live refresh",
     "session.monitor.notice.privacy": "This panel keeps its ring in memory; it writes to disk only when you export, and an exported file holds raw session bytes that may include passwords",
+    "session.monitor.toggle.boundary": "Burst boundary",
     "session.monitor.toggle.pause": "Pause refresh",
     "session.monitor.toggle.text_view": "Text view",
     "session.monitor.toggle.timestamp": "Timestamp prefix",

@@ -492,6 +492,7 @@
     },
     "session.monitor.notice.frozen": "已暂停跟尾（向上翻看时不追加新数据）",
     "session.monitor.notice.privacy": "本面板只在内存留痕，只有你显式导出时才会写盘；导出的文件是原始会话字节，可能含口令",
+    "session.monitor.toggle.boundary": "报文边界",
     "session.monitor.toggle.pause": "暂停刷新",
     "session.monitor.toggle.text_view": "文本视图",
     "session.monitor.toggle.timestamp": "时间戳前缀",

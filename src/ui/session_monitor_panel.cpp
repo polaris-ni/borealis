@@ -177,6 +177,8 @@ auto SessionMonitorPanel::make_options() const -> MonitorRowOptions {
         .view = text_view_ ? MonitorView::Text : MonitorView::Hex,
         // 腿名是跟绑定一起现取的那份副本，不是设置现值（稿 D28①）：换会话即换档，改设置不换。
         .encoding = encoding_,
+        // 第四枚同样是面板局部量（稿 §13 D46①）：它换的是**行种类**，环、采集、设置都不动。
+        .boundary_rows = boundary_rows_,
     };
 }
 
@@ -369,6 +371,12 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
 
 [[nodiscard]] auto SessionMonitorPanel::build_row(const MonitorRow &row) -> aurora::Node {
     const auto chrome = settings_chrome();
+    if (row.kind == MonitorRowKind::Boundary) {
+        // 分隔行**整行**走次要色，且只有一格：`RX`／`TX` 已经在那句里，强调色这一列本期不给它（稿 §13
+        // D47／F26「强调色只吃方向那一格」的既有形态不为新增行种类让路）。`row_text()` 在这里就等于
+        // `dump`（前缀与方向格恒空），故观测面与显示串仍同源。
+        return row_of(std::vector<aurora::Node>{node(mono_cell(row.dump, chrome.text_dim))}, 0.0F);
+    }
     // 三格顺序拼接就是 `row_text()`；格间**不给 gap**——对齐这件事只由等宽族与折算件负责（稿 §2）。
     auto cells = std::vector<aurora::Node>{};
     if (!row.timestamp_prefix.empty()) {
@@ -405,8 +413,9 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
                                                [this]() -> void { close(); }, chrome.card_line)));
     children.push_back(row_of(std::move(header_children), 8.0F));
 
-    // ---- 开关行：时间戳前缀（缺省开）+ 暂停刷新（缺省关）+ 文本视图（缺省关，稿 D26①）----
-    // 第三枚排在最后：集成用例按 `find("Switch", N)` 的树序取件，前两枚的序号不能因为新增而挪位。
+    // ---- 开关行：时间戳前缀（缺省开）+ 暂停刷新（缺省关）+ 文本视图（缺省关，稿 D26①）
+    //      + 报文边界（缺省关，稿 §13 D46①）----
+    // 新增的一枚**排在最后**：集成用例按 `find("Switch", N)` 的树序取件，前面几枚的序号不能因为新增而挪位。
     auto timestamp_switch = std::make_shared<aurora::Switch>(aurora::Reactive<bool>{timestamp_prefix_});
     timestamp_switch->set_on_changed(
         [this](bool next) -> void { on_timestamp_changed(next); });
@@ -414,7 +423,9 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
     pause_switch->set_on_changed([this](bool next) -> void { on_pause_changed(next); });
     auto text_switch = std::make_shared<aurora::Switch>(aurora::Reactive<bool>{text_view_});
     text_switch->set_on_changed([this](bool next) -> void { on_text_view_changed(next); });
-    for (auto &sw : {timestamp_switch, pause_switch, text_switch}) {
+    auto boundary_switch = std::make_shared<aurora::Switch>(aurora::Reactive<bool>{boundary_rows_});
+    boundary_switch->set_on_changed([this](bool next) -> void { on_boundary_changed(next); });
+    for (auto &sw : {timestamp_switch, pause_switch, text_switch, boundary_switch}) {
         // 锁高的理由与设置面板开关同款：滑块直径按自身盒高算，行交叉轴居中给的是紧约束。
         sw->modifier.set(aurora::Modifier{}.height(24.0F));
         sw->set_active_color(chrome.accent);
@@ -431,7 +442,10 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
                              node(std::static_pointer_cast<aurora::Widget>(std::move(pause_switch))),
                              node(make_text(settings_label("session.monitor.toggle.text_view"),
                                             chrome.text_dim)),
-                             node(std::static_pointer_cast<aurora::Widget>(std::move(text_switch)))},
+                             node(std::static_pointer_cast<aurora::Widget>(std::move(text_switch))),
+                             node(make_text(settings_label("session.monitor.toggle.boundary"),
+                                            chrome.text_dim)),
+                             node(std::static_pointer_cast<aurora::Widget>(std::move(boundary_switch)))},
                          8.0F));
 
     // ---- 动作行：把这一屏取出去（三期，稿 §10.2 D22①／§10.3）----
@@ -550,6 +564,21 @@ auto SessionMonitorPanel::on_text_view_changed(bool next) -> void {
     rebuild_pending_ = true;
 }
 
+auto SessionMonitorPanel::on_boundary_changed(bool next) -> void {
+    boundary_rows_ = next;
+    // 边界档换的是**行种类**，但同样换行号坐标系：分隔行进的是 `total_rows_` 与折带窗口，沿用旧行号
+    // 指向的是别段历史（稿 §13 F24／二期 D34 那条口径的同族）。故走与文本视图那枚完全相同的重排腿，
+    // 而不是时间戳那枚（前缀不进计数，行号不动）。回调里不折行，重建排在下一帧。
+    if (frozen_) {
+        frozen_ = false;
+        skip_geometry_once_ = true;  // 解除冻结＝回到这份料源的末尾（`on_latest()` 同一条腿）
+    }
+    if (paused_) {
+        rebase_rows_ = true;  // 暂停说的是「别读新环」，不是「别换形状」：清一下也不读环
+    }
+    rebuild_pending_ = true;
+}
+
 auto SessionMonitorPanel::on_clear() -> void {
     if (hooks_.clear != nullptr) {
         hooks_.clear();
@@ -641,7 +670,7 @@ auto SessionMonitorPanel::clear_state() -> void {
     dropped_bytes_ = 0U;
     binding_.clear();
     // 编码腿名跟绑定同生死（稿 D28①：它是「那条会话」的属性，不是面板的档）；下一次 `follow_frame()`
-    // 会随新绑定现取。三枚面板局部档不在这里复位——与另两枚同一条口径（D9①：复位只发生在进程重启）。
+    // 会随新绑定现取。面板那几枚局部档不在这里复位——同一条口径（D9①：复位只发生在进程重启）。
     encoding_ = "UTF-8";
     seen_revision_ = 0U;
     cap_bytes_ = session::kMaxRawTapBytes;

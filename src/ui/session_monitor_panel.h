@@ -5,8 +5,9 @@
 // ------------------------------------------------------------
 // `SPEC.FEAT.CONN.05` 那条延后子项「可选十六进制收发视图与行首时间戳前缀」的界面腿，形态由设计稿
 // `codespec/UI_SERIAL_MONITOR.draft.md` 的 D1①／D5①／D6①／D7①／D8①／D9①（二期再叠 D10～D18）定形：
-// 左侧 **640 dp** 停靠卡片（8 字节/行 = 54 字符，14 pt 等宽单格 11 dp ⇒ 594 dp）、三枚**面板局部**开关
-// （时间戳前缀缺省开、暂停刷新缺省关、文本视图缺省关＝稿 §11 D26①）、一枚清空、丢弃计数上屏，
+// 左侧 **640 dp** 停靠卡片（8 字节/行 = 54 字符，14 pt 等宽单格 11 dp ⇒ 594 dp）、四枚**面板局部**开关
+// （时间戳前缀缺省开、暂停刷新缺省关、文本视图缺省关＝稿 §11 D26①、报文边界缺省关＝稿 §13 D46①）、
+// 一枚清空、丢弃计数上屏，
 // 零新设置键（D9①：环上限仍是文件级常量，重启即回缺省档；二期的折带窗口是显示期常量，不是第二个上限）。
 //
 // **本件不认识 `Session`，也不认识连接类型**（五期把入口扩到四型，本件的形状与型无关；隧道／密钥／SFTP
@@ -27,6 +28,8 @@
 //      （`kMonitorVisibleRowCap` / `kMonitorTailBytes` / `tail_runs`）已删除（D18①）。
 //   ⑵ **上色与等宽**：`direction_label` 那一格吃强调色、其余两格正色（稿 §2：RX／TX 只以这两个字母与
 //      一列强调色区分），族名 `kDefaultMonospaceFamily`——行形态的算术只在这个族名下成立（F8／F9）。
+//      边界行（`MonitorRowKind::Boundary`，稿 §13 D47）是这一条的例外：它整行走次要色，`RX`／`TX`
+//      已经在 `dump` 那句里，不再单独吃强调色（本期不新增颜色档）。
 //   ⑶ **留痕**：丢弃计数 >0 才上屏那句「已丢弃 N 字节」，另有「只在显式导出时才写盘」那句常驻（稿 §1 第一条
 //      安全口径经 §10.2 D24① 改口）；冻结时另出「已暂停跟尾」与「回到最新」两枚（D13①），跟尾时都不出现。
 //   ⑷ **取出去**（三期，稿 §10）：标题行两枚按钮把 `source_` 按**当前显示档**整份折成文本
@@ -181,8 +184,14 @@ class SessionMonitorPanel {
 
     /// @brief 文本视图档（观测面；缺省关＝十六进制档，稿 §11 D26①）。
     ///
-    /// 与另两枚同族：面板局部量，切档只换行形态，不改采集、不改环、不改设置。
+    /// 与面板其余局部量同族：切档只换行形态，不改采集、不改环、不改设置。
     [[nodiscard]] auto text_view_enabled() const noexcept -> bool { return text_view_; }
+
+    /// @brief 报文边界档（观测面；缺省关，稿 §13 D46①）。
+    ///
+    /// 与面板其余局部量同族，但它**换的是行种类**而不是行内容：开档后行区多出分隔行，于是当前窗口的行号
+    /// 坐标系跟着变（`total_rows_` 里多算了分隔行）——切档走的是 `on_text_view_changed` 那条重排腿。
+    [[nodiscard]] auto boundary_enabled() const noexcept -> bool { return boundary_rows_; }
 
     /// @brief 这一屏料源的整份行文本（三期观测面，稿 §10.2 D19①／D20①）。
     ///
@@ -198,7 +207,7 @@ class SessionMonitorPanel {
     /// @brief 问一次环（Hook 缺席即空投影：本件不许因装配层没装某条腿而崩）。
     [[nodiscard]] auto read_snapshot() const -> Snapshot;
 
-    /// @brief 当前显示档（三枚面板局部量都在这里汇合；窗口折行与整表折行同一口径）。
+    /// @brief 当前显示档（面板那几枚局部量都在这里汇合；窗口折行与整表折行同一口径）。
     [[nodiscard]] auto make_options() const -> MonitorRowOptions;
 
     /// @brief 几何判冻结（D12①）：离底且不在环尾窗口的底端 ⇒ 冻结；未布局/不足一屏一律视为跟尾。
@@ -229,6 +238,7 @@ class SessionMonitorPanel {
 
     auto on_timestamp_changed(bool next) -> void;
     auto on_text_view_changed(bool next) -> void;
+    auto on_boundary_changed(bool next) -> void;
     auto on_pause_changed(bool next) -> void;
     auto on_clear() -> void;
     auto on_latest() -> void;
@@ -244,10 +254,11 @@ class SessionMonitorPanel {
     std::shared_ptr<aurora::LazyList> list_{};  ///< 当前浮层里的行区（重建即换新；观察滚动几何用）。
     bool open_ = false;
 
-    // ---- 三枚面板局部量（D9①：零新设置键，重启回这里写的缺省档；稿 §11 D26① 加第三枚）----
+    // ---- 面板局部量（D9①：零新设置键，重启回这里写的缺省档；稿 §11 D26① 加第三枚、§13 D46① 加第四枚）----
     bool timestamp_prefix_ = true;  ///< 关掉即不折前缀，也不调 `localtime`（稿 D6④ 的那半代价）。
     bool paused_ = false;           ///< 暂停＝用户显式停更，仍可按显示档重画。
     bool text_view_ = false;        ///< 缺省关＝十六进制档；开＝按会话编码腿解出的文本档（稿 D26／D27）。
+    bool boundary_rows_ = false;    ///< 缺省关＝连续行；开＝一条 run 在自然行界收尾时多画一条分隔行（稿 D44／D46）。
     bool frozen_ = false;           ///< 冻结＝离底自动停更（D12①）；与暂停互相独立（D14①）。
     bool rebuild_pending_ = false;  ///< 暂停/冻结中改了档、清了环或冻结边沿：下一帧补一次重建。
     bool skip_geometry_once_ = false;  ///< 「回到最新」/清空之后的首帧不判几何（旧列表还在离底位置）。

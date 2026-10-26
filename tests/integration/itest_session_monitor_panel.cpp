@@ -11,11 +11,14 @@
 // 暂停中换档只重画不读环、暂停中换档在两档行数不等时复位到这份料源的末尾。
 // 最后那一条是 D34②那条重排腿**唯一**的证人，故刻意用 62 字节的宽行：短行在两档折出同样的行数，
 // 「沿用旧行号」与「按新档重算」给出同一份窗口，把那条腿整段删掉 24 案仍全绿（批 C 变异自证实测到）。
+// 六期（稿 §13）再加五腿：第四枚开关在开关行里画得出且点得动（同一条 `find` 也就是卡宽没溢出的证人）、
+// 开档上屏的分隔行只落在自然行界上（跨 run 的那条设备行整条只有一条）、字节计数与料源都不因翻档而变、
+// 复制／`dump_text` 交出的文本带着分隔行（D49①）、停更两态下翻档各走自己的腿（冻结即回尾、暂停只重排）。
 // 驱动台形态照 itest_tunnel_panel 的 Harness（present_root 排真实布局 + hit_test_chain 取命中 +
 // EventDispatcher 发真事件），精简到本件用得到的那几条腿。
 //
-// 判据一律走面板交出的观测面（visible_rows / notice / timestamp_enabled / text_view_enabled / is_open），
-// 浮层树只用于「按钮与开关真点得到」这一条派发腿——行区重建会挪位置，按坐标断言会把排版改动误报成功能回归。
+// 判据一律走面板交出的观测面（visible_rows / notice / timestamp_enabled / text_view_enabled /
+// boundary_enabled / is_open），浮层树只用于「按钮与开关真点得到」这一条派发腿——行区重建会挪位置，按坐标断言会把排版改动误报成功能回归。
 //
 // 「快照被问了几次」（`snapshot_calls`）是本件独有的证人：暂停这条腿的判据不是「画面没变」，而是
 // 「压根没去读环」——只看行表的话，「读了但算出同一份」与「没读」两种实现都给同一个读数。
@@ -419,6 +422,38 @@ auto toggle_text_view(Harness &h) -> void {
     const bool before = sw->value();
     h.click(spot);
     AURORA_TEST_CHECK(sw->value() != before);
+}
+
+/// @brief 真点第四枚开关（报文边界，稿 §13 D46①）并确认它翻了位。
+///
+/// 序号 4 同样是刻意的：新增的一枚排在开关行**末**，前三枚的树序不挪位。这条 `find` 本身派发得到，
+/// 就是「四枚标签 + 四枚开关仍在 616 dp 卡宽里排得下」的证人（F27：整组被挤出卡宽时点在派发链上点不到）。
+auto toggle_boundary(Harness &h) -> void {
+    auto spot = h.find("Switch", 4);
+    AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr, "the boundary switch is not dispatch-reachable");
+    auto *sw = dynamic_cast<au::Switch *>(spot.widget);
+    AURORA_TEST_REQUIRE(sw != nullptr);
+    const bool before = sw->value();
+    h.click(spot);
+    AURORA_TEST_CHECK(sw->value() != before);
+}
+
+/// @brief 行表里分隔行的条数（稿 §13 D44①：一条 run 在自然行界收尾才算一条）。
+[[nodiscard]] auto boundary_row_count(const std::vector<ui::MonitorRow> &rows) -> std::size_t {
+    std::size_t count = 0U;
+    for (const auto &row : rows) {
+        if (row.kind == ui::MonitorRowKind::Boundary) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+/// @brief 行表里有没有这句形态的分隔行（按 `dump` 逐字符比，不按 `find` 比substring）。
+[[nodiscard]] auto shows_separator(const std::vector<ui::MonitorRow> &rows, const std::string &text) -> bool {
+    return std::any_of(rows.begin(), rows.end(), [&text](const ui::MonitorRow &row) -> bool {
+        return row.kind == ui::MonitorRowKind::Boundary && row.dump == text;
+    });
 }
 
 }  // namespace
@@ -1260,6 +1295,163 @@ AURORA_TEST_CASE(switching_the_view_while_paused_rebases_to_the_tail_of_this_sou
     AURORA_TEST_CHECK_EQ(rows.size(), 96U);
     AURORA_TEST_CHECK_TRUE(shows_tag(rows, 99));    // 屏尾是这份料源的最后一条
     AURORA_TEST_CHECK_FALSE(shows_tag(rows, 0));    // 不是从旧行号指向的那一段开始的
+}
+
+// ------------------------------------------------------------
+// 判据㉑（稿 §13 D46①／F27）：第四枚开关画得出、点得动，开档只加分隔行、不动字节计数
+// ------------------------------------------------------------
+AURORA_TEST_CASE(boundary_switch_is_the_fourth_toggle_and_rewrites_the_rows) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe = make_probe();  // `OK\r\n`（RX 4 B）与 `AT\r\n`（TX 4 B，晚 1000 ms）：两条都收在行界上
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    AURORA_TEST_CHECK_FALSE(panel->boundary_enabled());  // 缺省关＝今天那档（稿 D46①）。
+    const std::string toggle_label = ui::settings_label("session.monitor.toggle.boundary");
+    AURORA_TEST_REQUIRE_MSG(!toggle_label.empty(), "the boundary switch has no vocabulary entry");
+    AURORA_TEST_REQUIRE_MSG(h.find_text(toggle_label).widget != nullptr,
+                            "the boundary switch label is not drawn");
+    auto rows = panel->visible_rows();
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 2U);
+    AURORA_TEST_CHECK_EQ(boundary_row_count(rows), 0U);
+
+    toggle_boundary(h);
+    h.tick(*panel);
+    AURORA_TEST_CHECK_TRUE(panel->boundary_enabled());
+    rows = panel->visible_rows();
+    // 分隔行插在**它自己那条 run 之后**：内容与边界交替，不是整屏末尾补两条。
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 4U);
+    AURORA_TEST_CHECK_TRUE(rows[0].kind == ui::MonitorRowKind::Content);
+    AURORA_TEST_CHECK_TRUE(rows[1].kind == ui::MonitorRowKind::Boundary);
+    AURORA_TEST_CHECK_EQ(rows[1].dump, "-- RX 4 B --");
+    AURORA_TEST_CHECK_EQ(rows[3].dump, "-- TX 4 B (+1000 ms) --");
+    // 标题行那句字节计数吃的是环里的字节数（8），与行种类无关：开档前后同一句仍在树上。
+    AURORA_TEST_REQUIRE_MSG(h.find_text(
+                                ui::settings_label("session.monitor.bytes", {{"count", std::int64_t{8}}}))
+                                .widget != nullptr,
+                            "the header byte count moved with the boundary toggle");
+
+    toggle_boundary(h);
+    h.tick(*panel);
+    AURORA_TEST_CHECK_FALSE(panel->boundary_enabled());
+    rows = panel->visible_rows();
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 2U);  // 同一份料源：整批分隔行消失，内容行还是那两行
+    AURORA_TEST_CHECK_TRUE(rows[0].dump.find("4F 4B 0D 0A") != std::string::npos);
+    AURORA_TEST_CHECK_TRUE(rows[1].dump.find("41 54 0D 0A") != std::string::npos);
+}
+
+// ------------------------------------------------------------
+// 判据㉒（稿 §13 D44①）：跨 run 的同一条设备行整条只有一条分隔行，落在它的末尾
+// ------------------------------------------------------------
+AURORA_TEST_CASE(a_device_line_split_across_runs_gets_one_separator_at_its_end) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    probe.record(make_run(session::RawDirection::Received, 1'700'000'000'000LL, "ab"));
+    probe.record(make_run(session::RawDirection::Received, 1'700'000'000'050LL, "cd\r\n"));
+    probe.record(make_run(session::RawDirection::Received, 1'700'000'000'080LL, "ef"));
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 2U);  // `abcd\r\n` 与末尾挂起的 `ef`
+    toggle_boundary(h);
+    h.tick(*panel);
+    const auto rows = panel->visible_rows();
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 3U);
+    // 第一条 run（2 B）不收在行界上 ⇒ 不给分隔行；第二条把那条设备行收了尾 ⇒ 一条，说的是它那 4 个字节。
+    AURORA_TEST_CHECK_EQ(boundary_row_count(rows), 1U);
+    AURORA_TEST_CHECK_TRUE(shows_separator(rows, "-- RX 4 B (+50 ms) --"));
+    AURORA_TEST_CHECK_FALSE(shows_separator(rows, "-- RX 2 B --"));
+    AURORA_TEST_CHECK_TRUE(rows[2].kind == ui::MonitorRowKind::Content);  // 挂起尾段仍是内容行，不是分隔行
+}
+
+// ------------------------------------------------------------
+// 判据㉓（稿 §13 D49①）：开档时交出去的文本与屏面同源——分隔行跟着一起出去
+// ------------------------------------------------------------
+AURORA_TEST_CASE(copy_and_dump_carry_the_separators_when_the_boundary_toggle_is_on) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe = make_probe();
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    toggle_boundary(h);
+    h.tick(*panel);
+    const auto text = panel->dump_text();
+    AURORA_TEST_CHECK_TRUE(text.find("-- RX 4 B --") != std::string::npos);
+    AURORA_TEST_CHECK_TRUE(text.find("-- TX 4 B (+1000 ms) --") != std::string::npos);
+    // 屏面与交出去的文本一台折算件：行数相等且每一行逐字符都在（稿 D19① 在边界档仍成立）。
+    const auto rows = panel->visible_rows();
+    AURORA_TEST_CHECK_EQ(dump_line_count(text), rows.size());
+    for (const auto &row : rows) {
+        AURORA_TEST_CHECK_TRUE(text.find(ui::row_text(row)) != std::string::npos);
+    }
+
+    auto copy_spot = h.find_button(ui::settings_label("session.monitor.action.copy"));
+    AURORA_TEST_REQUIRE_MSG(copy_spot.widget != nullptr, "the copy button is not dispatch-reachable");
+    h.click(copy_spot);
+    h.tick(*panel);
+    AURORA_TEST_REQUIRE_EQ(probe.copy_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.copied_text, text);
+}
+
+// ------------------------------------------------------------
+// 判据㉔（稿 §13 F24／二期 D34 同族）：冻结中翻边界档＝回到这份料源的末尾
+// ------------------------------------------------------------
+AURORA_TEST_CASE(switching_the_boundary_toggle_while_frozen_returns_to_the_tail_of_this_source) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 80);  // 每条 run 一行，且都收在 CRLF 上 ⇒ 开档后一条 run 占两行
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+
+    scroll_to_top(h, *panel);
+    AURORA_TEST_REQUIRE_TRUE(panel->frozen());
+    AURORA_TEST_REQUIRE_TRUE(row_is(panel->visible_rows().front(), 0));
+
+    toggle_boundary(h);
+    h.tick(*panel);
+    AURORA_TEST_CHECK_FALSE(panel->frozen());  // 翻档即解除冻结（与「回到最新」同一条腿）
+    const auto rows = panel->visible_rows();
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 96U);  // 160 行 > 折带窗口 96：屏上是尾段 32..79 那 48 条 run
+    AURORA_TEST_CHECK_EQ(boundary_row_count(rows), 48U);
+    AURORA_TEST_CHECK_TRUE(shows_line(rows, 79));
+    AURORA_TEST_CHECK_TRUE(shows_separator(rows, "-- RX 6 B (+1 ms) --"));
+    AURORA_TEST_CHECK_FALSE(shows_line(rows, 31));  // 不是沿旧行号（hex 的 0 起步）跳去另一段历史
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.notice.frozen")).widget == nullptr);
+}
+
+// ------------------------------------------------------------
+// 判据㉕（稿 §13 D46① 的停更腿）：暂停中翻边界档只重排这一屏，压根不去读环
+// ------------------------------------------------------------
+AURORA_TEST_CASE(switching_the_boundary_toggle_while_paused_rebases_to_the_tail_of_this_source) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_wide_lines(probe, 100);  // 62 字节的设备行：hex 档 8 行 + 1 条分隔行＝每条 run 占 9 行
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+    AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 96U);  // 800 行的尾窗：行号坐标系是 hex 的
+
+    auto pause_spot = h.find("Switch", 2);
+    AURORA_TEST_REQUIRE_MSG(pause_spot.widget != nullptr, "the pause switch is not reachable");
+    h.click(pause_spot);
+    h.tick(*panel);
+    const std::size_t calls_while_paused = probe.snapshot_calls;
+
+    toggle_boundary(h);
+    h.tick(*panel);
+    AURORA_TEST_CHECK_EQ(probe.snapshot_calls, calls_while_paused);  // 「别读新环」这条不放松
+    const auto rows = panel->visible_rows();
+    // 沿用旧行号（hex 的 704 起步）在 900 行的新坐标系里指向中段历史；重排才给得出这份料源的末尾。
+    AURORA_TEST_REQUIRE_MSG(!rows.empty(), "the paused boundary switch folded an empty window");
+    AURORA_TEST_CHECK_EQ(rows.size(), 96U);
+    AURORA_TEST_CHECK_EQ(boundary_row_count(rows), 11U);  // 屏尾那条 run 的分隔行在场
+    AURORA_TEST_CHECK_TRUE(shows_tag(rows, 99));
+    AURORA_TEST_CHECK_TRUE(shows_separator(rows, "-- RX 62 B (+1 ms) --"));
+    AURORA_TEST_CHECK_FALSE(shows_tag(rows, 0));
 }
 
 }  // namespace borealis::test_cases::itest_session_monitor_panel
