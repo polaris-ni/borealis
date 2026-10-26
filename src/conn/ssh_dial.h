@@ -68,7 +68,22 @@ enum class DialOutcome : std::uint8_t {
     Auth,        ///< 认证被服务器拒绝，或缺该方式必需的秘密材料。
     Hop,         ///< 跳板侧失败（`SPEC.FEAT.CONN.03`）：卡在链路里的某一跳，档位见 `DialFailure`。
     HopUnwired,  ///< 档案带跳链但本条腿不会建链：fail-closed 拒拨，绝不静默直连（稿 D6）。
+    SeedTruncated, ///< seed 句柄过宽，库会折掉高位（稿 F17）：拨号前拒，绝不冒跑在别人连接上的险。
 };
+
+/// @brief 库对 seed 句柄的存储宽度：`ssh_options_set(SSH_OPTIONS_FD)` 落的是
+///        `session->opts.fd = *x & 0xffff`（libssh 0.12.2 `src/options.c` 实测，稿 F17）。
+inline constexpr std::uintptr_t kSeedFdLibraryWidth = 0xffffU;
+
+/// @brief seed 句柄能否原样穿过库的那格 16 位存储（纯逻辑，无头单测）。
+///
+/// 0（＝不递 seed，走真 TCP）恒为真。超宽的真值被折掉高位后**仍是一枚看起来合法的句柄**，
+/// 而它可能是进程里另一条活连接的句柄——协议就跑到了别人的链路上（不是「这次拨号失败」
+/// 而是「串线」）。Win32 的 `SOCKET` 是内核句柄、句柄表长了就会越过 0xffff；POSIX 的 fd
+/// 同理会随打开数增长，故本判据不分平台。
+[[nodiscard]] constexpr auto seed_fd_fits_library_storage(std::uintptr_t seed_fd) -> bool {
+    return seed_fd <= kSeedFdLibraryWidth;
+}
 
 /// @brief 带跳链拨号的失败归因：卡在哪一档 + 第几跳（`SPEC.FEAT.CONN.03` 稿 D4）。
 ///
@@ -117,6 +132,7 @@ struct SshAlgorithmOverrides {
 ///                `SSH_OPTIONS_FD`，本次拨号在该句柄上跑协议而**不**发起 TCP 连接；
 ///                0＝走真 TCP。句柄的关闭责任在调用方（libssh 0.10 起 `ssh_disconnect()`
 ///                不关它，见稿 D4）。档案带跳链而未交 seed ⇒ `HopUnwired`（稿 D6）。
+///                seed 宽过库的 16 位存储 ⇒ `SeedTruncated`（稿 F17，未发起连接）。
 /// @return 认证成功回 `Ok`；其余按失败所在的那一步回对应档位。
 ///
 /// `SPEC.FEAT.CONN.03` 的四条拨号腿（终端/SFTP/隧道/密钥推送）均已按 seed 建链

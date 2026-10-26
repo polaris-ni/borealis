@@ -185,6 +185,9 @@ auto run_exec(ssh_session_struct *session, std::string_view command, std::string
     // 四级阶梯讲的是「走到哪一步」，不为某一跳再开一档文案；hop_index 在 ERROR 日志里。
     case DialOutcome::Hop:
     case DialOutcome::HopUnwired:
+    // SeedTruncated＝跳链出口的句柄宽过库的存储格（稿 F17）：本机句柄形状问题，同样不是
+    // 用户能区分的一档阶梯，落「连不上」，真值与宽度都写在 ERROR 日志里。
+    case DialOutcome::SeedTruncated:
     case DialOutcome::Ok:
         break;
     }

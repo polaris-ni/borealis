@@ -1,11 +1,11 @@
-/// 测试类型: integration（POSIX 腿）
+/// 测试类型: integration（两通道）
 /// 目标单元: src/conn/ssh_hop_chain.{h,cpp} + src/conn/ssh_dial.{h,cpp} 的 seed 腿 +
-///           src/platform/posix/hop_pipe.cpp + 三条拨号腿（sftp_client／tunnel_client／
+///           src/platform/{posix,win}/hop_pipe.cpp + 三条拨号腿（sftp_client／tunnel_client／
 ///           key_push）的接链形态（`SPEC.FEAT.CONN.03` 批 6）
 /// 测试说明: `SPEC.FEAT.CONN.03` 跳板机（稿 D1「自建 direct-tcpip 跳链」／D4／D6／D10）的
 ///           **真协议**端到端证人。对端是 2–3 台进程内假 SSH 服务器（跳板那几台开了
 ///           `allow_direct_tcpip`，于是它们真的替客户端把字节搬到下一台），链路两端跑的
-///           是真 libssh 会话。证九件事（稿 §5 的 E1/E2/E3/E4 + D6/E6 + 0 跳边界 + E5 两条 + E7）：
+///           是真 libssh 会话。证十件事（稿 §5 的 E1/E2/E3/E4 + D6/E6 + 0 跳边界 + E5 两条 + E7 + F17 宽度闸）：
 ///           ① E1 一跳：目标经跳链连通并回显；跳板服务器 1 次 `direct-tcpip`，目的地＝
 ///              目标端口；目标服务器收到 1 条连接与 1 条 shell。
 ///           ② E2 两跳：A 的转发目的地＝B 端口、B 的转发目的地＝目标端口（跳序写反立刻现形）。
@@ -24,6 +24,8 @@
 ///           ⑧ E5 分键：registry 只比不拨——空链、跳板口令异、目标口令异、跳板主机异（这一条
 ///              只靠 `proxy_jumps` 入键）都借不到那条链路。
 ///           ⑨ E7 关一格只收它自己的通道：跳板连接数不变、另一格照常收发（原生实现做不到，F15）。
+///           ⑩ F17 宽度闸：seed 句柄宽过库的 16 位存储格时，dial 在发起任何协议之前拒拨
+///              （照原值递进去会被折成另一枚看起来合法的句柄＝跑在别人的连接上）。
 ///
 ///           真协议链路的读环在共享会话里跑（I/O 线程），故 ⑦⑨ 也是「跳链 + 多标签」这条
 ///           组合形态唯一的证人。
@@ -33,8 +35,10 @@
 ///           隔不干净（libssh 的主目录取 `getpwuid(2)` 的 `pw_dir`，`$HOME` 只是查不到时的回退，
 ///           实测依据见稿 §6），故不入本件。
 ///
-///           无 Win32 腿：假服务器与 hop_pipe 的 Win32 腿均未编译验证（稿 §6 第一条），
-///           文件名 `_posix_` 让 cmake/BorealisTests.cmake 在 Windows 构建里排除本套件。
+///           两通道同一份：裸句柄全在两条平台接缝里各按后端分腿——假服务器那处见
+///           `tests/support/fake_ssh_server.cpp`，`platform::make_hop_pair` 的 POSIX 腿走
+///           `socketpair`、Win32 腿走回环 TCP 一对（`src/platform/win/hop_pipe.cpp`，本件是它的
+///           第一位消费者，2026-10-27 起两通道同编同跑）。断言不看句柄形状，只看线上事实。
 
 #include <array>
 #include <cstddef>
@@ -64,7 +68,7 @@
 #include "conn/tunnel_client.h"
 #include "support/fake_ssh_server.h"
 
-namespace borealis::test_cases::itest_posix_ssh_proxy_jump {
+namespace borealis::test_cases::itest_ssh_proxy_jump {
 
 namespace {
 
@@ -450,6 +454,25 @@ AURORA_TEST_CASE(profile_with_jumps_without_seed_refuses_to_connect_directly) {
     AURORA_TEST_CHECK_EQ(jump.accepted_connections(), std::size_t{0});
 }
 
+AURORA_TEST_CASE(a_seed_wider_than_the_library_slot_is_refused_before_connect) {
+    FakeSshServer jump{jump_options()};
+    FakeSshServer target{target_options()};
+    AURORA_TEST_REQUIRE_MSG(jump.ok() && target.ok(), "fake ssh servers could not listen");
+
+    // 稿 F17 的宽度闸（libssh 0.12.2 `src/options.c` 实测：`SSH_OPTIONS_FD` 落的是
+    // `session->opts.fd = *x & 0xffff`）：宽句柄被折掉高位后仍是一枚看起来合法的句柄，而它
+    // 可能是本进程另一条活连接的句柄——那是**串线**，不是「这次拨号失败」。故 dial 在发起任何
+    // 协议之前拒；两台服务器零连接既是「没连」的证人，也是「没拿别人的句柄去连」的证人。
+    const auto profile = target_profile(target, {make_hop(jump)});
+    auto session = Session{};
+    const auto outcome =
+        ssh_dial_and_authenticate(profile, std::string{kSecret}, session.get(),
+                                  SshAlgorithmOverrides{}, /*seed_fd=*/0x10000U);
+    AURORA_TEST_CHECK_MSG(outcome == DialOutcome::SeedTruncated, "not the seed-width bucket");
+    AURORA_TEST_CHECK_EQ(target.accepted_connections(), std::size_t{0});
+    AURORA_TEST_CHECK_EQ(jump.accepted_connections(), std::size_t{0});
+}
+
 AURORA_TEST_CASE(sftp_leg_dials_the_target_through_the_chain) {
     FakeSshServer jump{jump_options()};
     FakeSshServer target{target_options()};
@@ -669,4 +692,4 @@ AURORA_TEST_CASE(closing_one_tab_does_not_stop_the_chain_of_the_others) {
     second_tab->close();
 }
 
-}  // namespace borealis::test_cases::itest_posix_ssh_proxy_jump
+}  // namespace borealis::test_cases::itest_ssh_proxy_jump

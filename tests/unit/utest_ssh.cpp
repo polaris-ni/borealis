@@ -1,12 +1,13 @@
 /// 测试类型: unit
 /// 目标单元: src/conn/ssh_connection.h（私有头）纯逻辑裁决函数
 /// 测试说明: 守住 SSH 传输抽出来的纯逻辑矩阵——主机密钥策略裁决、端口/认证方式
-///           归一、认证材料需求判定；另含算法表的本地写入证人（`ssh_options_get`
-///           回读，无网络）。真实 ssh_connect/认证属网络 I/O，不在无头单测范围
+///           归一、认证材料需求判定、seed 句柄的库内存储宽度判据；另含算法表的本地写入证人
+///           （`ssh_options_get` 回读，无网络）。真实 ssh_connect/认证属网络 I/O，不在无头单测范围
 ///           （沙箱无 sshd）；传输体的线程纪律与 forkpty 腿同构。
 
 #include "conn/ssh_connection.h"
 
+#include <cstdint>
 #include <string>
 
 #include <libssh/libssh.h>
@@ -156,6 +157,17 @@ AURORA_TEST_CASE(empty_overrides_leave_the_library_defaults_untouched) {
     AURORA_TEST_CHECK_EQ(read_algorithms(session, SSH_OPTIONS_HOSTKEYS), before_host_key);
 
     ssh_free(session);
+}
+
+AURORA_TEST_CASE(seed_fd_width_gate_matches_the_library_storage_slot) {
+    // 稿 F17：库写 `SSH_OPTIONS_FD` 时落的是 `session->opts.fd = *x & 0xffff`（libssh 0.12.2
+    // `src/options.c` 实测），本仓的闸取同一格宽度——宽出来的句柄不是「拨号失败」而是「跑在
+    // 别人已有的连接上」，所以判据必须是拒而不是放行后由库出错。
+    AURORA_TEST_CHECK_TRUE(conn::seed_fd_fits_library_storage(0U));
+    AURORA_TEST_CHECK_TRUE(conn::seed_fd_fits_library_storage(0x1D4U));
+    AURORA_TEST_CHECK_TRUE(conn::seed_fd_fits_library_storage(conn::kSeedFdLibraryWidth));
+    AURORA_TEST_CHECK_FALSE(conn::seed_fd_fits_library_storage(conn::kSeedFdLibraryWidth + 1U));
+    AURORA_TEST_CHECK_FALSE(conn::seed_fd_fits_library_storage(std::uintptr_t{0x7FF00000U}));
 }
 
 }  // namespace borealis::test_cases::utest_ssh

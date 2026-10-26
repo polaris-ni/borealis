@@ -70,11 +70,13 @@ constexpr std::string_view kPtyTerm = "xterm-256color";
             return session::CloseReason::HostKeyRejected;
         case DialOutcome::Options:
         case DialOutcome::Unallocated:
-        // Hop＝某一跳失败（子档在 `DialFailure` 里）、HopUnwired＝这条腿不建链就拒拨（稿 D6）。
-        // 本腿还不消费跳链（`SPEC.FEAT.CONN.03` 批 4 接线），两档现在都到不了这里；归不进
-        // 任何一类网络/服务器原因，保守按不可重拨。
+        // Hop＝某一跳失败（子档在 `DialFailure` 里）、HopUnwired＝这条腿不建链就拒拨（稿 D6）：
+        // 本腿批 4 起接了链，`Hop` 是真到得了的（跳板认证/密钥被拒），`HopUnwired` 只剩漏接线的
+        // 兜底档。两档都归不进任何一类网络/服务器原因，保守按不可重拨。
         case DialOutcome::Hop:
         case DialOutcome::HopUnwired:
+        // SeedTruncated＝seed 宽过库的存储格（稿 F17）：本机句柄形状问题，重拨只会原样再失败。
+        case DialOutcome::SeedTruncated:
         case DialOutcome::Ok:
             break;
     }
@@ -647,7 +649,7 @@ struct SshSharedSession::Impl {
         if (index.has_value()) {
             auto &lease = *leases[*index];
             // 与旧单标签腿的观测面一致：close() 返回前一定投一份 LocalClose（既有
-            // `itest_posix_ssh_connection` 三案的判据）。`on_finished` 先于它，alive() 立即可判。
+            // `itest_ssh_connection` 三案的判据）。`on_finished` 先于它，alive() 立即可判。
             lease.on_finished();
             lease.events->on_reconnect_progress(session::ReconnectProgress{
                 .attempt = 0,

@@ -133,6 +133,15 @@ auto ssh_dial_and_authenticate(const SshProfile &profile,
         // （库侧 `SSH_OPTIONS_FD` 分支不在平台守卫内，稿 F14）。`SSH_OPTIONS_HOST`
         // 与端口照旧设——主机密钥核对按「host:port」查 known_hosts，跳板那一跳的策略
         // 判据要靠它。句柄关闭责任留在调用方：libssh 0.10 起 `ssh_disconnect()` 不关它。
+        // 宽度过闸（稿 F17）：库把值折成 16 位再存，折出来的数可能是进程里另一条活连接的
+        // 句柄——那不再是「这次拨号失败」而是「串线」，所以在发起任何协议之前拒拨。
+        if (!seed_fd_fits_library_storage(seed_fd)) {
+            AURORA_LOG_ERROR("conn", "ssh: dial: seed handle ", std::to_string(seed_fd),
+                             " does not fit the library's 16-bit fd slot (limit ",
+                             std::to_string(kSeedFdLibraryWidth), ") for '", profile.host,
+                             "'; refusing to dial on a handle the library would truncate");
+            return DialOutcome::SeedTruncated;
+        }
         const auto fd = static_cast<socket_t>(seed_fd);
         ssh_options_set(session, SSH_OPTIONS_FD, &fd);
     }
