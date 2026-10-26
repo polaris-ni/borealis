@@ -544,7 +544,44 @@ AURORA_TEST_CASE(history_beyond_the_fold_window_is_reachable_by_scrolling_back) 
 }
 
 // ------------------------------------------------------------
-// 判据⑧（稿 D12①／D13①）：离底即冻结且不自动吸回；滚回窗口底（窗口已抵环尾）才恢复跟尾
+// 判据⑧（稿 §9.4 滑窗向下那半）：冻结中滚到窗口底只是继续下翻，窗口抵环尾才许解冻
+// ------------------------------------------------------------
+AURORA_TEST_CASE(scrolling_down_a_frozen_window_pages_instead_of_unfreezing) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 200);
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+    h.tick(*panel);  // 同判据⑦：先消化 open() 的几何豁免。
+
+    scroll_to_top(h, *panel);  // 冻结在中段窗口（88..183）。
+    AURORA_TEST_REQUIRE(panel->frozen());
+    AURORA_TEST_REQUIRE(row_is(panel->visible_rows().front(), 88));
+    const std::size_t calls_while_frozen = probe.snapshot_calls;
+
+    // 滚到窗口底：at_bottom 为真，但窗口底（183）不是环底（200）——只是继续往下翻。
+    auto *list = h.find_list();
+    AURORA_TEST_REQUIRE(list != nullptr);
+    list->set_scroll_offset(list->max_scroll_offset());
+    h.tick(*panel);
+    AURORA_TEST_CHECK_TRUE(panel->frozen());
+    AURORA_TEST_CHECK_EQ(probe.snapshot_calls, calls_while_frozen);
+    // 窗口落点由「可见首行 - 16 行」与「窗口须盖到环尾」两头上限夹住：这里是环尾窗口 104..199。
+    AURORA_TEST_CHECK(row_is(panel->visible_rows().front(), 104));
+    AURORA_TEST_CHECK(row_is(panel->visible_rows().back(), 199));
+
+    // 窗口已抵环尾，再滚到窗口底才解冻（几何判据的两个合取项此时都成立）。
+    list = h.find_list();
+    AURORA_TEST_REQUIRE(list != nullptr);
+    list->set_scroll_offset(list->max_scroll_offset());
+    h.tick(*panel);
+    AURORA_TEST_CHECK_FALSE(panel->frozen());
+    AURORA_TEST_CHECK(probe.snapshot_calls > calls_while_frozen);
+}
+
+// ------------------------------------------------------------
+// 判据⑨（稿 D12①／D13①）：离底即冻结且不自动吸回；滚回窗口底（窗口已抵环尾）才恢复跟尾
 // ------------------------------------------------------------
 AURORA_TEST_CASE(leaving_the_bottom_freezes_the_view_and_the_bottom_resumes_following) {
     static_cast<void>(ui::install_settings_strings());
@@ -594,7 +631,7 @@ AURORA_TEST_CASE(leaving_the_bottom_freezes_the_view_and_the_bottom_resumes_foll
 }
 
 // ------------------------------------------------------------
-// 判据⑨（稿 D14①）：「回到最新」是冻结与暂停的共同出口——下一帧直接重读环并落底
+// 判据⑩（稿 D14①）：「回到最新」是冻结与暂停的共同出口——下一帧直接重读环并落底
 // ------------------------------------------------------------
 AURORA_TEST_CASE(jump_to_latest_clears_pause_and_freeze) {
     static_cast<void>(ui::install_settings_strings());
@@ -636,7 +673,7 @@ AURORA_TEST_CASE(jump_to_latest_clears_pause_and_freeze) {
 }
 
 // ------------------------------------------------------------
-// 判据⑩（稿 D7①／D14①）：冻结中清空——唯一止血动作连冻结一起归零，落回空态
+// 判据⑪（稿 D7①／D14①）：冻结中清空——唯一止血动作连冻结一起归零，落回空态
 // ------------------------------------------------------------
 AURORA_TEST_CASE(clear_from_a_frozen_view_lands_on_the_empty_state) {
     static_cast<void>(ui::install_settings_strings());
