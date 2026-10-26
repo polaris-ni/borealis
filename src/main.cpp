@@ -4453,6 +4453,17 @@ auto main(int argc, char **argv) -> int {
         return borealis::ui::settings_label("serial.monitor.binding",
                                            {{"name", name}, {"path", path}});
     };
+    // 文本视图的解码腿（稿 §11 D28①）：交的是那条会话**构造期折好的实际生效腿名**，不是设置现值——
+    // 编码是建会话那一刻取一次的构造期值（`SPEC.FEAT.TERM.09`），改过设置再按现值去解历史字节就是拿错的
+    // 钥匙开旧的锁；折好的腿名也与会话真正在跑的那台解码器同源（裁决 7.104 D6②），故别名（`GB2312` 那类）
+    // 不会在卡片上报成另一条腿。会话散了交回缺省档，面板侧不另立第二套回落口径。
+    monitor_hooks.encoding_name = [&monitor_session]() -> std::string {
+        const auto session = monitor_session.lock();
+        if (session == nullptr) {
+            return std::string{"UTF-8"};
+        }
+        return std::string{session->encoding_name()};
+    };
 
     // 三期「取出去」（稿 §10.4 批 B）：面板只做显示，三条腿的 OS 接触面都收在装配层。
     // 剪贴板走全仓唯一写点（与密钥面板「一键复制」同一入口）；导出先问路径再写盘，问不到（取消或

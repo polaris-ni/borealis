@@ -264,6 +264,7 @@
     "serial.monitor.notice.frozen": "Follow paused — scrolling up stops the live refresh",
     "serial.monitor.notice.privacy": "This panel keeps its ring in memory; it writes to disk only when you export, and an exported file holds raw device bytes that may include passwords",
     "serial.monitor.toggle.pause": "Pause refresh",
+    "serial.monitor.toggle.text_view": "Text view",
     "serial.monitor.toggle.timestamp": "Timestamp prefix",
     "serial.monitor.title": "Serial monitor",
     "serial.set_baud.applied": "Switched to {baud}",

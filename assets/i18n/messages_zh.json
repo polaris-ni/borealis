@@ -436,6 +436,7 @@
     "serial.monitor.notice.frozen": "已暂停跟尾（向上翻看时不追加新数据）",
     "serial.monitor.notice.privacy": "本面板只在内存留痕，只有你显式导出时才会写盘；导出的文件是原始设备字节，可能含口令",
     "serial.monitor.toggle.pause": "暂停刷新",
+    "serial.monitor.toggle.text_view": "文本视图",
     "serial.monitor.toggle.timestamp": "时间戳前缀",
     "serial.monitor.title": "串口监视",
     "serial.set_baud.applied": "已切到 {baud}",

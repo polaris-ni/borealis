@@ -173,6 +173,10 @@ auto SerialMonitorPanel::make_options() const -> MonitorRowOptions {
     return MonitorRowOptions{
         .bytes_per_row = kMonitorBytesPerRow,
         .timestamp_prefix = timestamp_prefix_,
+        // 第三枚同样是面板局部量（稿 D26①）：切档只换行形态，环、采集、设置都不动。
+        .view = text_view_ ? MonitorView::Text : MonitorView::Hex,
+        // 腿名是跟绑定一起现取的那份副本，不是设置现值（稿 D28①）：换会话即换档，改设置不换。
+        .encoding = encoding_,
     };
 }
 
@@ -198,10 +202,16 @@ auto SerialMonitorPanel::window_covers_ring_end() const -> bool {
 auto SerialMonitorPanel::follow_frame() -> void {
     auto snapshot = read_snapshot();
     auto binding = hooks_.binding_label != nullptr ? hooks_.binding_label() : std::string{};
+    // 编码腿名与绑定同帧现取（稿 D28①）：空串或 Hook 缺席都折成 `UTF-8`——与折算件那条既有回落同值，
+    // 但在这里折掉而不是交给 `make_session_decoder()` 去 WARN，否则每次重建都在显示路径上刷一条日志。
+    auto encoding = hooks_.encoding_name != nullptr ? hooks_.encoding_name() : std::string{};
+    if (encoding.empty()) {
+        encoding = "UTF-8";
+    }
     const bool forced = rebuild_pending_;
     const bool ring_changed = snapshot.revision != seen_revision_;
     if (!forced && !ring_changed && snapshot.cap_bytes == cap_bytes_ &&
-        snapshot.dropped_bytes == dropped_bytes_ && binding == binding_) {
+        snapshot.dropped_bytes == dropped_bytes_ && binding == binding_ && encoding == encoding_) {
         return;  // D17①：环没变、档没动就零工作量（快照本身仍是一次 ≤ 256 KiB 拷贝，一期已有）。
     }
     if (ring_changed) {
@@ -211,6 +221,7 @@ auto SerialMonitorPanel::follow_frame() -> void {
     }
     source_ = std::move(snapshot.runs);
     binding_ = std::move(binding);
+    encoding_ = std::move(encoding);
     ring_bytes_ = 0U;
     for (const auto &run : source_) {
         ring_bytes_ += run.bytes.size();
@@ -220,6 +231,7 @@ auto SerialMonitorPanel::follow_frame() -> void {
     cap_bytes_ = snapshot.cap_bytes;
 
     const auto options = make_options();
+    rebase_rows_ = false;  // 这条腿本来就按当前档重算了 total/fold，停更态欠的那次重排在这里一并兑现。
     total_rows_ = monitor_row_count(source_, options);
     const auto window = std::min(total_rows_, kMonitorFoldWindowRows);
     fold_first_row_ = total_rows_ - window;
@@ -237,6 +249,18 @@ auto SerialMonitorPanel::follow_frame() -> void {
 
 auto SerialMonitorPanel::rebuild_current_view() -> void {
     const auto options = make_options();
+    if (rebase_rows_) {
+        // 换视图档就是换行号坐标系（hex 档 8 字节/行 ↔ 文本档 36 字节/行），冻结/暂停里沿用的
+        // `fold_first_row_` 与旧偏移在另一档指向的是别的历史段——与其悄悄跳去另一段，不如复位到**手里
+        // 这份料源的末尾**（稿 D34：暂停不清，只是不读新环）。计数不依赖解码（D27①），这里补一次便宜。
+        rebase_rows_ = false;
+        total_rows_ = monitor_row_count(source_, options);
+        const auto tail_window = std::min(total_rows_, kMonitorFoldWindowRows);
+        fold_first_row_ = total_rows_ - tail_window;
+        auto tail = monitor_row_window(source_, options, fold_first_row_, tail_window);
+        paint_rows(std::move(tail), static_cast<float>(tail.size()) * kMonitorRowExtent);
+        return;
+    }
     const auto available = total_rows_ > fold_first_row_ ? total_rows_ - fold_first_row_ : 0U;
     const auto window = std::min(available, kMonitorFoldWindowRows);
     auto rows = monitor_row_window(source_, options, fold_first_row_, window);
@@ -381,13 +405,16 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
                                                [this]() -> void { close(); }, chrome.card_line)));
     children.push_back(row_of(std::move(header_children), 8.0F));
 
-    // ---- 开关行：时间戳前缀（缺省开）+ 暂停刷新（缺省关）----
+    // ---- 开关行：时间戳前缀（缺省开）+ 暂停刷新（缺省关）+ 文本视图（缺省关，稿 D26①）----
+    // 第三枚排在最后：集成用例按 `find("Switch", N)` 的树序取件，前两枚的序号不能因为新增而挪位。
     auto timestamp_switch = std::make_shared<aurora::Switch>(aurora::Reactive<bool>{timestamp_prefix_});
     timestamp_switch->set_on_changed(
         [this](bool next) -> void { on_timestamp_changed(next); });
     auto pause_switch = std::make_shared<aurora::Switch>(aurora::Reactive<bool>{paused_});
     pause_switch->set_on_changed([this](bool next) -> void { on_pause_changed(next); });
-    for (auto &sw : {timestamp_switch, pause_switch}) {
+    auto text_switch = std::make_shared<aurora::Switch>(aurora::Reactive<bool>{text_view_});
+    text_switch->set_on_changed([this](bool next) -> void { on_text_view_changed(next); });
+    for (auto &sw : {timestamp_switch, pause_switch, text_switch}) {
         // 锁高的理由与设置面板开关同款：滑块直径按自身盒高算，行交叉轴居中给的是紧约束。
         sw->modifier.set(aurora::Modifier{}.height(24.0F));
         sw->set_active_color(chrome.accent);
@@ -401,7 +428,10 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
                              node(std::static_pointer_cast<aurora::Widget>(std::move(timestamp_switch))),
                              node(make_text(settings_label("serial.monitor.toggle.pause"),
                                             chrome.text_dim)),
-                             node(std::static_pointer_cast<aurora::Widget>(std::move(pause_switch)))},
+                             node(std::static_pointer_cast<aurora::Widget>(std::move(pause_switch))),
+                             node(make_text(settings_label("serial.monitor.toggle.text_view"),
+                                            chrome.text_dim)),
+                             node(std::static_pointer_cast<aurora::Widget>(std::move(text_switch)))},
                          8.0F));
 
     // ---- 动作行：把这一屏取出去（三期，稿 §10.2 D22①／§10.3）----
@@ -506,6 +536,20 @@ auto SerialMonitorPanel::on_pause_changed(bool next) -> void {
     paused_ = next;  // 不重建：画面停在按下那一刻，行区本来就是它该停的样子。
 }
 
+auto SerialMonitorPanel::on_text_view_changed(bool next) -> void {
+    text_view_ = next;
+    // 换视图档就是换行号坐标系（hex 档 8 字节/行 ↔ 文本档 36 字节/行）：跟尾态由 `follow_frame()` 按新档
+    // 重算，停更态得显式重排（稿 D34）。与时间戳那枚同一条纪律——回调里不折行、不解码，重建排在下一帧。
+    if (frozen_) {
+        frozen_ = false;
+        skip_geometry_once_ = true;  // 解除冻结＝回到这份料源的末尾（`on_latest()` 同一条腿）
+    }
+    if (paused_) {
+        rebase_rows_ = true;  // 暂停说的是「别读新环」，不是「别换形状」：清一下也不读环
+    }
+    rebuild_pending_ = true;
+}
+
 auto SerialMonitorPanel::on_clear() -> void {
     if (hooks_.clear != nullptr) {
         hooks_.clear();
@@ -596,6 +640,9 @@ auto SerialMonitorPanel::clear_state() -> void {
     ring_bytes_ = 0U;
     dropped_bytes_ = 0U;
     binding_.clear();
+    // 编码腿名跟绑定同生死（稿 D28①：它是「那条会话」的属性，不是面板的档）；下一次 `follow_frame()`
+    // 会随新绑定现取。三枚面板局部档不在这里复位——与另两枚同一条口径（D9①：复位只发生在进程重启）。
+    encoding_ = "UTF-8";
     seen_revision_ = 0U;
     cap_bytes_ = session::kMaxRawTapBytes;
     total_rows_ = 0U;
@@ -603,6 +650,7 @@ auto SerialMonitorPanel::clear_state() -> void {
     pending_scroll_offset_ = 0.0F;
     frozen_ = false;
     rebuild_pending_ = false;
+    rebase_rows_ = false;
     skip_geometry_once_ = false;
     open_ = false;
 }

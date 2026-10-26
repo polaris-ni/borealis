@@ -5,14 +5,15 @@
 // ------------------------------------------------------------
 // `SPEC.FEAT.CONN.05` 那条延后子项「可选十六进制收发视图与行首时间戳前缀」的界面腿，形态由设计稿
 // `codespec/UI_SERIAL_MONITOR.draft.md` 的 D1①／D5①／D6①／D7①／D8①／D9①（二期再叠 D10～D18）定形：
-// 左侧 **640 dp** 停靠卡片（8 字节/行 = 54 字符，14 pt 等宽单格 11 dp ⇒ 594 dp）、两枚**面板局部**开关
-// （时间戳前缀缺省开、暂停刷新缺省关）、一枚清空、丢弃计数上屏，零新设置键（D9①：环上限仍是文件级
-// 常量，重启即回缺省档；二期的折带窗口是显示期常量，不是第二个上限）。
+// 左侧 **640 dp** 停靠卡片（8 字节/行 = 54 字符，14 pt 等宽单格 11 dp ⇒ 594 dp）、三枚**面板局部**开关
+// （时间戳前缀缺省开、暂停刷新缺省关、文本视图缺省关＝稿 §11 D26①）、一枚清空、丢弃计数上屏，
+// 零新设置键（D9①：环上限仍是文件级常量，重启即回缺省档；二期的折带窗口是显示期常量，不是第二个上限）。
 //
 // **本件不认识 `Session`，也不认识串口**（隧道／密钥／SFTP 面板的同族纪律，AGENTS §4.5 第 23 条）：
-// 与装配层的全部接缝就是下面六条 Hooks——`snapshot` 交出环里现存的 run 表与累计丢弃字节、`clear` 交回
-// 本期唯一的止血动作、`binding_label` 交出绑定的档案名与设备路径，三期再加 `copy_text`／`pick_export_path`／
-// `export_text` 三条取出去的腿（稿 §10.2 D22①）。武装（`Session::enable_raw_tap()`）
+// 与装配层的接缝就是下面七条 Hooks——`snapshot` 交出环里现存的 run 表与累计丢弃字节、`clear` 交回
+// 本期唯一的止血动作、`binding_label` 交出绑定的档案名与设备路径、`encoding_name` 交出那条会话**构造期
+// 折好的实际生效编码腿**（稿 D28：文本档解码用，缺席或映射不到即回落 UTF-8），三期再加 `copy_text`／
+// `pick_export_path`／`export_text` 三条取出去的腿（稿 §10.2 D22①）。武装（`Session::enable_raw_tap()`）
 // 发生在命令腿，故本件不写环（除 `clear`），也不判断「这一格是不是串口」。
 //
 // 读法是 **latest-value**（稿 §5）：每帧问一次「环里现在有什么」，不做「本帧新增的 run」那种增量协议
@@ -105,6 +106,10 @@ class SerialMonitorPanel {
         std::function<void()> clear;
         /// @brief 绑定的档案名与设备路径（稿 §2 标题行那一格；空串＝绑定已失去身份）。
         std::function<std::string()> binding_label;
+        /// @brief 那条会话**构造期折好的实际生效编码腿名**（稿 §11 D28①，取自 `Session::encoding_name()`）：
+        ///        文本档的解码器按它现造。缺席或空串在 `follow_frame()` 里折成 `UTF-8`（稿 D35②：与
+        ///        `make_session_decoder` 的既有回落同值，但不在绘制路径上刷 WARN），本件不认识编码表。
+        std::function<std::string()> encoding_name;
         /// @brief 把整份行文本交给剪贴板（稿 §10.2 D22①）：本件不碰 OS、不判成败，那条腿在装配层
         ///        （`ClipboardOutbox::write`，与 `keys_panel` 的一键复制同一入口）。
         std::function<void(std::string text)> copy_text;
@@ -173,6 +178,11 @@ class SerialMonitorPanel {
     /// @brief 时间戳前缀档（观测面；缺省开，D6①）。
     [[nodiscard]] auto timestamp_enabled() const noexcept -> bool { return timestamp_prefix_; }
 
+    /// @brief 文本视图档（观测面；缺省关＝十六进制档，稿 §11 D26①）。
+    ///
+    /// 与另两枚同族：面板局部量，切档只换行形态，不改采集、不改环、不改设置。
+    [[nodiscard]] auto text_view_enabled() const noexcept -> bool { return text_view_; }
+
     /// @brief 这一屏料源的整份行文本（三期观测面，稿 §10.2 D19①／D20①）。
     ///
     /// 与屏面同一份 `MonitorRowOptions`、同一台扫描器，故文件/剪贴板里每一行都能在屏上逐字符找到。
@@ -187,7 +197,7 @@ class SerialMonitorPanel {
     /// @brief 问一次环（Hook 缺席即空投影：本件不许因装配层没装某条腿而崩）。
     [[nodiscard]] auto read_snapshot() const -> Snapshot;
 
-    /// @brief 当前显示档（两枚档都在这里汇合；窗口折行与整表折行同一口径）。
+    /// @brief 当前显示档（三枚面板局部量都在这里汇合；窗口折行与整表折行同一口径）。
     [[nodiscard]] auto make_options() const -> MonitorRowOptions;
 
     /// @brief 几何判冻结（D12①）：离底且不在环尾窗口的底端 ⇒ 冻结；未布局/不足一屏一律视为跟尾。
@@ -217,6 +227,7 @@ class SerialMonitorPanel {
     [[nodiscard]] auto build_row(const MonitorRow &row) -> aurora::Node;
 
     auto on_timestamp_changed(bool next) -> void;
+    auto on_text_view_changed(bool next) -> void;
     auto on_pause_changed(bool next) -> void;
     auto on_clear() -> void;
     auto on_latest() -> void;
@@ -232,12 +243,16 @@ class SerialMonitorPanel {
     std::shared_ptr<aurora::LazyList> list_{};  ///< 当前浮层里的行区（重建即换新；观察滚动几何用）。
     bool open_ = false;
 
-    // ---- 两枚面板局部量（D9①：零新设置键，重启回这里写的缺省档）----
+    // ---- 三枚面板局部量（D9①：零新设置键，重启回这里写的缺省档；稿 §11 D26① 加第三枚）----
     bool timestamp_prefix_ = true;  ///< 关掉即不折前缀，也不调 `localtime`（稿 D6④ 的那半代价）。
     bool paused_ = false;           ///< 暂停＝用户显式停更，仍可按显示档重画。
+    bool text_view_ = false;        ///< 缺省关＝十六进制档；开＝按会话编码腿解出的文本档（稿 D26／D27）。
     bool frozen_ = false;           ///< 冻结＝离底自动停更（D12①）；与暂停互相独立（D14①）。
     bool rebuild_pending_ = false;  ///< 暂停/冻结中改了档、清了环或冻结边沿：下一帧补一次重建。
     bool skip_geometry_once_ = false;  ///< 「回到最新」/清空之后的首帧不判几何（旧列表还在离底位置）。
+    /// 换过视图档且当下停更：下一次 `rebuild_current_view()` 先按新档重算总行数并复位到这份料源的末尾
+    /// （行号坐标系是档特定的，沿用旧行号会指向别段历史——稿 D34）。跟尾态不走这条腿。
+    bool rebase_rows_ = false;
 
     std::uint64_t seen_revision_ = 0U;  ///< 上次收下的环 revision（D17① 的早退基准）。
     std::size_t cap_bytes_ = session::kMaxRawTapBytes;  ///< 环现值上限（D16①；留痕那句的数）。
@@ -249,6 +264,9 @@ class SerialMonitorPanel {
     std::size_t ring_bytes_ = 0U;            ///< 环里现存字节数（标题行那个计数）。
     std::size_t dropped_bytes_ = 0U;         ///< 累计丢弃字节（`notice()` 的那一句）。
     std::string binding_{};                  ///< 绑定的档案名与设备路径（现取 Hook 的落地副本）。
+    /// 文本档解码用的编码腿名（`binding_` 的同族副本：跟绑定一起现取，不是设置现值——稿 D28①）。
+    /// 初值是「没问到会话」那一档：Hook 缺席、会话散了都停在这里，与 `make_session_decoder` 的回落同值。
+    std::string encoding_{"UTF-8"};
     std::string feedback_{};                 ///< 上一次「取出去」动作的留痕（稿 §10.3；新的 revision 即清）。
 
     // ---- 上一帧真画出来的那份（diff 基准；与 `tunnel_panel`／`keys_panel` 同形）----
