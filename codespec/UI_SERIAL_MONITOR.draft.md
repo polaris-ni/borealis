@@ -338,6 +338,11 @@ D6（每行一个、短档 + 毫秒、可关）。
   （400 字节一次读全；每 1 ms 各 10 字节的慢速流一批一 run；一条行被切成 15 + 3 字节的两个读块）。→ F10。
 - `probe_cell`：链 `libaurora.a` 实调 `render::FontEngine::monospace_cell` / `measure_width`，
   Cascadia Code 11/12/13/14 pt 单格推进 9/9/10/11 dp，77 字符在 14 pt 下 847 dp。→ F8／F9。
+- `dump_probe`（三期批 C，2026-10-26）：合成 32768 条 8 字节 run（= 满环 256 KiB，字节取可打印区以免
+  CR／LF 改变行数），编 `src/ui/serial_monitor_format.cpp` 单件、不链 aurora，20 次取均值且先预热一次 →
+  整份折行 **9.427 ms／次（0.288 µs／行）**、文本 **1,802,239 字节**；时间戳档关掉 **8.245 ms**（0.252 µs／行）。
+  → §10.5 的实测成本面（那条 7.8 ms 的推算被替换）。编译口径同 `pathprobe`：`/std:c++20 /O2 /utf-8`，
+  `/I include /I src`；`RawDirection` 的两枚拼写是 `Received`／`Transmitted`（写成 `Sent` 报 C2838）。
 - 读源盘点（非运行时）：`src/session/session.cpp` 的 `ingest` / `flush` / `write_out`、
   `src/conn/serial_connection.cpp` 的三个读块常量、`include/borealis/session/session_log.h` 的会话级参数先例、
   `src/ui/{tunnel,snippet,sftp}_panel.*` 与 `tests/integration/itest_panel_retarget.cpp` 的面板族形态。→ F1／F2／F3／F12／F13／F14。
@@ -554,12 +559,17 @@ S13② 同口径），其余四枚都在面板里消费，故不进 `itest_setti
 |---|---|---|
 | A | `monitor_dump_text(runs, options)` 进纯逻辑件（委托 `monitor_rows` + `row_text`，不第二台机器）；面板三条 Hook、两枚按钮、`feedback` 一行、观测面 `dump_text()`；词条双档 + 改口那句 | `utest_serial_monitor_format`：空表即空串、行间单个 `\n`、无结尾 `\n`、时间戳档关掉即无前缀、与屏面逐行相等。`itest_serial_monitor_panel`：点复制收到全文本、点导出先问路径再交文本、空环两条都不触发、取消路径不调写盘、写盘回原因时上屏 `export_failed` 且不调 `copy` |
 | B | 装配腿：`copy_text`＝`ClipboardOutbox::write`（全仓唯一剪贴板写点）＋面板那句留痕；`pick_export_path`＝`picked_save_path(title, filters)`（原只服务设置导出的一枚助手，按两枚调用方参数化）；`export_text`＝`platform::write_private_file`——**写盘下沉成平台腿**（D25）：同目录 0600 临时件（`create_private_file`）→ 截断写 → `rename` 就位 → 失败即删临时件，路径串经新增的 `platform::native_path_of` 转宽串 | `utest_file_secure` 五条新例（整份落位不留临时件／第二次写整体换新／占位临时件逐字不动而导出照旧／三类失败什么都没发生／非 ASCII 名逐字落位——最后一条 Windows 独有）。装配本身仍无自动化证人（`src/main.cpp` 不进 `borealis_test_runner`，裁决 7.83）⇒ 走查清单只留对话框与剪贴板两条 |
-| C | 变异自证（≥3 则）、全量构建与用例读数、四处文档回写（SPECIFICATIONS 裁决 7.162 / CHANGELOG v0.162 / PLAN §4 那行 / 本稿 §9.8 出账 + `raw_tap.h` 头注改口） | 读数入账后方称落地 |
+| C | 变异自证（≥3 则）、全量构建与用例读数、四处文档回写（SPECIFICATIONS 裁决 7.162 / CHANGELOG v0.162 / PLAN §4 那行 / 本稿 §10.5 实测读数 + §10.9 结项读数 + `raw_tap.h` 头注改口） | **已结项（2026-10-26）**：六则变异 M1–M6 各有指名红案（§10.9），全量 `ctest` **123/123**、runner **1532 案／1529 绿**，两处门禁 PASS。批 A＝`a4bef77`、批 B＝`2f114db`，本批随裁决 7.162 提交 |
 
 ### 10.5 数字与代价
 
-- 满环（256 KiB）在 8 字节档折成 **32768 行**，行文本 ≈ **1.8 MB**（F7 的 4.8 倍换算）；全折一次的成本
-  按 F5 的 0.239 µs/行 ≈ **7.8 ms**（**推算，未本机实测**；批 C 落一次性探针后回写实测值）。
+- 满环（256 KiB）在 8 字节档折成 **32768 行**，行文本 **1,802,239 字节 ≈ 1.72 MiB**。全折一次的成本
+  本机实测（一次性探针 `dump_probe`，不入仓，2026-10-26 MSVC `/O2 /std:c++20`，直接编
+  `src/ui/serial_monitor_format.cpp`，20 次取均值、先预热一次）：**9.427 ms／次 = 0.288 µs／行**；
+  时间戳档关掉是 **8.245 ms = 0.252 µs／行** ⇒ `localtime` + `strftime` 那一档的净成本 ≈ **1.2 ms**（占 12%）。
+  与 §2 那条 F5 的 0.239 µs／行推算（7.8 ms）同一量级、略高 21%——差在整份串要一次 grow 到 1.8 MB。
+  ⇒ 一期那条「只画 24 行」的顶棚之所以必要，这里有了实测成本面：**满环全折 ≈ 10 ms**，
+  是一次点击的量级，不是一帧的量级。
 - 它发生在**点击派发**而不是 `tick()`：与「事件回调不做长计算」（§4.5 第 25 条）的关系按 `SettingsPanel::run_export()`
   同一条口径判定——一次性、用户显式发起、量级毫秒而不是秒，且紧随其后的是原生对话框与写盘（那两条本来就是阻塞 IO，
   已建立的先例比本件更重）。**不做**后台线程 + 有界队列那一套：那是给持续热路径准备的，给一次点击加线程只会引入
@@ -603,3 +613,28 @@ S13② 同口径），其余四枚都在面板里消费，故不进 `itest_setti
    业界（Wireshark、Eltima、浏览器另存为）都会预填一个与内容同源的缺省名，用户改一下即可；本仓替身＝把命名
    完全交给用户，代价是每次导出都要手打一个有意义的名字。框架侧建议：`Options::suggested_name`
    （Win32 `IFileDialog::SetFileName`、GTK/自绘那两条腿各有现成接缝）。**不阻塞本棒**，故先按候选登记。
+
+### 10.9 批 C 结项读数（2026-10-26，AGENTS §4.4 第 22 条的变异自证）
+
+六则注入各改一处实现、重建后跑对应套件、逐字节回退（`git diff --exit-code` 空）再复绿。**每则的指名红案**：
+
+| # | 注入 | 红案（恰此数） | 这条变异证明了什么 |
+|---|---|---|---|
+| M1 | `native_path_of` 的 Win 腿退回 `path{std::string{utf8}}`（窄串构造） | `utest_file_secure.a_non_ascii_name_lands_at_that_exact_name`（1 案，`hits==0`） | F15 那条码页读数**有断言证人**：删掉宽串转换，用户点中文名就真的落到花码名 |
+| M2 | 临时件撞名不再 `continue`，而是把占位那一档当建成的来用（覆写） | `…a_taken_scratch_name_moves_to_the_next_slot_untouched`（1 案） | 「逐档让位」不是装饰：占位的 `.tmp` 可能是用户自己的文件，覆写形态能被抓住 |
+| M3 | 前置「空串／内嵌 NUL」那道闸架空成恒不成立 | `…a_refused_or_broken_write_never_moves_anything`（1 案） | 内嵌 NUL 若进系统调用就截断成另一份路径——归因从 `InvalidPath` 退成 `Failed` 的形状可测 |
+| M4 | `ofstream` 的 `std::ios::binary` 摘掉 | 2 案（`…the_whole_text_lands_and_no_scratch_is_left_behind`＋`…a_non_ascii_name_lands_at_that_exact_name`） | 转储的**逐字节**口径有证人：文本模式下 `\n` 变 `\r\n`，Windows 腿写出的就不再是屏面那份 |
+| M5 | `on_copy` 的空环早退架空 | `itest_serial_monitor_panel.cancelling_the_path_or_an_empty_ring_runs_neither_leg`（1 案） | D21①「空环整条不跑、连剪贴板都不碰」不是靠注释维持 |
+| M6 | 两枚钮不再问对应 Hook 在场（恒画） | `…the_take_out_buttons_appear_only_with_their_legs`（1 案） | 面板族那条纪律（不画点了没反应的钮）在装配没装腿时确实生效 |
+
+- **两处仍无自动化证人**（在册，不谎称有）：`src/main.cpp` 的三枚 Hook 装配本体与 `write_private_dump` 里那句
+  「行间 LF、末尾补一个 `\n`」——`src/main.cpp` 不编入 runner（裁决 7.83）。故 §10.6 那八条走查里 1／2／3 三条
+  是这两处的唯一判据；写盘**语义**（三道闸、整体换新、码页名）已下沉到有证人的平台腿，剩的只是「腿有没有接上」。
+- **全量读数**：`cmake --build --preset msvc --parallel` 通过（含 `src/main.cpp` 与 `Borealis.exe` 链接）；
+  `ctest --preset msvc -E etest_ -j 16` **123/123 全绿**（套件数与基线 7.161 相同——本棒扩案不扩套件）；
+  `borealis_test_runner` 全跑 **1532 案 / 1529 绿**（基线 1517/1514，三期 +15 案：折算件、面板、写盘腿三处），
+  三红仍是 Windows 无 secret-service 的 `etest_libsecret_credential_store`（同 7.156／7.158／7.159／7.160／7.161）。
+  门禁：`check_display_literals.py` **PASS**（261 源件无 CJK 引语，两档同 550 键）、`check_agents_size.py` **PASS**。
+- **状态改口**：三期「复制／导出」的代码腿与自动判据**已结项**；`SPEC.FEAT.CONN.05` 那条**仍不称「可用」**
+  ——§10.6 八条真机走查未做（锁屏会话下 `SendInput` 静默失效，裁决 7.31①），文本视图、`.bin` 导出、
+  按过滤导出、跨重启记忆与三型入口照旧在册（§10.7）。
