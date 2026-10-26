@@ -10,6 +10,12 @@
 //
 // 四期（稿 §11）加的是**行内容**的第二种形态而不是第二台机器：`RowScanner` 只认字节，
 // 文本档换的只是「一段字节 → `dump`」那一步（`build_dump` ↔ 解码后折文本）与每行的字节预算。
+//
+// 六期（稿 §13）加的是**行种类**的第二档，仍然不加第二台机器：`RowScanner` 在一条 run 收尾且
+// 当前显示行已收口时多交一次「边界」事件。为什么边界行必须由扫描器交出而不是调用方在 run 循环里补：
+// 「这条 run 收尾时是不是正好在行界上」是扫描器的内部状态（挂起缓冲 + `line_started_` +
+// `awaiting_lf_`），调用方看不见；而在窗口折行里，窗口之前的 run 也要按同一规则计数，否则
+// `monitor_row_count()` 与折出来的行数就会分家（稿 F24 那条恒等式）。
 // ============================================================
 
 #include "session_monitor_format.h"
@@ -76,6 +82,37 @@ auto append_hex_pair(std::string &out, std::byte value) -> void {
     return dump;
 }
 
+/// @brief 一条 run 收尾时交给边界消费端的三个读数（稿 §13 D47／D48 的料源）。
+///
+/// 全部取自环里已有的 run 级料：方向、这一批的字节数、与**环内上一 run** 的时刻差。本件不看时钟，
+/// 也不认识「会话」——它只认识调用方喂进来的那张到达序表（`RawTap::snapshot()` 的产物）。
+struct MonitorBoundary {
+    session::RawDirection direction = session::RawDirection::Received;
+    std::size_t run_bytes = 0;  ///< 该 run 的字节数，就是屏上那个 `N B`。
+    std::int64_t delta_ms = 0;  ///< 与上一 run 的到达时刻差；时钟回拨给的负值已夹成 0（D48①）。
+    bool has_delta = false;     ///< 环内首条无前批可比 ⇒ 整段 `(+N ms)` 不画（D47① 的无 Δ 形态）。
+};
+
+/// @brief 边界行的整句：`-- RX 12 B (+812 ms) --`，无前批时 `-- RX 12 B --`（稿 §13 D47①）。
+///
+/// 纯 ASCII 是刻意的：这一行要装的是数字与两个字母，没有可翻的语言；而它必须**恒 ≤ 56 格**（稿 F27），
+/// 非 ASCII 字形在 GB18030 与 UTF-8 两档下的字节数不同，长度就算不死了。整句落在 `dump` 一格、
+/// 前缀与方向格留空——这行的时刻就是它上面那条内容行的时刻，再折一次 `localtime` 是纯浪费。
+[[nodiscard]] auto build_boundary_dump(const MonitorBoundary &boundary) -> std::string {
+    auto text = std::string{"-- "};
+    text += boundary.direction == session::RawDirection::Received ? "RX" : "TX";
+    text += ' ';
+    text += std::to_string(boundary.run_bytes);
+    text += " B";
+    if (boundary.has_delta) {
+        text += " (+";
+        text += std::to_string(boundary.delta_ms);
+        text += " ms)";
+    }
+    text += " --";
+    return text;
+}
+
 /// @brief 文本档的码点接收端：码点 → 追加进 `text`（稿 §11 D29 的三条形态口径只写在这里）。
 ///
 /// 判定吃**码点值**而不是字节值：解码之后才有「这一格是不是一条控制码」这个问题可言，同一份字节在
@@ -131,21 +168,32 @@ class DiscardSink final : public term::CodePointSink {
     return next;
 }
 
-/// @brief 行扫描器：run 表 → 逐行交给 `consume`（返回 false 即停止）。
+/// @brief 行扫描器：run 表 → 逐行交给 `consume`（返回 false 即停止），开档时另交边界事件。
 ///
 /// 四条行边界口径只在这里写一遍（稿 §2／§4.1③）：CRLF 一条断点、孤立 CR 一条断点、
 /// 挂起尾段跨 run 拼接、快照末尾的不完整行也上屏。满格的行一凑满就交出（不等行尾），
 /// 故挂起缓冲恒 ≤ 每行字节数；窗口之前的行由调用方只计数、不建字符串。
-template <typename Consumer>
+/// `emit_boundaries` 为真时，一条**非空** run 扫完且此刻正好落在自然行界上（挂起缓冲空、
+/// 当前显示行未起、也没有等 LF 的 CR）就多交一次 `consume_boundary`——同一条设备行被读块
+/// 切成两段时那一段不算行界，故不插（稿 §13 D44①／F23）。
+template <typename Consumer, typename BoundaryConsumer>
 class RowScanner {
   public:
-    RowScanner(std::size_t bytes_per_row, Consumer &consume)
-        : bytes_per_row_{bytes_per_row}, consume_{consume} {
+    RowScanner(std::size_t bytes_per_row, Consumer &consume, BoundaryConsumer &consume_boundary,
+               bool emit_boundaries)
+        : bytes_per_row_{bytes_per_row}, consume_{consume}, consume_boundary_{consume_boundary},
+          emit_boundaries_{emit_boundaries} {
         pending_.reserve(bytes_per_row_);
     }
 
     /// @brief 吃进一条 run。
     auto feed(const session::RawRun &run) -> void {
+        // 「上一批」按喂入序算，与这条 run 是否交出过行、是否在窗口内都无关（稿 D48①）：
+        // 环里存着的就是它，`clear()` 之后第一张快照自然没有前批，Δ 段也就不画。
+        const bool has_previous = has_previous_run_;
+        const std::int64_t previous_timestamp_ms = previous_timestamp_ms_;
+        previous_timestamp_ms_ = run.timestamp_ms;
+        has_previous_run_ = true;
         const std::byte *const data = run.bytes.data();
         const std::size_t size = run.bytes.size();
         std::size_t pos = 0;
@@ -185,6 +233,21 @@ class RowScanner {
                 flush_line();
             }
             ++pos;
+        }
+        // 边界行只在 run 的**自然行界**上插：此刻挂起缓冲已交出、当前显示行已收口、也没有等 LF 的
+        // CR。一条设备行被读块切成两段时这里什么都不是（稿 §13 D44①／F23 那条已裁口径不被推翻）。
+        if (emit_boundaries_ && !aborted_ && !run.bytes.empty() && pending_.empty() && !line_started_ &&
+            !awaiting_lf_) {
+            const std::int64_t elapsed = run.timestamp_ms - previous_timestamp_ms;
+            const auto boundary = MonitorBoundary{
+                .direction = run.direction,
+                .run_bytes = run.bytes.size(),
+                .delta_ms = elapsed > 0 ? elapsed : 0,  // 时钟回拨不装神弄鬼（D48①）
+                .has_delta = has_previous,
+            };
+            if (!consume_boundary_(boundary)) {
+                aborted_ = true;
+            }
         }
     }
 
@@ -250,9 +313,13 @@ class RowScanner {
 
     std::size_t bytes_per_row_;
     Consumer &consume_;
+    BoundaryConsumer &consume_boundary_;
+    bool emit_boundaries_ = false;  ///< 面板那枚边界开关（稿 §13 D46①：缺省关）。
     std::vector<std::byte> pending_{};
     session::RawDirection direction_ = session::RawDirection::Received;
     std::int64_t timestamp_ms_ = 0;
+    std::int64_t previous_timestamp_ms_ = 0;  ///< 上一条**喂入**的 run 的时刻（边界行的 Δ 料源）。
+    bool has_previous_run_ = false;           ///< 第一条喂入的 run 没有前批，故不画 Δ 段。
     bool line_started_ = false;
     bool awaiting_lf_ = false;  ///< 行尾刚收了一个 CR：紧跟的 LF 属于同一条断点。
     bool aborted_ = false;      ///< 消费者说窗口已满：停止扫描。
@@ -304,7 +371,14 @@ auto monitor_row_count(const std::vector<session::RawRun> &runs, const MonitorRo
         ++count;
         return true;
     };
-    auto scanner = RowScanner<decltype(consume)>{effective_bytes_per_row(options), consume};
+    // 边界行同进计数侧：只进折行侧就等于给 `LazyList` 报了一个偏小的总行数，窗口尾部丢行且回翻
+    // 翻不到（稿 §13 F24——二期那条恒等式在开档下的直接扩展）。
+    auto consume_boundary = [&count](const MonitorBoundary &) -> bool {
+        ++count;
+        return true;
+    };
+    auto scanner = RowScanner<decltype(consume), decltype(consume_boundary)>{
+        effective_bytes_per_row(options), consume, consume_boundary, options.boundary_rows};
     for (const auto &run : runs) {
         scanner.feed(run);
     }
@@ -369,14 +443,33 @@ auto monitor_row_window(const std::vector<session::RawRun> &runs, const MonitorR
         ++index;
         return rows.size() < max_rows;  // 窗口折满即停止扫描（其后的行不必再看）
     };
-    auto scanner = RowScanner<decltype(consume)>{bytes_per_row, consume};
+    auto consume_boundary = [&](const MonitorBoundary &boundary) -> bool {
+        if (index >= first_row && rows.size() < max_rows) {
+            // 前缀与方向格留空：整句（含 `RX`／`TX`）在 `dump` 里，面板据此把这一行画成次要色（稿 D47①）。
+            rows.push_back(MonitorRow{
+                .kind = MonitorRowKind::Boundary,
+                .direction = boundary.direction,
+                .timestamp_prefix = {},
+                .direction_label = {},
+                .dump = build_boundary_dump(boundary),
+            });
+        }
+        ++index;
+        return rows.size() < max_rows;  // 与内容行同一个窗口界：折满即停
+    };
+    auto scanner = RowScanner<decltype(consume), decltype(consume_boundary)>{
+        bytes_per_row, consume, consume_boundary, options.boundary_rows};
     for (const auto &run : runs) {
         scanner.feed(run);
     }
     scanner.finish();
-    if (text_view && !scanner.aborted() && !rows.empty()) {
+    if (text_view && !scanner.aborted() && !rows.empty() &&
+        rows.back().kind == MonitorRowKind::Content) {
         // 料源末尾那段挂起的半字序列按替换字符收尾，落在最后一行上：头注口径 ⑵ 在文本面的落地——
         // 环里存着却不显示的字节等于说谎。收不住的情形只有「中途停扫」，那一支上面已排除。
+        // 末行是边界行时不收尾：那意味着上一条 run 正好在行尾收口，而 CR／LF 在两档编码里都是
+        // 单字节，解码器不可能还挂着半字——判一层是为了「将来若有别的断点字节」也不至于把
+        // 替换字符拼进那句 `-- RX 4 B --`。
         auto sink = RowTextSink{};
         decoder->finish(sink);
         rows.back().dump += std::move(sink.text);

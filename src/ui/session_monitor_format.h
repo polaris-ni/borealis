@@ -24,6 +24,14 @@
 // 四期（稿 §11）在同一台机器上加了第二种**行内容**形态：`MonitorRowOptions::view` 取 `Text` 时，
 // `dump` 装的是按会话编码解码后的文本（`bytes_per_row` 让给 `kMonitorTextRowBytes` 那枚字节预算）。
 // 断点、跨 run 拼接、不完整尾行这些行边界口径两档共用一份——变的只是「一段字节怎么变成一行字」。
+//
+// 六期（稿 §13）加的是第二种**行种类**：`MonitorRowOptions::boundary_rows` 为真时，一条 run 若在
+// 自然行界上收尾（该 run 交出时挂起缓冲已空且当前显示行已收口），紧随其后多画一条分隔行
+// （`-- RX 12 B (+812 ms) --`）。三个读数全取自环里已有的 run 级料（方向、条数、与上一 run 的时刻差），
+// 故采集腿一行不改。两条口径要记住：① **行中到达不插**——一条设备行被读块切成两段时中间那条界不在屏上，
+// 否则就推翻了口径 ⑵ 那条已裁的「挂起尾段不与后续 run 断开」（稿 F23／D44① 的代价）；② 边界行与内容行
+// **同进计数侧与折行侧**，`monitor_row_count()` 与 `monitor_rows()` 的恒等式（稿 F24）在开档下仍成立。
+// 边界行不吃时间戳前缀：它的时刻就是上面那条内容行的时刻，再折一次 `localtime` 是纯浪费。
 // ============================================================
 
 #include <cstddef>
@@ -66,14 +74,24 @@ enum class MonitorView : std::uint8_t {
     Text,  ///< 文本档：按会话编码解码后的文本，CR/LF 只作断点，其余不可打印码点一个 `.`（D29）。
 };
 
+/// @brief 行种类（稿 §13 D44）：内容行是缺省档，边界行是那条 `-- RX 12 B (+812 ms) --`。
+///
+/// 缺省取 `Content` 是有意的：既有 26 案与装配层的构造都不写这一格，它们的语义本来就是内容行。
+/// 面板据它决定整行色（边界行走次要色，不吃方向强调），折算件据它决定 `dump` 的形态。
+enum class MonitorRowKind : std::uint8_t {
+    Content,  ///< 一段字节的显示行（十六进制档或文本档）。
+    Boundary, ///< 报文边界行：一条 run 在自然行界上收尾时紧随其后的那一条分隔行。
+};
+
 /// @brief 行折算的选项。
 ///
-/// 三枚都是**面板局部量**（D9①：零新设置键），重启回到这里写的缺省档。
+/// 每一枚都是**面板局部量**（D9①：零新设置键），重启回到这里写的缺省档。
 struct MonitorRowOptions {
     std::size_t bytes_per_row = kMonitorBytesPerRow;  ///< 0 视作缺省档，不另立「无字节」形态；文本档不吃这一格。
     bool timestamp_prefix = true;                     ///< 关掉即不折前缀（也不调 `localtime`）。
     MonitorView view = MonitorView::Hex;              ///< 文本档时 `dump` 装的是解码文本（稿 D26／D27）。
     std::string encoding{"UTF-8"};                    ///< 文本档的解码档名；取**实际生效腿**名（稿 D28）。
+    bool boundary_rows = false;                       ///< 报文边界行上屏（稿 §13 D46①：缺省关，翻档不改既有行）。
 };
 
 /// @brief 一条显示行。
@@ -81,15 +99,18 @@ struct MonitorRowOptions {
 /// 三段各自成套、拼起来就是那一行：面板把 `timestamp_prefix` 与 `dump` 画成默认色的 `Text`，
 /// `direction_label` 画成一列强调色（稿 §2「RX／TX 只以这两个字母与一列强调色区分」）。
 /// 三段之间**不带**隐式间距：间距是字符串自己的空格，等宽族下逐字符对齐这件事只由本件负责。
+/// 边界行是这一形的例外：`timestamp_prefix` 与 `direction_label` 恒空，整句（含 `RX`／`TX`）在 `dump` 里。
 struct MonitorRow {
+    MonitorRowKind kind = MonitorRowKind::Content;  ///< 行种类；缺省＝内容行，既有构造不必改口。
     session::RawDirection direction = session::RawDirection::Received;  ///< 强调色只吃这一枚字段。
     std::string timestamp_prefix;  ///< `[HH:MM:SS.mmm] `（含尾随空格）；开关关掉时为空串。
-    std::string direction_label;   ///< `"RX"` ／ `"TX"`（恒 2 字符）。
-    std::string dump;              ///< 十六进制档＝两空格 + 十六进制段 + 两空格 + `|ASCII|`；文本档＝两空格 + 解码文本。
+    std::string direction_label;   ///< `"RX"` ／ `"TX"`（恒 2 字符）；边界行为空串。
+    std::string dump;              ///< 十六进制档＝两空格 + 十六进制段 + 两空格 + `|ASCII|`；文本档＝两空格 + 解码文本；边界行＝整句分隔行。
 
     /// @brief 逐字段相等（面板状态泵的 diff 基准：`tick()` 拿它判「这一帧要不要重建行区」）。
     ///
-    /// 三格都是值语义，故 defaulted 就是要的判据——不比指针、不比绘制态。
+    /// 四格都是值语义，故 defaulted 就是要的判据——不比指针、不比绘制态。`kind` 进这一格是刻意的：
+    /// 「只有边界行插进来了」那种帧必须让面板重画行区（稿 §13 F26）。
     [[nodiscard]] auto operator==(const MonitorRow &) const -> bool = default;
 };
 
@@ -104,6 +125,7 @@ struct MonitorRow {
 /// @param runs `RawTap::snapshot()` 的产物，须是到达序（最旧在前）。
 /// @param options 视图档与每行字节数（0 视作缺省档）；时间戳档与编码档不影响计数——文本档的预算按字节，
 ///        故这一条不需要解码就能给出真实总行数（稿 D27 换来的那条对称性）。
+///        边界档（`boundary_rows`）**影响**计数，且与 `monitor_row_window()` 同进同一台扫描器（稿 §13 F24）。
 /// @return 显示行总数；空环即 0。
 [[nodiscard]] auto monitor_row_count(const std::vector<session::RawRun> &runs,
                                      const MonitorRowOptions &options) -> std::size_t;

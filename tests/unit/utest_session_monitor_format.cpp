@@ -7,9 +7,13 @@
 ///           三期再加交出去的串形（稿 §10.2 D19①）：逐行 `row_text` 以单个 `\n` 相连且末尾不带换行、
 ///           行数与逐行内容与全折逐条相等、空环即空串。
 ///           四期再加文本视图（稿 §11 D26–D31）：同一台行机器换行内容——断点四口径在文本档同判据、
-///           96 字节预算与行首的方向/时刻沿用、不可打印码点折 `.` 而 U+FFFD 原样上屏、非 UTF-8 腿
+///           按字节预算切行与行首的方向/时刻沿用、不可打印码点折 `.` 而 U+FFFD 原样上屏、非 UTF-8 腿
 ///           （GB18030）解出中文、被预算切断的多字节序列不在前一行产出、计数与折行在两档仍恒等、
 ///           `monitor_dump_text` 跟当前视图档走。
+///           六期再加行种类（稿 §13 D44–D50）：边界档缺省关且关档逐字段不变、一条 run 在自然行界收尾
+///           才插分隔行（被读块切断的那条设备行中间不插）、同向连续两 run 各插一条、Δ 毫秒吃环内
+///           上一 run 且负值夹 0、首条无前批不画 Δ、分隔行长度顶得住最坏档也不越 56 格、
+///           计数与窗口切片在开档下仍恒等、`monitor_dump_text` 带得上分隔行。
 ///           面板那侧的开关联动与留痕上屏属 itest_session_monitor_panel（批 3）。
 
 #include "ui/session_monitor_format.h"
@@ -568,6 +572,184 @@ AURORA_TEST_CASE(an_unmapped_encoding_name_decodes_as_utf8) {
         AURORA_TEST_REQUIRE_EQ(rows.size(), 1U);
         AURORA_TEST_CHECK_EQ(rows[0].dump, "  OK");
     }
+}
+
+namespace {
+
+/// @brief 边界档的选项（稿 §13 D46）：时间戳前缀关掉，好让断言只吃行内容那一段。
+[[nodiscard]] auto boundary_options(bool on) -> ui::MonitorRowOptions {
+    auto options = ui::MonitorRowOptions{.timestamp_prefix = false};
+    options.boundary_rows = on;
+    return options;
+}
+
+}  // namespace
+
+AURORA_TEST_CASE(the_boundary_switch_defaults_off_and_leaves_every_line_verbatim) {
+    // 稿 §13 D46①：缺省关。这一案同时是 F25 那条**假绿**教训的正面判据——同一份料，开档必然多出
+    // 行数、关档逐字段与今天相同；只比「像不像」而不比行数的判据，插不插边界都行不通地全绿。
+    const auto runs = std::vector{received("OK\r\n"), received("+WDT: 1\r\n")};
+    const auto off = ui::monitor_rows(runs, boundary_options(false));
+    const auto as_today = ui::monitor_rows(runs, ui::MonitorRowOptions{.timestamp_prefix = false});
+    AURORA_TEST_REQUIRE_EQ(off.size(), 3U);  // 4 字节一段 + 9 字节两段，一条分隔行都没有
+    for (std::size_t index = 0; index < off.size(); ++index) {
+        AURORA_TEST_CHECK_TRUE(off[index] == as_today[index]);
+        AURORA_TEST_CHECK_TRUE(off[index].kind == ui::MonitorRowKind::Content);
+    }
+    const auto on = ui::monitor_rows(runs, boundary_options(true));
+    AURORA_TEST_CHECK_EQ(on.size(), 5U);
+    // `kind` 的缺省档是内容行：既有 26 案与装配层的构造都不写这一格，它们的语义本来就是内容行（F26）。
+    AURORA_TEST_CHECK_TRUE(ui::MonitorRow{}.kind == ui::MonitorRowKind::Content);
+}
+
+AURORA_TEST_CASE(a_run_that_ends_on_a_line_break_is_followed_by_its_separator) {
+    // §13.3 那一屏：`OK\r\n` 一段加它的分隔行，隔 812 ms 的第二批同理（分隔行吃的是**这一批**的条数）。
+    const auto runs = std::vector{
+        run(session::RawDirection::Received, local_epoch_ms(10, 23, 41, 502), "OK\r\n"),
+        run(session::RawDirection::Received, local_epoch_ms(10, 23, 42, 314), "+WDT: 1\r\n")};
+    const auto rows = ui::monitor_rows(runs, ui::MonitorRowOptions{.boundary_rows = true});
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 5U);
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[0]),
+                         expected_line("[10:23:41.502] ", "RX", "4F 4B 0D 0A", 4U, "OK.."));
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[1]), "-- RX 4 B --");
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[2]),
+                         expected_line("[10:23:42.314] ", "RX", "2B 57 44 54 3A 20 31 0D", 8U, "+WDT: 1."));
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[3]),
+                         expected_line("[10:23:42.314] ", "RX", "0A", 1U, "."));
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[4]), "-- RX 9 B (+812 ms) --");
+    AURORA_TEST_CHECK_TRUE(rows[1].kind == ui::MonitorRowKind::Boundary);
+    AURORA_TEST_CHECK_TRUE(rows[4].direction == session::RawDirection::Received);
+    // 边界行不吃时间戳前缀、也不占方向格：它的时刻就是它上面那条内容行的时刻（稿 D47①／F22）。
+    AURORA_TEST_CHECK_EQ(rows[1].timestamp_prefix, std::string{});
+    AURORA_TEST_CHECK_EQ(rows[1].direction_label, std::string{});
+    // 前缀档关掉时同样完整：这一行自带方向与条数，不依赖前缀（稿 D47 那句「仍然完整」）。
+    const auto bare = ui::monitor_rows(runs, boundary_options(true));
+    AURORA_TEST_REQUIRE_EQ(bare.size(), 5U);
+    AURORA_TEST_CHECK_EQ(ui::row_text(bare[1]), "-- RX 4 B --");
+}
+
+AURORA_TEST_CASE(a_device_line_split_across_runs_gets_one_separator_only_at_its_end) {
+    // F10 那一例（一条 20 字节的设备行被切成 15 + 5 两个读块）：开档后**仍是同一段**（头注口径 ⑵
+    // 不被推翻，稿 F23），中间那条 run 界不在屏上（D44① 认下的代价）。
+    const auto runs = std::vector{
+        run(session::RawDirection::Received, local_epoch_ms(12, 0, 0, 100), "abcdefghijklmno"),
+        run(session::RawDirection::Received, local_epoch_ms(12, 0, 0, 200), "pqr\r\n")};
+    const auto rows = ui::monitor_rows(runs, boundary_options(true));
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 4U);  // 20 字节＝8 + 8 + 4 三行内容 + 一条分隔行
+    AURORA_TEST_CHECK_TRUE(rows[0].kind == ui::MonitorRowKind::Content);
+    AURORA_TEST_CHECK_TRUE(rows[1].kind == ui::MonitorRowKind::Content);
+    AURORA_TEST_CHECK_TRUE(rows[2].kind == ui::MonitorRowKind::Content);
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[3]), "-- RX 5 B (+100 ms) --");
+    // 末行那一段是第 17–20 字节（`qr\r\n`）：整段仍在同一设备上算作一行，分隔行报的是**最后一个读块**。
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[2]),
+                         expected_line("", "RX", "71 72 0D 0A", 4U, "qr.."));
+}
+
+AURORA_TEST_CASE(consecutive_runs_of_the_same_direction_each_get_a_separator) {
+    // D45②：设备连发两条同名回应时，方向不变恰恰是最需要边界的那一列；按方向变化画（D45①）会把
+    // 「谁回了几次」抹平。
+    const auto runs = std::vector{
+        run(session::RawDirection::Received, 1000, "+WDT: OK\r\n"),
+        run(session::RawDirection::Received, 2000, "+WDT: OK\r\n"),
+        run(session::RawDirection::Received, 2000, "+WDT: BUSY\r\n")};
+    const auto rows = ui::monitor_rows(runs, boundary_options(true));
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 9U);  // 每条 10／12 字节的回应都是两行内容 + 一条分隔行
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[2]), "-- RX 10 B --");
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[5]), "-- RX 10 B (+1000 ms) --");
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[8]), "-- RX 12 B (+0 ms) --");  // 同毫秒两批：夹 0 不是负数
+}
+
+AURORA_TEST_CASE(the_delta_is_read_against_the_previous_run_in_the_ring) {
+    // D48①：Δ 吃**环内上一 run** 的到达时刻，与这一批折了几行、方向是否改变都无关；
+    // 环里第一条没有前批 ⇒ 整段 `(+N ms)` 不画（D47① 的无 Δ 形态）。
+    const auto runs = std::vector{
+        run(session::RawDirection::Transmitted, 5000, "AT\r\n"),
+        run(session::RawDirection::Received, 5000, "OK\r\n"),
+        run(session::RawDirection::Transmitted, 4000, "AT\r\n")};  // 时钟回拨给的那一档
+    const auto rows = ui::monitor_rows(runs, boundary_options(true));
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 6U);
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[1]), "-- TX 4 B --");
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[3]), "-- RX 4 B (+0 ms) --");
+    AURORA_TEST_CHECK_EQ(ui::row_text(rows[5]), "-- TX 4 B (+0 ms) --");  // 负值夹成 0，不装神弄鬼
+}
+
+AURORA_TEST_CASE(the_row_count_and_the_window_slices_hold_with_separators_on) {
+    // 稿 §13 F24：边界行必须**同进**计数侧与折行侧——只进折行侧就等于给 `LazyList` 报了一个偏小的
+    // 总行数，窗口尾部丢行且回翻翻不到。两档 × 两个视图 × 逐窗口切片都判。
+    const auto shapes = std::vector<std::vector<session::RawRun>>{
+        {},
+        {received("A")},
+        {received("AB\r\nCD\rEF")},
+        {received("AB\r"), received("\nCD")},
+        {received("OK\r\n"), received("OK\r\n")},
+        {run(session::RawDirection::Transmitted, 5, "AT\r\n"), received("OK\r\n")},
+        {received("abcdefghijklmno"), received("pqr\r\n")},
+    };
+    for (const bool on : {false, true}) {
+        const auto hex_options = boundary_options(on);
+        auto text = text_options();
+        text.boundary_rows = on;
+        for (const auto &runs : shapes) {
+            for (const auto &options : {hex_options, text}) {
+                const auto all = ui::monitor_rows(runs, options);
+                const auto total = ui::monitor_row_count(runs, options);
+                AURORA_TEST_CHECK_EQ(total, all.size());
+                for (std::size_t first = 0; first <= total; ++first) {
+                    for (const std::size_t max : {1U, 2U, 96U}) {
+                        const auto window = ui::monitor_row_window(runs, options, first, max);
+                        const std::size_t begin = std::min(first, total);
+                        const std::size_t want = std::min(max, total - begin);
+                        AURORA_TEST_REQUIRE_EQ(window.size(), want);
+                        for (std::size_t offset = 0; offset < want; ++offset) {
+                            AURORA_TEST_CHECK_EQ(ui::row_text(window[offset]),
+                                                 ui::row_text(all[begin + offset]));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // 开档比关档多出来的行数＝落在自然行界上的 run 条数（这里三条各算一条）。
+    const auto three = std::vector{received("OK\r\n"), received("OK\r\n"), received("OK\r\n")};
+    AURORA_TEST_CHECK_EQ(ui::monitor_row_count(three, boundary_options(true)) -
+                             ui::monitor_row_count(three, boundary_options(false)),
+                         3U);
+}
+
+AURORA_TEST_CASE(a_separator_stays_within_the_card_width_at_its_worst_shape) {
+    // F27 的硬界：卡内净宽 616 dp＝56 格，边界行**不许顶到满格**（一顶就重演 D27／D31 那条
+    // 「满格在最右截字」的量化教训）。这里取六位条数与十二位毫秒的 Δ——再大就只是位数相同、
+    // 折出来的内容行更多（100000 字节已够 12500 行，环上界那一档只是把同一句话多验几万次）。
+    auto first = run(session::RawDirection::Received, 0, "OK\r\n");
+    auto big = session::RawRun{};
+    big.direction = session::RawDirection::Transmitted;
+    big.timestamp_ms = 999999999999;
+    big.bytes.assign(99999U, std::byte{'A'});
+    big.bytes.push_back(std::byte{'\n'});
+    const auto rows = ui::monitor_rows(std::vector{first, big}, boundary_options(true));
+    AURORA_TEST_REQUIRE_EQ(rows.size(), 12500U + 2U + 1U);  // 尾 run 折 12500 行 + 两条分隔行
+    const auto &separator = rows.back();
+    AURORA_TEST_CHECK_EQ(ui::row_text(separator), "-- TX 100000 B (+999999999999 ms) --");
+    AURORA_TEST_CHECK_LE(separator.dump.size(), 56U);
+    AURORA_TEST_CHECK_LE(ui::row_text(separator).size(), 56U);
+}
+
+AURORA_TEST_CASE(the_dump_carries_the_separators_because_the_screen_has_them) {
+    // D49①＝D19① 的原文口径「带走屏上那一份」：导出腿吃的就是同一张行表，不需要新增按 kind 过滤。
+    const auto runs = std::vector{run(session::RawDirection::Received, 1000, "OK\r\n"),
+                                  run(session::RawDirection::Transmitted, 1500, "AT\r\n")};
+    AURORA_TEST_CHECK_EQ(ui::monitor_dump_text(runs, boundary_options(true)),
+                         expected_line("", "RX", "4F 4B 0D 0A", 4U, "OK..") + "\n-- RX 4 B --\n" +
+                             expected_line("", "TX", "41 54 0D 0A", 4U, "AT..") +
+                             "\n-- TX 4 B (+500 ms) --");
+    AURORA_TEST_CHECK_EQ(ui::monitor_dump_text(runs, boundary_options(false)),
+                         expected_line("", "RX", "4F 4B 0D 0A", 4U, "OK..") + "\n" +
+                             expected_line("", "TX", "41 54 0D 0A", 4U, "AT.."));
+    // 文本档同理：分隔行与视图档正交，hex／文本两档都带得出去。
+    auto text = text_options();
+    text.boundary_rows = true;
+    AURORA_TEST_CHECK_EQ(ui::monitor_dump_text(runs, text),
+                         "RX  OK\n-- RX 4 B --\nTX  AT\n-- TX 4 B (+500 ms) --");
 }
 
 }  // namespace borealis::test_cases::utest_session_monitor_format
