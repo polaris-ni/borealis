@@ -1,5 +1,5 @@
 // ============================================================
-// 串口十六进制收发监视面板实现（src/ui/serial_monitor_panel.cpp）
+// 串口十六进制收发监视面板实现（src/ui/session_monitor_panel.cpp）
 // ------------------------------------------------------------
 // 形态对照设计稿 `codespec/UI_SERIAL_MONITOR.draft.md` 的标号（§2 那张屏面表 + 二期 §9.2 的 D10～D18）：
 // 640 dp 停靠卡片（D5①，54 字符/行）、两枚面板局部开关（D6①／D7①）、清空与关闭（D7①：清空是唯一的
@@ -16,7 +16,7 @@
 // 文件出现（稿 §10.2 D22①／D24①），常驻那句声明也按同一口径改了口。
 // ============================================================
 
-#include "serial_monitor_panel.h"
+#include "session_monitor_panel.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -97,12 +97,12 @@ namespace {
 
 }  // namespace
 
-SerialMonitorPanel::SerialMonitorPanel(aurora::OverlayHost &host, Hooks hooks)
+SessionMonitorPanel::SessionMonitorPanel(aurora::OverlayHost &host, Hooks hooks)
     : host_{&host}, hooks_{std::move(hooks)} {}
 
 // 先摘后换（头文件的判据）：`close()` 摘的是**旧宿主**上自己记的那枚序号，之后浮层归零。环不动——
 // 留痕活在那条会话的 `Session` 里，本件只是它的一份投影，所以搬窗既不停采也不清屏（重开看到的是历史）。
-auto SerialMonitorPanel::set_overlay_host(aurora::OverlayHost &host) -> void {
+auto SessionMonitorPanel::set_overlay_host(aurora::OverlayHost &host) -> void {
     if (host_ == &host) {
         return;
     }
@@ -110,11 +110,11 @@ auto SerialMonitorPanel::set_overlay_host(aurora::OverlayHost &host) -> void {
     host_ = &host;
 }
 
-SerialMonitorPanel::~SerialMonitorPanel() {
+SessionMonitorPanel::~SessionMonitorPanel() {
     close();
 }
 
-auto SerialMonitorPanel::open() -> void {
+auto SessionMonitorPanel::open() -> void {
     if (open_) {
         // 已开着：只跟一帧数。命令重复唤起不该把浮层拆了重挂（面板族同款口径，`TunnelPanel::open()`）。
         tick();
@@ -130,14 +130,14 @@ auto SerialMonitorPanel::open() -> void {
     install_overlay();
 }
 
-auto SerialMonitorPanel::close() -> void {
+auto SessionMonitorPanel::close() -> void {
     if (!open_) {
         return;
     }
     clear_state();
 }
 
-auto SerialMonitorPanel::tick() -> void {
+auto SessionMonitorPanel::tick() -> void {
     if (!open_) {
         return;  // 没开就没有泵的事：环照人写，本件不在场时零成本（D7① 的常驻代价在会话侧）。
     }
@@ -165,11 +165,11 @@ auto SerialMonitorPanel::tick() -> void {
     follow_frame();
 }
 
-auto SerialMonitorPanel::read_snapshot() const -> Snapshot {
+auto SessionMonitorPanel::read_snapshot() const -> Snapshot {
     return hooks_.snapshot != nullptr ? hooks_.snapshot() : Snapshot{};
 }
 
-auto SerialMonitorPanel::make_options() const -> MonitorRowOptions {
+auto SessionMonitorPanel::make_options() const -> MonitorRowOptions {
     return MonitorRowOptions{
         .bytes_per_row = kMonitorBytesPerRow,
         .timestamp_prefix = timestamp_prefix_,
@@ -180,7 +180,7 @@ auto SerialMonitorPanel::make_options() const -> MonitorRowOptions {
     };
 }
 
-auto SerialMonitorPanel::compute_frozen() const -> bool {
+auto SessionMonitorPanel::compute_frozen() const -> bool {
     if (list_ == nullptr) {
         return false;
     }
@@ -195,11 +195,11 @@ auto SerialMonitorPanel::compute_frozen() const -> bool {
     return !(at_bottom && window_covers_ring_end());
 }
 
-auto SerialMonitorPanel::window_covers_ring_end() const -> bool {
+auto SessionMonitorPanel::window_covers_ring_end() const -> bool {
     return fold_first_row_ + painted_rows_.size() >= total_rows_;
 }
 
-auto SerialMonitorPanel::follow_frame() -> void {
+auto SessionMonitorPanel::follow_frame() -> void {
     auto snapshot = read_snapshot();
     auto binding = hooks_.binding_label != nullptr ? hooks_.binding_label() : std::string{};
     // 编码腿名与绑定同帧现取（稿 D28①）：空串或 Hook 缺席都折成 `UTF-8`——与折算件那条既有回落同值，
@@ -247,7 +247,7 @@ auto SerialMonitorPanel::follow_frame() -> void {
     paint_rows(std::move(rows), offset);
 }
 
-auto SerialMonitorPanel::rebuild_current_view() -> void {
+auto SessionMonitorPanel::rebuild_current_view() -> void {
     const auto options = make_options();
     if (rebase_rows_) {
         // 换视图档就是换行号坐标系（hex 档 8 字节/行 ↔ 文本档 36 字节/行），冻结/暂停里沿用的
@@ -269,7 +269,7 @@ auto SerialMonitorPanel::rebuild_current_view() -> void {
     paint_rows(std::move(rows), offset);
 }
 
-auto SerialMonitorPanel::slide_frozen_window() -> void {
+auto SessionMonitorPanel::slide_frozen_window() -> void {
     if (list_ == nullptr || total_rows_ == 0U || painted_rows_.empty()) {
         return;
     }
@@ -305,7 +305,7 @@ auto SerialMonitorPanel::slide_frozen_window() -> void {
     paint_rows(std::move(rows), next_offset);
 }
 
-auto SerialMonitorPanel::paint_rows(std::vector<MonitorRow> rows, float scroll_offset) -> void {
+auto SessionMonitorPanel::paint_rows(std::vector<MonitorRow> rows, float scroll_offset) -> void {
     painted_rows_ = std::move(rows);
     painted_binding_ = binding_;
     painted_ring_bytes_ = ring_bytes_;
@@ -318,23 +318,23 @@ auto SerialMonitorPanel::paint_rows(std::vector<MonitorRow> rows, float scroll_o
     refresh_overlay();
 }
 
-auto SerialMonitorPanel::visible_rows() const -> std::vector<MonitorRow> {
+auto SessionMonitorPanel::visible_rows() const -> std::vector<MonitorRow> {
     return painted_rows_;
 }
 
-auto SerialMonitorPanel::notice() const -> std::string {
+auto SessionMonitorPanel::notice() const -> std::string {
     if (dropped_bytes_ == 0U) {
         return {};
     }
     // 丢弃必须上屏：不报这一句，「环里最早那行」就会被当成「设备最早发的那行」（D4①）。上限读快照
     // 带出的现值（D16①）——换档后这一句自己跟着走，不在面板里写死第二份。
     const auto cap_kib = (cap_bytes_ + 1023U) / 1024U;
-    return settings_label("serial.monitor.notice.dropped",
+    return settings_label("session.monitor.notice.dropped",
                           {{"count", static_cast<std::int64_t>(dropped_bytes_)},
                            {"cap", static_cast<std::int64_t>(cap_kib)}});
 }
 
-auto SerialMonitorPanel::install_overlay() -> void {
+auto SessionMonitorPanel::install_overlay() -> void {
     if (!open_ || host_ == nullptr) {
         return;
     }
@@ -356,7 +356,7 @@ auto SerialMonitorPanel::install_overlay() -> void {
     dialog_->show();
 }
 
-auto SerialMonitorPanel::refresh_overlay() -> void {
+auto SessionMonitorPanel::refresh_overlay() -> void {
     if (!open_ || !overlay_index_.has_value() || host_ == nullptr) {
         return;
     }
@@ -367,7 +367,7 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
     install_overlay();
 }
 
-[[nodiscard]] auto SerialMonitorPanel::build_row(const MonitorRow &row) -> aurora::Node {
+[[nodiscard]] auto SessionMonitorPanel::build_row(const MonitorRow &row) -> aurora::Node {
     const auto chrome = settings_chrome();
     // 三格顺序拼接就是 `row_text()`；格间**不给 gap**——对齐这件事只由等宽族与折算件负责（稿 §2）。
     auto cells = std::vector<aurora::Node>{};
@@ -379,7 +379,7 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
     return row_of(std::move(cells), 0.0F);
 }
 
-[[nodiscard]] auto SerialMonitorPanel::build_overlay() -> std::shared_ptr<aurora::Column> {
+[[nodiscard]] auto SessionMonitorPanel::build_overlay() -> std::shared_ptr<aurora::Column> {
     const auto chrome = settings_chrome();
     auto children = std::vector<aurora::Node>{};
 
@@ -387,20 +387,20 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
     // 与隧道面板同一条实测教训：标题不抓 fill_max_width，否则计数与两枚按钮整组被挤出卡宽（派发链上
     // 点不到）。绑定失去身份（标签散了／非串口）就整格不画，而不是画一句「未知」。
     auto header_children = std::vector<aurora::Node>{
-        node(make_text(settings_label("serial.monitor.title"), chrome.text))};
+        node(make_text(settings_label("session.monitor.title"), chrome.text))};
     if (!painted_binding_.empty()) {
         header_children.push_back(node(make_text(painted_binding_, chrome.text_dim)));
     }
     header_children.push_back(
-        node(make_text(settings_label("serial.monitor.bytes", count_arg(painted_ring_bytes_)),
+        node(make_text(settings_label("session.monitor.bytes", count_arg(painted_ring_bytes_)),
                        chrome.text_dim)));
     if (hooks_.clear != nullptr) {
-        header_children.push_back(node(make_button(settings_label("serial.monitor.action.clear"),
+        header_children.push_back(node(make_button(settings_label("session.monitor.action.clear"),
                                                    chrome.control_bg, chrome.text_dim, 48.0F,
                                                    [this]() -> void { on_clear(); },
                                                    chrome.card_line)));
     }
-    header_children.push_back(node(make_button(settings_label("serial.monitor.action.close"),
+    header_children.push_back(node(make_button(settings_label("session.monitor.action.close"),
                                                chrome.control_bg, chrome.text_dim, 48.0F,
                                                [this]() -> void { close(); }, chrome.card_line)));
     children.push_back(row_of(std::move(header_children), 8.0F));
@@ -423,13 +423,13 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
         sw->set_thumb_color(chrome.text);
     }
     children.push_back(row_of(std::vector<aurora::Node>{
-                             node(make_text(settings_label("serial.monitor.toggle.timestamp"),
+                             node(make_text(settings_label("session.monitor.toggle.timestamp"),
                                             chrome.text_dim)),
                              node(std::static_pointer_cast<aurora::Widget>(std::move(timestamp_switch))),
-                             node(make_text(settings_label("serial.monitor.toggle.pause"),
+                             node(make_text(settings_label("session.monitor.toggle.pause"),
                                             chrome.text_dim)),
                              node(std::static_pointer_cast<aurora::Widget>(std::move(pause_switch))),
-                             node(make_text(settings_label("serial.monitor.toggle.text_view"),
+                             node(make_text(settings_label("session.monitor.toggle.text_view"),
                                             chrome.text_dim)),
                              node(std::static_pointer_cast<aurora::Widget>(std::move(text_switch)))},
                          8.0F));
@@ -441,12 +441,12 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
     {
         auto actions = std::vector<aurora::Node>{};
         if (hooks_.copy_text != nullptr) {
-            actions.push_back(node(make_button(settings_label("serial.monitor.action.copy"),
+            actions.push_back(node(make_button(settings_label("session.monitor.action.copy"),
                                                chrome.control_bg, chrome.text_dim, 48.0F,
                                                [this]() -> void { on_copy(); }, chrome.card_line)));
         }
         if (hooks_.pick_export_path != nullptr && hooks_.export_text != nullptr) {
-            actions.push_back(node(make_button(settings_label("serial.monitor.action.export_file"),
+            actions.push_back(node(make_button(settings_label("session.monitor.action.export_file"),
                                                chrome.control_bg, chrome.text_dim, 48.0F,
                                                [this]() -> void { on_export(); }, chrome.card_line)));
         }
@@ -458,9 +458,9 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
     // ---- 冻结行：只有离底冻结时才在场（D13①：冻结必须可见，否则会被读成「设备停了」）----
     if (painted_frozen_) {
         children.push_back(row_of(std::vector<aurora::Node>{
-                                     node(make_text(settings_label("serial.monitor.notice.frozen"),
+                                     node(make_text(settings_label("session.monitor.notice.frozen"),
                                                     chrome.text_dim)),
-                                     node(make_button(settings_label("serial.monitor.action.latest"),
+                                     node(make_button(settings_label("session.monitor.action.latest"),
                                                       chrome.control_bg, chrome.text_dim, 72.0F,
                                                       [this]() -> void { on_latest(); },
                                                       chrome.card_line))},
@@ -474,13 +474,13 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
         line->modifier.set(aurora::Modifier{}.fill_max_width());
         children.push_back(node(std::move(line)));
     }
-    auto privacy = make_text(settings_label("serial.monitor.notice.privacy"), chrome.text_dim);
+    auto privacy = make_text(settings_label("session.monitor.notice.privacy"), chrome.text_dim);
     privacy->modifier.set(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::move(privacy)));
 
     // ---- 行区：`LazyList` 虚拟化（D10①），只实例化可见窗口；条目内容按折出的窗口快照闭包 ----
     if (painted_rows_.empty()) {
-        auto empty = make_text(settings_label("serial.monitor.empty"), chrome.text_dim);
+        auto empty = make_text(settings_label("session.monitor.empty"), chrome.text_dim);
         empty->modifier.set(aurora::Modifier{}.fill_max_width().expand());
         children.push_back(node(std::move(empty)));
     } else {
@@ -527,16 +527,16 @@ auto SerialMonitorPanel::refresh_overlay() -> void {
     return card;
 }
 
-auto SerialMonitorPanel::on_timestamp_changed(bool next) -> void {
+auto SessionMonitorPanel::on_timestamp_changed(bool next) -> void {
     timestamp_prefix_ = next;
     rebuild_pending_ = true;  // 重建排在下一帧（头注那条代价）。
 }
 
-auto SerialMonitorPanel::on_pause_changed(bool next) -> void {
+auto SessionMonitorPanel::on_pause_changed(bool next) -> void {
     paused_ = next;  // 不重建：画面停在按下那一刻，行区本来就是它该停的样子。
 }
 
-auto SerialMonitorPanel::on_text_view_changed(bool next) -> void {
+auto SessionMonitorPanel::on_text_view_changed(bool next) -> void {
     text_view_ = next;
     // 换视图档就是换行号坐标系（hex 档 8 字节/行 ↔ 文本档 36 字节/行）：跟尾态由 `follow_frame()` 按新档
     // 重算，停更态得显式重排（稿 D34）。与时间戳那枚同一条纪律——回调里不折行、不解码，重建排在下一帧。
@@ -550,7 +550,7 @@ auto SerialMonitorPanel::on_text_view_changed(bool next) -> void {
     rebuild_pending_ = true;
 }
 
-auto SerialMonitorPanel::on_clear() -> void {
+auto SessionMonitorPanel::on_clear() -> void {
     if (hooks_.clear != nullptr) {
         hooks_.clear();
     }
@@ -569,7 +569,7 @@ auto SerialMonitorPanel::on_clear() -> void {
     rebuild_pending_ = true;
 }
 
-auto SerialMonitorPanel::on_latest() -> void {
+auto SessionMonitorPanel::on_latest() -> void {
     // 「回到最新」在语义上就是「我要看最新的」：顺手解暂停与冻结（D14①），并让下一帧直接重读环。
     // 这里不读环、不重建——回调里不做长计算的纪律与其余动作腿同。
     paused_ = false;
@@ -578,13 +578,13 @@ auto SerialMonitorPanel::on_latest() -> void {
     rebuild_pending_ = true;
 }
 
-auto SerialMonitorPanel::dump_text() const -> std::string {
+auto SessionMonitorPanel::dump_text() const -> std::string {
     // 料源是手里的 `source_`（稿 §10.2 D20①）而不是重读环：暂停/冻结时屏面没变，交出去的东西也不该变。
     // 显示档取 `make_options()`——与画这一屏同一份，故文件/剪贴板里每一行都能在屏上逐字符找到（D19①）。
     return monitor_dump_text(source_, make_options());
 }
 
-auto SerialMonitorPanel::on_copy() -> void {
+auto SessionMonitorPanel::on_copy() -> void {
     const auto text = dump_text();
     if (text.empty()) {
         return;  // D21①：空环整条不跑——不碰剪贴板也不留痕，那句「等待数据」本来就在行区里说清了。
@@ -592,11 +592,11 @@ auto SerialMonitorPanel::on_copy() -> void {
     if (hooks_.copy_text != nullptr) {
         hooks_.copy_text(text);
     }
-    feedback_ = settings_label("serial.monitor.notice.copied", count_arg(total_rows_));
+    feedback_ = settings_label("session.monitor.notice.copied", count_arg(total_rows_));
     rebuild_pending_ = true;  // 留痕上屏排在下一帧：本件唯一的重建入口是 `tick()`（D8① 的纪律）。
 }
 
-auto SerialMonitorPanel::on_export() -> void {
+auto SessionMonitorPanel::on_export() -> void {
     // 三条接缝齐备是这枚按钮画出来的**前提**（`build_overlay()` 那侧的判据），故这里不再逐条问空——
     // 与 `SettingsPanel::run_export()` 同一条口径。
     const auto text = dump_text();
@@ -610,18 +610,18 @@ auto SerialMonitorPanel::on_export() -> void {
     if (const auto reason = hooks_.export_text(picked, text); reason.has_value()) {
         // 存储侧的原因是 ASCII 诊断串，只进日志；上屏的永远是那一句「屏面未变」（同 S13② 的备份行）。
         AURORA_LOG_WARN("serial", "monitor export failed: ", *reason);
-        feedback_ = settings_label("serial.monitor.notice.export_failed");
+        feedback_ = settings_label("session.monitor.notice.export_failed");
         rebuild_pending_ = true;
         return;
     }
     // 路径是**取值**而不是字面量，故逐字上屏（`settings.config.exported` 同一条口径，裁决 7.76⑤）。
     feedback_ =
-        settings_label("serial.monitor.notice.exported",
+        settings_label("session.monitor.notice.exported",
                        {{"count", static_cast<std::int64_t>(total_rows_)}, {"path", picked}});
     rebuild_pending_ = true;
 }
 
-auto SerialMonitorPanel::clear_state() -> void {
+auto SessionMonitorPanel::clear_state() -> void {
     if (overlay_index_.has_value() && host_ != nullptr) {
         host_->remove_overlay(*overlay_index_);
         overlay_index_.reset();

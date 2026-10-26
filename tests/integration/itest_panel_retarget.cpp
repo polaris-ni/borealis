@@ -1,6 +1,6 @@
 /// 测试类型: integration
 /// 目标单元: src/ui/{connection_sidebar,connection_wizard,credential_prompt,keys_panel,sftp_panel,
-///                    serial_monitor_panel,tunnel_panel,settings_panel,debug_panel,startup_notice}.cpp
+///                    session_monitor_panel,tunnel_panel,settings_panel,debug_panel,startup_notice}.cpp
 ///           的搬窗接缝
 ///           （`SPEC.FEAT.WS.03` 稿 D6「面板搬窗而非各一份」＋稿 §0 的 F3「焦点权威按窗取」）
 /// 测试说明: `src/main.cpp` 不进测试运行器（裁决 7.83），装配层那条「散掉的窗把浮层搬到落点」的腿因此
@@ -28,7 +28,7 @@
 ///           与 `itest_debug_panel` / `itest_startup_notice` 同一条宿主构造事实：`overlay_count()` 按
 ///           `children_.size() - 1` 回（**基础内容不计入**），故每只宿主都带一个基础子节点，「挂了一层」
 ///           的读数是 1。中文一律经词条表在运行期交出，本文件不写中文字面量（§4.3 第 14 条）。
-///           第八只（`serial_monitor_panel`，`SPEC.FEAT.CONN.05` 稿 D6 那条「搬窗不停采集」）判据与其余
+///           第八只（`session_monitor_panel`，`SPEC.FEAT.CONN.05` 稿 D6 那条「搬窗不停采集」）判据与其余
 ///           七只逐字相同，只多一层含义：留痕活在那条会话的 `Session` 里，本件是它的一份投影，故摘挂
 ///           浮层这一跳既不动环也不清屏——它走的仍是 `set_overlay_host` 这一支，而不是两只常驻框那条
 ///           `set_overlay_destination`（本件是瞬态浮层：关闭即摘，重开即挂）。
@@ -51,7 +51,7 @@
 #include "../../src/ui/credential_prompt.h"
 #include "../../src/ui/debug_panel.h"
 #include "../../src/ui/keys_panel.h"
-#include "../../src/ui/serial_monitor_panel.h"
+#include "../../src/ui/session_monitor_panel.h"
 #include "../../src/ui/settings_i18n.h"
 #include "../../src/ui/settings_panel.h"
 #include "../../src/ui/sftp_panel.h"
@@ -73,7 +73,7 @@ using borealis::ui::DebugSessionSnapshot;
 using borealis::ui::KeysPanel;
 using borealis::ui::SettingsPanel;
 using borealis::ui::SftpPanel;
-using borealis::ui::SerialMonitorPanel;
+using borealis::ui::SessionMonitorPanel;
 using borealis::ui::StartupNotice;
 using borealis::ui::TunnelPanel;
 
@@ -210,7 +210,7 @@ AURORA_TEST_CASE(the_sftp_panel_moves_without_leaving_a_copy_behind) {
     check_transient_retarget(sftp, a, b, "sftp", [](SftpPanel &panel) -> void { panel.open(); });
 }
 
-AURORA_TEST_CASE(the_serial_monitor_moves_without_disturbing_the_tap) {
+AURORA_TEST_CASE(the_monitor_card_moves_without_disturbing_the_tap) {
     borealis::ui::install_settings_strings();
     std::shared_ptr<au::Text> base_a;
     std::shared_ptr<au::Text> base_b;
@@ -220,8 +220,8 @@ AURORA_TEST_CASE(the_serial_monitor_moves_without_disturbing_the_tap) {
     au::OverlayHost &b = *host_b;
     // 空 Hooks：本件的搬窗判据与其余七只逐字相同，不需要一条真会话在场——留痕环归 `Session`，
     // 浮层这一跳碰不到它（稿 D6 那句「搬窗不停采集」的结构根据就在这条判据里）。
-    SerialMonitorPanel monitor{a, {}};
-    check_transient_retarget(monitor, a, b, "monitor", [](SerialMonitorPanel &panel) -> void { panel.open(); });
+    SessionMonitorPanel monitor{a, {}};
+    check_transient_retarget(monitor, a, b, "monitor", [](SessionMonitorPanel &panel) -> void { panel.open(); });
 }
 
 AURORA_TEST_CASE(the_tunnel_panel_moves_as_one_list) {

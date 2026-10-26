@@ -90,7 +90,7 @@
 #include "ui/keys_format.h"
 #include "ui/keys_panel.h"
 #include "ui/serial_format.h"
-#include "ui/serial_monitor_panel.h"
+#include "ui/session_monitor_panel.h"
 #include "ui/settings_i18n.h"
 #include "ui/settings_panel.h"
 #include "ui/sftp_panel.h"
@@ -4405,8 +4405,8 @@ auto main(int argc, char **argv) -> int {
         return session == nullptr ? nullptr : session->raw_tap();
     };
 
-    borealis::ui::SerialMonitorPanel::Hooks monitor_hooks;
-    monitor_hooks.snapshot = [&monitor_tap]() -> borealis::ui::SerialMonitorPanel::Snapshot {
+    borealis::ui::SessionMonitorPanel::Hooks monitor_hooks;
+    monitor_hooks.snapshot = [&monitor_tap]() -> borealis::ui::SessionMonitorPanel::Snapshot {
         const auto tap = monitor_tap();
         if (tap == nullptr) {
             return {};
@@ -4414,7 +4414,7 @@ auto main(int argc, char **argv) -> int {
         // revision 先读、runs 后取（D17①）：反序时两次读之间的写入会让新数据被当成旧帧跳过。
         const auto revision = tap->revision();
         const auto cap_bytes = tap->max_bytes();
-        return borealis::ui::SerialMonitorPanel::Snapshot{
+        return borealis::ui::SessionMonitorPanel::Snapshot{
             .runs = tap->snapshot(),
             .dropped_bytes = tap->dropped_bytes(),
             .revision = revision,
@@ -4450,7 +4450,7 @@ auto main(int argc, char **argv) -> int {
         if (name.empty()) {
             return path;
         }
-        return borealis::ui::settings_label("serial.monitor.binding",
+        return borealis::ui::settings_label("session.monitor.binding",
                                            {{"name", name}, {"path", path}});
     };
     // 文本视图的解码腿（稿 §11 D28①）：交的是那条会话**构造期折好的实际生效腿名**，不是设置现值——
@@ -4479,26 +4479,26 @@ auto main(int argc, char **argv) -> int {
     monitor_hooks.export_text = [](const std::string &path, const std::string &text)
         -> std::optional<std::string> { return write_private_dump(path, text); };
 
-    borealis::ui::SerialMonitorPanel monitor_panel{*host, std::move(monitor_hooks)};
+    borealis::ui::SessionMonitorPanel monitor_panel{*host, std::move(monitor_hooks)};
     // 一句提示沿用波特率那一只框（`serial_baud_dialog` + `show_serial_baud_frame` 那对既有件）：
     // 「两只框共用一只 Dialog 换 content」在 `close_confirm` 与多行粘贴确认那里已是先例，再开第二只
     // `Dialog` 与第二枚 `MountedOverlay` 就要多维护一套落点账，而这两句话本来不会同时在场。
     auto show_monitor_notice = [&serial_baud_dialog, &show_serial_baud_frame](std::string_view key) -> void {
-        const std::string title = borealis::ui::settings_label("serial.monitor.title");
+        const std::string title = borealis::ui::settings_label("session.monitor.title");
         const std::string message = borealis::ui::settings_label(key);
         auto dialog = serial_baud_dialog;
         show_serial_baud_frame(au::alert(title, message, [dialog]() -> void { dialog->close(); }));
     };
 
-    // `serial.monitor.toggle` 命令（稿 D8①）：分流判据与重启、热改波特率那两条同源——「当前标签在
+    // `session.monitor.toggle` 命令（稿 D8①）：分流判据与重启、热改波特率那两条同源——「当前标签在
     // `serial_by_tab` 里有没有身份」。非串口只留一句话，**不武装任何采集**（未武装的会话在采集点判一次
     // 指针就走，这是 §5 那条「非串口会话零成本」的落地）。同一条命令再按一次是关闭：关闭既不停采集
     // 也不清环，重开看到的就是刚才那一段（D7①）。
-    au::Command toggle_serial_monitor;
-    toggle_serial_monitor.id = "serial.monitor.toggle";
-    toggle_serial_monitor.title = borealis::ui::settings_label("serial.monitor.command");
-    toggle_serial_monitor.category = "terminal";
-    toggle_serial_monitor.action =
+    au::Command toggle_session_monitor;
+    toggle_session_monitor.id = "session.monitor.toggle";
+    toggle_session_monitor.title = borealis::ui::settings_label("session.monitor.command");
+    toggle_session_monitor.category = "terminal";
+    toggle_session_monitor.action =
         [&monitor_panel, &monitor_tab, &monitor_session, &retarget_panel, &command_tab_id,
          &focused_pane_session, &serial_by_tab, &show_monitor_notice]() -> void {
         retarget_panel(monitor_panel);  // 搬窗（稿 D6，本件是面板族第八只）：先挂到发起命令那一扇
@@ -4511,7 +4511,7 @@ auto main(int argc, char **argv) -> int {
             target.has_value() ? focused_pane_session(target.value()) : nullptr;
         if (session == nullptr || !target.has_value() ||
             serial_by_tab.find(target.value()) == serial_by_tab.end()) {
-            show_monitor_notice("serial.monitor.not_serial");
+            show_monitor_notice("session.monitor.not_serial");
             return;
         }
         monitor_tab = target;
@@ -4519,7 +4519,7 @@ auto main(int argc, char **argv) -> int {
         static_cast<void>(session->enable_raw_tap());  // 幂等：重开看到的是历史而不是空白
         monitor_panel.open();
     };
-    app.commands().add(std::move(toggle_serial_monitor));
+    app.commands().add(std::move(toggle_session_monitor));
 
     // ---- 会话日志（`SPEC.FEAT.CONN.11`，裁决 7.116 的批 2：界面路径自此可达）----
     //

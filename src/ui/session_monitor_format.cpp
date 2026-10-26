@@ -1,8 +1,8 @@
 // ============================================================
-// 串口监视卡的行折算纯逻辑件实现（src/ui/serial_monitor_format.cpp）
+// 串口监视卡的行折算纯逻辑件实现（src/ui/session_monitor_format.cpp）
 // ------------------------------------------------------------
 // 两个纯函数：`monitor_rows`（run 表 → 行表）与 `monitor_timestamp_prefix`（毫秒 → 前缀）。
-// 行形态的算术写在头注与稿 §2，这里只兑现它；断言住在 `utest_serial_monitor_format`。
+// 行形态的算术写在头注与稿 §2，这里只兑现它；断言住在 `utest_session_monitor_format`。
 //
 // 断点状态机只有一枚旗标 `awaiting_lf`：CR 收口一条行但**先不落笔**，等下一个字节判它是
 // CRLF（同一条断点，一个换行）还是新行的开头。这与 `session::fold_to_plain_text` 里那枚
@@ -12,7 +12,7 @@
 // 文本档换的只是「一段字节 → `dump`」那一步（`build_dump` ↔ 解码后折文本）与每行的字节预算。
 // ============================================================
 
-#include "serial_monitor_format.h"
+#include "session_monitor_format.h"
 
 #include <algorithm>
 #include <cstddef>

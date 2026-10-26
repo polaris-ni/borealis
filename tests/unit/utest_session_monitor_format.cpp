@@ -1,5 +1,5 @@
 /// 测试类型: unit
-/// 目标单元: src/ui/serial_monitor_format.{h,cpp}（无 au:: 类型）纯折算件
+/// 目标单元: src/ui/session_monitor_format.{h,cpp}（无 au:: 类型）纯折算件
 /// 测试说明: 守住串口监视卡的行形态（稿 codespec/UI_SERIAL_MONITOR.draft.md §2／D5①／D6①）——
 ///           8 字节档那一行的逐字符串形（满格 54 字符）、十六进制段的大写与定宽补齐、尾栏只承
 ///           ASCII 可打印区其余一个 `.`、CR／LF／CRLF 各折一条断点、被切在两个 run 里的同一条
@@ -10,9 +10,9 @@
 ///           96 字节预算与行首的方向/时刻沿用、不可打印码点折 `.` 而 U+FFFD 原样上屏、非 UTF-8 腿
 ///           （GB18030）解出中文、被预算切断的多字节序列不在前一行产出、计数与折行在两档仍恒等、
 ///           `monitor_dump_text` 跟当前视图档走。
-///           面板那侧的开关联动与留痕上屏属 itest_serial_monitor_panel（批 3）。
+///           面板那侧的开关联动与留痕上屏属 itest_session_monitor_panel（批 3）。
 
-#include "ui/serial_monitor_format.h"
+#include "ui/session_monitor_format.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -24,7 +24,7 @@
 #include "borealis/session/raw_tap.h"
 #include "framework/aurora_test.h"
 
-namespace borealis::test_cases::utest_serial_monitor_format {
+namespace borealis::test_cases::utest_session_monitor_format {
 
 namespace {
 
@@ -570,4 +570,4 @@ AURORA_TEST_CASE(an_unmapped_encoding_name_decodes_as_utf8) {
     }
 }
 
-}  // namespace borealis::test_cases::utest_serial_monitor_format
+}  // namespace borealis::test_cases::utest_session_monitor_format

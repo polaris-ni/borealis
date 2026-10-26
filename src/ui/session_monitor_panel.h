@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================
-// 串口十六进制收发监视面板（src/ui/serial_monitor_panel.h）
+// 串口十六进制收发监视面板（src/ui/session_monitor_panel.h）
 // ------------------------------------------------------------
 // `SPEC.FEAT.CONN.05` 那条延后子项「可选十六进制收发视图与行首时间戳前缀」的界面腿，形态由设计稿
 // `codespec/UI_SERIAL_MONITOR.draft.md` 的 D1①／D5①／D6①／D7①／D8①／D9①（二期再叠 D10～D18）定形：
@@ -51,7 +51,7 @@
 #include "aurora/widget/popup.h"
 
 #include "borealis/session/raw_tap.h"
-#include "serial_monitor_format.h"
+#include "session_monitor_format.h"
 
 namespace aurora {
 class LazyList;  ///< 私有头只持句柄：滚动物件在建树期现造，定义留在 .cpp（D10①）。
@@ -84,7 +84,7 @@ inline constexpr std::size_t kMonitorFoldMarginRows = 16U;
 inline constexpr float kMonitorBottomTolerance = 0.5F;
 
 /// @brief 串口十六进制收发监视卡（面板族第八只瞬态浮层）。
-class SerialMonitorPanel {
+class SessionMonitorPanel {
   public:
     /// @brief 一帧的环投影（稿 §4 那句「`snapshot`（取 run 表 + 丢弃数）」的返回形态）。
     struct Snapshot {
@@ -122,12 +122,12 @@ class SerialMonitorPanel {
             export_text;
     };
 
-    SerialMonitorPanel(class aurora::OverlayHost &host, Hooks hooks);
-    SerialMonitorPanel(const SerialMonitorPanel &) = delete;
-    auto operator=(const SerialMonitorPanel &) -> SerialMonitorPanel & = delete;
-    SerialMonitorPanel(SerialMonitorPanel &&) = delete;
-    auto operator=(SerialMonitorPanel &&) -> SerialMonitorPanel & = delete;
-    ~SerialMonitorPanel();
+    SessionMonitorPanel(class aurora::OverlayHost &host, Hooks hooks);
+    SessionMonitorPanel(const SessionMonitorPanel &) = delete;
+    auto operator=(const SessionMonitorPanel &) -> SessionMonitorPanel & = delete;
+    SessionMonitorPanel(SessionMonitorPanel &&) = delete;
+    auto operator=(SessionMonitorPanel &&) -> SessionMonitorPanel & = delete;
+    ~SessionMonitorPanel();
 
     /// @brief 换浮层宿主（`SPEC.FEAT.WS.03` 稿 D6「面板搬窗」，本件是面板族**第八只**）：面板是 app 级
     ///        单实例，浮层要挂在发起命令的那一扇窗上；装配层在打开腿与关窗撤账腿各调一次。

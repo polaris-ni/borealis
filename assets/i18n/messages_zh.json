@@ -375,70 +375,6 @@
     "search.reopen_hint": "按 Enter 搜索",
     "search.toggle_case": "区分大小写",
     "search.toggle_regex": "正则表达式",
-    "serial.monitor.action.clear": "清空",
-    "serial.monitor.action.close": "关闭",
-    "serial.monitor.action.copy": "复制",
-    "serial.monitor.action.export_file": "导出",
-    "serial.monitor.action.latest": "回到最新",
-    "serial.monitor.binding": "{name} · {path}",
-    "@serial.monitor.binding": {
-      "placeholders": {
-        "name": {
-          "type": "string"
-        },
-        "path": {
-          "type": "string"
-        }
-      }
-    },
-    "serial.monitor.bytes": "{count, plural, other {{count} 字节}}",
-    "@serial.monitor.bytes": {
-      "placeholders": {
-        "count": {
-          "type": "int64"
-        }
-      }
-    },
-    "serial.monitor.command": "串口十六进制监视",
-    "serial.monitor.empty": "等待数据",
-    "serial.monitor.not_serial": "当前标签不是串口会话",
-    "serial.monitor.notice.copied": "已复制 {count, plural, other {{count} 行}}到剪贴板",
-    "@serial.monitor.notice.copied": {
-      "placeholders": {
-        "count": {
-          "type": "int64"
-        }
-      }
-    },
-    "serial.monitor.notice.dropped": "已丢弃 {count, plural, other {{count} 字节}}（环上限 {cap} KiB）",
-    "@serial.monitor.notice.dropped": {
-      "placeholders": {
-        "count": {
-          "type": "int64"
-        },
-        "cap": {
-          "type": "int64"
-        }
-      }
-    },
-    "serial.monitor.notice.export_failed": "导出失败，屏面未变",
-    "serial.monitor.notice.exported": "已导出 {count, plural, other {{count} 行}}到 {path}",
-    "@serial.monitor.notice.exported": {
-      "placeholders": {
-        "count": {
-          "type": "int64"
-        },
-        "path": {
-          "type": "string"
-        }
-      }
-    },
-    "serial.monitor.notice.frozen": "已暂停跟尾（向上翻看时不追加新数据）",
-    "serial.monitor.notice.privacy": "本面板只在内存留痕，只有你显式导出时才会写盘；导出的文件是原始设备字节，可能含口令",
-    "serial.monitor.toggle.pause": "暂停刷新",
-    "serial.monitor.toggle.text_view": "文本视图",
-    "serial.monitor.toggle.timestamp": "时间戳前缀",
-    "serial.monitor.title": "串口监视",
     "serial.set_baud.applied": "已切到 {baud}",
     "@serial.set_baud.applied": {
       "placeholders": {
@@ -496,6 +432,70 @@
     "session.log.confirm.title": "开启会话日志",
     "session.log.menu.start": "开启会话日志",
     "session.log.menu.stop": "停止会话日志",
+    "session.monitor.action.clear": "清空",
+    "session.monitor.action.close": "关闭",
+    "session.monitor.action.copy": "复制",
+    "session.monitor.action.export_file": "导出",
+    "session.monitor.action.latest": "回到最新",
+    "session.monitor.binding": "{name} · {path}",
+    "@session.monitor.binding": {
+      "placeholders": {
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "session.monitor.bytes": "{count, plural, other {{count} 字节}}",
+    "@session.monitor.bytes": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        }
+      }
+    },
+    "session.monitor.command": "串口十六进制监视",
+    "session.monitor.empty": "等待数据",
+    "session.monitor.not_serial": "当前标签不是串口会话",
+    "session.monitor.notice.copied": "已复制 {count, plural, other {{count} 行}}到剪贴板",
+    "@session.monitor.notice.copied": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        }
+      }
+    },
+    "session.monitor.notice.dropped": "已丢弃 {count, plural, other {{count} 字节}}（环上限 {cap} KiB）",
+    "@session.monitor.notice.dropped": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        },
+        "cap": {
+          "type": "int64"
+        }
+      }
+    },
+    "session.monitor.notice.export_failed": "导出失败，屏面未变",
+    "session.monitor.notice.exported": "已导出 {count, plural, other {{count} 行}}到 {path}",
+    "@session.monitor.notice.exported": {
+      "placeholders": {
+        "count": {
+          "type": "int64"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "session.monitor.notice.frozen": "已暂停跟尾（向上翻看时不追加新数据）",
+    "session.monitor.notice.privacy": "本面板只在内存留痕，只有你显式导出时才会写盘；导出的文件是原始设备字节，可能含口令",
+    "session.monitor.toggle.pause": "暂停刷新",
+    "session.monitor.toggle.text_view": "文本视图",
+    "session.monitor.toggle.timestamp": "时间戳前缀",
+    "session.monitor.title": "串口监视",
     "session.reconnect.countdown": "{seconds} 秒后自动重试",
     "@session.reconnect.countdown": {
       "placeholders": {

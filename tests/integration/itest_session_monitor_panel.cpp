@@ -1,5 +1,5 @@
 // ============================================================
-// 串口监视面板集成用例（tests/integration/itest_serial_monitor_panel.cpp）
+// 串口监视面板集成用例（tests/integration/itest_session_monitor_panel.cpp）
 // ------------------------------------------------------------
 // `SPEC.FEAT.CONN.05` 两条延后子项的面板腿（UI_SERIAL_MONITOR.draft.md §6 批 3 那五行判据）：
 // 行表随环刷新、时间戳开关联动、暂停中不读环、清空是唯一止血、丢弃留痕上屏、绑定与常驻声明；
@@ -42,11 +42,11 @@
 #include "borealis/session/raw_tap.h"
 #include "framework/aurora_test.h"
 // 私有头（裁决 D1①），按相对路径取用而不给整个测试目标开 `src/` 含目录。
-#include "../../src/ui/serial_monitor_format.h"
-#include "../../src/ui/serial_monitor_panel.h"
+#include "../../src/ui/session_monitor_format.h"
+#include "../../src/ui/session_monitor_panel.h"
 #include "../../src/ui/settings_i18n.h"
 
-namespace borealis::test_cases::itest_serial_monitor_panel {
+namespace borealis::test_cases::itest_session_monitor_panel {
 
 namespace {
 
@@ -59,7 +59,7 @@ constexpr int kWindowHeight = 760;
 
 /// @brief 一帧环投影 + 绑定串 + 七条腿的调用留痕。
 struct Probe {
-    ui::SerialMonitorPanel::Snapshot snapshot{};
+    ui::SessionMonitorPanel::Snapshot snapshot{};
     std::string binding;
     std::size_t snapshot_calls = 0U;
     std::size_t clear_calls = 0U;
@@ -86,15 +86,15 @@ struct Probe {
         ++snapshot.revision;
     }
 
-    [[nodiscard]] auto hooks() -> ui::SerialMonitorPanel::Hooks {
-        ui::SerialMonitorPanel::Hooks out;
-        out.snapshot = [this]() -> ui::SerialMonitorPanel::Snapshot {
+    [[nodiscard]] auto hooks() -> ui::SessionMonitorPanel::Hooks {
+        ui::SessionMonitorPanel::Hooks out;
+        out.snapshot = [this]() -> ui::SessionMonitorPanel::Snapshot {
             ++snapshot_calls;
             return snapshot;
         };
         out.clear = [this]() -> void {
             ++clear_calls;
-            snapshot = ui::SerialMonitorPanel::Snapshot{};
+            snapshot = ui::SessionMonitorPanel::Snapshot{};
         };
         out.binding_label = [this]() -> std::string {
             ++binding_calls;
@@ -171,22 +171,22 @@ class Harness {
     Harness(const Harness &) = delete;
     auto operator=(const Harness &) -> Harness & = delete;
 
-    [[nodiscard]] auto attach(Probe &probe) -> std::unique_ptr<ui::SerialMonitorPanel> {
-        return std::make_unique<ui::SerialMonitorPanel>(*host_, probe.hooks());
+    [[nodiscard]] auto attach(Probe &probe) -> std::unique_ptr<ui::SessionMonitorPanel> {
+        return std::make_unique<ui::SessionMonitorPanel>(*host_, probe.hooks());
     }
     auto render() -> void {
         static_cast<void>(window_.present_root(root_));
     }
 
     /// @brief 打开面板并排两帧（浮层入树 + 布局落 bounds）。
-    auto open(ui::SerialMonitorPanel &panel) -> void {
+    auto open(ui::SessionMonitorPanel &panel) -> void {
         panel.open();
         render();
         render();
     }
 
     /// @brief 排帧后走一帧状态泵（环里多了字节经这里进行表）。
-    auto tick(ui::SerialMonitorPanel &panel) -> void {
+    auto tick(ui::SessionMonitorPanel &panel) -> void {
         panel.tick();
         render();
         render();
@@ -372,7 +372,7 @@ auto fill_wide_lines(Probe &probe, int count) -> void {
 }
 
 /// @brief 把行区滚到顶再排两帧：首帧判冻结并保位重画，次帧才按「可见首行 - 16 行」重折窗口。
-auto scroll_to_top(Harness &h, ui::SerialMonitorPanel &panel) -> void {
+auto scroll_to_top(Harness &h, ui::SessionMonitorPanel &panel) -> void {
     if (auto *list = h.find_list(); list != nullptr) {
         list->set_scroll_offset(0.0F);
     }
@@ -537,14 +537,14 @@ AURORA_TEST_CASE(clear_button_is_the_only_bleed_stop) {
     AURORA_TEST_CHECK_EQ(probe.clear_calls, 0U);
     AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 2U);
 
-    auto clear_spot = h.find_button(ui::settings_label("serial.monitor.action.clear"));
+    auto clear_spot = h.find_button(ui::settings_label("session.monitor.action.clear"));
     AURORA_TEST_REQUIRE_MSG(clear_spot.widget != nullptr, "the clear button is not dispatch-reachable");
     h.click(clear_spot);
     h.tick(*panel);
     AURORA_TEST_CHECK_EQ(probe.clear_calls, 1U);
     AURORA_TEST_CHECK_TRUE(panel->visible_rows().empty());
     // 空态那句画出来了（判据走派发链：本件不许把「等待数据」写成第二处措辞）。
-    auto empty_spot = h.find_text(ui::settings_label("serial.monitor.empty"));
+    auto empty_spot = h.find_text(ui::settings_label("session.monitor.empty"));
     AURORA_TEST_REQUIRE_MSG(empty_spot.widget != nullptr, "the empty state is not drawn");
 }
 
@@ -569,7 +569,7 @@ AURORA_TEST_CASE(dropped_bytes_are_shown_and_cleared_with_the_ring) {
     AURORA_TEST_REQUIRE_MSG(dropped_spot.widget != nullptr, "the drop notice is not drawn on the chain");
 
     // 清空连丢弃累计一起归零：那一屏已经是新开始，再挂着 N 就是在说看不到的数据。
-    auto clear_spot = h.find_button(ui::settings_label("serial.monitor.action.clear"));
+    auto clear_spot = h.find_button(ui::settings_label("session.monitor.action.clear"));
     AURORA_TEST_REQUIRE(clear_spot.widget != nullptr);
     h.click(clear_spot);
     h.tick(*panel);
@@ -589,16 +589,16 @@ AURORA_TEST_CASE(binding_follows_the_identity_and_the_disclaimer_stays) {
 
     auto binding_spot = h.find_text(probe.binding);
     AURORA_TEST_REQUIRE_MSG(binding_spot.widget != nullptr, "the binding label is not drawn");
-    auto privacy_spot = h.find_text(ui::settings_label("serial.monitor.notice.privacy"));
+    auto privacy_spot = h.find_text(ui::settings_label("session.monitor.notice.privacy"));
     AURORA_TEST_REQUIRE_MSG(privacy_spot.widget != nullptr, "the never-persist note is not drawn");
 
     // 绑定失去身份（标签散了／非串口）就整格不画，而不是画一句「未知」；卡片其余部分照旧。
     probe.binding.clear();
     h.tick(*panel);
-    AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.title")).widget != nullptr);
-    AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.notice.privacy")).widget != nullptr);
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.title")).widget != nullptr);
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.notice.privacy")).widget != nullptr);
     // 标题行的字节计数走的是词条，两档都有模板（覆盖闸之外唯一的一条同源判据）。
-    AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.bytes", {{"count", std::int64_t{8}}}))
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.bytes", {{"count", std::int64_t{8}}}))
                           .widget != nullptr);
 }
 
@@ -709,10 +709,10 @@ AURORA_TEST_CASE(leaving_the_bottom_freezes_the_view_and_the_bottom_resumes_foll
     scroll_to_top(h, *panel);
     AURORA_TEST_CHECK_TRUE(panel->frozen());
     AURORA_TEST_REQUIRE_MSG(
-        h.find_text(ui::settings_label("serial.monitor.notice.frozen")).widget != nullptr,
+        h.find_text(ui::settings_label("session.monitor.notice.frozen")).widget != nullptr,
         "the freeze hint is not drawn");
     AURORA_TEST_REQUIRE_MSG(
-        h.find_button(ui::settings_label("serial.monitor.action.latest")).widget != nullptr,
+        h.find_button(ui::settings_label("session.monitor.action.latest")).widget != nullptr,
         "the jump-to-latest button is not drawn");
 
     // 冻结中环照人写：面板既不读，也不追加——「设备停了」与「你看的是旧屏」必须能区分。
@@ -733,8 +733,8 @@ AURORA_TEST_CASE(leaving_the_bottom_freezes_the_view_and_the_bottom_resumes_foll
     AURORA_TEST_CHECK(probe.snapshot_calls > calls_while_frozen);
     AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 85U);
     AURORA_TEST_CHECK(row_is(panel->visible_rows().back(), 84));
-    AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.notice.frozen")).widget == nullptr);
-    AURORA_TEST_CHECK(h.find_button(ui::settings_label("serial.monitor.action.latest")).widget == nullptr);
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.notice.frozen")).widget == nullptr);
+    AURORA_TEST_CHECK(h.find_button(ui::settings_label("session.monitor.action.latest")).widget == nullptr);
 
     // 恢复跟尾后新数据照常追加。
     append_lines(probe, 85, 1);
@@ -766,7 +766,7 @@ AURORA_TEST_CASE(jump_to_latest_clears_pause_and_freeze) {
     AURORA_TEST_CHECK_EQ(probe.snapshot_calls, calls_while_stopped);
     AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 80U);
 
-    auto latest_spot = h.find_button(ui::settings_label("serial.monitor.action.latest"));
+    auto latest_spot = h.find_button(ui::settings_label("session.monitor.action.latest"));
     AURORA_TEST_REQUIRE_MSG(latest_spot.widget != nullptr,
                             "the jump-to-latest button is not dispatch-reachable");
     h.click(latest_spot);
@@ -776,7 +776,7 @@ AURORA_TEST_CASE(jump_to_latest_clears_pause_and_freeze) {
     AURORA_TEST_CHECK(probe.snapshot_calls > calls_while_stopped);
     AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 85U);
     AURORA_TEST_CHECK(row_is(panel->visible_rows().back(), 84));
-    AURORA_TEST_CHECK(h.find_button(ui::settings_label("serial.monitor.action.latest")).widget == nullptr);
+    AURORA_TEST_CHECK(h.find_button(ui::settings_label("session.monitor.action.latest")).widget == nullptr);
     // 暂停开关被一起解掉（D14①：这两档说的是同一件事——「别停」）。
     auto resumed = h.find("Switch", 2);
     AURORA_TEST_REQUIRE(resumed.widget != nullptr);
@@ -799,7 +799,7 @@ AURORA_TEST_CASE(clear_from_a_frozen_view_lands_on_the_empty_state) {
     AURORA_TEST_REQUIRE(panel->frozen());
     AURORA_TEST_REQUIRE(!panel->visible_rows().empty());
 
-    auto clear_spot = h.find_button(ui::settings_label("serial.monitor.action.clear"));
+    auto clear_spot = h.find_button(ui::settings_label("session.monitor.action.clear"));
     AURORA_TEST_REQUIRE_MSG(clear_spot.widget != nullptr, "the clear button is not dispatch-reachable");
     h.click(clear_spot);
     h.tick(*panel);
@@ -807,9 +807,9 @@ AURORA_TEST_CASE(clear_from_a_frozen_view_lands_on_the_empty_state) {
     AURORA_TEST_CHECK_FALSE(panel->frozen());
     AURORA_TEST_CHECK_TRUE(panel->visible_rows().empty());
     AURORA_TEST_CHECK_EQ(probe.clear_calls, 1U);
-    AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.empty")).widget != nullptr);
-    AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.notice.frozen")).widget == nullptr);
-    AURORA_TEST_CHECK(h.find_button(ui::settings_label("serial.monitor.action.latest")).widget == nullptr);
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.empty")).widget != nullptr);
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.notice.frozen")).widget == nullptr);
+    AURORA_TEST_CHECK(h.find_button(ui::settings_label("session.monitor.action.latest")).widget == nullptr);
 }
 
 // 判据⑦（稿 §10.2 D19①／D21①／D22①）：复制把**整个环**交出去，而不是当前折带窗口
@@ -824,7 +824,7 @@ AURORA_TEST_CASE(copy_hands_the_whole_ring_instead_of_the_fold_window) {
     AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 96U);
     AURORA_TEST_REQUIRE_FALSE(shows_line(panel->visible_rows(), 0));
 
-    auto copy_spot = h.find_button(ui::settings_label("serial.monitor.action.copy"));
+    auto copy_spot = h.find_button(ui::settings_label("session.monitor.action.copy"));
     AURORA_TEST_REQUIRE_MSG(copy_spot.widget != nullptr, "the copy button is not dispatch-reachable");
     h.click(copy_spot);
     h.tick(*panel);
@@ -838,7 +838,7 @@ AURORA_TEST_CASE(copy_hands_the_whole_ring_instead_of_the_fold_window) {
     AURORA_TEST_CHECK_EQ(probe.copied_text, panel->dump_text());
     // 留痕那句当场出现（「复制了什么」不该让用户去粘贴板上验，业界同态）。
     const auto sentence =
-        ui::settings_label("serial.monitor.notice.copied", {{"count", std::int64_t{120}}});
+        ui::settings_label("session.monitor.notice.copied", {{"count", std::int64_t{120}}});
     AURORA_TEST_CHECK_EQ(panel->feedback(), sentence);
     AURORA_TEST_CHECK(h.find_text(sentence).widget != nullptr);
 }
@@ -855,7 +855,7 @@ AURORA_TEST_CASE(export_asks_a_path_then_hands_the_same_text) {
     auto panel = h.attach(probe);
     h.open(*panel);
 
-    auto export_spot = h.find_button(ui::settings_label("serial.monitor.action.export_file"));
+    auto export_spot = h.find_button(ui::settings_label("session.monitor.action.export_file"));
     AURORA_TEST_REQUIRE_MSG(export_spot.widget != nullptr, "the export button is not dispatch-reachable");
     h.click(export_spot);
     h.tick(*panel);
@@ -866,7 +866,7 @@ AURORA_TEST_CASE(export_asks_a_path_then_hands_the_same_text) {
     // 与剪贴板同一台折算件、同一份显示档：两条腿拿到的文本一字不差（D19① 的「不第二份真值」）。
     AURORA_TEST_CHECK_EQ(dump_line_count(probe.exported_text), 3U);
     AURORA_TEST_CHECK_EQ(probe.exported_text, panel->dump_text());
-    const auto sentence = ui::settings_label("serial.monitor.notice.exported",
+    const auto sentence = ui::settings_label("session.monitor.notice.exported",
                                              {{"count", std::int64_t{3}},
                                               {"path", probe.picked_path}});
     AURORA_TEST_CHECK_EQ(panel->feedback(), sentence);
@@ -886,7 +886,7 @@ AURORA_TEST_CASE(cancelling_the_path_or_an_empty_ring_runs_neither_leg) {
     h.open(*panel);
 
     // 先留一句「已复制」，好让「取消导出什么都不改」这件事有证人。
-    auto copy_spot = h.find_button(ui::settings_label("serial.monitor.action.copy"));
+    auto copy_spot = h.find_button(ui::settings_label("session.monitor.action.copy"));
     AURORA_TEST_REQUIRE_MSG(copy_spot.widget != nullptr, "the copy button is not dispatch-reachable");
     h.click(copy_spot);
     h.tick(*panel);
@@ -894,7 +894,7 @@ AURORA_TEST_CASE(cancelling_the_path_or_an_empty_ring_runs_neither_leg) {
     AURORA_TEST_REQUIRE(!copied_sentence.empty());
 
     probe.picked_path.clear();  // 用户在原生保存框里点了取消。
-    auto export_spot = h.find_button(ui::settings_label("serial.monitor.action.export_file"));
+    auto export_spot = h.find_button(ui::settings_label("session.monitor.action.export_file"));
     AURORA_TEST_REQUIRE_MSG(export_spot.widget != nullptr, "the export button is not dispatch-reachable");
     h.click(export_spot);
     h.tick(*panel);
@@ -902,7 +902,7 @@ AURORA_TEST_CASE(cancelling_the_path_or_an_empty_ring_runs_neither_leg) {
     AURORA_TEST_CHECK_EQ(panel->feedback(), copied_sentence);  // 上一句还在 ⇒ 这一次什么都没发生。
 
     // 空环：两枚都点了都不该发起（不起对话框、不碰剪贴板、不留痕）。
-    auto clear_spot = h.find_button(ui::settings_label("serial.monitor.action.clear"));
+    auto clear_spot = h.find_button(ui::settings_label("session.monitor.action.clear"));
     AURORA_TEST_REQUIRE_MSG(clear_spot.widget != nullptr, "the clear button is not dispatch-reachable");
     h.click(clear_spot);
     h.tick(*panel);
@@ -910,8 +910,8 @@ AURORA_TEST_CASE(cancelling_the_path_or_an_empty_ring_runs_neither_leg) {
     AURORA_TEST_REQUIRE_TRUE(panel->dump_text().empty());
     const std::size_t picks_before = probe.pick_calls;
     const std::size_t copies_before = probe.copy_calls;
-    h.click(h.find_button(ui::settings_label("serial.monitor.action.copy")));
-    h.click(h.find_button(ui::settings_label("serial.monitor.action.export_file")));
+    h.click(h.find_button(ui::settings_label("session.monitor.action.copy")));
+    h.click(h.find_button(ui::settings_label("session.monitor.action.export_file")));
     h.tick(*panel);
     AURORA_TEST_CHECK_EQ(probe.copy_calls, copies_before);
     AURORA_TEST_CHECK_EQ(probe.pick_calls, picks_before);  // 连对话框都没替用户开一次。
@@ -931,14 +931,14 @@ AURORA_TEST_CASE(a_failed_write_shows_the_neutral_sentence_and_keeps_the_screen)
     h.open(*panel);
     const auto rows_before = panel->visible_rows();
 
-    auto export_spot = h.find_button(ui::settings_label("serial.monitor.action.export_file"));
+    auto export_spot = h.find_button(ui::settings_label("session.monitor.action.export_file"));
     AURORA_TEST_REQUIRE_MSG(export_spot.widget != nullptr, "the export button is not dispatch-reachable");
     h.click(export_spot);
     h.tick(*panel);
 
     AURORA_TEST_CHECK_EQ(probe.export_calls, 1U);
     AURORA_TEST_CHECK_EQ(panel->visible_rows().size(), rows_before.size());
-    const auto sentence = ui::settings_label("serial.monitor.notice.export_failed");
+    const auto sentence = ui::settings_label("session.monitor.notice.export_failed");
     AURORA_TEST_CHECK_EQ(panel->feedback(), sentence);
     AURORA_TEST_CHECK(h.find_text(sentence).widget != nullptr);
     AURORA_TEST_CHECK(h.find_text(probe.export_path).widget == nullptr);  // 失败那句不带路径。
@@ -964,7 +964,7 @@ AURORA_TEST_CASE(export_while_paused_hands_what_is_on_screen) {
     h.tick(*panel);
     AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 2U);
 
-    auto export_spot = h.find_button(ui::settings_label("serial.monitor.action.export_file"));
+    auto export_spot = h.find_button(ui::settings_label("session.monitor.action.export_file"));
     AURORA_TEST_REQUIRE_MSG(export_spot.widget != nullptr, "the export button is not dispatch-reachable");
     h.click(export_spot);
     h.tick(*panel);
@@ -983,9 +983,9 @@ AURORA_TEST_CASE(the_take_out_buttons_appear_only_with_their_legs) {
     auto panel = h.attach(probe);
     h.open(*panel);
     AURORA_TEST_CHECK(
-        h.find_button(ui::settings_label("serial.monitor.action.copy")).widget != nullptr);
+        h.find_button(ui::settings_label("session.monitor.action.copy")).widget != nullptr);
     AURORA_TEST_CHECK(
-        h.find_button(ui::settings_label("serial.monitor.action.export_file")).widget != nullptr);
+        h.find_button(ui::settings_label("session.monitor.action.export_file")).widget != nullptr);
     panel->close();
     h.render();
 
@@ -994,12 +994,12 @@ AURORA_TEST_CASE(the_take_out_buttons_appear_only_with_their_legs) {
     auto second = h.attach(probe);
     h.open(*second);
     AURORA_TEST_CHECK(
-        h.find_button(ui::settings_label("serial.monitor.action.copy")).widget == nullptr);
+        h.find_button(ui::settings_label("session.monitor.action.copy")).widget == nullptr);
     AURORA_TEST_CHECK(
-        h.find_button(ui::settings_label("serial.monitor.action.export_file")).widget == nullptr);
+        h.find_button(ui::settings_label("session.monitor.action.export_file")).widget == nullptr);
     // 没装新腿时这张卡的其余部分照旧：清空与关闭两枚还在（一枚都不该跟着消失）。
     AURORA_TEST_CHECK(
-        h.find_button(ui::settings_label("serial.monitor.action.clear")).widget != nullptr);
+        h.find_button(ui::settings_label("session.monitor.action.clear")).widget != nullptr);
 }
 
 // ------------------------------------------------------------
@@ -1012,7 +1012,7 @@ AURORA_TEST_CASE(a_new_run_clears_the_action_notice) {
     auto panel = h.attach(probe);
     h.open(*panel);
 
-    auto copy_spot = h.find_button(ui::settings_label("serial.monitor.action.copy"));
+    auto copy_spot = h.find_button(ui::settings_label("session.monitor.action.copy"));
     AURORA_TEST_REQUIRE_MSG(copy_spot.widget != nullptr, "the copy button is not dispatch-reachable");
     h.click(copy_spot);
     h.tick(*panel);
@@ -1042,7 +1042,7 @@ AURORA_TEST_CASE(text_switch_rewrites_the_rows_and_a_round_trip_keeps_the_source
     AURORA_TEST_CHECK_FALSE(panel->text_view_enabled());  // 缺省关＝今天那档 hex（稿 D26①）。
     // 第三枚的词条真在双语表里、且真画到了树上。判据取「非空」而不是「不等于键名」：缺键时
     // `settings_label` 回退的是空串而非键（`settings_i18n.h` 文件头①），后者是永真的空转证人。
-    const std::string toggle_label = ui::settings_label("serial.monitor.toggle.text_view");
+    const std::string toggle_label = ui::settings_label("session.monitor.toggle.text_view");
     AURORA_TEST_REQUIRE_MSG(!toggle_label.empty(), "the text view switch has no vocabulary entry");
     AURORA_TEST_REQUIRE_MSG(h.find_text(toggle_label).widget != nullptr,
                             "the text view switch label is not drawn");
@@ -1083,7 +1083,7 @@ AURORA_TEST_CASE(the_text_view_copies_the_text_that_is_on_screen) {
 
     toggle_text_view(h);
     h.tick(*panel);
-    auto copy_spot = h.find_button(ui::settings_label("serial.monitor.action.copy"));
+    auto copy_spot = h.find_button(ui::settings_label("session.monitor.action.copy"));
     AURORA_TEST_REQUIRE_MSG(copy_spot.widget != nullptr, "the copy button is not dispatch-reachable");
     h.click(copy_spot);
     h.tick(*panel);
@@ -1165,7 +1165,7 @@ AURORA_TEST_CASE(switching_the_view_while_frozen_returns_to_the_tail_of_this_sou
     AURORA_TEST_CHECK_TRUE(text_row_is(rows.back(), 79));
     AURORA_TEST_CHECK_TRUE(text_row_is(rows.front(), 0));
     // 冻结提示与「回到最新」那枚跟着消失：不是只有观测面变了。
-    AURORA_TEST_CHECK(h.find_text(ui::settings_label("serial.monitor.notice.frozen")).widget == nullptr);
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.notice.frozen")).widget == nullptr);
 }
 
 // ------------------------------------------------------------
@@ -1223,4 +1223,4 @@ AURORA_TEST_CASE(switching_the_view_while_paused_rebases_to_the_tail_of_this_sou
     AURORA_TEST_CHECK_FALSE(shows_tag(rows, 0));    // 不是从旧行号指向的那一段开始的
 }
 
-}  // namespace borealis::test_cases::itest_serial_monitor_panel
+}  // namespace borealis::test_cases::itest_session_monitor_panel
