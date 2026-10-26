@@ -6,9 +6,11 @@
 // 二期（稿 §9）另四腿：历史超过折带窗口仍可回看、离底冻结与回底恢复、「回到最新」双解、冻结中清空；
 // 三期（稿 §10）再加六腿：复制交整环而不是窗口、导出先问路径再交同一份文本、取消与空环整条不跑、
 // 写盘失败上屏中性那句、暂停中导出的是这一屏、两枚按钮只在对应腿在场时画；
-// 四期（稿 §11）再加六腿：第三枚开关真点即换行形态且拨回来是同一份料源、文本档复制交出去的是屏上
+// 四期（稿 §11）再加七腿：第三枚开关真点即换行形态且拨回来是同一份料源、文本档复制交出去的是屏上
 // 那一份文本、解码腿按 hook 报的那条腿走、hook 缺席整条回落 UTF-8 不崩、冻结中换档回到这份料源的末尾、
-// 暂停中换档只重画不读环。
+// 暂停中换档只重画不读环、暂停中换档在两档行数不等时复位到这份料源的末尾。
+// 最后那一条是 D34②那条重排腿**唯一**的证人，故刻意用 62 字节的宽行：短行在两档折出同样的行数，
+// 「沿用旧行号」与「按新档重算」给出同一份窗口，把那条腿整段删掉 24 案仍全绿（批 C 变异自证实测到）。
 // 驱动台形态照 itest_tunnel_panel 的 Harness（present_root 排真实布局 + hit_test_chain 取命中 +
 // EventDispatcher 发真事件），精简到本件用得到的那几条腿。
 //
@@ -332,6 +334,30 @@ auto append_lines(Probe &probe, int first, int count) -> void {
 }
 
 auto fill_lines(Probe &probe, int count) -> void { append_lines(probe, 0, count); }
+
+/// @brief 一条**超过文本档字节预算**的设备行（`R000` + 56 个 `x` + CRLF＝62 字节）。
+///
+/// 两档的行号坐标系因此真的分开：hex 档 8 字节/行 ⇒ ⌈62/8⌉=8 行，文本档 36 字节/行 ⇒ ⌈62/36⌉=2 行。
+/// 「换档即重算行数」那条腿（稿 D34②）只有在两档行数不等时才有证人——短行两档行数相同，
+/// 沿用旧行号与重排给出同一份窗口，变异注入打不红（批 C 实测：去掉 `rebase_rows_` 分支 24 案全绿）。
+[[nodiscard]] auto wide_line_run(int index, std::int64_t timestamp_ms) -> session::RawRun {
+    return make_run(session::RawDirection::Received, timestamp_ms,
+                    line_tag(index) + std::string(56U, 'x') + "\r\n");
+}
+
+auto fill_wide_lines(Probe &probe, int count) -> void {
+    for (int index = 0; index < count; ++index) {
+        probe.record(wide_line_run(index, 1'700'000'000'000LL + index));
+    }
+}
+
+/// @brief 行表里有没有带这个行号标签的行（文本档的 `dump` 直接含标签，不看 hex 尾栏）。
+[[nodiscard]] auto shows_tag(const std::vector<ui::MonitorRow> &rows, int index) -> bool {
+    const std::string tag = line_tag(index);
+    return std::any_of(rows.begin(), rows.end(), [&tag](const ui::MonitorRow &row) -> bool {
+        return ui::row_text(row).find(tag) != std::string::npos;
+    });
+}
 
 /// @brief 这一行是不是 `line_tag(index)`（比十六进制段好读的尾栏判据）。
 [[nodiscard]] auto row_is(const ui::MonitorRow &row, int index) -> bool {
@@ -1166,6 +1192,35 @@ AURORA_TEST_CASE(switching_the_view_while_paused_redraws_without_reading_the_rin
     AURORA_TEST_REQUIRE_EQ(rows.size(), 5U);
     AURORA_TEST_CHECK_TRUE(text_row_is(rows.front(), 0));
     AURORA_TEST_CHECK_TRUE(text_row_is(rows.back(), 4));
+}
+
+// ------------------------------------------------------------
+// 判据⑳（稿 D34②）：暂停中换档、且两档行数真的不等时——复位到这份料源的末尾
+// ------------------------------------------------------------
+AURORA_TEST_CASE(switching_the_view_while_paused_rebases_to_the_tail_of_this_source) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_wide_lines(probe, 100);  // 62 字节的设备行：hex 档 800 行 / 文本档 200 行
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+    AURORA_TEST_REQUIRE_EQ(panel->visible_rows().size(), 96U);  // 折带窗口顶格，行号坐标系是 hex 的
+
+    auto pause_spot = h.find("Switch", 2);
+    AURORA_TEST_REQUIRE_MSG(pause_spot.widget != nullptr, "the pause switch is not reachable");
+    h.click(pause_spot);
+    h.tick(*panel);
+    const std::size_t calls_while_paused = probe.snapshot_calls;
+
+    toggle_text_view(h);
+    h.tick(*panel);
+    AURORA_TEST_CHECK_EQ(probe.snapshot_calls, calls_while_paused);  // ⑳ 不放松⑲那条「别读新环」
+    const auto rows = panel->visible_rows();
+    // 沿用旧行号（hex 的 704 起步）在文本档的 200 行坐标系里越过了料源尽头 ⇒ 空屏；重排才给得出这一屏。
+    AURORA_TEST_REQUIRE_MSG(!rows.empty(), "the paused view switch folded an empty window");
+    AURORA_TEST_CHECK_EQ(rows.size(), 96U);
+    AURORA_TEST_CHECK_TRUE(shows_tag(rows, 99));    // 屏尾是这份料源的最后一条
+    AURORA_TEST_CHECK_FALSE(shows_tag(rows, 0));    // 不是从旧行号指向的那一段开始的
 }
 
 }  // namespace borealis::test_cases::itest_serial_monitor_panel
