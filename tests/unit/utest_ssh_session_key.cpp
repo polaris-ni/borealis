@@ -2,7 +2,7 @@
 /// 目标单元: src/conn/ssh_shared.h 的共享判据（`SshSessionKey` 与 `same_secret`）
 /// 测试说明: `SPEC.FEAT.CONN.02` 连接复用的纯逻辑面——键的归一口径与逐字段区分、
 ///           秘密材料的全等判定。共享会话本体与 I/O 线程属真协议腿，由
-///           `itest_posix_ssh_shared_connection` 出证人；本套件不碰网络。
+///           `itest_ssh_shared_connection` 出证人；本套件不碰网络。
 ///           `SPEC.FEAT.CONN.03` 把跳链折成归一串形入键、并把逐跳秘密加进秘密判据，
 ///           两案（`key_carries_the_normalized_hop_chain` /
 ///           `secret_bundle_compares_hops_elementwise`）见证这一层的分键口径。

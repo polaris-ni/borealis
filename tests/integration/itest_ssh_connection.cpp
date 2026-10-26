@@ -1,4 +1,4 @@
-/// 测试类型: integration（POSIX 腿）
+/// 测试类型: integration（两通道；⑥ 那一案只在 POSIX 腿）
 /// 目标单元: src/conn/ssh_connection.{h,cpp} + src/conn/ssh_dial.{h,cpp}
 /// 测试说明: `SPEC.FEAT.CONN.02` 终端腿的**真协议**端到端证人。本沙箱没有 sshd，
 ///           故对端是 `tests/support/fake_ssh_server`（libssh server 腿，真 KEX/加密/
@@ -15,13 +15,18 @@
 ///              `auth-agent@openssh.com` 通道，字节经本机 `SSH_AUTH_SOCK` 替身往返
 ///              （`SPEC.FEAT.CONN.02` 裁决 7.145⑦ 的真协议证人）。
 ///
-///           无 Win32 腿：假服务器用 POSIX select/getsockname/shutdown（文件名 `_posix_`
-///           让 cmake/BorealisTests.cmake 在 Windows 构建里排除本套件）。
+///           ①~⑤ 两通道同编同跑：假服务器的裸 socket 只在它自己的接缝里（POSIX
+///           `select`/`fcntl` 与 Winsock `WSAPoll`/`ioctlsocket` 各一支）。⑥ 的**替身
+///           agent** 是另一处平台接缝——AF_UNIX 文件 socket + `SSH_AUTH_SOCK`，Win32 侧
+///           的 OpenSSH agent 走命名管道，本件不迁（在册另开一棒）。
 
+#ifndef _WIN32
+// ⑥ 那一案的替身 agent 专用：AF_UNIX socket 与 `unlink`（Win32 无对应入口）。
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#endif
 
 #include <array>
 #include <atomic>
@@ -45,7 +50,7 @@
 #include "conn/ssh_connection.h"
 #include "support/fake_ssh_server.h"
 
-namespace borealis::test_cases::itest_posix_ssh_connection {
+namespace borealis::test_cases::itest_ssh_connection {
 
 namespace {
 
@@ -144,6 +149,11 @@ class Recorder final : public ConnectionEvents {
         [&] { return server.shell_requests() >= 1 && connection.alive(); }, 8000);
 }
 
+#ifndef _WIN32
+// TODO(SPEC.FEAT.CONN.02): Win32 侧的假 agent。本节的三件（`SSH_AUTH_SOCK` 改写、
+// AF_UNIX 监听点、`/tmp` 下的 socket 路径）是 ⑥ 一案的夹具；libssh 在 Windows 上取
+// agent 走的是命名管道，替身要另做一台管道服务器，与本棒的「假服务器 Win32 腿」不是
+// 同一处接缝，故整节留在 POSIX 腿。
 /// @brief 在作用域内改写 `SSH_AUTH_SOCK`，析构时原样归还（口径同 `utest_posix_agent_socket`）。
 class ScopedAuthSock {
   public:
@@ -257,6 +267,7 @@ struct MultiEchoAgent {
     return "/tmp/borealis-itest-agent-" + std::to_string(static_cast<long>(::getpid())) + ".sock";
 }
 
+#endif  // !_WIN32
 }  // namespace
 
 AURORA_TEST_CASE(connect_lands_pty_shell_banner_and_the_echo_round_trip) {
@@ -387,6 +398,7 @@ AURORA_TEST_CASE(link_loss_redials_the_same_endpoint_and_gets_a_new_shell) {
     AURORA_TEST_CHECK(recorder.last_close_reason() == CloseReason::LocalClose);
 }
 
+#ifndef _WIN32
 AURORA_TEST_CASE(agent_forwarding_relays_a_reverse_channel_to_the_local_agent) {
     auto options = FakeSshServerOptions{};
     options.open_agent_channel = true;
@@ -431,4 +443,6 @@ AURORA_TEST_CASE(agent_forwarding_relays_a_reverse_channel_to_the_local_agent) {
     AURORA_TEST_CHECK(recorder.last_close_reason() == CloseReason::LocalClose);
 }
 
-}  // namespace borealis::test_cases::itest_posix_ssh_connection
+#endif  // !_WIN32
+
+}  // namespace borealis::test_cases::itest_ssh_connection

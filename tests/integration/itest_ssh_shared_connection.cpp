@@ -1,4 +1,4 @@
-/// 测试类型: integration（POSIX 腿）
+/// 测试类型: integration（两通道）
 /// 目标单元: src/conn/ssh_shared.{h,cpp} + src/conn/ssh_connection.{h,cpp}
 /// 测试说明: `SPEC.FEAT.CONN.02` 连接复用（多标签共享一条 TCP）的**真协议**端到端证人。
 ///           对端是 `tests/support/fake_ssh_server`（libssh server 腿：真 KEX/加密/通道
@@ -14,8 +14,8 @@
 ///           ⑨ `stop_reconnect` 是连接级：一份租约触发，两份都落 UserStopped；
 ///           ⑩ 收口后的共享会话不被复用（第三个标签拿到新 TCP）。
 ///
-///           无 Win32 腿：假服务器用 POSIX select/getsockname/shutdown（文件名 `_posix_`
-///           让 cmake/BorealisTests.cmake 在 Windows 构建里排除本套件）。
+///           两通道同一份：本件不碰裸 socket，对端那台假服务器的平台接缝在它自己的
+///           文件里（`tests/support/fake_ssh_server.cpp`）。
 
 #include <cstddef>
 #include <memory>
@@ -34,7 +34,7 @@
 #include "conn/ssh_shared.h"
 #include "support/fake_ssh_server.h"
 
-namespace borealis::test_cases::itest_posix_ssh_shared_connection {
+namespace borealis::test_cases::itest_ssh_shared_connection {
 
 namespace {
 
@@ -68,7 +68,7 @@ constexpr RetryPolicy kSlowPolicy{.base_ms = 1500, .cap_ms = 1500, .max_attempts
     return out;
 }
 
-/// @brief 连接事件的记录替身（口径同 `itest_posix_ssh_connection`）。
+/// @brief 连接事件的记录替身（口径同 `itest_ssh_connection`）。
 ///
 /// **声明顺序是硬约束**：替身必须比连接活得久——I/O 线程在 `close()` 的 ack 之前
 /// 还会投终态回调，连接持的是这里的裸指针；用例里先写 Recorder 再写连接。
@@ -470,4 +470,4 @@ AURORA_TEST_CASE(a_finished_shared_session_is_not_reused) {
     third_tab->close();
 }
 
-}  // namespace borealis::test_cases::itest_posix_ssh_shared_connection
+}  // namespace borealis::test_cases::itest_ssh_shared_connection

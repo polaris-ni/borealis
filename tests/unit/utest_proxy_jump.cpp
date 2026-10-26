@@ -3,7 +3,7 @@
 /// 测试说明: 守住 CONN.03 延后子项「跳板机（ProxyJump 语义）」的语法层四条口径——
 ///           `[user@]host[:port]` 逗号串的逐段折算、任一枚坏 token 即整串拒绝、
 ///           串形的规范化（留空端口与 :22 必须折成同一个串，否则连接复用会分键）、
-///           条数上限。真实拨链属网络 I/O，在 itest_posix_ssh_proxy_jump 里见证。
+///           条数上限。真实拨链属网络 I/O，在 itest_ssh_proxy_jump 里见证。
 
 #include "conn/proxy_jump.h"
 
