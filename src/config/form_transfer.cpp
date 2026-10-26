@@ -158,6 +158,11 @@ auto assign_shortcuts(Settings &settings, const FormValue &value) -> void {
         Binding{"appearance.theme",
                 [](const Settings &s) -> FormValue { return FormValue::text(s.appearance.theme); },
                 [](Settings &s, const FormValue &v) { assign(s.appearance.theme, v); }},
+        Binding{"appearance.chrome_theme",
+                [](const Settings &s) -> FormValue {
+                    return enumerated(s.appearance.chrome_theme, kChromeThemeNames);
+                },
+                [](Settings &s, const FormValue &v) { assign_enum(s.appearance.chrome_theme, v, kChromeThemeNames); }},
         Binding{"appearance.language",
                 [](const Settings &s) -> FormValue {
                     return enumerated(s.appearance.language, kInterfaceLanguageNames);

@@ -1,6 +1,7 @@
 {
   "locale": "en",
   "messages": {
+    "appearance.chrome_theme": "Application theme",
     "appearance.cursor_blink_period_ms": "Blink period",
     "appearance.cursor_blinking": "Cursor blinking",
     "appearance.cursor_shape": "Cursor shape",

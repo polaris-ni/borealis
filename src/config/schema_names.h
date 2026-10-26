@@ -84,6 +84,14 @@ inline constexpr std::array<EnumName, 2> kInterfaceLanguageNames{{
     {"en", static_cast<std::int64_t>(InterfaceLanguage::En)},
 }};
 
+// 界面外壳明暗档（`SPEC.FEAT.PREF.01`，`codespec/UI_CHROME.draft.md` D1）：`system` 排首即缺省，
+// 落盘名一旦写下即对外契约——改名等于让老配置里那一行读不回来。
+inline constexpr std::array<EnumName, 3> kChromeThemeNames{{
+    {"system", static_cast<std::int64_t>(ChromeTheme::System)},
+    {"dark", static_cast<std::int64_t>(ChromeTheme::Dark)},
+    {"light", static_cast<std::int64_t>(ChromeTheme::Light)},
+}};
+
 inline constexpr std::array<EnumName, 2> kAmbiguousWidthNames{{
     {"narrow", static_cast<std::int64_t>(term::AmbiguousWidth::Narrow)},
     {"wide", static_cast<std::int64_t>(term::AmbiguousWidth::Wide)},

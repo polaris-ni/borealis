@@ -462,6 +462,7 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
 [[nodiscard]] auto appearance_to_json(const AppearanceSettings &appearance) -> Value {
     auto node = Value::object();
     put(node, "theme", appearance.theme);
+    put_enum(node, "chrome_theme", kChromeThemeNames, static_cast<std::int64_t>(appearance.chrome_theme));
     put_enum(node, "language", kInterfaceLanguageNames, static_cast<std::int64_t>(appearance.language));
     put(node, "font_family", appearance.font_family);
     put(node, "font_size_pt", appearance.font_size_pt);
@@ -799,6 +800,9 @@ enum class CredentialProjection : std::uint8_t {
 [[nodiscard]] auto read_appearance(ScopeReader &scope, const Settings &defaults) -> AppearanceSettings {
     AppearanceSettings appearance{};
     appearance.theme = scope.text("theme", defaults.appearance.theme);
+    // 外壳明暗档同样是枚举腿：域外值留痕并保留基线，装填侧不再有第二次回落（`UI_CHROME.draft.md` D9）。
+    appearance.chrome_theme = static_cast<ChromeTheme>(scope.enumerated(
+        "chrome_theme", kChromeThemeNames, static_cast<std::int64_t>(defaults.appearance.chrome_theme)));
     // 语言档的取值域在这一跳就把守（裁决 7.46② 的分工）：域外值走 `enumerated` 的「留痕 + 保留基线」，
     // 装填侧因此不需要也不会再有一次回落。
     appearance.language = static_cast<InterfaceLanguage>(scope.enumerated(

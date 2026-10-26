@@ -300,8 +300,9 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // WS.11 的会话恢复开关 `connection.restore_sessions` 随稿 D3① 进表（它决定「重启后要不要重连上次的
     // 连接」，与 `connection.local_shell`／`startup_directory` 同域，故归连接页而非外观页），
     // CONN.02 的两枚算法表（`kex_algorithms` / `host_key_algorithms`）随裁决 7.144 进表，
-    // 故停在 73。
-    AURORA_TEST_CHECK_EQ(keys.size(), 73U);
+    // PREF.01 的界面外壳明暗档 `appearance.chrome_theme` 随 `UI_CHROME.draft.md` D5 进表，
+    // 故停在 74。
+    AURORA_TEST_CHECK_EQ(keys.size(), 74U);
 }
 
 AURORA_TEST_CASE(restore_sessions_is_a_wired_next_launch_connection_switch) {
@@ -325,6 +326,27 @@ AURORA_TEST_CASE(restore_sessions_is_a_wired_next_launch_connection_switch) {
     AURORA_TEST_CHECK_TRUE(Settings{}.connection.restore_sessions);
     // 判据 ③ 的另一半（关掉之后快照文件**不被删除**）不在本件：落盘件面上没有删除那两跳，
     // 那是 `utest_workspace_snapshot` 的档位案与一枚编译期证人管的。
+}
+
+AURORA_TEST_CASE(chrome_theme_row_is_a_wired_immediate_choice) {
+    // PREF.01 稿 D5：这一档换的是窗口外壳，装配层的广播腿换活动档并重设每窗 `ThemeScope` 的共享
+    // `State<Theme>`，故 `Wired ∧ Immediate`；候选就是落盘名，三串与 `kChromeThemeNames` 同源
+    // 由 `utest_form_transfer` 的逐候选案把守。
+    const SettingsControl *control = borealis::ui::find_settings_control("appearance.chrome_theme");
+    AURORA_TEST_CHECK(control != nullptr);
+    if (control == nullptr) {
+        return;
+    }
+    AURORA_TEST_CHECK(control->page == SettingsPage::Appearance);
+    AURORA_TEST_CHECK(control->kind == ControlKind::Dropdown);
+    AURORA_TEST_CHECK(control->domain == ValueDomain::Choice);
+    AURORA_TEST_CHECK(control->consumer == ConsumerStatus::Wired);
+    AURORA_TEST_CHECK(control->effect == EffectLevel::Immediate);
+    const std::vector<std::string> kThemeNames{"system", "dark", "light"};
+    AURORA_TEST_CHECK_MSG(control->choices == kThemeNames,
+                          "chrome theme choices drifted: [" + join(control->choices) + "]");
+    // 缺省跟随系统：现有用户升级后不会在浅色桌面上继续看到一块固定黑面板（稿 D1 的交付内容）。
+    AURORA_TEST_CHECK_TRUE(Settings{}.appearance.chrome_theme == config::ChromeTheme::System);
 }
 
 AURORA_TEST_CASE(language_row_is_a_wired_next_launch_choice) {

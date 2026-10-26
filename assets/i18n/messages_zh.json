@@ -3,6 +3,7 @@
   "locale": "zh",
   "id_base": 1024,
   "messages": {
+    "appearance.chrome_theme": "界面主题",
     "appearance.cursor_blink_period_ms": "闪烁频率",
     "appearance.cursor_blinking": "光标闪烁",
     "appearance.cursor_shape": "光标形态",

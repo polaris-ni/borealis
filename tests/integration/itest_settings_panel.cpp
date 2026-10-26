@@ -1772,17 +1772,20 @@ enum class ChainButton {
 /// 落在 offset 0 的可见带之外 ⇒ 与 `reveal_chain_button` 同一处境、同一滚法（每轮 12 格 × 最多 20 轮，
 /// 命中即止；滚到哪一档不是判据）。
 ///
-/// 余量那一句是 PREF.05 批 2 之后加的、**只在要往下探候选的那一例里传**：外观页在字体行**之上**多了一行
-/// 「界面语言」（裁决 D1①），整页随之下移一档行高，于是浮层按触发按钮下沿铺开时只剩第 0 档还在视口内——
-/// 而第 0 档按 A4 的置顶规则**恒等于当前生效族**，`pick_font_candidate` 的「不点回同一个值」把它跳过，
-/// 读数就退化成「一档都点不到」。其余各例判的是锚点几何与关闭次序，不需要铺开候选，故照旧取缺省 0：
-/// 多滚一档会让留痕行那一格的绘制状态跟着变（本件实测过），而那不是它们要判的事。
+/// 余量那一句是 PREF.05 批 2 之后加的，传给两类用例：① 要往下探候选的那一例——外观页在字体行**之上**
+/// 多了一行「界面语言」（裁决 D1①），整页随之下移一档行高，于是浮层按触发按钮下沿铺开时只剩第 0 档还在
+/// 视口内——而第 0 档按 A4 的置顶规则**恒等于当前生效族**，`pick_font_candidate` 的「不点回同一个值」把它
+/// 跳过，读数就退化成「一档都点不到」；② 判锚点同一的那一例——PREF.01 批 2 的「界面主题」再占一档行高，
+/// 缺省余量下触发按钮被视口下沿裁掉一截（实测可达框 31 dp、整枚 38 dp），而 `reachable_box` 量的是裁到
+/// 视口的那一段、`window_bounds()` 给的是整枚框，两读数必然不等，那差的是裁切量而不是坐标空间。
+/// 其余各例判的是关闭次序等，不需要铺开候选，故照旧取缺省 0：多滚一档会让留痕行那一格的绘制状态跟着变
+/// （本件实测过），而那不是它们要判的事。
 /// 「滚出来的行在视口内」这条反空转前提仍由 `clicking_the_font_trigger_anchors_...` 一案自己断
 /// （见 `find_first` 的 `room_below_dp` 注）。
 /// @param h 驱动台。
 /// @param panel 面板（按钮指针在每次重建浮层时换，故按当前值现取）。
 /// @param room_below_dp 触发按钮可达框下沿到视口下沿之间还要留出的余量（dp）：要往浮层里探候选的用例
-///        取一档行高的四倍（4 × 30 dp）。
+///        取一档行高的四倍（4 × 30 dp），判锚点同一的用例取一档行高（30 dp）即可。
 /// @return 该按钮的命中点与窗口坐标下的可达框；未找到时 `widget` 为空。
 [[nodiscard]] auto reveal_font_trigger(Harness &h, SettingsPanel &panel, float room_below_dp = 0.0F) -> HitSpot {
     HitSpot spot;
@@ -3156,7 +3159,9 @@ AURORA_TEST_CASE(clicking_the_font_trigger_anchors_a_popup_at_that_press_below_t
     std::unique_ptr<SettingsPanel> panel = h.attach(probe);
     h.open(*panel);
 
-    const HitSpot trigger = reveal_font_trigger(h, *panel);
+    // 余量一档行高：按钮整枚在视口内，可达框才等于整枚框，下面「两处入口量同一块」才有意义（理由见
+    // `reveal_font_trigger` 的余量段②）。
+    const HitSpot trigger = reveal_font_trigger(h, *panel, 30.0F);
     AURORA_TEST_REQUIRE_MSG(trigger.widget != nullptr, "the font trigger button is not dispatch-reachable");
     AURORA_TEST_CHECK_FALSE(panel->family_view().popup_open);
     AURORA_TEST_REQUIRE_EQ(h.overlay_count(), 1U);  // 只有面板那一层
@@ -3199,11 +3204,18 @@ AURORA_TEST_CASE(clicking_the_font_trigger_anchors_a_popup_at_that_press_below_t
     AURORA_TEST_CHECK_EQ(std::string_view{outside->type_name()}, std::string_view{"Canvas"});
 
     // A4-b：留痕是字体行**下方**那一条独立行。`Text` 不可点，故 `reachable_box` 那套量法对它无效
-    // （命中链只收「自身可点或含可点后代」的节点，裁决 7.61⑤），本例只比同一坐标空间里的上下关系。
+    // （命中链只收「自身可点或含可点后代」的节点，裁决 7.61⑤），但 G36 的 `Widget::window_bounds()` 对任何
+    // 控件都给窗口逻辑 dp——两个框都经它现取，才是在**同一坐标空间**里比上下。
+    // 不用 `paint_bounds()`：那是「上一次绘制落在父缓冲里的盒」，而浮层正压在留痕行上、该行不再重绘，读到的会
+    // 是滚到上一个位置时的旧值（PREF.01 批 2 在字体行上方加了一行「界面主题」后实测：旧值 834，真值 904）。
+    // 触发器那一框也现取：点击会把焦点交给它，框架可能顺手把它滚进视野，点前那份量在此已不是当前帧。
+    const std::optional<au::Rect> trigger_box = trigger.widget->window_bounds();
+    AURORA_TEST_REQUIRE_MSG(trigger_box.has_value(), "the font trigger reports no window-space box after the click");
     au::Widget *const notice = panel->font_notice_text();
     AURORA_TEST_REQUIRE(notice != nullptr);
-    AURORA_TEST_CHECK_GT(notice->paint_bounds().origin.y,
-                         trigger.widget->paint_bounds().origin.y + trigger.widget->paint_bounds().size.height);
+    const std::optional<au::Rect> notice_box = notice->window_bounds();
+    AURORA_TEST_REQUIRE_MSG(notice_box.has_value(), "the font notice row reports no window-space box");
+    AURORA_TEST_CHECK_GT(notice_box->origin.y, trigger_box->origin.y + trigger_box->size.height);
     // 缺省档（配置里的族在目录里且等宽）：没有留痕可写，按钮显示的正是生效的那一族。
     AURORA_TEST_CHECK_TRUE(panel->family_view().notice.empty());
     AURORA_TEST_CHECK_EQ(panel->family_view().effective, panel->family_view().configured);

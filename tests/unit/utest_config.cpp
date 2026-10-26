@@ -38,6 +38,7 @@ namespace au = aurora;
 
 using borealis::config::BellMode;
 using borealis::config::builtin_themes;
+using borealis::config::ChromeTheme;
 using borealis::config::InterfaceLanguage;
 using borealis::config::kDefaultThemeName;
 using borealis::config::kSnapshotRetention;
@@ -85,6 +86,8 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
     Settings next{};
 
     next.appearance.theme = "nord";
+    // 外壳明暗档取与缺省（`system`）不同的一档：写侧漏键或读侧认不出名字都会回落缺省。
+    next.appearance.chrome_theme = ChromeTheme::Light;
     // 两档枚举的「相反档」就是另一档：写侧漏键或读侧回落缺省时，这里读回来的是 `zh` 而不是 `en`。
     next.appearance.language = InterfaceLanguage::En;
     // 色值刻意不等于任何预置主题：往返等值才排得出「写侧漏了某个字段、读侧又从主题表捡回来」。

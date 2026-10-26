@@ -64,6 +64,16 @@ enum class InterfaceLanguage : std::uint8_t {
     En,  ///< 英文。
 };
 
+/// @brief 界面外壳（chrome）的明暗档选择（`SPEC.FEAT.PREF.01`，`codespec/UI_CHROME.draft.md` D1）。
+///
+/// 只作用于窗口外壳，**不**联动终端内容配色（该稿 D8）；`System` 缺省即「跟随系统」，
+/// 系统不表态时由 `ui::resolve_chrome_scheme()` 回落暗档。落盘名是 `system` / `dark` / `light`。
+enum class ChromeTheme : std::uint8_t {
+    System,  ///< 跟随系统明暗（缺省）。
+    Dark,    ///< 固定暗档。
+    Light,   ///< 固定亮档。
+};
+
 /// @brief 粘贴文本里换行符的处理策略（`SPEC.FEAT.INTERACT.03`）。
 ///
 /// 取值与语义的唯一定义在 `term::PasteNewlinePolicy`（发送侧要用它折算计划），配置侧只作别名，
@@ -118,6 +128,11 @@ struct AppearanceSettings {
     AppearanceSettings();
 
     std::string theme{kDefaultThemeName};  ///< 预置主题名；取值见 `config/themes.h`。
+    /// @brief 界面外壳的明暗档（`SPEC.FEAT.PREF.01`）：缺省跟随系统，改档即时换肤。
+    ///
+    /// 与上面的 `theme` 是两件事：这一档换窗口外壳（面板 / 标签栏 / 分屏缝隙），
+    /// `theme` 换终端内容那 16 格（`UI_CHROME.draft.md` D8）。
+    ChromeTheme chrome_theme{ChromeTheme::System};
     /// @brief 界面语言（`SPEC.FEAT.PREF.05`）：启动时读定，整进程一种语言（该稿 D2）。
     ///
     /// 缺省 `Zh` 让「配置里没有这个键」与本键落地前的行为逐字相同（`SPEC.FEAT.PREF.06` 的

@@ -88,6 +88,15 @@ namespace {
                           {},
                           ConsumerStatus::Wired,
                           EffectLevel::Immediate));
+    // 外壳明暗档（`SPEC.FEAT.PREF.01`，`codespec/UI_CHROME.draft.md` D5）：紧跟终端主题之后——两者都是
+    // 「主题」但作用面不同，相邻才看得出区别。候选就是落盘名（与 `appearance.language` 同一条既有惯例），
+    // 三串与 `schema_names.h` 的 `kChromeThemeNames` 同源由 `utest_form_transfer` 的逐候选案把守。
+    // 即时生效：装配层的广播腿换活动档并重设每窗 `ThemeScope` 的共享 `State<Theme>`。
+    catalog.push_back(dropdown("appearance.chrome_theme",
+                               SettingsPage::Appearance,
+                               {"system", "dark", "light"},
+                               ConsumerStatus::Wired,
+                               EffectLevel::Immediate));
     // 语言档的两个候选就是落盘名，也是 i18n 的区域标签（`SPEC.FEAT.PREF.05` 稿 D3／D4：名字的唯一
     // 读点在 `src/config/schema_names.h`，本行照抄那两串）。生效档位取 `NextLaunch` 而不是
     // `NextSession`：词条在**建任何控件之前**装填，运行期改它既不会重放既有会话，也不会重画已经
