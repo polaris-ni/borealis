@@ -50,7 +50,7 @@ Borealis 是基于 **Aurora**（C++20 跨平台 AI-first GUI 库）开发的跨�
 | `include/borealis/vt/` | 解析器、序列定义 |
 | `include/borealis/term/` | 终端状态机、编码解码、字符集指派与映射、宽度判定 |
 | `include/borealis/grid/` | cell / 行 / 环形缓冲 / 主备屏 / 脏区 |
-| `include/borealis/session/` | 会话抽象、背压队列、生命周期；两份「锁内留存、锁外 IO」的落地件都在 `src/session/`——`clipboard_outbox`（52 写与读应答，全仓唯一触达框架剪贴板处）与 `notification_outbox`（9／777 投递，全仓唯一触达框架通知处，裁决 7.128），二者的公共头都不含框架类型 |
+| `include/borealis/session/` | 会话抽象、背压队列、生命周期；三份「锁内留存、锁外投递」的落地件都在 `src/session/`——`clipboard_outbox`（52 写与读应答，全仓唯一触达框架剪贴板处）与 `notification_outbox`（9／777 投递，全仓唯一触达框架通知处，裁决 7.128），二者的公共头都不含框架类型；`bell_audio`（BEL 出声，全仓唯一触达框架音频图处，裁决 7.159）**只有私有头** `src/session/bell_audio.h`，公共面留给同批的纯逻辑件 `session/bell.h`——策略与设备分两件，节流才脱得开设备单测 |
 | `include/borealis/conn/` | 连接类型与档案、凭据句柄、快捷片段（`snippet`：`{{name}}` 占位符、分组／搜索过滤、编号与校验的纯逻辑件，裁决 7.137） |
 | `include/borealis/ui/` | 终端视口、标签栏、pane 树（含 `PaneShape` 的形状描述／重建，裁决 7.131）、工作区布局快照模型（`workspace_snapshot`，纯逻辑、fail-closed 编解码）、选区的归一／取文本与智能配对（`selection`，纯逻辑；配对档见裁决 7.136）、quick select 的行扫描与标签分配（`quick_select`，纯逻辑，裁决 7.135）、搜索浮层、设置面板 |
 | `include/borealis/config/` | 配置 schema、原子写与降级、profile；逐窗几何记忆另起第二枚框架接缝，实现与头都在 `src/config/`（`window_geometry_store`，裁决 7.126）；布局快照再起第三枚（`workspace_store`，绑 `workspace.json`、顶层键 `layout`、无删除入口，裁决 7.131） |

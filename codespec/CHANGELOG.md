@@ -4,6 +4,22 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.159（2026-10-26）**`SPEC.FEAT.WS.04` 可听铃声（audible beep）结项：`terminal.bell` 三档自此有消费方，策略件与出声件分两件，本仓显式开 `AURORA_ENABLE_AUDIO`（裁决 7.159；本地提交＝代码笔 + 用例笔 + 文档笔）**
+
+**动机**：`terminal.bell` 是设置面板上少数「画了控件却没有消费方」的行之一——`settings_catalog` 里它标 `ConsumerStatus::Absent`，而 `main.cpp` 的 BEL 腿**无条件**点角标，选 `off` 也照样亮红点、选 `audible` 也永远没有声音。业界（Windows Terminal 的 `bellStyle` 缺省即 `audible`、`all`＝声音与任务栏闪烁并存、`none`＝两者全无；WezTerm / kitty 的可听档同样不摘视觉）没有「可听档去掉视觉」这一档，而 `config/settings.h` 的 `BellMode::Audible` 头注释本来就写死「视觉提示之外再发铃声」。本棒把这三档语义一次落齐。
+
+**落地形态**：
+
+- **策略件（纯逻辑，公共头）**：`session::BellPolicy::decide(mode, now)` → `BellAction{None, Badge, BadgeAndTone}`。`Off` 整条忽略；`Visual` 只点角标；`Audible` 在 200 ms 窗口外角标 + 铃声、窗口内只角标。**节流锚点只在真响铃那一刻推进**——被吞的那几次不推窗口，否则连打十条会把窗口喂成 2 秒，而用户直觉的锚点是「上一次响铃之后」。节流是进程级、只吞铃声不吞角标：多格同响只出一声，「哪一格响过」绝不因音频面而丢。时刻由调用方喂固定 `steady_clock::time_point`，于是节流与边界脱离任何音频设备单测（§4.4 第 20 条）。
+- **出声件（全仓唯一触达框架音频图的 TU）**：`src/session/bell_audio.{h,cpp}`（**只有私有头**，形态照 `session::notification_outbox`）。构造期预烘一段 48 kHz 单声道 16-bit PCM——880 Hz、120 ms、幅度 0.22、4 ms 线性起音 + τ=35 ms 指数衰减 + 12 ms 收尾淡出（收尾必须回零，硬切在设备侧就是爆音）——每次 `ring()` 经 `AudioStreamSourceNode::push` 推入 SPSC 环。**不取 `AudioBufferSourceNode::start()` 重播**：后者在 UI 线程重写非原子的 `play_pos_` 而渲染线程同时在读（**读源结论、未经 TSan 实测**），且节点由 context 持有不随响铃销毁。设备不可用（无内置后端 / 无设备 / `start()` 失败三态合一 → `AudioContext::silent()`）时 `ring()` 返回 false 且只留一条 WARN，不回填不重试不在界面另起提示——铃声是增强，不能成为会话事件的新失败点。
+- **装配层**：`main.cpp` 起手只在 `bell == Audible` 时建 `BellAudio`（缺省视觉档不启动音频设备线程）；运行期改到可听档由首声铃懒建、此后复用同一台（该档更可能是「设备晚到」：耳机插入、蓝牙握手完成）。帧边界那一格由「无条件 `mark_bell_triggered`」换成按 `bell_policy.decide(settings.terminal.bell, steady_clock::now())` 三档分派，档位逐次现读内存值 ⇒ `EffectLevel::Immediate` 名实相符。
+- **构建面**：根 `CMakeLists.txt` 在 `add_subdirectory` 之前追加 `set(AURORA_ENABLE_AUDIO ON CACHE BOOL "" FORCE)`（框架侧缺省 OFF，Windows 上 `AURORA_ENABLE_AUDIO_WASAPI` 随之为 ON，`ole32` 由 Aurora 自己 PUBLIC 链接）。少了这一行时音频图仍在、context 恒静默，**编译与用例都不红**——「档位看起来生效、实际没声音」正是这条开关要防的形态，故写进开关注释而不只写进文档。
+- **面板侧随之闭合**：`terminal.bell` 的 `ConsumerStatus` 由 `Absent` 改 `Wired`，`utest_settings_catalog` 的未接线计数闸 19→**18**；「无消费方」的只读摘要注记自动消失，该行自此与 `ambiguous_width` 一样出真 `Dropdown`（`itest_settings_panel` 那条按下拉选项数认行的用例按 `== 2U` 取锚，三档的 bell 进不去，判据无需改）。
+
+**验收读数**：`cmake --preset msvc` 重配置（日志出「WASAPI audio backend enabled」）＋ `cmake --build --preset msvc --parallel` 通过；`ctest --preset msvc -E etest_ -j 16` **121/121 全绿**（基线 119，本棒 +2 套件）；`borealis_test_runner` 全跑 **1500 案 / 1497 绿**（基线 1491／1488，本棒 +9 案＝`utest_bell_policy` 6 + `itest_bell_audio` 3），三红仍是 Windows 无 secret-service 的 `etest_libsecret_credential_store`（同 7.156／7.158）。四则变异各自指名打红、还原后复绿：M1 节流边界 `<`→`<=` ⇒ 策略 4 案红；M2 被吞的 BEL 也推进锚点 ⇒ 3 案红（`throttled_bells_do_not_push_the_anchor_forward` 指名）；M3 摘掉 `connect(source, destination)` ⇒ 音频两案红（出声与重复响铃）；M4 铃声时长 0.12→0.30 s ⇒ 尾部精确归零那条判据红。音频用例的判据形态是「注入假设备、由用例手动拉块」：验峰值有界（>0.05 ∧ <0.3）、mono 复制到双声道、120 ms 后逐样本精确为 0、同一出口可再响、`start()` 失败即静默且不抛。
+
+**边界与不称可用**：本棒**无新增框架缺口**（音频面公共 API 够用，G45／G46 在册不变）。**没有听觉证人**——用例测的是渲染出的样本，不是「扬声器里那一声像终端铃声、响度合适、不打扰」；`src/main.cpp` 的按档分派与懒建设备两腿不编入 runner（裁决 7.83）⇒ 只有源码审查担保；真机走查未做（锁屏会话下 `SendInput` 静默失效，裁决 7.31①），本条不替 WS.04 摘「可用」（§4.4 第 33 条）。延后在册：逐标签／逐会话响铃开关（与本条「哪一格响过看角标」重叠，业界无强共识）、焦点窗才响（要做语义解释，撞 7.155 对 `Critical` 的处置口径）、可配波形或音量（框架有 master volume，但本条无设置键，开新键即六处同步）。
+
 ## v0.158（2026-10-26）**`SPEC.FEAT.CONN.05` 串口监视卡二期（滚动回溯与历史窗口）结项：`LazyList` 虚拟化＋离底冻结＋「回到最新」、行窗口折算与 `revision`、框架缺口 G46 出任务书（裁决 7.158；本地提交 `efe2019`（设计稿 §9 的 D10–D18）→ `fc83d62`（批 A：窗口折算＋变更计数）→ `b1a2bdd`（批 B：面板虚拟化与冻结）→ `d1f7202`（批 C：冻结翻页用例）→ 文档回写（本笔））**
 
 **动机**：一期监视卡只画最近 24 行、想看更早得先暂停，且「暂停」与「回看」被焊在一起。二期把顶棚拆掉：历史连续可读、只有贴底才跟尾、离底冻结且**绝不自动吸回**（业界一致把「往上翻被新输出拽回」当缺陷），回底是一枚随时可按的动作。采集腿的字节口径一字不动。

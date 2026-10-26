@@ -71,7 +71,7 @@
 | `scrollback_limit` | 数值步进 `[0, 100000]` | 上限即 `grid::kMaxScrollbackLimit`，与 SVG 终端页那格「上限 100,000」的面板批注一致（圆标 8 只写「scrollback 上限」） | `Session` / `Storage` 构造期 | **下次会话** |
 | `ambiguous_width` | 下拉两档 | `term::AmbiguousWidth` | `term::TerminalDefaults` 的构造期注入；`set_ambiguous_width` 只改当前口径、不写回初始档（裁决 **7.76②**） | 已接线 → 下次会话 |
 | `long_line` | 下拉两档（截断 / 折行） | `config::LongLinePolicy` | 无消费方 | 延后 |
-| `bell` | 下拉三档（关 / 视觉 / 可听） | `config::BellMode` | 无消费方（视觉提示未落地） | 延后 |
+| `bell` | 下拉三档（关 / 视觉 / 可听） | `config::BellMode` | 已接线（`session::BellPolicy` 逐帧按档处置角标，`session::BellAudio` 出可听铃声，裁决 7.159） | 即时生效 |
 | `encoding` | 下拉（UTF-8 / GB18030 / GBK / Big5 / Latin-1 / CP437） | 自由文本键，装载侧只判类型 | 无消费方（会话编码腿未接） | 延后 + 下次会话 |
 | `paste_newlines` | 下拉三档（原样 / 过滤 / 转换） | `term::PasteNewlinePolicy` | `InteractionOptions::paste` | 即时 |
 | `right_click` | 下拉三档（菜单 / 粘贴 / 选中即复制） | `ui::RightClickAction` | `ui::plan_right_click` | 即时 |
