@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <map>
 #include <memory>
@@ -74,6 +75,7 @@
 #include "config/workspace_store.h"
 #include "platform/credential_store.h"
 #include "platform/crash_handler.h"
+#include "platform/file_secure.h"
 #include "platform/instance_channel.h"
 #include "platform/open_url.h"
 #include "platform/process_args.h"
@@ -265,10 +267,11 @@ struct TunnelEntry {
 ///
 /// 失败（平台对话框起不来）与取消走同一个空串，因为面板那一条腿的判据就是「没给路径就整条不跑、
 /// 连留痕都不写」，把「取消」读成一次失败反而会在界面上谎报「导出失败」。
-[[nodiscard]] auto picked_save_path() -> std::string {
+[[nodiscard]] auto picked_save_path(std::string_view title,
+                                    std::vector<aurora::file_dialog::Filter> filters) -> std::string {
     aurora::file_dialog::Options opts;
-    opts.title = "Export settings";  // 平台对话框的标题由 OS 呈现，不经本仓词条表（S13② 的同一条口径）
-    opts.filters = {{"JSON", {"*.json"}}};
+    opts.title = std::string{title};  // 平台对话框的标题由 OS 呈现，不经本仓词条表（S13② 的同一条口径）
+    opts.filters = std::move(filters);
     const au::Result<std::string> result = aurora::file_dialog::save_file(opts);
     return result.ok() ? result.value() : std::string{};
 }
@@ -283,6 +286,28 @@ struct TunnelEntry {
         return std::string{};
     }
     return result.value().front();
+}
+
+/// @brief 把一段文本落到用户点名的路径；成功为空，失败为 ASCII 原因（稿 §10.2 D23①）。
+///
+/// 三道闸（0600 临时件 → 截断写 → `rename` 就位、失败即删）在 `platform::write_private_file`
+/// 里收着，本件只补两处面板不认识的事：⑴ D19③——监视折算件交回的文本行间只有 LF 且**末尾没有**
+/// 换行，落盘这侧补上那一个（剪贴板那侧不补，粘出来不该多一行空行）；⑵ 枚举分档折成一句 ASCII
+/// 诊断串，只进日志，上屏的是词条那句（同 `Store::export_settings` 的口径）。
+[[nodiscard]] auto write_private_dump(const std::string &path, const std::string &text)
+    -> std::optional<std::string> {
+    using borealis::platform::PrivateWriteOutcome;
+    switch (borealis::platform::write_private_file(path, text + "\n")) {
+        case PrivateWriteOutcome::Written:
+            return std::nullopt;
+        case PrivateWriteOutcome::InvalidPath:
+            return "serial monitor export refused: the picked path is not usable: " + path;
+        case PrivateWriteOutcome::NoScratchName:
+            return "serial monitor export found no free scratch name next to: " + path;
+        case PrivateWriteOutcome::Failed:
+            return "serial monitor export could not be put in place: " + path;
+    }
+    return "serial monitor export failed: " + path;
 }
 
 /// @brief 定长 UTF-8 串的码点收集器（与 `session.cpp` 的 `BufferSink` 同一形态，装配侧另有一份）。
@@ -2482,7 +2507,9 @@ auto main(int argc, char **argv) -> int {
         sync_clipboard_gate();
         return reason;
     };
-    hooks.pick_export_path = []() -> std::string { return picked_save_path(); };
+    hooks.pick_export_path = []() -> std::string {
+        return picked_save_path("Export settings", {{"JSON", {"*.json"}}});
+    };
     hooks.pick_import_path = []() -> std::string { return picked_open_path(); };
     borealis::ui::SettingsPanel panel{*host, app.shortcuts(), std::move(hooks)};
     settings_panel = &panel;
@@ -4426,6 +4453,20 @@ auto main(int argc, char **argv) -> int {
         return borealis::ui::settings_label("serial.monitor.binding",
                                            {{"name", name}, {"path", path}});
     };
+
+    // 三期「取出去」（稿 §10.4 批 B）：面板只做显示，三条腿的 OS 接触面都收在装配层。
+    // 剪贴板走全仓唯一写点（与密钥面板「一键复制」同一入口）；导出先问路径再写盘，问不到（取消或
+    // 对话框起不来）就交回空串——面板据此整条不跑、连留痕都不写（D21②）。
+    // 这两条都在**点击派发**里做 IO，口径与 `SettingsPanel::run_export()` 同源，判据见稿 §10.5：
+    // 一次性、用户显式发起、毫秒级折算，后面本来就跟着原生对话框与写盘这两段阻塞 IO。
+    monitor_hooks.copy_text = [](std::string text) -> void {
+        borealis::session::ClipboardOutbox::write(text);
+    };
+    monitor_hooks.pick_export_path = []() -> std::string {
+        return picked_save_path("Export serial monitor dump", {{"Text", {"*.txt"}}});
+    };
+    monitor_hooks.export_text = [](const std::string &path, const std::string &text)
+        -> std::optional<std::string> { return write_private_dump(path, text); };
 
     borealis::ui::SerialMonitorPanel monitor_panel{*host, std::move(monitor_hooks)};
     // 一句提示沿用波特率那一只框（`serial_baud_dialog` + `show_serial_baud_frame` 那对既有件）：

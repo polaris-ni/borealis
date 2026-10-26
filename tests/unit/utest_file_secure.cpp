@@ -1,10 +1,13 @@
 /// 测试类型: unit
-/// 目标单元: src/platform/file_secure.h + src/platform/posix/file_secure.cpp
+/// 目标单元: src/platform/file_secure.h + 共享腿 src/platform/file_secure.cpp +
+///           两腿 src/platform/{posix,win}/file_secure.cpp、src/platform/native_path.h
 /// 测试说明: SPEC.FEAT.CONN.10 私钥落盘的第一道闸（裁决 7.106 D5①）——「已存在即不碰」与
 ///           「权限钉死 0600」两件事各自独立可验：覆盖拒绝要能在既有文件已有内容时验出，
 ///           权限要在**故意让 umask 削掉属主写位**的现场验出（不注入这条 umask，删掉实现里的
 ///           fchmod 也照样全绿，因为默认 umask 恰好不动属主位）。Windows 腿同接口，
-///           其 ACL 边界见 file_secure.cpp 头注释与稿 §7（本机无 MSVC，未经编译验证）。
+///           其 ACL 边界见 file_secure.cpp 头注释与稿 §7。
+///           CONN.05 三期补上 `write_private_file`（整份就位、不留半成品）与 `native_path_of`
+///           （UTF-8 路径名在码页制 Windows 上逐字落位），两件的判据在本文件后半。
 
 #include "platform/file_secure.h"
 
@@ -141,5 +144,121 @@ AURORA_TEST_CASE(missing_parent_and_illegal_names_are_errors_not_successes) {
                          static_cast<int>(platform::PrivateFileOutcome::Error));
     AURORA_TEST_CHECK_TRUE(!std::filesystem::exists(make_path("bad")));
 }
+
+AURORA_TEST_CASE(the_whole_text_lands_and_no_scratch_is_left_behind) {
+    // D23① 的两条判据各一条：字节全在（截断写不是追加）、本次的临时件不留（半成品不外溢给用户）。
+    const auto path = make_path("dump.txt");
+    const auto scratch = make_path("dump.txt.tmp");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(scratch, ec);
+
+    AURORA_TEST_CHECK_EQ(static_cast<int>(platform::write_private_file(path.string(), "RX  00\n")),
+                         static_cast<int>(platform::PrivateWriteOutcome::Written));
+    AURORA_TEST_CHECK_MSG(read_text(path) == "RX  00\n", "every byte, in order");
+    AURORA_TEST_CHECK_TRUE(!std::filesystem::exists(scratch));
+}
+
+AURORA_TEST_CASE(the_second_write_replaces_the_target_whole) {
+    // 「用户点了保存」的应有之义：目标已存在即整体换新（稿 §10.2 D23③——本件不替用户拒绝覆盖）。
+    // 只看第二次回 Written 不够：写成 append 的实现也会回 Written，而那份转储就成了两屏叠一起。
+    const auto path = make_path("dump_twice.txt");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    AURORA_TEST_CHECK_EQ(static_cast<int>(platform::write_private_file(path.string(), "AAAAAAAA")),
+                         static_cast<int>(platform::PrivateWriteOutcome::Written));
+    AURORA_TEST_CHECK_EQ(static_cast<int>(platform::write_private_file(path.string(), "BB")),
+                         static_cast<int>(platform::PrivateWriteOutcome::Written));
+    AURORA_TEST_CHECK_MSG(read_text(path) == "BB", "the old bytes are gone");
+    AURORA_TEST_CHECK_EQ(static_cast<std::size_t>(std::filesystem::file_size(path)), 2U);
+    AURORA_TEST_CHECK_TRUE(!std::filesystem::exists(make_path("dump_twice.txt.tmp")));
+}
+
+AURORA_TEST_CASE(a_taken_scratch_name_moves_to_the_next_slot_untouched) {
+    // 逐档改名这一条的两半：占位的文件**逐字不动**（那是别人的盘，可能是用户自己的同名文件），
+    // 而导出本身照旧成功（不这样，一次崩溃留下的临时件就把这个目标永久封死）。
+    const auto path = make_path("dump_ladder.txt");
+    const auto first = make_path("dump_ladder.txt.tmp");
+    const auto second = make_path("dump_ladder.txt.tmp1");
+    const auto third = make_path("dump_ladder.txt.tmp2");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(third, ec);
+    write_text(first, "NOT-MINE");
+    write_text(second, "ALSO-NOT-MINE");
+
+    AURORA_TEST_CHECK_EQ(static_cast<int>(platform::write_private_file(path.string(), "MINE")),
+                         static_cast<int>(platform::PrivateWriteOutcome::Written));
+    AURORA_TEST_CHECK_MSG(read_text(path) == "MINE", "the export still landed");
+    AURORA_TEST_CHECK_MSG(read_text(first) == "NOT-MINE", "the taken scratch is not mine to touch");
+    AURORA_TEST_CHECK_MSG(read_text(second) == "ALSO-NOT-MINE", "same for the second slot");
+    AURORA_TEST_CHECK_TRUE(!std::filesystem::exists(third));  // 第三档用完即删
+}
+
+AURORA_TEST_CASE(a_refused_or_broken_write_never_moves_anything) {
+    // 三条「什么都没发生」：空串与内嵌 NUL 判非法（进系统调用只会落到另一份路径），父目录不在判失败。
+    // 每条都断言目标那一份**没有**凭空出现：让失败留下半份东西是本件最该防住的形态。
+    const auto dir = std::filesystem::path{aurora::testing::isolation::temp_dir()};
+    const auto orphan = (dir / "dump_no_parent") / "dump.txt";
+    AURORA_TEST_CHECK_EQ(static_cast<int>(platform::write_private_file(std::string_view{}, "x")),
+                         static_cast<int>(platform::PrivateWriteOutcome::InvalidPath));
+    AURORA_TEST_CHECK_EQ(static_cast<int>(platform::write_private_file(
+                             std::string_view{"dump\0bad.txt", 10}, "x")),
+                         static_cast<int>(platform::PrivateWriteOutcome::InvalidPath));
+    AURORA_TEST_CHECK_EQ(static_cast<int>(platform::write_private_file(orphan.string(), "x")),
+                         static_cast<int>(platform::PrivateWriteOutcome::Failed));
+    AURORA_TEST_CHECK_TRUE(!std::filesystem::exists(make_path("dump")));
+    AURORA_TEST_CHECK_TRUE(!std::filesystem::exists(make_path("dump_no_parent")));
+}
+
+#if !defined(_WIN32)
+AURORA_TEST_CASE(the_written_file_keeps_the_owner_only_mode) {
+    // 钉住「0600 在建出来那一刻定下、截断写与 rename 都不改它」这一条链：只测 create_private_file
+    // 的 mode 不够，把实现改成「先 ofstream 再 chmod」在本用例面前同样得红。
+    const auto path = make_path("dump_mode.txt");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    AURORA_TEST_CHECK_EQ(static_cast<int>(platform::write_private_file(path.string(), "RX  00\n")),
+                         static_cast<int>(platform::PrivateWriteOutcome::Written));
+    const auto permissions = std::filesystem::status(path).permissions();
+    AURORA_TEST_CHECK_MSG((permissions & std::filesystem::perms::owner_read) != std::filesystem::perms::none,
+                          "owner can read");
+    AURORA_TEST_CHECK_MSG((permissions & std::filesystem::perms::owner_write) != std::filesystem::perms::none,
+                          "owner can write");
+    const auto world_bits = permissions & (std::filesystem::perms::group_all |
+                                           std::filesystem::perms::others_all);
+    AURORA_TEST_CHECK_MSG(world_bits == std::filesystem::perms::none, "no group/other bits at all");
+}
+#endif
+
+#if defined(_WIN32)
+AURORA_TEST_CASE(a_non_ascii_name_lands_at_that_exact_name) {
+    // Windows 独有的那条码页闸（本机 2026-10-26 实测 ACP=936）：`std::filesystem::path` 从窄串构造
+    // 时按 GBK 解，一串 UTF-8 中文就落成花码名——同一份文本因此会写到用户没点的那条路径上。
+    // 判据只能取**盘上真名的 UTF-8 字节**：宽 API 枚举后 `u8string()`，与请求的字节逐字节比。
+    // POSIX 侧不设本例——那里本地名本就是字节串，UTF-8 直传没有可过的一道转换。
+    const auto directory = std::filesystem::path{aurora::testing::isolation::temp_dir()};
+    const std::string leaf = "\xE4\xB8\xAD\xE6\x96\x87.dump";  // 中文名的 UTF-8 转义（字面量仍全 ASCII）
+    const std::string target = directory.string() + "/" + leaf;
+
+    AURORA_TEST_CHECK_EQ(static_cast<int>(platform::write_private_file(target, "RX  00\n")),
+                         static_cast<int>(platform::PrivateWriteOutcome::Written));
+
+    int hits = 0;
+    for (const auto &entry : std::filesystem::directory_iterator{directory}) {
+        const auto name = entry.path().filename().u8string();
+        if (std::string_view{reinterpret_cast<const char *>(name.data()), name.size()} == leaf) {
+            ++hits;
+            std::ifstream in{entry.path(), std::ios::binary};
+            const std::string content{std::istreambuf_iterator<char>{in},
+                                      std::istreambuf_iterator<char>{}};
+            AURORA_TEST_CHECK_MSG(content == "RX  00\n", "the bytes are at the exact name");
+        }
+    }
+    AURORA_TEST_CHECK_EQ(hits, 1);  // 0＝落到花码名上；>1＝多写了一份
+}
+#endif
 
 }  // namespace borealis::test_cases::utest_file_secure

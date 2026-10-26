@@ -36,6 +36,7 @@
 | F12 | 出向字节从不进网格；入向字节进网格前已被 VT 状态机吃掉 | `write_out` → `connection_->write` 之外无消费者；`ingest` 的产物是 `decode_buffer_` → `terminal_.feed`（`src/session/session.cpp`） | 十六进制视图**不可能**做成「终端格换一档」：TX 根本没有格；网格内容是解码+解析后的产物，塞假字节会同时污染复制、搜索与 scrollback（D1 的否决理由） |
 | F13 | 既有会话级参数的先例 | `LogSpec::timestamp` 是开启时给的**会话级量**、不进 schema；`kMaxSessionLogBytes` 是文件级常量而非配置键（`include/borealis/session/session_log.h`，裁决 7.116 D8①/⑥） | 本稿的时间戳开关与环容量走同一条口径：**零新设置键**，省掉「schema + store 读写 + 搬运 + 核对表行 + 词条 + 计数」六处同步 |
 | F14 | 面板状态泵与观测面先例 | `TunnelPanel::tick()` 由装配层 `set_on_frame` 调用、读 `snapshot` Hook，行表逐字段相等就不重建；`SnippetPanel` 同族；观测面 `visible_rows()` / `notice()` / `is_open()`；`itest_panel_retarget` 现覆盖**七只**瞬态面板 | 监视面板照这套骨架（D8/D9），并**必须**进 `itest_panel_retarget` 成为第八只——搬窗漏一条就是「浮层留在已散的那扇窗上」 |
+| F15 | 窄串构 `std::filesystem::path` 在 Windows 上走本地码页（一次性探针 `pathprobe`，不入仓，2026-10-26 本机 MSVC `/std:c++20 /utf-8 /O2` 实测） | 本机 **ACP=936**；同一串 UTF-8 中文文件名 `E4 B8 AD E6 96 87 2E 74 78 74`：经腿内自做 UTF-8→UTF-16 的 `CreateFileW` 落到真名，而经 `std::ofstream{std::filesystem::path{narrow}}` 落到 `E6 B6 93 EE 85 9F E6 9E 83 2E 74 78 74`（**按 GBK 两两解出的花码名**），两份同时在场、互不可见。`create_private_file` 的 Win 腿自做宽串转换（`src/platform/win/file_secure.cpp:43`），故它与 CRT 那条路**不同名** | 写盘腿的两半必须共用同一套路径口径，否则「建的那份」与「写的那份」是两个文件（D25 的直接依据）；顺带读数：本仓 `config/store.cpp::write_document` 与 `session/session_log.cpp` 的 `ofstream{窄串路径}` 同带这条latent 边界，只因目标名恒 ASCII 才没打到（§10.7 在册） |
 
 **未在实测射程内**：Windows/MSVC 构建与真机走查（沙箱无 MSVC、无交互桌面、无 `tty`/`dialout` 权限——
 `codespec/UI_SERIAL.draft.md` §0 的 F1/F10 那两条环境欠账在本稿同样成立）。本稿全部 UI 判据走无头真布局 +
@@ -340,6 +341,12 @@ D6（每行一个、短档 + 毫秒、可关）。
 - 读源盘点（非运行时）：`src/session/session.cpp` 的 `ingest` / `flush` / `write_out`、
   `src/conn/serial_connection.cpp` 的三个读块常量、`include/borealis/session/session_log.h` 的会话级参数先例、
   `src/ui/{tunnel,snippet,sftp}_panel.*` 与 `tests/integration/itest_panel_retarget.cpp` 的面板族形态。→ F1／F2／F3／F12／F13／F14。
+- `pathprobe`（三期批 B 补，2026-10-26 本机）：`cl /std:c++20 /utf-8 /O2` 直编，在一个 ASCII 目录里
+  ⑴ 用 `std::ofstream{std::filesystem::path{narrow}}` 建一份「UTF-8 中文名的文件」、⑵ 用
+  `CreateFileW(MultiByteToWideChar(CP_UTF8,…))` 建同一份真名，再以 `FindFirstFileW` + `WideCharToMultiByte(CP_UTF8,…)`
+  枚举落盘真名的字节。读数：本机 **ACP=936**，⑴ 落到 `E6 B6 93 EE 85 9F E6 9E 83 2E 74 78 74`（GBK 花码）、
+  ⑵ 落到 `E4 B8 AD E6 96 87 2E 74 78 74`（请求的那个名字），两份同时在场。→ F15／D25。
+  （注：默认 `/std` 是 C++14，`std::filesystem` 直接报 C3083——这条探针必须带 `/std:c++20`。）
 
 ---
 
@@ -487,7 +494,7 @@ D6（每行一个、短档 + 毫秒、可关）。
 
 ---
 
-## 10 三期：把这一屏取出去（复制与导出，D19–D24，2026-10-26 自裁）
+## 10 三期：把这一屏取出去（复制与导出，D19–D25，2026-10-26 自裁）
 
 **意图**：`SPEC.FEAT.CONN.05` 那条延后子项在册的最后两枚可组合动作——**复制**与**导出**。采集腿、行形态、
 状态机一字不动；三期只加「把已经折好的东西交出去」这一段：一件纯逻辑串形件、面板两枚按钮三条 Hook、
@@ -519,6 +526,7 @@ D6（每行一个、短档 + 毫秒、可关）。
 | **D22** | 面板与装配的分工 | ① 面板只做文本与状态：新增 `copy_text` / `pick_export_path` / `export_text` 三条 Hook，剪贴板、原生对话框、写盘、失败留痕全在装配腿；② 面板自己 `ofstream` | **①** | 与 `SettingsPanel::run_export()` 完全同形（`pick_export_path` 空串＝取消即整条不跑、`export_text` 回 `optional<reason>`、上屏的措辞归词条、ASCII 原因归 `AURORA_LOG_WARN`），也与本件头注那句「本件不认识 `Session`，也不认识串口」同一条纪律。**差异也要记**：设置导出那条腿可以直接裸写目标文件，因为它写的是**已保证无明文凭据**的配置档（判据「配置目录 grep 无明文凭据」）；本卡写的是设备原始流量，性质不同 ⇒ 权限与原子性由 D23 单独收 |
 | **D23** | 落盘的安全姿态 | ① 显式动作 ×3（开卡→点导出→在原生保存框点名）即授权，**不打码**；权限与原子性由「私有临时件 + `rename` 就位」收（复用 `platform::create_private_file`，裁决 7.106 D5① 同一条腿）；② 加一道 `au::confirm` 把全路径再念一遍（CONN.11 判据 3 形态）；③ 拒绝覆盖既有文件 | **①** | 打码在本档**做不到有意义**：CONN.11 的打码器是逐行词表替换，而本卡的十六进制列把口令的每个字节都拼了出来（`70 61 73 73` 就是 `pass`），替换词行只会产出一份「看着干净其实不干净」的文件——那比不打码更危险。故**不打码**，并把理由入册（这也是 §9.8 原来那条「撞口径」的确切位置）。② 的第四道确认不加分：原生保存框已经显示了确切路径并要求一次点击，再加模态框是把「保存」变成「认罪」；替代措施是常驻那句改口后的声明（D24），措辞要让人在点导出**之前**就读到。③ 与 OS 保存框自己的「替换已有文件？」直接冲突，会把用户引向「我说了替换，你却拒绝」。留下的两条硬闸＝**0600**（同 `create_private_file`：建出来即只我可读，不受 umask 支配）与**先写临时件再 `rename`**（写崩了不留下半份 dump 冒充整份捕获，也不碰用户原有的同名文件）|
 | **D24** | 那条「不落盘」声明怎么办 | ① 改口为「本面板只在内存留痕，只有你显式导出时才写盘」，双档同改，且**保留常驻**；② 删掉这句；③ 只在未导出过时显示 | **①** | 这句是一期那条安全口径唯一的**上屏载体**：删掉它（②）等于悄悄改掉一条写进 `SPECIFICATIONS.md` 与 `raw_tap.h` 头注的不变量，③ 又让「现在到底会不会写盘」变成要猜的事。改口后的句子承担三件事：常驻可见、显式动作是唯一的写盘触发者、以及 D23 那条「文件里是原始字节、含口令回显」的提醒落点。**随之必须回写**：`include/borealis/session/raw_tap.h` 头注那句「不持久化」补一句「除非用户显式导出」，SPECIFICATIONS 的 CONN.05 与 CONN.11 交界同步入册（AGENTS §4.2 第 11／12 条） |
+| **D25** | 写盘那条腿落在哪一层（批 B 实施期改口，2026-10-26） | ① 原计划：装配层 `src/main.cpp` 里就地组合 `create_private_file` + `ofstream` + `rename`；② 下沉成平台腿：共享 `src/platform/file_secure.cpp` 的 `platform::write_private_file(path, text)`，配新增的 `platform::native_path_of`（两腿） | **②**（本条即 D23① 那句「复用 `create_private_file`」的落地形态改口，三道闸的口径不变） | 改口的直接原因是 F15 那条实测：`std::filesystem::path` **从窄串构造时走本地码页**，本机 ACP=936 下一个 UTF-8 中文文件名会按 GBK 解成花码——于是「用 `create_private_file` 建的临时件」（腿内自做 UTF-8→UTF-16，名字对）与「用 `ofstream` 打开的临时件」（名字花码）是**盘上两份不同的文件**：真名那份留成 0 字节空壳，内容写进花码那份并把花码名 rename 成花码目标。用户点的是「串口捕获.txt」，拿到的是「涓…txt」。这条读数把原本「只是没有自动化证人」的装配腿，变成**必须**有一条带证人的平台腿（AGENTS §4.4 第 18 条：新增核心逻辑须配套单测）。分层也因此顺：码页是平台假设，按 §4.5 第 23 条只能在 `src/platform/` 内，共享侧只收两个枚举加两个函数。代价与残留：`config/store.cpp::write_document` 与 `session/session_log.cpp` 那两处同类窄串构 path 的写法**本期不改**（它们的目标名恒为 ASCII 或由配置目录决定，本机路径全 ASCII ⇒ 打不到；改它们要各自动写盘语义，属另一棒），在册见 §10.7 |
 
 ### 10.3 屏面与词条
 
@@ -545,7 +553,7 @@ S13② 同口径），其余四枚都在面板里消费，故不进 `itest_setti
 | 批 | 内容 | 判据 |
 |---|---|---|
 | A | `monitor_dump_text(runs, options)` 进纯逻辑件（委托 `monitor_rows` + `row_text`，不第二台机器）；面板三条 Hook、两枚按钮、`feedback` 一行、观测面 `dump_text()`；词条双档 + 改口那句 | `utest_serial_monitor_format`：空表即空串、行间单个 `\n`、无结尾 `\n`、时间戳档关掉即无前缀、与屏面逐行相等。`itest_serial_monitor_panel`：点复制收到全文本、点导出先问路径再交文本、空环两条都不触发、取消路径不调写盘、写盘回原因时上屏 `export_failed` 且不调 `copy` |
-| B | 装配腿：`copy_text`＝`ClipboardOutbox::write` + 一句留痕；`export_text`＝同目录私有临时件（`create_private_file`）→ 截断写 → `rename` 就位 → 失败即删临时件并回原因 | 无自动化证人（`src/main.cpp` 不进 `borealis_test_runner`，裁决 7.83）⇒ 走查清单加三条 |
+| B | 装配腿：`copy_text`＝`ClipboardOutbox::write`（全仓唯一剪贴板写点）＋面板那句留痕；`pick_export_path`＝`picked_save_path(title, filters)`（原只服务设置导出的一枚助手，按两枚调用方参数化）；`export_text`＝`platform::write_private_file`——**写盘下沉成平台腿**（D25）：同目录 0600 临时件（`create_private_file`）→ 截断写 → `rename` 就位 → 失败即删临时件，路径串经新增的 `platform::native_path_of` 转宽串 | `utest_file_secure` 五条新例（整份落位不留临时件／第二次写整体换新／占位临时件逐字不动而导出照旧／三类失败什么都没发生／非 ASCII 名逐字落位——最后一条 Windows 独有）。装配本身仍无自动化证人（`src/main.cpp` 不进 `borealis_test_runner`，裁决 7.83）⇒ 走查清单只留对话框与剪贴板两条 |
 | C | 变异自证（≥3 则）、全量构建与用例读数、四处文档回写（SPECIFICATIONS 裁决 7.162 / CHANGELOG v0.162 / PLAN §4 那行 / 本稿 §9.8 出账 + `raw_tap.h` 头注改口） | 读数入账后方称落地 |
 
 ### 10.5 数字与代价
@@ -563,10 +571,16 @@ S13② 同口径），其余四枚都在面板里消费，故不进 `itest_setti
 1. 复制：满环量级下按下是否有一次明显停顿；粘到编辑器里行数与屏面尾行是否对得上。
 2. 导出：原生保存框标题与过滤器读起来是否像「导出串口转储」；文件名缺省值是否合适（本期不合成缺省名，见 §10.7）。
 3. 导出成功后那句留痕里的长路径在 640 dp 卡里是否截断得能看懂。
-4. 换掉一个已存在的文件：OS 弹「替换？」→ 同意后旧文件确实整体换新，且权限位仍只我可读。
-5. 写到只读目录（如 `C:\Windows`）：上屏那句失败、临时件不留。
+4. 换掉一个已存在的文件：OS 弹「替换？」→ 同意后旧文件确实整体换新，且权限位仍只我可读。（「整体换新」
+   已由 `utest_file_secure::the_second_write_replaces_the_target_whole` 锁住；**Windows 的继承 ACL** 这条
+   只有真机看得出，`create_private_file` 的 Win 腿本就不改 ACL。）
+5. 写到只读目录（如 `C:\Windows`）：上屏那句失败、临时件不留。（失败姿态的自动化版本是
+   `a_refused_or_broken_write_never_moves_anything` 的「父目录不在」那一档；只读目录是另一条现场。）
 6. 暂停中导出：文件末行应与屏面最后一行一致，而不是环里更新的字节（D20 的人眼验证）。
 7. 改口那句常驻声明在小窗宽下是否仍完整可读——它是 D23 那第四道确认的替代品，被截掉就等于没有。
+8. 在对话框里点一个**中文名**的目标（如 `桌面\串口捕获.txt`）：落盘后文件名应与点下的逐字一致、目录里
+   不多出一份 0 字节的 `.tmp`（F15 那条读数的现场复核；`utest_file_secure` 已有同判据的自动例，
+   但那条走的是本仓 temp 目录，不是真实桌面路径）。
 
 ### 10.7 本期不做（在册）
 
@@ -577,6 +591,11 @@ S13② 同口径），其余四枚都在面板里消费，故不进 `itest_setti
 - **原始字节导出**（`.bin`，不经 hex 折算）：与本期的「同一台折算件」判据相冲，是另一种产品形态（Wireshark 的
   `Export Packet Bytes`），需要单独的口径与单独的走查。在册。
 - **自动写盘 / 环形落盘**：明确不做（§10.1 那条反面教材）。
+- **把另两处窄串构 path 的写法一并纠到 `native_path_of`**（`config/store.cpp::write_document` 的
+  `fs::path{file.string() + ".tmp"}`、`session/session_log.cpp` 的 `ofstream{spec_.path}`）：F15 那条
+  读数对它们同样成立，但两者的目标名一个由用户在保存框里改、一个是 `session-<id>-<epoch>.log`，
+  且路径都落在配置目录内（本机全 ASCII）⇒ 打不到现场。改它们要各自动一次写盘语义（append/trunc、
+  快照名单校验），与本棒无关，**在册另开一棒**；真机若出现「配置导出/会话日志落到花码名」，那才是它的开工令。
 
 ### 10.8 Aurora 缺口（任务书候选，按「可组合能力留本仓」分流）
 

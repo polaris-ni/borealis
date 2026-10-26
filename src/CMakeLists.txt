@@ -38,6 +38,7 @@ add_library(borealis_core STATIC
         conn/tunnel_socks.cpp
         diag/crash_report.cpp
         platform/credential_store.cpp
+        platform/file_secure.cpp
         ui/connection_glyph.cpp
         ui/connection_sidebar.cpp
         ui/connection_wizard.cpp
@@ -124,6 +125,7 @@ if (WIN32)
             platform/win/hop_pipe.cpp
             platform/win/instance_channel.cpp
             platform/win/local_terminal.cpp
+            platform/win/native_path.cpp
             platform/win/open_url.cpp
             platform/win/process_args.cpp
             platform/win/serial.cpp
@@ -140,6 +142,7 @@ elseif (UNIX)
             platform/posix/forkpty_connection.cpp
             platform/posix/instance_channel.cpp
             platform/posix/local_terminal.cpp
+            platform/posix/native_path.cpp
             platform/posix/open_url.cpp
             platform/posix/process_args.cpp
             platform/posix/serial.cpp
