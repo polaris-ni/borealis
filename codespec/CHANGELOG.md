@@ -4,6 +4,22 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.157（2026-10-26）**`SPEC.FEAT.PREF.01` 亮/暗 chrome 适配结项：12 token 双色板、`appearance.chrome_theme` 三档、共享 `State<Theme>` 换肤与跟随系统轮询（裁决 7.157；本地提交 `a87571f`（设计稿）→ `c88d2be`（双色板与活动档）→ `9e8cb51`（配置键六处同步）→ `1b8e6a1`（标签栏与分屏去硬编码）→ `5f9c5f3`（装配接线）→ 文档回写（本笔））**
+
+**动机**：`SPEC.FEAT.PREF.01` 的预置配色腿与主题切换入口早已交付，剩下「UI 主题暗色优先、跟随 `ThemeScope`」的亮/暗半边一直挂在 PLAN 的 M2 行，理由是「无 light/dark 数据源、无配置键、不自行择一实现」。2026-10-26 复核推翻了前两条：Aurora 已有公共 `aurora::os_color_scheme()`（Win32 直读注册表、GTK 启发式、不缓存）。本棒按设计稿 `codespec/UI_CHROME.draft.md`（D1–D10 出稿时按「最优方案、不计工作量」自裁）一次收口。
+
+**落地形态**：
+
+- **双色板**：`SettingsChrome` 由 7 色扩到 12 token（新增 `nav_bg` / `scrim` / `danger` / `success` / `warning`，原先散在 `settings_panel.cpp` 与 `tab_bar.cpp` 的文件内常量收进唯一表）；`chrome_palette(Dark|Light)` 是唯一色值来源。暗档除 `text_dim` 由 `#627280` 提亮到 `#8A8FA3`（旧值 3.19:1 不达 WCAG AA）外逐值不变；亮档 accent 取 `#7C3AED`（`#BD93F9` 在白底仅 2.4:1），两档正文/次要文本/语义三色/accent 对 `card_bg` 均 ≥ 4.5。
+- **配置键**：`appearance.chrome_theme` 三档 `system` / `dark` / `light`、缺省 `system`，六处同步；`chrome_theme_tag()` 是落盘名与解析查找键的同一来源；缺键与域外值按 `system` 回落并留痕。设置页外观段第二行（紧跟 `appearance.theme`），`Wired ∧ Immediate`。
+- **运行期换肤**：`set_chrome_scheme()` / `chrome_scheme()` 为进程级主线程状态；每扇窗的 `ThemeScope` 改以共享 `State<Theme>` 构造，换档＝设活动档 → `state->set()` → 逐窗 `request_wake()`（`request_wake_all()` 是 private，实撞后改走公共面）。设置面板浮层在**下一调度 tick** 重建而非同步（换档可能发生在面板自己的按钮回调栈内，同步撤浮层会摘掉正在派发的控件，G34 一族）。
+- **三处去硬编码**：`settings_panel.cpp` 154 处、`tab_bar.cpp` 10 处、`workspace_view.cpp` 3 处固定暗色改读 `settings_chrome()`；`broadcast_banner` 的琥珀底按语义警示条保持自带色。设计稿 §4 一处「标签栏底＝`window_bg`」的笔误随本棒更正为 `card_bg`（以代码与 §1 色值表为准）。
+- **跟随系统（G45 代偿）**：启动解算一次 `os_color_scheme()`；运行期以 `Application::scheduler()` 的 1 s interval 轮询，仅当配置为 `system` 时经 `apply_chrome_scheme()` 动作（调度器 deadline 参与帧循环等待，空闲深睡准时醒）。框架缺口 **G45** 登记：`Surface::set_os_color_scheme_handler` 单槽且已被 `WindowHost` 独占消费（赋值即替换），`Window::os_scheme_` / `resolved_root_theme()` 与 `Application` 无公共读点 ⇒ 无应用级通知与当前档读点；任务书 `codespec/FRAMEWORK_TASK_CHROME_OS_NOTIFY.md`（两条可接受形态、五条口径、五条回货判据），回货后删轮询即可。
+
+**验收读数**：构建通过（`cmake --build --preset msvc --parallel`）；`ctest --preset msvc -E etest_ --parallel` **119/119 全绿**；`utest_chrome_palette` **5 案**、`itest_tab_bar` **14 案**（含新增像素证人 `the_bar_background_follows_the_active_chrome_scheme`）、`itest_settings_panel` 新增浮层重建案、`utest_settings_catalog` chrome 行补候选映射断言。四刃变异各有指名红（m1 强制解析回 Light／m2 `settings_chrome()` 恒回暗板／m3 亮档 `text_dim` 改灰／m4 栏底写死暗色），逐次还原复绿。**吞吐门禁未复跑**：本棒只换色值来源、不改每帧绘制算式，基准三场景不含面板与主题切换。
+
+**边界与不称可用**：真机走查未做（锁屏会话下 `SendInput` 静默失效，裁决 7.31①）——待走查三条：Windows 设置里切「应用模式」≤ 1 s 整窗换档、面板内换档立即生效、亮档无残留暗带；`main.cpp` 的装配与轮询不编入 runner（裁决 7.83）⇒ 源码审查＋走查担保。本条不替 PREF.01 摘「可用」（§4.4 第 33 条）。
+
 ## v0.156（2026-10-26）**Windows/MSVC 主通道重新启用：4 处 Win32 腿硬错误、4 处平台行为差、2 处通道读数订正一并修掉（裁决 7.156；本地提交 `867cd87`（msvc_env）→ `bca80d5`（Win32 腿与测试修正）→ 文档回写（本笔））**
 
 **动机**：批 4／5／6／7 的「Win32／MSVC 未复核」欠账叠加到本棒——7.155 的回存工作在 Windows 主通道执行，该腿自 2026-10-08 以来第一次完整编译，欠账集中现形。所有改动与回存意图独立，按 §4.6 第 26 条单独成笔。

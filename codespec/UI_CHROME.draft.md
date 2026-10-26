@@ -3,6 +3,7 @@
 > 本稿回答「界面 chrome 从恒暗变成可亮、可随系统，需要立哪些档、色值取哪一套、运行期怎么换」。
 > 需求原文的终端配色腿（≥8 套预置 + 16 色重映射 + 前景/背景/选区/光标）**早已交付**（裁决 7.26②、7.52 ~ 7.61），本稿只补需求里「UI 主题暗色优先、跟随 Aurora `Theme::dark()` / `ThemeScope` 体系」这一句的亮/暗半边。
 > **本稿出稿时人不在场**，按长期目标指令「决策点按最优方案、不考虑工作量」**自裁 D1–D10**，逐条列理由、备选与代价；后续人若改判，按 `SPECIFICATIONS.md` §7 新增裁决覆盖，不回收本稿编号。
+> 状态：**已落地（2026-10-26，裁决 7.157）**——D1–D10 按本稿推荐档实现；§4 一处「标签栏底＝`window_bg`」的笔误按代码与 §1 色值表更正为 `card_bg`；D4 的框架缺口登记为 **G45**（任务书 `codespec/FRAMEWORK_TASK_CHROME_OS_NOTIFY.md`），1 s 轮询代偿在册；真机走查未做故不称「可用」。
 
 ---
 
@@ -101,7 +102,7 @@
 
 **单元（`utest_chrome_palette`）**：解析表五档（system×{Light,Dark,Unspecified}、dark、light）；`set_chrome_scheme` 后 `settings_chrome()` 与 `chrome_theme().scheme` 同步；两套色板的对比度下界；两套色板逐 token 不同（防止「亮档忘了改某一项」）；`chrome_theme(Light).roles.on_primary` 分档正确。
 
-**集成（`itest_tab_bar` 增一例）**：同一棵标签栏在暗档与亮档各出一次无头帧，栏底像素分别等于两套 `window_bg`；切回暗档帧与首帧逐位相同（状态可逆）。
+**集成（`itest_tab_bar` 增一例）**：同一棵标签栏在暗档与亮档各出一次无头帧，栏底像素分别等于两套 `card_bg`（§1 表「标签栏底」那一格；本行初稿误写 `window_bg`，以表与 D6 为准）；切回暗档帧与首帧逐位相同（状态可逆）。
 
 **变异自证（AGENTS §4.4 第 22 条）**：
 - m1：`resolve_chrome_scheme(System, Unspecified)` 返回 Light → 解析表单测红；
