@@ -5,9 +5,10 @@
 // 取「回环 TCP 一对」而不是 AF_UNIX：Win10 之前的 AF_UNIX 支持面不完整，而本仓主通道
 // 要覆盖到没有 unix domain socket 的构建机（稿 D10 的选型理由）。
 //
-// **本腿未编译验证**（沙箱无 MSVC）；与 `SPEC.NF.RELI.01` 的 Win32 腿同一条在册边界，
-// 见稿 `codespec/CONN03_PROXYJUMP.draft.md` §6。裸 socket 知识不外溢：接口见
-// platform/hop_pipe.h（AGENTS.md §4.5 第 23 条）。
+// **本腿已编译并实测**（2026-10-27，MSVC＋Win32 主通道）：`itest_ssh_proxy_jump` 的一跳／
+// 两跳／归因／主机密钥／SFTP／隧道／密钥推送与共享链路各案都跑在这对回环句柄上，稿
+// `codespec/CONN03_PROXYJUMP.draft.md` §6 里「Win32 全链未编译」那条在册边界就此收口。
+// 裸 socket 知识不外溢：接口见 platform/hop_pipe.h（AGENTS.md §4.5 第 23 条）。
 // ============================================================
 
 #include "platform/hop_pipe.h"
@@ -79,6 +80,12 @@ class SocketHandle {
 
     [[nodiscard]] auto get() const -> SOCKET { return socket_; }
     [[nodiscard]] auto valid() const -> bool { return socket_ != INVALID_SOCKET; }
+    /// @brief 交还所有权而不关闭：调用方接手的是活的套接字。
+    [[nodiscard]] auto release() -> SOCKET {
+        const auto socket = socket_;
+        socket_ = INVALID_SOCKET;
+        return socket;
+    }
     auto reset(SOCKET socket = INVALID_SOCKET) -> void {
         if (socket_ != INVALID_SOCKET) {
             ::closesocket(socket_);
@@ -203,10 +210,10 @@ class WinHopPipeEnd final : public HopPipeEnd {
         AURORA_LOG_WARN("platform", "cannot accept hop pipe peer: ", last_error_text());
         return std::nullopt;
     }
-    // 监听点使命完成：留到会占着一枚端口，且本件只有一对连接。
-    auto out = std::array<SOCKET, 2>{accepted.get(), client.get()};
-    accepted.reset();
-    client.reset();
+    // 监听点使命完成：`listener` 出作用域即关（留会占着一枚端口，且本件只有一对连接）。
+    // 两端按**移交**交出去——`reset()` 是先关再置空，那样交出去的是一双已关的句柄，
+    // 对端 `WSAPoll` 立刻 `WSAENOTSOCK`（10038），整条跳链停在 `ssh_connect` 之前。
+    auto out = std::array<SOCKET, 2>{accepted.release(), client.release()};
     return out;
 }
 
