@@ -5133,7 +5133,7 @@ auto main(int argc, char **argv) -> int {
         sftp_panel.tick();     // SFTP 面板取件与判活（D8①/D9①；面板关着即空操作）
         tunnel_panel.tick();   // 隧道行表随快照刷新（D6①；面板关着即空操作）
         keys_panel.tick();     // 密钥行表随快照刷新（D6① 同族；面板关着即空操作）
-        monitor_panel.tick();  // 串口监视行表随环刷新（稿 D6①；关着即空操作，暂停中不读环）
+        monitor_panel.tick();  // 字节监视行表随环刷新（稿 D6①；关着即空操作，暂停中不读环）
     });
 
     // 关窗的两条入口共用一段（`SPEC.FEAT.WS.03` 稿 D3／D4，裁决 7.161）：点 × 与命令面板那条
