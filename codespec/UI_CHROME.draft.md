@@ -3,7 +3,7 @@
 > 本稿回答「界面 chrome 从恒暗变成可亮、可随系统，需要立哪些档、色值取哪一套、运行期怎么换」。
 > 需求原文的终端配色腿（≥8 套预置 + 16 色重映射 + 前景/背景/选区/光标）**早已交付**（裁决 7.26②、7.52 ~ 7.61），本稿只补需求里「UI 主题暗色优先、跟随 Aurora `Theme::dark()` / `ThemeScope` 体系」这一句的亮/暗半边。
 > **本稿出稿时人不在场**，按长期目标指令「决策点按最优方案、不考虑工作量」**自裁 D1–D10**，逐条列理由、备选与代价；后续人若改判，按 `SPECIFICATIONS.md` §7 新增裁决覆盖，不回收本稿编号。
-> 状态：**已落地（2026-10-26，裁决 7.157）**——D1–D10 按本稿推荐档实现；§4 一处「标签栏底＝`window_bg`」的笔误按代码与 §1 色值表更正为 `card_bg`；D4 的框架缺口登记为 **G45**（任务书 `codespec/FRAMEWORK_TASK_CHROME_OS_NOTIFY.md`），1 s 轮询代偿在册；真机走查未做故不称「可用」。
+> 状态：**已落地（2026-10-26，裁决 7.157）**——D1–D10 按本稿推荐档实现；§4 一处「标签栏底＝`window_bg`」的笔误按代码与 §1 色值表更正为 `card_bg`；D4 的框架缺口登记为 **G45**（任务书 `temp_tasks/FRAMEWORK_TASK_CHROME_OS_NOTIFY.md`），1 s 轮询代偿在册；真机走查未做故不称「可用」。
 
 ---
 
@@ -11,7 +11,7 @@
 
 - **色值面**：界面 chrome 的唯一来源是 `ui::settings_chrome()`（7 色）与 `ui::settings_chrome_theme()`（由同一批常量合成的 `aurora::Theme`），挂在每扇窗场景根的 `ThemeScope` 上。它是**显式恒暗**的：`settings_panel.cpp` 的 154 处常量、`tab_bar.cpp` 的 10 处固定色、`workspace_view.cpp` 的 3 处固定色都直接写死暗色值（后两处甚至没走 `settings_chrome()`）。
 - **数据源面**：Aurora 已有公共 `aurora::os_color_scheme()`（Win32 读 `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize\AppsUseLightTheme`，缺失键回 Light、打不开回 `Unspecified`；GTK 启发式；不缓存）。故 PLAN 原记的「本仓无 light/dark 数据源」**已过期**。
-- **通知面（新缺口，登记为 G45）**：`Surface::set_os_color_scheme_handler` 是**单槽**且已被 `WindowHost` 独占消费（`WindowHost::on_os_color_scheme` 只做 `Window::set_os_color_scheme` + 整窗重绘），**没有**应用级多播、也**没有**取得「当前生效明暗」的公共读点（`Window::resolved_root_theme()` 与 `os_scheme_` 均私有）。本仓在场景根注入自己的 `ThemeScope` 后，框架解析出的明暗**到不了**本仓控件，运行期也不会通知本仓。→ 按跨仓纪律出任务书 `codespec/FRAMEWORK_TASK_CHROME_OS_NOTIFY.md`，本仓先以**低频轮询**代偿（D4）。
+- **通知面（新缺口，登记为 G45）**：`Surface::set_os_color_scheme_handler` 是**单槽**且已被 `WindowHost` 独占消费（`WindowHost::on_os_color_scheme` 只做 `Window::set_os_color_scheme` + 整窗重绘），**没有**应用级多播、也**没有**取得「当前生效明暗」的公共读点（`Window::resolved_root_theme()` 与 `os_scheme_` 均私有）。本仓在场景根注入自己的 `ThemeScope` 后，框架解析出的明暗**到不了**本仓控件，运行期也不会通知本仓。→ 按跨仓纪律出任务书 `temp_tasks/FRAMEWORK_TASK_CHROME_OS_NOTIFY.md`，本仓先以**低频轮询**代偿（D4）。
 - **入口面**：配置无对应键、面板无对应行、装配层不读 `os_color_scheme()`。
 
 ---

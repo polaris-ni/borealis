@@ -36,3 +36,6 @@ Testing/
 # 本地临时文件与日志
 *.log
 *.tmp
+
+# 跨仓派发用的框架任务书（临时出件，不入仓；账目指针在 codespec/SPECIFICATIONS.md 附录 A.2）
+/temp_tasks/
