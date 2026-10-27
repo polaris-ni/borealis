@@ -268,11 +268,15 @@ struct TunnelEntry {
 ///
 /// 失败（平台对话框起不来）与取消走同一个空串，因为面板那一条腿的判据就是「没给路径就整条不跑、
 /// 连留痕都不写」，把「取消」读成一次失败反而会在界面上谎报「导出失败」。
+/// `suggested_name` 是**预选而不是答案**（框架缺口 G48 的口径，裁决 7.169）：对话框把它落在名字栏，
+/// 用户照改、清空、换目录都仍算同一次确认；空串＝不表达意图，与不传该格同形。
 [[nodiscard]] auto picked_save_path(std::string_view title,
-                                    std::vector<aurora::file_dialog::Filter> filters) -> std::string {
+                                    std::vector<aurora::file_dialog::Filter> filters,
+                                    std::string_view suggested_name) -> std::string {
     aurora::file_dialog::Options opts;
     opts.title = std::string{title};  // 平台对话框的标题由 OS 呈现，不经本仓词条表（S13② 的同一条口径）
     opts.filters = std::move(filters);
+    opts.suggested_name = std::string{suggested_name};
     const au::Result<std::string> result = aurora::file_dialog::save_file(opts);
     return result.ok() ? result.value() : std::string{};
 }
@@ -2509,7 +2513,9 @@ auto main(int argc, char **argv) -> int {
         return reason;
     };
     hooks.pick_export_path = []() -> std::string {
-        return picked_save_path("Export settings", {{"JSON", {"*.json"}}});
+        // 设置导出交一份固定名（G48）：这份内容本身就是「当前配置的全部」，没有比它自己更准的名字。
+        return picked_save_path("Export settings", {{"JSON", {"*.json"}}},
+                                "borealis-settings.json");
     };
     hooks.pick_import_path = []() -> std::string { return picked_open_path(); };
     borealis::ui::SettingsPanel panel{*host, app.shortcuts(), std::move(hooks)};
@@ -4520,8 +4526,20 @@ auto main(int argc, char **argv) -> int {
     monitor_hooks.copy_text = [](std::string text) -> void {
         borealis::session::ClipboardOutbox::write(text);
     };
-    monitor_hooks.pick_export_path = []() -> std::string {
-        return picked_save_path("Export session byte dump", {{"Text", {"*.txt"}}});
+    monitor_hooks.pick_export_path = [&monitor_tab]() -> std::string {
+        // 缺省名与内容同源（G48 回货后本仓唯一的接线动作）：`session-<标签>-<epoch 秒>.txt`，与
+        // `session::make_log_file_name()` 那族 `session-<tab>-<epoch>.log` 同一形状——两个数都取自
+        // 「这一次点导出」的现场，纯 ASCII 因此不含 OS 会拒的非法字符，也不必替用户猜设备名或档案名
+        // （档案名可以是中文，而对话框那格的名字栏要逐字节走得通码页这一关，本仓不替用户赌）。
+        if (!monitor_tab.has_value()) {
+            return {};
+        }
+        const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
+                               std::chrono::system_clock::now().time_since_epoch())
+                               .count();
+        return picked_save_path("Export session byte dump", {{"Text", {"*.txt"}}},
+                                "session-" + std::to_string(monitor_tab.value()) + "-" +
+                                    std::to_string(epoch) + ".txt");
     };
     monitor_hooks.export_text = [](const std::string &path, const std::string &text)
         -> std::optional<std::string> { return write_private_dump(path, text); };

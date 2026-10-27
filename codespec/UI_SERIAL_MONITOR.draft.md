@@ -590,7 +590,7 @@ S13② 同口径），其余四枚都在面板里消费，故不进 `itest_setti
 ### 10.6 走查清单（AGENTS §4.4 第 33 条，人工）
 
 1. 复制：满环量级下按下是否有一次明显停顿；粘到编辑器里行数与屏面尾行是否对得上。
-2. 导出：原生保存框标题与过滤器读起来是否像「导出串口转储」；文件名缺省值是否合适（本期不合成缺省名，见 §10.7）。
+2. 导出：原生保存框标题与过滤器读起来是否像「导出串口转储」；**缺省名是否就是那一份内容**（G48 回货后本卡送 `session-<tab>-<epoch>.txt`，与 `SPEC.FEAT.CONN.11` 的 `session-<tab>-<epoch>.log` 同族；那一格用户仍可改、可清空，见 §10.7 出账句）。
 3. 导出成功后那句留痕里的长路径在 640 dp 卡里是否截断得能看懂。
 4. 换掉一个已存在的文件：OS 弹「替换？」→ 同意后旧文件确实整体换新，且权限位仍只我可读。（「整体换新」
    已由 `utest_file_secure::the_second_write_replaces_the_target_whole` 锁住；**Windows 的继承 ACL** 这条
@@ -605,10 +605,12 @@ S13② 同口径），其余四枚都在面板里消费，故不进 `itest_setti
 
 ### 10.7 本期不做（在册）
 
-- **缺省文件名**：`SPEC.FEAT.CONN.11` 那边有 `session-<tab>-<epoch>.log` 的合成规则，本卡交给用户在保存框里
-  命名。**实测（2026-10-26 读 Aurora 活动分支 `include/aurora/app/file_dialog.h`）**：`Options` 只有
-  `title` / `initial_dir` / `filters` 三格，**没有**「建议文件名」这一格 ⇒ 本棒不做缺省名；该格已登记成框架缺口
-  **G48** 并出任务书 `temp_tasks/FRAMEWORK_TASK_FILEDIALOG_NAME.md`（裁决 **7.163**），回货后本卡接线面见该任务书 §4。
+- ~~**缺省文件名**：`SPEC.FEAT.CONN.11` 那边有 `session-<tab>-<epoch>.log` 的合成规则，本卡交给用户在保存框里
+  命名。~~ **已出账（2026-10-27，随缺口 G48 回货与本仓接线，裁决 **7.169**）**：框架那格补齐（`Options::suggested_name`
+  ＋可选 `default_extension`，观察面 `headless_last_options`），本卡导出送 `session-<tab>-<epoch>.txt`、设置导出送
+  `borealis-settings.json`。原文留档（2026-10-26 实测 `include/aurora/app/file_dialog.h`）：`Options` 只有
+  `title` / `initial_dir` / `filters` 三格，**没有**「建议文件名」这一格 ⇒ 当时登记成缺口 **G48**、出任务书
+  `temp_tasks/FRAMEWORK_TASK_FILEDIALOG_NAME.md`（裁决 **7.163**）。
 - **过滤后再导出**（只导出某个方向／某个时间区间）：与「文本视图」「搜索」同属一棒，先有过滤再谈按过滤导出。
 - **原始字节导出**（`.bin`，不经 hex 折算）：与本期的「同一台折算件」判据相冲，是另一种产品形态（Wireshark 的
   `Export Packet Bytes`），需要单独的口径与单独的走查。在册。
@@ -628,6 +630,8 @@ S13② 同口径），其余四枚都在面板里消费，故不进 `itest_setti
    缺口 **G48**（附录 A.2），可派发任务书 `temp_tasks/FRAMEWORK_TASK_FILEDIALOG_NAME.md`：§1 三腿能力清册（含那条
    「两腿早有接缝、只差一格」的实测）、§2 字段口径与可选的 `default_extension`、§3 五条回货判据（含非 ASCII 名
    逐字节到达，对应本稿 F15）、§4 本仓接线面（`picked_save_path` 加第三形参 + 缺省名形态）。
+   **闭合（2026-10-27）**：形态甲＋乙一起回货，观察面取建议里的第一种；§5 那条相邻读数（`initial_dir` 在 Win32
+   腿被忽略）同笔接上 `SetFolder` ⇒ **G49 不必开**。本仓 §4 接线面已落（裁决 **7.169**），该任务书可撤件。
 
 ### 10.9 批 C 结项读数（2026-10-26，AGENTS §4.4 第 22 条的变异自证）
 

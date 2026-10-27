@@ -187,7 +187,7 @@
 | G39 | ~~**`CommandPalette` 空态提示硬编码英文**（`on_paint` 内 `"No matching commands"`，同病灶）~~ **已闭合**（同 G38，2026-10-23 随 `AURORA_DEFAULT_EMPTY_MESSAGE_KEY` 回货；接货结论见裁决 **7.138** 与附录 A.2） | `SPEC.FEAT.WS.07` 的中文词条面；同 G38 改判——不接 `set_empty_message()`，只依靠装表 | 已闭合，无须排期；任务书见 `codespec/FRAMEWORK_TASK_WS07.md` §2 |
 **G40–G44 五条不进本表**：它们（2026-10-08～10-21 登记）未排进任何里程碑，2026-10-23 已随 Aurora 回货逐条出账——G40／G41／G43／G44 已闭合并被本仓消费（重放见裁决 **7.138**③、关窗确认见裁决 **7.138**⑤），**G42 判为部分闭合**：宿主级五类直调派发不记账，本仓 `ui::ActiveWindowTracker` 代偿保留、**不阻塞后续棒次**。全文见裁决 **7.138**、附录 A.2 与 `codespec/FRAMEWORK_TASK_WS03_G42.md` §7。
 **G45（2026-10-26 登记）同样不进本表**：它不阻塞任何需求——`SPEC.FEAT.PREF.01` 的运行期「跟随系统」以 1 s 轮询代偿（裁决 **7.157⑤**），任务书为 `temp_tasks/FRAMEWORK_TASK_CHROME_OS_NOTIFY.md`，回货后删轮询即可。
-**G48（2026-10-26 登记）不进本表**：它不阻塞任何需求——`SPEC.FEAT.CONN.05` 的导出与设置面板导出今天都走得通，代价只是文件名由用户手打（裁决 **7.163**①），任务书为 `temp_tasks/FRAMEWORK_TASK_FILEDIALOG_NAME.md`，回货后本仓 `picked_save_path` 加第三形参即可。同日另两条的去向：**G46** 三处代偿、不阻塞（裁决 **7.158⑤**，任务书 `temp_tasks/FRAMEWORK_TASK_LAZYLIST_SCROLL.md`）；**G47** 硬阻塞 `SPEC.FEAT.WS.12` 的装配腿，其排期账记在本文 §5 的 Quick Terminal 行（裁决 **7.160**，任务书 `temp_tasks/FRAMEWORK_TASK_WS12_QUAKE.md`）。
+**G48（2026-10-26 登记、2026-10-27 闭合）不进本表**：它从不阻塞——导出今天走得通，欠的只是每次得手打一个名字（裁决 **7.163**①）；任务书 `temp_tasks/FRAMEWORK_TASK_FILEDIALOG_NAME.md` 已于 2026-10-27 随 Aurora `dev-1.0.0-alpha.11` 回货（甲＋乙＋观察面，另把 §5 那条 `initial_dir` 一并接上 `SetFolder`），本仓 `picked_save_path` 第三形参与两处缺省名同日接线（裁决 **7.169**）。同日另两条的去向：**G46** 三处代偿、不阻塞（裁决 **7.158⑤**，任务书 `temp_tasks/FRAMEWORK_TASK_LAZYLIST_SCROLL.md`）；**G47** 硬阻塞 `SPEC.FEAT.WS.12` 的装配腿，其排期账记在本文 §5 的 Quick Terminal 行（裁决 **7.160**，任务书 `temp_tasks/FRAMEWORK_TASK_WS12_QUAKE.md`）。
 后续按裁决 7.13 的类别分流：凡属渲染与事件链路的缺口，撞到即先补框架；交互体验类缺口留在应用侧。
 
 ---
