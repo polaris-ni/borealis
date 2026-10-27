@@ -2,6 +2,7 @@
 
 > 本文件是 Borealis `SPEC.FEAT.WS.12` Quick Terminal（quake 模式）的唯一框架依赖项的派发任务书，登记为缺口 **G47**（`codespec/SPECIFICATIONS.md` 附录 A.2；裁决 **7.160**）。消费动机见 `codespec/UI_QUAKE_TERMINAL.draft.md` §3。
 > 依据：对 Aurora 活动分支的**读源实测**（2026-10-26），涉及 `include/aurora/window/window.h`、`include/aurora/window/surface.h`、`include/aurora/app/display.h`、`include/aurora/app/window_geometry.h`、`src/aurora/window/win32_host.cpp`。只读源码、未编译未真机，涉及后端行为的句子一律标「读源」。
+> **派发前复检**（2026-10-27 于 Aurora HEAD `f1c5da35`）：`Surface` / `Window` 仍无运行期 `set_visible` 与 `set_always_on_top` 入口（`ShowWindow` 与 `HWND_TOPMOST` 仍只在 `win32_host.cpp` 的构造路径），§4 那条 `set_size` 头注释与实现相反的单位缺陷同样未修 ⇒ 缺口与文档缺陷都仍在。
 > **结论先行**： quake 模式的四条腿里，**两条今天就能用**（全局热键 `OsHotkeyRegistry`、显示器工作区枚举 `app::list_displays()`），**两条没有公共入口**（运行期显隐、运行期置顶）——`ShowWindow` 与 `SetWindowPos(HWND_TOPMOST)` 在框架里都只存在于**构造路径**，之后应用侧再无任何句柄可触达它们。另附带报一条**文档缺陷**：`Surface::set_size` 头注释的单位与实现相反。
 
 ---

@@ -2,6 +2,7 @@
 
 > 本文件是 Borealis `SPEC.FEAT.CONN.05` 串口监视卡二期（滚动回溯与历史窗口）在 Aurora 框架侧的唯一依赖项的派发任务书，登记为缺口 **G46**（`codespec/SPECIFICATIONS.md` 附录 A.2；裁决 **7.158**）。设计稿 `codespec/UI_SERIAL_MONITOR.draft.md` §9.7 是本条的消费动机。
 > 依据：对 Aurora 活动分支的**读源实测**（2026-10-26），涉及 `include/aurora/widget/lazy_list.h`、`include/aurora/state/signal_view.h`。只读源码、未编译未真机，涉及后端行为的句子一律标「读源」。
+> **派发前复检**（2026-10-27 于 Aurora HEAD `f1c5da35`）：`LazyList` 仍无 `invalidate_items()` / `scroll_to_end()` / 任何锚定与偏移回调入口，`SignalViewBase` 的订阅面仍只有 `subscribe(Effect&)` 一条 ⇒ 三条缺口全部仍在。
 > **结论先行**：三条都不是「没实现」，而是「实现了但没有公共入口」——live 条目的刷新被 `on_layout` 的「只建缺项」挡住；「落到末尾」藏在 `deserialize_props` 的 `pending_offset_` 里；偏移信号只有 `Effect` 订阅一条路。Borealis 三条各有代偿（整卡重建浮层、极大偏移 JSON、`tick()` 轮询），回货后逐条删除。
 
 ---

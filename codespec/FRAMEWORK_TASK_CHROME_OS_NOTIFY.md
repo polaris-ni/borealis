@@ -2,6 +2,7 @@
 
 > 本文件是 Borealis `SPEC.FEAT.PREF.01`（亮/暗 chrome 适配）在 Aurora 框架侧的唯一依赖项的派发任务书，登记为缺口 **G45**（`codespec/SPECIFICATIONS.md` 附录 A.2；裁决 **7.157⑤**）。设计稿 `codespec/UI_CHROME.draft.md` 的 D4 是本条的消费动机。
 > 依据：Borealis 对 Aurora 活动分支 `dev-1.0.0-alpha.10` 的**读源实测**（2026-10-26），涉及 `include/aurora/window/surface.h`、`include/aurora/window/platform.h`、`include/aurora/window/window.h`、`include/aurora/app/window_host.h`、`include/aurora/app/application.h` 与 `src/aurora/app/window_host.cpp`、`src/aurora/window/win32_host.cpp`。只读源码、未编译未真机，涉及后端行为的句子一律标「读源」。
+> **派发前复检**（2026-10-27 于 Aurora HEAD `f1c5da35`）：`Application` 仍无 `os_color_scheme_state()` / `refresh_os_color_scheme()` / `os_color_scheme()` 任一读点，`Surface::set_os_color_scheme_handler` 的唯一安装方仍是 `WindowHost` ⇒ 缺口仍在，本节锚点未变。
 > **结论先行**：框架已经**检测到**系统明暗切换（Win32 `WM_SETTINGCHANGE` → 重读注册表 → 逐宿主去重上报），也已经把它用于**框架自己的根主题解析**（`Window::os_scheme_` 的三级优先链）。缺的是**把这件事交给应用**：`Surface::set_os_color_scheme_handler` 是独占单槽、已被 `WindowHost` 装上自己的处理器（赋值语义，应用再装即顶掉框架那一层），而 `Window` 解析后的档（`os_scheme_` / `resolved_root_theme()`）与 `Application` 全无公共读点 ⇒ 应用要么自轮询注册表、要么放弃运行期跟随。
 
 ---

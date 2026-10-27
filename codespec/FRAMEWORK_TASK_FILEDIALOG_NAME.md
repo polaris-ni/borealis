@@ -8,7 +8,7 @@
 
 ---
 
-## 1 框架侧既有能力清册（读源实测，2026-10-26 于 `dev-1.0.0-alpha.10`，HEAD `a63bc190`）
+## 1 框架侧既有能力清册（读源实测，2026-10-26 于 `dev-1.0.0-alpha.10`，HEAD `a63bc190`；2026-10-27 于 HEAD `f1c5da35` 复检——`Options` 仍只有 `title` / `initial_dir` / `filters` 三格，headless 面仍无从观察传入的 `Options`，§5 的 `initial_dir` 被忽略同样未修）
 
 | 能力项 | 位置 | 现状 |
 |:---|:---|:---|
