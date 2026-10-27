@@ -667,8 +667,9 @@ auto main(int argc, char **argv) -> int {
     borealis::ui::install_settings_strings(settings.appearance.language);
     // 外壳明暗档的启动解算（`SPEC.FEAT.PREF.01` 稿 §3 第 1 步）：必须排在任何控件构造之前——标签栏与
     // 分屏缝隙的 `on_paint` 每次重绘现读活动档，首帧即取到；而设置面板的控件在**构建期**取定色值，
-    // 晚一步解算就是「先按暗档建好面板、用户打开才发现是亮的」。`system` 档在这里读一次 OS 偏好，
-    // 此后系统侧的变化由下面那条 1 s 轮询补齐（框架没有 app 级变更通知，缺口 G45）。
+    // 晚一步解算就是「先按暗档建好面板、用户打开才发现是亮的」。`system` 档在这里现读一次 OS 偏好
+    // ——此刻还没有 `Application`，只能走自由函数；此后系统侧的变化由下面那条应用级变更通知补齐
+    // （缺口 G45 已闭合，裁决 **7.170**；曾经的 1 s 轮询代偿随该条删除）。
     borealis::ui::set_chrome_scheme(borealis::ui::resolve_chrome_scheme(
         borealis::config::chrome_theme_tag(settings.appearance.chrome_theme), aurora::os_color_scheme()));
 
@@ -2342,9 +2343,10 @@ auto main(int argc, char **argv) -> int {
     // 而面板是 app 级单实例、宿主会随搬窗变（稿 D6）。与 `wizard_ref` 同一形态——先声明闭包、构造完再
     // 赋值，钩子跑起来时读到的永远是那一枚已经建好的面板。
     borealis::ui::SettingsPanel *settings_panel = nullptr;
-    // 换肤的唯一执行腿（`SPEC.FEAT.PREF.01` 稿 §3 第 4 条）：面板保存后的广播与跟随系统的轮询都收口
-    // 到这里，G45 补上后的框架通知也接这一处。「同值不动作」的短路是判据的一部分而不只是省一次重绘：
-    // 轮询每秒都算出同一个档，不短路就会每秒 `set()` 一次主题、每秒叫醒全部窗口。
+    // 换肤的唯一执行腿（`SPEC.FEAT.PREF.01` 稿 §3 第 4 条）：面板保存后的广播与下面那条 OS 变更通知都
+    // 收口到这里。「同值不动作」的短路是判据的一部分而不只是省一次重绘：框架那条通知只在值实际变化时
+    // 被调，但用户在设置面板里把档位绕回同一档（`system` → `light` → `system`）也会算出同一个解算结果，
+    // 不短路就会在静止期反复 `set()` 主题、反复叫醒全部窗口。
     auto apply_chrome_scheme = [&app, &chrome_theme_state, &workspace_windows, &settings_panel](
                                    borealis::ui::ChromeScheme scheme) -> void {
         if (scheme == borealis::ui::chrome_scheme()) {
@@ -2354,7 +2356,8 @@ auto main(int argc, char **argv) -> int {
         chrome_theme_state->set(borealis::ui::chrome_theme(scheme));
         // 逐窗叫醒：`Application::request_wake_all()` 是私有腿（公共面只有各窗自己的 surface）。
         // 主题变化已把子树标脏，这里补的是「帧循环正睡在某个 surface 上、等不到下一次事件」那一档；
-        // 调度器那条轮询本身也是一次唤醒源，但广播腿来自点击事件、不保证紧跟一帧渲染。
+        // OS 那条通知跑在平台消息泵里、那一帧本就醒了，需要这段的是来自点击的广播腿——两者共用一条腿，
+        // 叫醒对前者只是空操作。
         for (const std::unique_ptr<WorkspaceWindow> &window : workspace_windows) {
             if (window->surface != nullptr) {
                 window->surface->request_wake();
@@ -2370,19 +2373,23 @@ auto main(int argc, char **argv) -> int {
                 }
             }));
     };
-    // 跟随系统的替代腿（缺口 G45）：框架把 Win32 `WM_SETTINGCHANGE` 只送到 `WindowHost` 内部（改的是
-    // 它自己的默认根主题），公共 API 没有「系统明暗变了」的应用级回调。本仓以 1 s 轮询代替：只在配置
-    // 选择 `system` 时读 OS（注册表查询按框架口径本就不缓存），解算结果与活动档相同则被上面短路，
-    // 静止期每秒只多一次读表 + 一次比较。G45 任务书补上后删掉这段，改接通知回调即可。
-    static_cast<void>(app.scheduler().set_interval(
-        std::chrono::milliseconds(1000), [&store, &apply_chrome_scheme]() -> void {
-            const borealis::config::ChromeTheme choice = store.settings().appearance.chrome_theme;
-            if (choice != borealis::config::ChromeTheme::System) {
-                return;
-            }
-            apply_chrome_scheme(borealis::ui::resolve_chrome_scheme(
-                borealis::config::chrome_theme_tag(choice), aurora::os_color_scheme()));
-        }));
+    // 跟随系统的运行期腿（`SPEC.FEAT.PREF.01`；缺口 G45 回货后的形态，裁决 **7.170**）：框架在 Win32
+    // `WM_SETTINGCHANGE` 里重读偏好、逐宿主上报，并在应用级**去重成一次**通知（同值不重复、只在主线程被调）。
+    // `refresh_os_color_scheme()` 是先显式 seed：构造期不隐式读注册表是框架口径，没收过系统上报的进程里
+    // 那枚 State 恒读 `Unspecified`，而上面那次启动解算走的是自由函数、不经这枚 State——不 seed 就有两份
+    // 读数的起点。seed 排在注册回调**之前**，因为启动期那一次读数不该被表达成「系统刚刚切换」。
+    app.refresh_os_color_scheme();
+    app.set_on_os_color_scheme([&store, &apply_chrome_scheme](const aurora::ColorScheme os) -> void {
+        // 只有意图是「跟随系统」时才动屏面：用户显式选了亮/暗，OS 偏好就只是一份与屏面无关的读数（稿 §3
+        // 第 3 条的三级优先链）。这里吃**回调给的 OS 原值**而不是回头再读一次——回落哪一档由
+        // `resolve_chrome_scheme()` 判，装配层不再自己读注册表造第二个真值源。
+        const borealis::config::ChromeTheme choice = store.settings().appearance.chrome_theme;
+        if (choice != borealis::config::ChromeTheme::System) {
+            return;
+        }
+        apply_chrome_scheme(borealis::ui::resolve_chrome_scheme(
+            borealis::config::chrome_theme_tag(choice), os));
+    });
     // 面板的三条接缝都在装配层兑现：装载取 `Store` 的当前配置，落盘走 `apply_form` + `replace()`，
     // 广播把刚落盘的配置重新折算成外观包与交互项交回视口（`SPEC.FEAT.PREF.02` 的「即时生效」腿）。
     borealis::ui::SettingsPanel::Hooks hooks;

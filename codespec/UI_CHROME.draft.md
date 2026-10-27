@@ -11,7 +11,7 @@
 
 - **色值面**：界面 chrome 的唯一来源是 `ui::settings_chrome()`（7 色）与 `ui::settings_chrome_theme()`（由同一批常量合成的 `aurora::Theme`），挂在每扇窗场景根的 `ThemeScope` 上。它是**显式恒暗**的：`settings_panel.cpp` 的 154 处常量、`tab_bar.cpp` 的 10 处固定色、`workspace_view.cpp` 的 3 处固定色都直接写死暗色值（后两处甚至没走 `settings_chrome()`）。
 - **数据源面**：Aurora 已有公共 `aurora::os_color_scheme()`（Win32 读 `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize\AppsUseLightTheme`，缺失键回 Light、打不开回 `Unspecified`；GTK 启发式；不缓存）。故 PLAN 原记的「本仓无 light/dark 数据源」**已过期**。
-- **通知面（新缺口，登记为 G45）**：`Surface::set_os_color_scheme_handler` 是**单槽**且已被 `WindowHost` 独占消费（`WindowHost::on_os_color_scheme` 只做 `Window::set_os_color_scheme` + 整窗重绘），**没有**应用级多播、也**没有**取得「当前生效明暗」的公共读点（`Window::resolved_root_theme()` 与 `os_scheme_` 均私有）。本仓在场景根注入自己的 `ThemeScope` 后，框架解析出的明暗**到不了**本仓控件，运行期也不会通知本仓。→ 按跨仓纪律出任务书 `temp_tasks/FRAMEWORK_TASK_CHROME_OS_NOTIFY.md`，本仓先以**低频轮询**代偿（D4）。
+- **通知面（新缺口，登记为 G45）**：`Surface::set_os_color_scheme_handler` 是**单槽**且已被 `WindowHost` 独占消费（`WindowHost::on_os_color_scheme` 只做 `Window::set_os_color_scheme` + 整窗重绘），**没有**应用级多播、也**没有**取得「当前生效明暗」的公共读点（`Window::resolved_root_theme()` 与 `os_scheme_` 均私有）。本仓在场景根注入自己的 `ThemeScope` 后，框架解析出的明暗**到不了**本仓控件，运行期也不会通知本仓。→ 按跨仓纪律出任务书 `temp_tasks/FRAMEWORK_TASK_CHROME_OS_NOTIFY.md`，本仓先以**低频轮询**代偿（D4）。**闭合（2026-10-27）**：框架回齐 `Application::os_color_scheme_state()`／`set_on_os_color_scheme()`／`refresh_os_color_scheme()`（甲＋乙并存、跨宿主去重、主线程、`Unspecified` 原样透传），本仓轮询随裁决 **7.170** 删除。
 - **入口面**：配置无对应键、面板无对应行、装配层不读 `os_color_scheme()`。
 
 ---
@@ -64,7 +64,7 @@
 - 装配层对全部窗 `request_wake()`，空闲深睡也能排到这一帧。
 备选「重建场景根」会丢焦点、选区与滚动位置，且每窗一棵树不可接受。
 
-**D4 OS 跟随 = `os_color_scheme()` 轮询 1 s，缺口 G45 出任务书。**
+**D4 OS 跟随 = `os_color_scheme()` 轮询 1 s，缺口 G45 出任务书。**（**已改判，2026-10-27**：G45 回货后运行期跟随走应用级通知，轮询删除——裁决 **7.170**。原文留档，因为「为什么当时只能轮询」是那两条单槽限制的直接结论，不是可回收的措辞。）
 框架没有「明暗变化」的应用级通知（§0），单槽 handler 被宿主用掉，故运行期只能轮询。轮询挂在 `Application::scheduler()` 的 `set_interval(1 s)` 上：该调度器的 `next_deadline_ms()` 参与帧循环的等待决策（`application.cpp` 的 `decide_wait` 读它），**空闲深睡也会准时醒**，不依赖「恰好有帧」。代价：Windows 上每秒一次注册表读（数十微秒级、在主线程帧边界而非绘制路径），以及最多 1 s 的切换延迟；框架补出通知后删除轮询即可，接缝只有 `apply_chrome_scheme()` 一个函数。
 `Unspecified`（非 Windows、GTK 读不到）一律回暗，与 D1 的「暗色优先」同一条兜底。
 
@@ -93,7 +93,7 @@
 
 1. **启动**（`Store` 就绪、任何控件构造之前）：`resolve_chrome_scheme(settings.appearance.chrome_theme, os_color_scheme())` → `set_chrome_scheme(...)`；随后建 `shared_ptr<State<Theme>>(settings_chrome_theme())`，每扇窗的 `ThemeScope` 用它构造。
 2. **面板改档**（`hooks.broadcast`）：更新捕获的 `chrome_choice` → 重解析 → 若活动档变了则 `apply_chrome_scheme()`（设活动档 + `state.set` + 全窗 `request_wake`）。
-3. **跟随系统**（`Scheduler::set_interval(1 s)`）：仅当 `chrome_choice == System` 时读 `os_color_scheme()`；解析结果与活动档不同才走第 2 步的同一函数。
+3. **跟随系统**：仅当 `chrome_choice == System` 时动屏面；解析结果与活动档不同才走第 2 步的同一函数。~~实现＝`Scheduler::set_interval(1 s)` 现读 `os_color_scheme()`~~ → 实现＝`Application::set_on_os_color_scheme()` 的回调吃送来的 OS 原值，启动时先 `refresh_os_color_scheme()` 显式 seed（2026-10-27，裁决 **7.170**）。
 4. 三条路径共用 `apply_chrome_scheme()` 一处，包含「同值不动作」的短路——避免每秒一次无谓的整树重排。
 
 ---
@@ -110,12 +110,12 @@
 - m3：亮档 `text_dim` 换成 `#A0A0A0`（对比度 2.6）→ 对比度单测红；
 - m4：标签栏栏底改回写死 `#21222C` → 亮档像素案红而暗档仍绿（证明证人指名的正是这一处）。
 
-**不称「可用」**：`src/main.cpp` 不进 CTest runner（裁决 7.83），故启动解析、广播重解析、1 s 轮询三条腿只有源码审查；真机需目视「Windows 设置里切换应用明暗 → 1 s 内整窗换肤」「面板改档即时生效」「浅色下标签/缝隙/设置页无色带残留」三档，走查前不宣称可用。
+**不称「可用」**：`src/main.cpp` 不进 CTest runner（裁决 7.83），故启动解析、广播重解析、OS 变更通知三条腿只有源码审查；真机需目视「Windows 设置里切换应用明暗 → **≤1 帧**整窗换肤，且静止期不再有每秒一次注册表读」「面板改档即时生效」「浅色下标签/缝隙/设置页无色带残留」三档，走查前不宣称可用（第三条腿的措辞随裁决 **7.170** 由「1 s 轮询／1 s 内」改成通知档）。
 
 ---
 
 ## 5 在册缺口（不在本条修）
 
 1. **下拉候选项未本地化**（`system` / `zh` / `off` 原样上屏）：既有面板的整条形态，改它要给 `aurora::Dropdown` 一份「显示串 / 落盘值」双列，影响全部下拉行，属独立一棒。
-2. **G45**：应用级明暗切换通知（§0 / 任务书）。回货后删轮询、接公共通知即可。
+2. ~~**G45**：应用级明暗切换通知（§0 / 任务书）。回货后删轮询、接公共通知即可。~~ **已闭合并接线**（2026-10-27，裁决 **7.170**）：轮询已删、公共通知已接。
 3. **`broadcast_banner` 的自带色**：语义警示条不做亮暗双版（D6）。
