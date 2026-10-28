@@ -4,6 +4,20 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.173（2026-10-28）**CONN.02 的最后一处代码侧欠项清零：`itest_ssh_connection` 的 ⑥ 案两腿同跑——Win32 腿的替身 agent 落成命名管道回显服务器（裁决 **7.173**；`TODO(SPEC.*)` 自此零开放；本地提交＝本笔）**
+
+**动机**：v0.167 把三件 SSH 集成套件去 `posix` 前缀时，agent 反向通道那一案仍按平台缺件留在 `#ifndef _WIN32` 内——Win32 侧的生产腿 `src/platform/win/agent_socket.cpp` 只认命名管道，而夹具的三件（`SSH_AUTH_SOCK` 改写、AF_UNIX 监听点、`/tmp` 下的 socket 路径）都是 POSIX 形态。于是 `TODO(SPEC.FEAT.CONN.02)` 成了代码侧在册的最后一处开放挂账：CONN.02 的 agent 转发腿在 Windows 上「生产腿已编译、却没有本机侧证人」。本棒把替身 agent 的 Win32 腿补上，⑥ 案两腿同跑，这条账清零。
+
+**落地形态**：`tests/integration/itest_ssh_connection.cpp` 一处——（a）平台 include 分叉：Win32 侧 `<windows.h>`／`<process.h>`，POSIX 侧仍是 `<poll.h>`／`<sys/socket.h>`／`<sys/un.h>`／`<unistd.h>`；（b）`ScopedAuthSock` 的写入口收成一处 `write()`，Win32 走 `_putenv_s`（空串即删除）、POSIX 走 `setenv`／`unsetenv`；（c）`MultiEchoAgent` 的 Win32 形态只持管道名，析构先 `WaitForSingleObject(…, 0)` 再 `CancelSynchronousIo` 唤醒阻塞在 `ConnectNamedPipe` 上的工作线程；（d）Win32 的 `create_agent_pipe()`（`PIPE_ACCESS_DUPLEX`／字节型／`PIPE_UNLIMITED_INSTANCES`）与 `start_multi_echo_agent()`（**一深预挂**：服务当前连接前先挂出下一只实例）；（e）`agent_sock_path()` 返回 `\\.\pipe\borealis-itest-agent-<pid>`；（f）文件头与 ⑥ 案上方那段「只在 POSIX 腿」的说明与 `TODO(SPEC.FEAT.CONN.02)` 一起改口。
+
+**口径**：① 替身与生产腿同源寻址——两端都经 `SSH_AUTH_SOCK`，Win32 端由 `platform::agent_connect()` 用 `getenv` 读它。② **必须多轮且必须先挂下一只**：客户端先探活一次（连上即关）再为反向通道连一次，两次之间只隔一次环回往返量级；命名管道没有 listen backlog，「服务完再挂」会让中继吃 `ERROR_PIPE_BUSY` 而被生产腿判成「本机 agent 不可达」（探活成功、中继失败）。预挂实例上的 `ConnectNamedPipe` 以 `ERROR_PIPE_CONNECTED` 表示「客户端已先连上」。③ 收摊用 `CancelSynchronousIo` 撤掉阻塞的 `ConnectNamedPipe`（返回 `ERROR_OPERATION_ABORTED`），`stopping` 位只够叫醒回显环（每 10 ms 查一次）；析构里的重试循环上限 20 次、每次 10 ms。④ `_putenv_s(name, "")` 与 `unsetenv` 同义（空值即删除）。
+
+**变异自证**：M1＝把 `Win32AgentSocket::read` 的成功返回 `AgentReadOutcome::Data` 改成 `Error` ⇒ 只有 `itest_ssh_connection` 红，且指名 ⑥ 案在 `server.agent_received_text() == "sign-request"` 上超时（5150 ms）；逐字节还原后复绿。该案确实穿生产读腿。
+
+**验收读数**：`cmake --build build --parallel 14` 通过（EXIT=0）；`ctest --test-dir build -E etest_ -j 16 --timeout 240` **127/127**（113.63 s）；`borealis_test_runner --run itest_ssh_connection` **5/5**（含 ⑥，212.22 ms），⑥ 单案 `--repeat 30` **30/30**（6.43 s）；全量 runner **1609 案／1606 绿／3 红**（268.73 s），三红全是 `etest_libsecret_credential_store` 的已知会话锁屏欠账（与 v0.172 基线同一形态，本棒多出的 ＋1 案即 ⑥）。
+
+**边界与新账**：真 OpenSSH sshd／真 agent 的签名链仍未验（替身只回显字节、不解析 agent 协议）；POSIX 腿的夹具代码只原样搬进 `#else`、语义零改动，但本棒未在 Linux 上复跑；代码侧在册的 `TODO(SPEC.*)` 自此**清零**（`PLAN.md` §4 的 M4 小结同步改账），CONN.02 仍不称「可用」（真机走查与真 sshd 欠账不变）；本条无新增框架缺口。
+
 ## v0.172（2026-10-28）**G45–G48 回货的第四棒接线：G47 的 quake 装配腿落地——第九域 `ui` 与第五张设置页、建窗期 `Hidden` 与进循环前同路首发，四条回货至此全部出账（裁决 **7.172**；G47 出账；本地提交＝本笔）**
 
 **动机**：v0.171 之后剩下的最后一条是 G47，也是四条回货里唯一**硬阻塞用户可见行为**的一条——框架不给运行期显隐与置顶，而 `Window::minimize()` 的冒充早已被否（任务栏留痕、还原腿依赖未实测行为、回货即删，裁决 7.160⑥），于是批 1 的 `ui::quake_target_rect()`／`ui::QuakeToggle` 与 13 案无头证人只能干等。回货把 `set_visible`／`set_always_on_top` 两族公共入口与两枚能力位一起给了，本棒把装配腿与 `ui.quick_terminal.*` 七枚键同日落地，**四条回货（G45–G48）的接线自此全部完成**。

@@ -1,4 +1,4 @@
-/// 测试类型: integration（两通道；⑥ 那一案只在 POSIX 腿）
+/// 测试类型: integration（两通道；⑥ 的替身 agent 两条通道各一支）
 /// 目标单元: src/conn/ssh_connection.{h,cpp} + src/conn/ssh_dial.{h,cpp}
 /// 测试说明: `SPEC.FEAT.CONN.02` 终端腿的**真协议**端到端证人。本沙箱没有 sshd，
 ///           故对端是 `tests/support/fake_ssh_server`（libssh server 腿，真 KEX/加密/
@@ -13,15 +13,23 @@
 ///              **同一端口**重拨出第二条连接（判据 7 的两态与 `SPEC.FEAT.WS.05` 的环）；
 ///           ⑥ agent 转发：客户端发出 `auth-agent-req`，服务端反向开一条
 ///              `auth-agent@openssh.com` 通道，字节经本机 `SSH_AUTH_SOCK` 替身往返
-///              （`SPEC.FEAT.CONN.02` 裁决 7.145⑦ 的真协议证人）。
+///              （`SPEC.FEAT.CONN.02` 裁决 7.145⑦ 的真协议证人；Win32 腿的命名管道替身
+///              随裁决 7.173 补齐）。
 ///
 ///           ①~⑤ 两通道同编同跑：假服务器的裸 socket 只在它自己的接缝里（POSIX
 ///           `select`/`fcntl` 与 Winsock `WSAPoll`/`ioctlsocket` 各一支）。⑥ 的**替身
-///           agent** 是另一处平台接缝——AF_UNIX 文件 socket + `SSH_AUTH_SOCK`，Win32 侧
-///           的 OpenSSH agent 走命名管道，本件不迁（在册另开一棒）。
+///           agent** 同样两条腿各一支，但寻址同源：两端都经 `SSH_AUTH_SOCK` 指过去，
+///           POSIX 是 AF_UNIX 文件 socket，Win32 是命名管道（与生产腿
+///           `src/platform/win/agent_socket.cpp` 认的形态一致）。
 
-#ifndef _WIN32
-// ⑥ 那一案的替身 agent 专用：AF_UNIX socket 与 `unlink`（Win32 无对应入口）。
+#ifdef _WIN32
+// ⑥ 那一案的替身 agent（Win32 腿）：命名管道服务器与 `_getpid`（Win32 无 AF_UNIX 文件 socket）。
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#include <process.h>
+#else
+// ⑥ 那一案的替身 agent（POSIX 腿）：AF_UNIX socket 与 `unlink`。
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -149,11 +157,9 @@ class Recorder final : public ConnectionEvents {
         [&] { return server.shell_requests() >= 1 && connection.alive(); }, 8000);
 }
 
-#ifndef _WIN32
-// TODO(SPEC.FEAT.CONN.02): Win32 侧的假 agent。本节的三件（`SSH_AUTH_SOCK` 改写、
-// AF_UNIX 监听点、`/tmp` 下的 socket 路径）是 ⑥ 一案的夹具；libssh 在 Windows 上取
-// agent 走的是命名管道，替身要另做一台管道服务器，与本棒的「假服务器 Win32 腿」不是
-// 同一处接缝，故整节留在 POSIX 腿。
+// ⑥ 那一案的替身 agent：两条腿同源寻址——客户端与生产腿都经 `SSH_AUTH_SOCK` 指过去；
+// POSIX 是 AF_UNIX 文件 socket，Win32 是命名管道（生产腿 `src/platform/win/agent_socket.cpp`
+// 按 `\\.\pipe\...` 打开，故 Win32 的替身必须是一台管道服务器）。
 /// @brief 在作用域内改写 `SSH_AUTH_SOCK`，析构时原样归还（口径同 `utest_posix_agent_socket`）。
 class ScopedAuthSock {
   public:
@@ -163,25 +169,28 @@ class ScopedAuthSock {
         if (had_previous_) {
             previous_ = previous;
         }
-        if (value == nullptr) {
-            static_cast<void>(::unsetenv("SSH_AUTH_SOCK"));
-        } else {
-            static_cast<void>(::setenv("SSH_AUTH_SOCK", value, 1));
-        }
+        write(value);
     }
 
-    ~ScopedAuthSock() {
-        if (had_previous_) {
-            static_cast<void>(::setenv("SSH_AUTH_SOCK", previous_.c_str(), 1));
-        } else {
-            static_cast<void>(::unsetenv("SSH_AUTH_SOCK"));
-        }
-    }
+    ~ScopedAuthSock() { write(had_previous_ ? previous_.c_str() : nullptr); }
 
     ScopedAuthSock(const ScopedAuthSock &) = delete;
     auto operator=(const ScopedAuthSock &) -> ScopedAuthSock & = delete;
 
   private:
+    /// @brief 空值即删除该变量（Win32 的 `_putenv_s("", "")` 与 POSIX 的 `unsetenv` 同义）。
+    static auto write(const char *value) -> void {
+#ifdef _WIN32
+        static_cast<void>(::_putenv_s("SSH_AUTH_SOCK", value == nullptr ? "" : value));
+#else
+        if (value == nullptr) {
+            static_cast<void>(::unsetenv("SSH_AUTH_SOCK"));
+        } else {
+            static_cast<void>(::setenv("SSH_AUTH_SOCK", value, 1));
+        }
+#endif
+    }
+
     bool had_previous_{false};
     std::string previous_;
 };
@@ -190,8 +199,12 @@ class ScopedAuthSock {
 ///
 /// 必须多轮：客户端先连一次探活（立刻关），再为反向通道连一次真正中继。
 struct MultiEchoAgent {
+#ifdef _WIN32
+    std::string path;  ///< 管道名（`\\.\pipe\...`，窄字符 ASCII）。
+#else
     int listener{-1};
     std::string path;
+#endif
     std::atomic<bool> stopping{false};
     std::atomic<int> served{0};
     std::thread worker;
@@ -199,21 +212,111 @@ struct MultiEchoAgent {
     MultiEchoAgent() = default;
     ~MultiEchoAgent() {
         stopping.store(true);
+#ifdef _WIN32
         if (worker.joinable()) {
-            worker.join();  // 每轮 accept/read 都按 50 ms 分片查停止位。
+            // 工作线程可能正挂在阻塞的 ConnectNamedPipe 上（没有客户端来连）：对线程发出的同步
+            // IO 只能由 CancelSynchronousIo 撤。重试几次是因为它也可能刚收摊一轮、正在换实例。
+            for (int attempt = 0; attempt < 20; ++attempt) {
+                if (::WaitForSingleObject(worker.native_handle(), 0) == WAIT_OBJECT_0) {
+                    break;  // 已自行收摊（停止位置每 10 ms 查一次）。
+                }
+                if (::CancelSynchronousIo(worker.native_handle()) != FALSE) {
+                    break;
+                }
+                ::Sleep(10);
+            }
         }
+#endif
+        if (worker.joinable()) {
+            worker.join();  // POSIX 腿每轮 accept/read 按 50 ms 分片查停止位；Win32 腿见上。
+        }
+#ifndef _WIN32
         if (listener >= 0) {
             ::close(listener);
         }
         if (!path.empty()) {
             static_cast<void>(::unlink(path.c_str()));
         }
+#endif
     }
 
     MultiEchoAgent(const MultiEchoAgent &) = delete;
     auto operator=(const MultiEchoAgent &) -> MultiEchoAgent & = delete;
 };
 
+#ifdef _WIN32
+/// @brief 造一只管道实例（每轮一只，用完即弃；名字与生产腿认的 `\\.\pipe\...` 同形）。
+[[nodiscard]] auto create_agent_pipe(const std::string &path) -> HANDLE {
+    return ::CreateNamedPipeA(path.c_str(), PIPE_ACCESS_DUPLEX,
+                              PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                              PIPE_UNLIMITED_INSTANCES, 4096, 4096, 0, nullptr);
+}
+
+[[nodiscard]] auto start_multi_echo_agent(MultiEchoAgent &agent, const std::string &path) -> bool {
+    agent.path = path;
+    // 先造一只即关：名字不合法或实例耗尽在这里就回 false，与 POSIX 腿把 bind/listen 放在
+    // 启动期的分工一致；真正的等待与回显由工作线程每轮各造一只实例完成。
+    const HANDLE probe = create_agent_pipe(path);
+    if (probe == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    ::CloseHandle(probe);
+    agent.worker = std::thread([&agent] {
+        auto accepting = create_agent_pipe(agent.path);
+        if (accepting == INVALID_HANDLE_VALUE) {
+            return;
+        }
+        while (!agent.stopping.load()) {
+            const BOOL connected = ::ConnectNamedPipe(accepting, nullptr) != FALSE;
+            if (!connected && ::GetLastError() != ERROR_PIPE_CONNECTED) {
+                // 被 CancelSynchronousIo 叫醒（析构）或实例出错：这一只已不可用。
+                ::CloseHandle(accepting);
+                return;
+            }
+            if (agent.stopping.load()) {
+                ::DisconnectNamedPipe(accepting);
+                ::CloseHandle(accepting);
+                return;
+            }
+            // 先挂上下一只再服务本轮：命名管道没有 listen backlog，中继连接紧跟探活
+            // （只隔一次环回往返），不预挂就会撞 ERROR_PIPE_BUSY 被生产腿判成不可达。
+            const auto next = create_agent_pipe(agent.path);
+            agent.served.fetch_add(1);
+            auto buffer = std::array<std::uint8_t, 64>{};
+            while (!agent.stopping.load()) {
+                DWORD available = 0;
+                if (::PeekNamedPipe(accepting, nullptr, 0, nullptr, &available, nullptr) == FALSE) {
+                    break;  // 客户端收摊（ERROR_BROKEN_PIPE）。
+                }
+                if (available == 0) {
+                    ::Sleep(10);
+                    continue;
+                }
+                DWORD got = 0;
+                if (::ReadFile(accepting, buffer.data(), static_cast<DWORD>(buffer.size()), &got,
+                               nullptr) == FALSE ||
+                    got == 0) {
+                    break;
+                }
+                DWORD sent = 0;
+                if (::WriteFile(accepting, buffer.data(), got, &sent, nullptr) == FALSE ||
+                    sent != got) {
+                    break;
+                }
+                ::FlushFileBuffers(accepting);
+            }
+            ::DisconnectNamedPipe(accepting);
+            ::CloseHandle(accepting);
+            accepting = next;
+            if (accepting == INVALID_HANDLE_VALUE) {
+                return;
+            }
+        }
+        ::CloseHandle(accepting);
+    });
+    return true;
+}
+#else
 [[nodiscard]] auto start_multi_echo_agent(MultiEchoAgent &agent, const std::string &path) -> bool {
     agent.path = path;
     agent.listener = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -262,12 +365,15 @@ struct MultiEchoAgent {
     });
     return true;
 }
+#endif
 
 [[nodiscard]] auto agent_sock_path() -> std::string {
+#ifdef _WIN32
+    return "\\\\.\\pipe\\borealis-itest-agent-" + std::to_string(static_cast<long>(::_getpid()));
+#else
     return "/tmp/borealis-itest-agent-" + std::to_string(static_cast<long>(::getpid())) + ".sock";
+#endif
 }
-
-#endif  // !_WIN32
 }  // namespace
 
 AURORA_TEST_CASE(connect_lands_pty_shell_banner_and_the_echo_round_trip) {
@@ -398,7 +504,6 @@ AURORA_TEST_CASE(link_loss_redials_the_same_endpoint_and_gets_a_new_shell) {
     AURORA_TEST_CHECK(recorder.last_close_reason() == CloseReason::LocalClose);
 }
 
-#ifndef _WIN32
 AURORA_TEST_CASE(agent_forwarding_relays_a_reverse_channel_to_the_local_agent) {
     auto options = FakeSshServerOptions{};
     options.open_agent_channel = true;
@@ -442,7 +547,5 @@ AURORA_TEST_CASE(agent_forwarding_relays_a_reverse_channel_to_the_local_agent) {
                             "close was not reported");
     AURORA_TEST_CHECK(recorder.last_close_reason() == CloseReason::LocalClose);
 }
-
-#endif  // !_WIN32
 
 }  // namespace borealis::test_cases::itest_ssh_connection
