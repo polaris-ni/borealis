@@ -59,6 +59,7 @@
 
 namespace aurora {
 class LazyList;  ///< 私有头只持句柄：滚动物件在建树期现造，定义留在 .cpp（D10①）。
+class Text;      ///< 同上：卡上那四枚「只换文本」的格子持句柄，供原位刷新腿取（缺口 G46 回货后新增）。
 }  // namespace aurora
 
 namespace borealis::ui {
@@ -158,11 +159,12 @@ class SessionMonitorPanel {
         return open_;
     }
 
-    /// @brief 帧驱动（装配层 `on_frame` 调用，F14 那套状态泵）：几何判冻结、跟尾读环、窗口重折。
+    /// @brief 帧驱动（装配层 `on_frame` 调用，F14 那套状态泵）：跟尾读环、窗口重折、停更态补画。
     ///
-    /// 三条闸的次序（稿 §9.4）：①「回到最新」/清空后的首帧跳过几何判据（旧列表仍在离底位置，
-    /// 直接判会把刚落到底的画面判回冻结）；②暂停态不读环——画面停在按下那枚开关的那一刻，环照人
-    /// 在后面写；③冻结态不读环、不重建，只在可见区逼近折带边缘时滑窗。重建仍只在这里发生。
+    /// 两条闸（稿 §9.4）：①暂停态不读环——画面停在按下那枚开关的那一刻，环照人在后面写；②冻结态不读
+    /// 环、不重建，只在可见区逼近折带边缘时滑窗。重建与原位刷新都只在这里发生。**几何判冻结已不在这里**
+    /// （缺口 G46 回货后由行区的落定通知驱动，见 `on_scroll_changed()`）：原先每帧比一次偏移是为了补
+    /// 「没有通知面」，代价是「滚到底那一帧」要等下一次泵。
     auto tick() -> void;
 
     /// @brief 当前该画的行（观测面：当前折出的窗口，不是整环）。
@@ -170,6 +172,13 @@ class SessionMonitorPanel {
     /// 与浮层那一份同源，但它只在 `tick()` 里随重建更新：拨开关后要等下一帧才读到新档——「回调里不做
     /// 长计算」（§4.5 第 25 条）要的正是这个次序。跟尾时是环尾至多 96 行。
     [[nodiscard]] auto visible_rows() const -> std::vector<MonitorRow>;
+
+    /// @brief 整张卡被拆掉重装的次数（观测面，缺口 G46 回货后的接线判据）。
+    ///
+    /// 回货前这是唯一的更新入口——每一帧数据推进都要重建一次；回货后**内容刷新**走原位路径（行区经
+    /// `set_count`+`invalidate_items`，四格文本写 `Text::content` 那枚响应式值），只有**卡形状**变了才重装。
+    /// 形状＝标题行绑定那格在不在、丢弃留痕那行在不在、动作留痕那行在不在、冻结行在不在。
+    [[nodiscard]] auto overlay_rebuilds() const noexcept -> std::size_t { return overlay_rebuilds_; }
 
     /// @brief 是否已离底冻结（观测面，D12①）：冻结时行区不追加新数据，提示行与「回到最新」在场。
     [[nodiscard]] auto frozen() const noexcept -> bool { return frozen_; }
@@ -225,14 +234,39 @@ class SessionMonitorPanel {
     /// @brief 冻结态滑窗：可见区（含缓存）逼近折带边缘时以可见首行为锚重折，并按行差平移偏移。
     auto slide_frozen_window() -> void;
 
-    /// @brief 记下这份窗口并重建浮层（`scroll_offset` 同时是重建后的落位）。
-    auto paint_rows(std::vector<MonitorRow> rows, float scroll_offset) -> void;
+    /// @brief 记下这份窗口并把它交进浮层：卡形状没变就走原位刷新，变了才拆卡重装。
+    ///
+    /// @param offset 落位意图——`std::nullopt`＝落这份窗口的末尾（跟尾，走 `LazyList::scroll_to_end()`），
+    ///        有值＝保住那个偏移（停更态：重建路径借序列化面的待定偏移，原位路径经 `scroll_to`）。
+    auto paint_rows(std::vector<MonitorRow> rows, std::optional<float> offset) -> void;
+
+    /// @brief 卡的形状：四格「在不在」加行区形态之和——原位刷新的闸门。
+    ///
+    /// 这四格是按条件 `push_back` 进树的（绑定、丢弃留痕、动作留痕、冻结行），行区在空态与列表之间也会换
+    /// 节点；原位刷新只能换**内容**，换不了节点，故这几位里任何一位变了就仍走重装。
+    struct CardShape {
+        bool has_rows = false;     ///< 行区是列表（true）还是那句空态（false）。
+        bool binding = false;      ///< 标题行那格绑定在不在（失去身份即整格不画）。
+        bool dropped = false;      ///< 那句「已丢弃 N 字节」在不在（只在 >0 时）。
+        bool feedback = false;     ///< 那行动作留痕在不在（只在最近一次「取出去」之后）。
+        bool frozen = false;       ///< 那行冻结提示与「回到最新」在不在。
+        auto operator==(const CardShape &) const -> bool = default;
+    };
+
+    /// @brief 把四格文本按当前 painted 值原位改写（写 `Text::content` 那枚响应式值，不重建节点）。
+    auto refresh_text_cells() -> void;
+
+    /// @brief `LazyList` 的偏移变更回调（缺口 G46 回货后冻结判定的入口）：只翻状态位，不折行不读环。
+    auto on_scroll_changed() -> void;
 
     /// @brief 装（或重装）主卡片浮层：蒙版 + 卡片 + `Dialog` 一次造齐，记下宿主给的那枚序号。
     auto install_overlay() -> void;
 
     /// @brief 摘掉当前那层再装一次（唯一重建入口；由 `tick()` 的状态腿调用）。
     auto refresh_overlay() -> void;
+
+    /// @brief 还掉指向当前那张卡的六枚句柄（行区 + 共持窗口 + 四格文本）——拆树**前**调用。
+    auto drop_card_handles() -> void;
     [[nodiscard]] auto build_overlay() -> std::shared_ptr<aurora::Column>;
     [[nodiscard]] auto build_row(const MonitorRow &row) -> aurora::Node;
 
@@ -252,6 +286,14 @@ class SessionMonitorPanel {
     std::shared_ptr<aurora::Dialog> dialog_{};
     std::optional<std::size_t> overlay_index_{};
     std::shared_ptr<aurora::LazyList> list_{};  ///< 当前浮层里的行区（重建即换新；观察滚动几何用）。
+    // ---- 原位刷新那四格的句柄（缺口 G46 回货后的形态；重装时随 `build_overlay()` 一起换新）----
+    std::shared_ptr<std::vector<MonitorRow>> rows_window_{};  ///< 与行区 builder **共持**的当前窗口。
+    std::shared_ptr<aurora::Text> bytes_cell_{};              ///< 标题行那格字节计数。
+    std::shared_ptr<aurora::Text> binding_cell_{};            ///< 标题行那格绑定（在场时才有句柄）。
+    std::shared_ptr<aurora::Text> dropped_cell_{};            ///< 丢弃留痕那行（在场时才有句柄）。
+    std::shared_ptr<aurora::Text> feedback_cell_{};           ///< 动作留痕那行（在场时才有句柄）。
+    std::optional<CardShape> painted_shape_{};                ///< 当前浮层那一份的形状；空＝卡不在场。
+    std::size_t overlay_rebuilds_ = 0U;                       ///< 拆卡重装的次数（观测面，判据用）。
     bool open_ = false;
 
     // ---- 面板局部量（D9①：零新设置键，重启回这里写的缺省档；稿 §11 D26① 加第三枚、§13 D46① 加第四枚）----
@@ -261,7 +303,6 @@ class SessionMonitorPanel {
     bool boundary_rows_ = false;    ///< 缺省关＝连续行；开＝一条 run 在自然行界收尾时多画一条分隔行（稿 D44／D46）。
     bool frozen_ = false;           ///< 冻结＝离底自动停更（D12①）；与暂停互相独立（D14①）。
     bool rebuild_pending_ = false;  ///< 暂停/冻结中改了档、清了环或冻结边沿：下一帧补一次重建。
-    bool skip_geometry_once_ = false;  ///< 「回到最新」/清空之后的首帧不判几何（旧列表还在离底位置）。
     /// 换过视图档且当下停更：下一次 `rebuild_current_view()` 先按新档重算总行数并复位到这份料源的末尾
     /// （行号坐标系是档特定的，沿用旧行号会指向别段历史——稿 D34）。跟尾态不走这条腿。
     bool rebase_rows_ = false;
@@ -270,7 +311,8 @@ class SessionMonitorPanel {
     std::size_t cap_bytes_ = session::kMaxRawTapBytes;  ///< 环现值上限（D16①；留痕那句的数）。
     std::size_t total_rows_ = 0U;       ///< 当前快照折出的总行数（暂停/冻结时沿用上次的值）。
     std::size_t fold_first_row_ = 0U;   ///< 当前窗口首行在 `total_rows_` 里的行号。
-    float pending_scroll_offset_ = 0.0F;  ///< 建树时交给 `LazyList` 的待定偏移（D10① 的落底/保位）。
+    /// 建树时的落位意图（D10① 的落底/保位）：`nullopt`＝落这份窗口的末尾，有值＝保住那个偏移。
+    std::optional<float> pending_scroll_offset_{};
 
     std::vector<session::RawRun> source_{};  ///< 上次跟尾收下的整环 run 表：重折与交出去的唯一料源（D20①）。
     std::size_t ring_bytes_ = 0U;            ///< 环里现存字节数（标题行那个计数）。

@@ -63,6 +63,19 @@ namespace {
         aurora::TextProps{.content = std::move(content), .text_color = color});
 }
 
+/// @brief 就地改写一枚已挂载 `Text` 的文本（原位刷新腿唯一的写入口）。
+///
+/// WHY 不走 `Text::set_content()`：它是 `content = s`，而 `Reactive<T>` 全族没有「写穿到当前状态
+/// 节点」的赋值运算符——这条赋值走的是编译器生成的那个，把隐式构造出的临时 `Reactive` 的**状态节点
+/// 整个换掉**（实测 `&content.state()` 前后不同值），挂载期登记的观察边仍留在旧节点上，此后写谁都不
+/// 通知 → 本控件永不标脏 → 布局缓存里的旧文本一直摆在屏上。`content.set(s)` 写的是**同一个**状态节点，
+/// `State::set` 会 `notify()` 到那条 Effect（框架自己的 `deserialize_props` 走的也是这条），故这里
+/// 绕开赋值而不改框架。缺口登记见 `codespec/SPECIFICATIONS.md` 附录 A.2 的 G49；框架侧回货后这一格
+/// 可换回 `set_content`。
+auto set_cell_text(aurora::Text &cell, std::string content) -> void {
+    cell.content.set(std::move(content));
+}
+
 [[nodiscard]] auto make_button(std::string label, aurora::Color bg, aurora::Color fg, float min_width,
                                std::function<void()> on_click, aurora::Color line)
     -> std::shared_ptr<aurora::Button> {
@@ -121,9 +134,8 @@ auto SessionMonitorPanel::open() -> void {
         return;
     }
     // 首帧就有内容与计数，而不是空态加一句「等一下」。`open_` 仍为 false，故 `paint_rows()` 里的
-    // `refresh_overlay()` 空转，真正挂浮层的是下面这一句。
+    // 原位分支进不去（`list_` 还是空）——真正挂浮层的是下面这一句。
     frozen_ = false;
-    skip_geometry_once_ = true;
     rebuild_pending_ = true;
     follow_frame();
     open_ = true;
@@ -141,13 +153,9 @@ auto SessionMonitorPanel::tick() -> void {
     if (!open_) {
         return;  // 没开就没有泵的事：环照人写，本件不在场时零成本（D7① 的常驻代价在会话侧）。
     }
-    // 「回到最新」/清空：旧列表还停在离底位置，直接判几何会把刚落到底的画面判回冻结（D14① 的落地次序）。
-    const bool now_frozen = skip_geometry_once_ ? false : compute_frozen();
-    skip_geometry_once_ = false;
-    if (now_frozen != frozen_) {
-        frozen_ = now_frozen;
-        rebuild_pending_ = true;  // 提示行与「回到最新」只在帧边界增删（D13①）
-    }
+    // 这里**不再逐帧比几何**：冻结判据的唯一入口是行区落位通知（`on_scroll_changed()`，缺口 G46 回货
+    // 后接上的腿）。原先每帧读 `scroll_offset()`/`max_scroll_offset()` 是因为没有通知面，而它带来的
+    // 那一帧延迟——「滚到底那一帧立刻恢复」要等下一次泵（稿 §9.7 第 3 条登记的缺陷）——随之一起没了。
     if (paused_) {
         if (rebuild_pending_) {
             rebuild_current_view();  // 暂停中改了档或清了环：按手里的窗口重画，不读新数据。
@@ -163,6 +171,18 @@ auto SessionMonitorPanel::tick() -> void {
         return;
     }
     follow_frame();
+}
+
+auto SessionMonitorPanel::on_scroll_changed() -> void {
+    if (!open_) {
+        return;  // 卡已收：旧列表残余的落位通知不驱动状态机（摘层与析构的次序不由本件担保）。
+    }
+    const bool now_frozen = compute_frozen();
+    if (now_frozen == frozen_) {
+        return;
+    }
+    frozen_ = now_frozen;
+    rebuild_pending_ = true;  // 提示行与「回到最新」只在帧边界增删（D13①），回调里不建树
 }
 
 auto SessionMonitorPanel::read_snapshot() const -> Snapshot {
@@ -243,10 +263,9 @@ auto SessionMonitorPanel::follow_frame() -> void {
         cap_bytes_ == painted_cap_bytes_ && feedback_ == painted_feedback_ && !painted_frozen_) {
         return;  // revision 变了但画出来的东西没变（例如整条拒收只推进了丢弃数之外的状态）。
     }
-    // 跟尾恒落底：把窗口内容高交给 `LazyList` 的待定偏移，首次布局后夹到可滚范围末端（D10① 的
-    // 「无锚定到末尾入口」替身，见稿 §9.7 第 2 条）。
-    const auto offset = static_cast<float>(rows.size()) * kMonitorRowExtent;
-    paint_rows(std::move(rows), offset);
+    // 跟尾恒落底：交「末尾」这一份意图（`std::nullopt`），原位路径走 `scroll_to_end()`、重建路径在首次
+    // 可滚动布局按当时的真末尾夹取（缺口 G46 回货后不必再自己算内容高塞给序列化面，见稿 §9.7 第 2 条）。
+    paint_rows(std::move(rows), std::nullopt);
 }
 
 auto SessionMonitorPanel::rebuild_current_view() -> void {
@@ -260,13 +279,13 @@ auto SessionMonitorPanel::rebuild_current_view() -> void {
         const auto tail_window = std::min(total_rows_, kMonitorFoldWindowRows);
         fold_first_row_ = total_rows_ - tail_window;
         auto tail = monitor_row_window(source_, options, fold_first_row_, tail_window);
-        paint_rows(std::move(tail), static_cast<float>(tail.size()) * kMonitorRowExtent);
+        paint_rows(std::move(tail), std::nullopt);  // 复位＝回到这份料源的末尾（D34：暂停不清，只是不读新环）
         return;
     }
     const auto available = total_rows_ > fold_first_row_ ? total_rows_ - fold_first_row_ : 0U;
     const auto window = std::min(available, kMonitorFoldWindowRows);
     auto rows = monitor_row_window(source_, options, fold_first_row_, window);
-    // 冻结/暂停要保住用户当前读到的那一屏：新列表不继承旧偏移，故把旧偏移原样交给待定偏移。
+    // 冻结/暂停要保住用户当前读到的那一屏：同一只列表就地保位，重建时把旧偏移原样交给待定偏移。
     const auto offset = list_ != nullptr ? list_->scroll_offset() : 0.0F;
     paint_rows(std::move(rows), offset);
 }
@@ -307,7 +326,8 @@ auto SessionMonitorPanel::slide_frozen_window() -> void {
     paint_rows(std::move(rows), next_offset);
 }
 
-auto SessionMonitorPanel::paint_rows(std::vector<MonitorRow> rows, float scroll_offset) -> void {
+auto SessionMonitorPanel::paint_rows(std::vector<MonitorRow> rows,
+                                     std::optional<float> offset) -> void {
     painted_rows_ = std::move(rows);
     painted_binding_ = binding_;
     painted_ring_bytes_ = ring_bytes_;
@@ -315,9 +335,57 @@ auto SessionMonitorPanel::paint_rows(std::vector<MonitorRow> rows, float scroll_
     painted_cap_bytes_ = cap_bytes_;
     painted_frozen_ = frozen_;
     painted_feedback_ = feedback_;
-    pending_scroll_offset_ = scroll_offset;
     rebuild_pending_ = false;
-    refresh_overlay();
+
+    // 卡形状＝四枚条件行在不在 + 行区是列表还是那句空态。原位刷新只换**内容**，换不了节点，故先比形状：
+    // 一样就原地走，不一样才拆卡重装（`build_overlay()` 那几处 `if` 与这里必须逐条对齐，否则形状判据
+    // 与实际节点分叉——分叉的后果是「树上少一格而面板以为它在」，原位刷新会把文本写进已死的句柄）。
+    const CardShape next_shape{
+        .has_rows = !painted_rows_.empty(),
+        .binding = !painted_binding_.empty(),
+        .dropped = painted_dropped_bytes_ != 0U,
+        .feedback = !painted_feedback_.empty(),
+        .frozen = painted_frozen_,
+    };
+    if (painted_shape_.has_value() && *painted_shape_ == next_shape && list_ != nullptr &&
+        rows_window_ != nullptr) {
+        *rows_window_ = painted_rows_;  // 行区 builder 与面板共持这一份：换内容而不换节点
+        const auto want = static_cast<int>(painted_rows_.size());
+        if (list_->count() != want) {
+            list_->set_count(want);  // 只改总数：范围内存活条目不重建，越界的当场回收（偏移随之夹取）
+        }
+        refresh_text_cells();          // 标题行与两枚留痕就地改写
+        list_->invalidate_items();     // 数据变了而行还是旧的：显式失效，下一帧按当前窗口重建
+        // 落位：`nullopt`＝这份窗口的末尾（跟尾），有值＝保住那个偏移（停更态滑窗）。两条都直接在
+        // 已布局的列表上走，不再经序列化面。
+        if (offset.has_value()) {
+            list_->scroll_to(*offset, false);
+        } else {
+            list_->scroll_to_end(false);
+        }
+        return;
+    }
+    painted_shape_ = next_shape;
+    pending_scroll_offset_ = offset;
+    refresh_overlay();  // 形状变了（或卡还没建起来）：唯一的重装入口
+}
+
+auto SessionMonitorPanel::refresh_text_cells() -> void {
+    // 四格都是「只换文本」：句柄在 `build_overlay()` 里随节点一起记下，缺席的那格句柄为空即跳过
+    // （缺席＝这一格根本不在树上，形状判据已保证只有在场时才走到这里）。
+    if (bytes_cell_ != nullptr) {
+        set_cell_text(*bytes_cell_,
+                      settings_label("session.monitor.bytes", count_arg(painted_ring_bytes_)));
+    }
+    if (binding_cell_ != nullptr) {
+        set_cell_text(*binding_cell_, painted_binding_);
+    }
+    if (dropped_cell_ != nullptr) {
+        set_cell_text(*dropped_cell_, notice());  // 现算：上限换档时这一句自己跟着走（D16①）
+    }
+    if (feedback_cell_ != nullptr) {
+        set_cell_text(*feedback_cell_, painted_feedback_);
+    }
 }
 
 auto SessionMonitorPanel::visible_rows() const -> std::vector<MonitorRow> {
@@ -358,13 +426,27 @@ auto SessionMonitorPanel::install_overlay() -> void {
     dialog_->show();
 }
 
+auto SessionMonitorPanel::drop_card_handles() -> void {
+    // 六枚句柄都指向**当前那张卡**里的节点：原位刷新靠它们就地改写，卡一拆它们就是悬垂的外部持有。
+    list_.reset();
+    rows_window_.reset();
+    bytes_cell_.reset();
+    binding_cell_.reset();
+    dropped_cell_.reset();
+    feedback_cell_.reset();
+}
+
 auto SessionMonitorPanel::refresh_overlay() -> void {
     if (!open_ || !overlay_index_.has_value() || host_ == nullptr) {
         return;
     }
+    ++overlay_rebuilds_;  // 观测面：拆卡重装的次数——原位刷新接好后，它只该随**形状**变化而增长
     host_->remove_overlay(*overlay_index_);
     overlay_index_.reset();
-    list_.reset();  // 先松手再拆树：否则 LazyList 会在父节点已摘除后仍被别人持有（框架告警）。
+    // 先松手再拆树：框架在容器析构时发现**子控件仍被外部持有**会 WARN（`layout parent detached while
+    // the child widget is still alive`），而原位刷新留下的行区与四格句柄正是那份外部持有。次序＝
+    // 句柄 → 树，拆树才回到「子节点随本容器即刻销毁」那条静默的正常路径。
+    drop_card_handles();
     dialog_.reset();
     install_overlay();
 }
@@ -390,6 +472,13 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
 [[nodiscard]] auto SessionMonitorPanel::build_overlay() -> std::shared_ptr<aurora::Column> {
     const auto chrome = settings_chrome();
     auto children = std::vector<aurora::Node>{};
+    // 每次建树都重记一遍原位刷新的句柄：缺席的格必须落回 `nullptr`，否则上一张卡的句柄会在原位路径上
+    // 被写进一棵已死的树（形状判据只看「在不在」，看不出「在的是哪一棵」）。
+    bytes_cell_.reset();
+    binding_cell_.reset();
+    dropped_cell_.reset();
+    feedback_cell_.reset();
+    rows_window_.reset();
 
     // ---- 标题行：字节监视 + 绑定（档案名与连接目标）+ 字节计数 + 清空 + 关闭 ----
     // 与隧道面板同一条实测教训：标题不抓 fill_max_width，否则计数与两枚按钮整组被挤出卡宽（派发链上
@@ -397,11 +486,15 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
     auto header_children = std::vector<aurora::Node>{
         node(make_text(settings_label("session.monitor.title"), chrome.text))};
     if (!painted_binding_.empty()) {
-        header_children.push_back(node(make_text(painted_binding_, chrome.text_dim)));
+        auto binding = make_text(painted_binding_, chrome.text_dim);
+        binding_cell_ = binding;
+        header_children.push_back(node(binding));
     }
-    header_children.push_back(
-        node(make_text(settings_label("session.monitor.bytes", count_arg(painted_ring_bytes_)),
-                       chrome.text_dim)));
+    auto bytes =
+        make_text(settings_label("session.monitor.bytes", count_arg(painted_ring_bytes_)),
+                  chrome.text_dim);
+    bytes_cell_ = bytes;
+    header_children.push_back(node(std::move(bytes)));
     if (hooks_.clear != nullptr) {
         header_children.push_back(node(make_button(settings_label("session.monitor.action.clear"),
                                                    chrome.control_bg, chrome.text_dim, 48.0F,
@@ -486,6 +579,7 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
     if (!dropped.empty()) {
         auto line = make_text(dropped, chrome.text_dim);
         line->modifier.set(aurora::Modifier{}.fill_max_width());
+        dropped_cell_ = line;
         children.push_back(node(std::move(line)));
     }
     auto privacy = make_text(settings_label("session.monitor.notice.privacy"), chrome.text_dim);
@@ -498,22 +592,30 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
         empty->modifier.set(aurora::Modifier{}.fill_max_width().expand());
         children.push_back(node(std::move(empty)));
     } else {
-        // 条目 builder 捕获**这一份**窗口（共享只读），而不是回头读 `painted_rows_`：浮层存活期间
-        // 窗口若被下一页替换，已实例化条目与后进来条目才不会一半新一半旧（框架无条目刷新 API，
-        // 见稿 §9.7 第 1 条）。
-        auto window = std::make_shared<const std::vector<MonitorRow>>(painted_rows_);
+        // 条目 builder 捕获**这一份**窗口（与面板共持、可就地替换内容），而不是回头读 `painted_rows_`：
+        // 原位刷新换的是这份向量的内容，节点与 builder 都不动（缺口 G46 回货后不必再靠整卡重建保证
+        // 「后进来的条目与已实例化的条目是同一份数据」，见稿 §9.7 第 1 条）。
+        rows_window_ = std::make_shared<std::vector<MonitorRow>>(painted_rows_);
         auto list = std::make_shared<aurora::LazyList>(
             static_cast<int>(painted_rows_.size()),
-            [this, window](int index) -> aurora::Node {
+            [this, window = rows_window_](int index) -> aurora::Node {
                 return build_row((*window)[static_cast<std::size_t>(index)]);
             },
             kMonitorRowExtent);
         list->set_cache_extent(200.0F);
         list->modifier.set(aurora::Modifier{}.fill_max_width().expand());
-        // 落位：跟尾给内容高（布局后夹到末尾），冻结/暂停给原偏移（同一窗口坐标）。
-        auto props = aurora::Json::object();
-        props.set("scroll_offset", pending_scroll_offset_);
-        list->deserialize_props(props);
+        // 冻结判据的入口：偏移一落定就问一次几何（原先靠 `tick()` 逐帧轮询，见 `on_scroll_changed()`）。
+        list->set_on_scroll_changed([this](float) -> void { on_scroll_changed(); });
+        // 落位：`nullopt`＝跟尾，向控件要「末尾」这一份意图（未布局时记进待定偏移，首次可滚动布局
+        // 夹到当时的真末尾）；有值＝停更态保住原偏移，仍经序列化面的待定偏移交进去——框架只给了
+        // 末尾锚定的具名入口，任意偏移的「布局前」通路仍只有 `deserialize_props`（稿 §9.7 第 2 条就此收窄）。
+        if (pending_scroll_offset_.has_value()) {
+            auto props = aurora::Json::object();
+            props.set("scroll_offset", *pending_scroll_offset_);
+            list->deserialize_props(props);
+        } else {
+            list->scroll_to_end();
+        }
         list_ = list;
         children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(list))));
     }
@@ -524,6 +626,7 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
     if (!painted_feedback_.empty()) {
         auto line = make_text(painted_feedback_, chrome.text_dim);
         line->modifier.set(aurora::Modifier{}.fill_max_width());
+        feedback_cell_ = line;
         children.push_back(node(std::move(line)));
     }
 
@@ -555,8 +658,8 @@ auto SessionMonitorPanel::on_text_view_changed(bool next) -> void {
     // 换视图档就是换行号坐标系（hex 档 8 字节/行 ↔ 文本档 36 字节/行）：跟尾态由 `follow_frame()` 按新档
     // 重算，停更态得显式重排（稿 D34）。与时间戳那枚同一条纪律——回调里不折行、不解码，重建排在下一帧。
     if (frozen_) {
-        frozen_ = false;
-        skip_geometry_once_ = true;  // 解除冻结＝回到这份料源的末尾（`on_latest()` 同一条腿）
+        frozen_ = false;  // 解除冻结＝回到这份料源的末尾（`on_latest()` 同一条腿）：下一次落位由新
+                          // 列表自己报回来，不需要「先跳过一帧几何」那类通融
     }
     if (paused_) {
         rebase_rows_ = true;  // 暂停说的是「别读新环」，不是「别换形状」：清一下也不读环
@@ -570,8 +673,7 @@ auto SessionMonitorPanel::on_boundary_changed(bool next) -> void {
     // 指向的是别段历史（稿 §13 F24／二期 D34 那条口径的同族）。故走与文本视图那枚完全相同的重排腿，
     // 而不是时间戳那枚（前缀不进计数，行号不动）。回调里不折行，重建排在下一帧。
     if (frozen_) {
-        frozen_ = false;
-        skip_geometry_once_ = true;  // 解除冻结＝回到这份料源的末尾（`on_latest()` 同一条腿）
+        frozen_ = false;  // 解除冻结＝回到这份料源的末尾（`on_latest()` 同一条腿）
     }
     if (paused_) {
         rebase_rows_ = true;  // 暂停说的是「别读新环」，不是「别换形状」：清一下也不读环
@@ -592,9 +694,9 @@ auto SessionMonitorPanel::on_clear() -> void {
     feedback_.clear();  // 清了环，上一句「已导出/已复制」说的就不是这一屏了（稿 §10.3）。
     total_rows_ = 0U;
     fold_first_row_ = 0U;
-    // 清空回到空态：离底判据在旧列表上必然为真（它还停在原偏移），首帧先跳过几何（D14① 的次序）。
+    // 清空回到空态：行区换成那句空态就是形状变化，必然走重装；旧列表停在原偏移也不会把刚落底的画面
+    // 判回冻结——判据只由落定通知驱动（D14① 的落地次序在 G46 回货后由「跳过一帧」改成「无轮询」）。
     frozen_ = false;
-    skip_geometry_once_ = true;
     rebuild_pending_ = true;
 }
 
@@ -603,7 +705,6 @@ auto SessionMonitorPanel::on_latest() -> void {
     // 这里不读环、不重建——回调里不做长计算的纪律与其余动作腿同。
     paused_ = false;
     frozen_ = false;
-    skip_geometry_once_ = true;
     rebuild_pending_ = true;
 }
 
@@ -655,7 +756,11 @@ auto SessionMonitorPanel::clear_state() -> void {
         host_->remove_overlay(*overlay_index_);
         overlay_index_.reset();
     }
-    list_.reset();  // 先松手再拆树（与 `refresh_overlay` 同一条次序）。
+    // 原位刷新的那五枚句柄随卡一起失效，且**须在拆树前**还掉（同 `refresh_overlay` 那条次序）：留着
+    // 它们，容器析构会报「子控件仍被外部持有」；而留着 `painted_shape_` 更坏——下一次开卡会把「上一张
+    // 卡的格」当成本帧该改写的格子（判据与节点一起回到「卡不在场」才对）。
+    drop_card_handles();
+    painted_shape_.reset();
     dialog_.reset();
     painted_rows_.clear();
     painted_binding_.clear();
@@ -676,11 +781,10 @@ auto SessionMonitorPanel::clear_state() -> void {
     cap_bytes_ = session::kMaxRawTapBytes;
     total_rows_ = 0U;
     fold_first_row_ = 0U;
-    pending_scroll_offset_ = 0.0F;
+    pending_scroll_offset_ = std::nullopt;
     frozen_ = false;
     rebuild_pending_ = false;
     rebase_rows_ = false;
-    skip_geometry_once_ = false;
     open_ = false;
 }
 

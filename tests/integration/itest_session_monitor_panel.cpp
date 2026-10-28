@@ -16,6 +16,10 @@
 // 复制／`dump_text` 交出的文本带着分隔行（D49①）、停更两态下翻档各走自己的腿（冻结即回尾、暂停只重排）。
 // 分隔行「整句走次要色」那条口径（D47①）的证人取的是**树上那一格的取色**而不是像素：行表里的 `kind`
 // 说得出「这一行是分隔行」，说不出它有没有按那个口径上色——批 C 的变异自证正是靠这条断言把上色腿钉住的。
+// 框架缺口 G46 回货后另加三腿（稿 §9.7 那三条代偿的退役证人）：⑰ 数据推进只换内容 ⇒ 行区与标题格就地
+// 刷新、`overlay_rebuilds()` 不增长、行区还是同一只对象；⑱ 跟尾重新落底走的是**这只已布局对象**上的
+// `scroll_to_end()`，不再借序列化面的待定偏移；⑲ 冻结边沿由行区的偏移通知翻状态位——不叫 `tick()` 也
+// 立刻离底／回底，且边沿本身不拆卡（提示行仍留在帧边界增删）。
 // 驱动台形态照 itest_tunnel_panel 的 Harness（present_root 排真实布局 + hit_test_chain 取命中 +
 // EventDispatcher 发真事件），精简到本件用得到的那几条腿。
 //
@@ -38,6 +42,7 @@
 #include <vector>
 
 #include "aurora/aurora.h"
+#include "aurora/core/json.h"
 #include "aurora/event/dispatcher.h"
 #include "aurora/event/focus.h"
 #include "aurora/widget/button.h"
@@ -276,7 +281,7 @@ class Harness {
         return host_->overlay_count();
     }
 
-    /// @brief 树里当前那只行区（行区每次重建都会换新对象，故每步现取，不缓存句柄）。
+    /// @brief 树里当前那只行区（拆卡会换新对象，原位刷新不会；故每步现取，不假定恒等）。
     [[nodiscard]] auto find_list() -> au::LazyList * {
         return const_cast<au::LazyList *>(find_list_in(root_.widget()));
     }
@@ -702,7 +707,7 @@ AURORA_TEST_CASE(history_beyond_the_fold_window_is_reachable_by_scrolling_back) 
     Harness h;
     auto panel = h.attach(probe);
     h.open(*panel);
-    h.tick(*panel);  // 消化 open() 的「首帧不判几何」豁免，进入跟尾常态。
+    h.tick(*panel);  // 再排一帧坐实跟尾常态（G46 回货后 open() 当帧即落底，首帧豁免已删）。
 
     // 跟尾：窗口是环尾 96 行，落位在最底。
     auto rows = panel->visible_rows();
@@ -756,7 +761,7 @@ AURORA_TEST_CASE(scrolling_down_a_frozen_window_pages_instead_of_unfreezing) {
     Harness h;
     auto panel = h.attach(probe);
     h.open(*panel);
-    h.tick(*panel);  // 同判据⑦：先消化 open() 的几何豁免。
+    h.tick(*panel);  // 同判据⑦：多排一帧坐实常态，首帧豁免已随 G46 回货删掉。
 
     scroll_to_top(h, *panel);  // 冻结在中段窗口（88..183）。
     AURORA_TEST_REQUIRE(panel->frozen());
@@ -1472,6 +1477,101 @@ AURORA_TEST_CASE(switching_the_boundary_toggle_while_paused_rebases_to_the_tail_
     AURORA_TEST_CHECK_TRUE(shows_tag(rows, 99));
     AURORA_TEST_CHECK_TRUE(shows_separator(rows, "-- RX 62 B (+1 ms) --"));
     AURORA_TEST_CHECK_FALSE(shows_tag(rows, 0));
+}
+
+// ------------------------------------------------------------
+// 判据⑰（缺口 G46 回货的接线正面腿）：数据推进只换内容 ⇒ 行区与标题格就地刷新，不拆卡
+// ------------------------------------------------------------
+AURORA_TEST_CASE(content_advances_in_place_without_tearing_the_card_down) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 8);  // 每条 run 一行 `R0NN\r\n`＝6 字节 ⇒ 环里 48 字节
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+    auto *list = h.find_list();
+    AURORA_TEST_REQUIRE_MSG(list != nullptr, "the scrollable row area is not in the tree");
+    AURORA_TEST_REQUIRE_EQ(panel->overlay_rebuilds(), 0U);  // open() 的首装不记在重建数里
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.bytes",
+                                                     {{"count", std::int64_t{48}}}))
+                          .widget != nullptr);
+
+    append_lines(probe, 8, 4);  // R008..R011：环里 72 字节，窗口尾行随之前进
+    h.tick(*panel);
+    AURORA_TEST_CHECK_EQ(panel->overlay_rebuilds(), 0U);  // 内容推进不拆卡——回货前这里每帧 +1
+    AURORA_TEST_CHECK_TRUE(h.find_list() == list);        // 同一只行区对象还挂在树上
+
+    // 新尾行画得出来（`invalidate_items()` 的证人：只 `set_count` 不失效的话，行区还按旧窗口回放）。
+    const auto rows = panel->visible_rows();
+    AURORA_TEST_REQUIRE_MSG(rows.size() == 12U, "the fold window did not take the four new lines");
+    const auto tail = std::find_if(rows.begin(), rows.end(),
+                                   [](const ui::MonitorRow &row) -> bool { return row_is(row, 11); });
+    AURORA_TEST_REQUIRE(tail != rows.end());
+    AURORA_TEST_CHECK(h.find_text(tail->dump).widget != nullptr);
+
+    // 标题行那格计数也就地换了字（G49：这一步走的是响应式写入，不是 `Text::set_content`）。
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.bytes",
+                                                     {{"count", std::int64_t{72}}}))
+                          .widget != nullptr);
+    AURORA_TEST_CHECK(h.find_text(ui::settings_label("session.monitor.bytes",
+                                                     {{"count", std::int64_t{48}}}))
+                          .widget == nullptr);
+}
+
+// ------------------------------------------------------------
+// 判据⑱（G46 回货的落底腿）：不足一屏时不滚，越过一屏那一刻在同一只已布局的行区上落到底
+// ------------------------------------------------------------
+AURORA_TEST_CASE(following_the_tail_re_anchors_on_the_surviving_list) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 8);  // 首屏不足一屏：可滚范围为 0，落底与否此刻无从分辨——下一步才是证人
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+    auto *list = h.find_list();
+    AURORA_TEST_REQUIRE_MSG(list != nullptr, "the scrollable row area is not in the tree");
+    AURORA_TEST_CHECK_EQ(list->max_scroll_offset(), 0.0F);
+    // 把开卡时那份「末尾」意图换成显式偏移：不换的话它仍挂在待定偏移槽上（未可滚动的那次布局不吃它），
+    // 等窗口涨到一屏以上时由框架自己落底——那一路会把「跟尾显式重新落底」这条腿整个盖住（变异自证实测）。
+    {
+        auto props = aurora::Json::object();
+        props.set("scroll_offset", 0.0);
+        list->deserialize_props(props);
+    }
+    h.tick(*panel);
+    AURORA_TEST_REQUIRE_EQ(list->scroll_offset(), 0.0F);
+
+    append_lines(probe, 8, 192);  // 环尾涨到 200 行：窗口换成 96 行，可滚范围自此为正
+    h.tick(*panel);
+    AURORA_TEST_CHECK_EQ(panel->overlay_rebuilds(), 0U);
+    AURORA_TEST_CHECK_TRUE(h.find_list() == list);  // 落底走的是这只对象上的 `scroll_to_end()`
+    AURORA_TEST_REQUIRE(list->max_scroll_offset() > 0.0F);
+    AURORA_TEST_CHECK(list->scroll_offset() >= list->max_scroll_offset() - ui::kMonitorBottomTolerance);
+    AURORA_TEST_CHECK(row_is(panel->visible_rows().back(), 199));
+}
+
+// ------------------------------------------------------------
+// 判据⑲（G46 回货的落定通知腿）：冻结边沿由行区的偏移通知翻状态位，不等下一帧泵
+// ------------------------------------------------------------
+AURORA_TEST_CASE(rolling_off_the_bottom_freezes_without_a_frame_pump) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    fill_lines(probe, 200);
+    Harness h;
+    auto panel = h.attach(probe);
+    h.open(*panel);
+    h.tick(*panel);
+    auto *list = h.find_list();
+    AURORA_TEST_REQUIRE_MSG(list != nullptr, "the scrollable row area is not in the tree");
+    AURORA_TEST_REQUIRE(list->max_scroll_offset() > 0.0F);
+    AURORA_TEST_REQUIRE_FALSE(panel->frozen());
+
+    // 回货前这三条断言全要靠 `tick()` 里的逐帧几何比对才成立，代价是「滚到底那一帧」得等下一次泵。
+    list->set_scroll_offset(0.0F);
+    AURORA_TEST_CHECK_TRUE(panel->frozen());
+    list->scroll_to(list->max_scroll_offset(), false);
+    AURORA_TEST_CHECK_FALSE(panel->frozen());
+    AURORA_TEST_CHECK_EQ(panel->overlay_rebuilds(), 0U);  // 边沿只置状态位：提示行留在帧边界增删
 }
 
 }  // namespace borealis::test_cases::itest_session_monitor_panel

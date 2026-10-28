@@ -4,6 +4,20 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.171（2026-10-27）**G45–G48 回货的第三棒接线：监视卡三处 G46 代偿全撤——跟尾帧就地刷新、冻结判据改事件驱动；同棒实测出 G49（`Text::set_content()` 换掉响应式状态节点）（裁决 **7.171**；G46 出账、G49 新开；本地提交＝本笔）**
+
+**动机**：v0.170 接完 G45 后，四条回货里代价最大、收益也最直接的一条是 G46——监视卡的跟尾腿原来每帧数据一变就整卡拆掉重装（浮层重建、行区重建、偏移重新落底），滚动到底的恢复要等下一帧泵，开卡落底还得借 `deserialize_props` 写一个极大偏移。三条公共入口一到，这三处代偿可以一起撤，判据也从「看行为对不对」升级成「看它有没有拆卡」（`overlay_rebuilds()` 观测面）。
+
+**落地形态**：`paint_rows()` 先按 `CardShape{has_rows, binding, dropped, feedback, frozen}` 与上一帧比对，同形且句柄活着就走原位分支——`rows_window_` 整份换、条目数变了才 `set_count()`、四格文本各写一次（经 `set_cell_text()`，见下）、`invalidate_items()` 让下一帧按当前窗口重建，末尾按意图 `scroll_to_end(false)` 或 `scroll_to(*offset, false)`；形状变了才 `refresh_overlay()` 重装。`refresh_overlay()`／`close()` 两处都先 `drop_card_handles()` 再动浮层与形状（否则行区比布局父亲长寿，容器析构打 G34 同族那条告警）。`tick()` 删掉逐帧几何比较，冻结态改由 `list->set_on_scroll_changed(...)` → `on_scroll_changed()` 现算 `compute_frozen()`、只在状态位翻转时置 `rebuild_pending_`。观测面新增 `overlay_rebuilds()`。
+
+**口径**：① 接货核验逐条读框架侧语义：`invalidate_items()` 回收全部 `live_` 条目而保留 `count`/`offset`、`scroll_to_end(bool)` 未布局时把末尾哨兵写进 `pending_offset_` 且与 `deserialize_props` 同一条夹取路径、`set_on_scroll_changed()` 只在夹取后的偏移确实变化时才发。② 两处收窄在册：显式非零偏移在布局前仍经 `deserialize_props`（回货只给了「末尾」这一种布局前锚定，未给 `set_pending_scroll_offset()`）；视口变大而不动 `offset` 时没有通知、冻结态要等下一次滚动才翻（框架无视口几何变化通知面，本仓不补逐帧轮询）。③ 判据三案各自钉一条腿：⑰ 内容推进不拆卡且四格就地换字（`overlay_rebuilds()` 恒 0、同一只行区对象仍在树上）；⑱ 涨过一屏那一刻在同一只行区上落底（先把开卡那份「末尾」待定槽用 `deserialize_props` 消费掉，否则框架自动落底会盖住这条腿）；⑲ 滚出底部由行区通知翻冻结位、不靠帧泵（`set_scroll_offset(0)` ⇒ 冻结，`scroll_to(max)` ⇒ 解冻，全程无 `tick()`）。
+
+**变异自证**：M1 `set_cell_text()` → `Text::set_content()` 红 2（含 ⑰）＝G49 的实证；M2 删 `invalidate_items()` 红 1（⑰ 不红是真事实：追加行由 `set_count()` 覆盖）；M3 拆通知接线红 8（含 ⑲）；M4 首试等价变异（翻转形状位，34 案全绿，登记在案），真形态 `paint_rows()` 开头 `painted_shape_.reset()` 红 2（⑰⑱）；M5 删 `scroll_to_end(false)` 首试全绿（被开卡那份末尾哨兵盖住），⑱ 消费掉待定槽后再删即红（`offset=0.0 max=1526.0`）。
+
+**验收读数**：`tools\msvc_env.bat cmake --build build --parallel 14` 通过（EXIT=0，含 `Borealis.exe` 链接）；`ctest --test-dir build -E etest_ -j 16 --timeout 240` **127/127**（130.65 s，最终树），面板套件 **34 案**（31 旧＋3 新）；`check_display_literals` **PASS**（263 源文件、两档 **552** 键对称，零新增词条）、`check_agents_size` **PASS**；全量 `borealis_test_runner` **1608 案／1605 绿／3 红**（315.76 s），三红全是 `etest_libsecret_credential_store` 的已知会话锁屏欠账（同 v0.169 基线的 1605／1602），面板套件 34 案全绿。
+
+**边界与新账**：真机走查未做（跟尾滚动、冻结提示、回到最新三处肉眼行为）⇒ **不称 `SPEC.FEAT.CONN.05`「可用」**（§4.4 第 33 条）。同棒实测出 **G49**：`Text::set_content()` 的 `content = s` 把 `Reactive` 的状态节点整个换掉（实测 `&content.state()` 前后由 `…B440` 变为 `…9640`），挂载期登记的观察边仍留在旧节点 ⇒ 写新节点无人通知、屏幕不动且静默；`Button::set_label` 同形。已出任务书 `temp_tasks/FRAMEWORK_TASK_TEXT_SET_CONTENT.md`，本仓以 `set_cell_text()`（`cell.content.set(...)`）绕行并在源码头注留撤回点。另：本笔把 `SPECIFICATIONS.md` 抬头那句版本指针由陈旧的 **v0.163** 改到 v0.171（v0.164–v0.170 各笔都忘了同步它）。G47 的接线留第 4 棒。
+
 ## v0.170（2026-10-27）**G45–G48 回货的第二棒接线：应用级 OS 明暗通知落进本仓，`src/main.cpp` 那条 1 s 轮询代偿删除（裁决 **7.170**；G45 出账；本地提交＝本笔）**
 
 **动机**：v0.169 接完 G48 后，四条回货里最便宜的第二条是 G45——本仓唯一的代偿点是一枚 `Scheduler::set_interval(1 s)`，删掉它并把接缝改挂到框架新长出的应用级通知上，收益是静止期不再有每秒一次注册表读、切换延迟从「最多 1 s」变成「≤1 帧」。
