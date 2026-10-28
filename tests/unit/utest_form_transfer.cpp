@@ -272,6 +272,12 @@ struct BoolProbe {
         BoolProbe{"connection.restore_sessions",
                   [](const Settings &s) -> bool { return s.connection.restore_sessions; },
                   [](Settings &s) -> void { s.connection.restore_sessions = !s.connection.restore_sessions; }},
+        BoolProbe{"ui.quick_terminal.enabled",
+                  [](const Settings &s) -> bool { return s.ui.quick_terminal.enabled; },
+                  [](Settings &s) -> void { s.ui.quick_terminal.enabled = !s.ui.quick_terminal.enabled; }},
+        BoolProbe{"ui.quick_terminal.auto_hide",
+                  [](const Settings &s) -> bool { return s.ui.quick_terminal.auto_hide; },
+                  [](Settings &s) -> void { s.ui.quick_terminal.auto_hide = !s.ui.quick_terminal.auto_hide; }},
     };
     return probes;
 }

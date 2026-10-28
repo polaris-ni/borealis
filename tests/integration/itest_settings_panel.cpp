@@ -647,7 +647,7 @@ AURORA_TEST_CASE(the_page_row_table_is_the_catalog_intersection_in_order) {
 
     std::size_t total = 0;
     for (SettingsPage page : {SettingsPage::Appearance, SettingsPage::Terminal, SettingsPage::Connection,
-                              SettingsPage::Shortcuts}) {
+                              SettingsPage::Shortcuts, SettingsPage::QuickTerminal}) {
         panel.select_page(page);
         check_key_sequence("page rows", drawn_keys(panel), catalog_keys(page));
         total += drawn_keys(panel).size();
@@ -750,7 +750,7 @@ AURORA_TEST_CASE(deferred_and_next_session_rows_carry_their_badges) {
 
     panel.open();
     for (SettingsPage page : {SettingsPage::Appearance, SettingsPage::Terminal, SettingsPage::Connection,
-                              SettingsPage::Shortcuts}) {
+                              SettingsPage::Shortcuts, SettingsPage::QuickTerminal}) {
         panel.select_page(page);
         for (const SettingsPanel::VisibleRow &row : panel.visible_rows()) {
             AURORA_TEST_TRACE(row.key);

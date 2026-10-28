@@ -60,8 +60,10 @@ constexpr std::string_view kVersionKey = "schema_version";
 ///        形态见裁决 7.97 D3①）+ 密钥目录域 `key_dirs`（裁决 7.106 D2③）+ 快捷片段域 `snippets`
 ///        （`SPEC.FEAT.CONN.07` 的延后子项，稿 `UI_SNIPPETS.draft.md` D2）——后四域同形态：
 ///        顶层 `{ "items": [...] }`，因为 `read_settings` 的域闸要求域节点必须是对象）。
-constexpr std::array<std::string_view, 8> kDomainKeys{
-    {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels", "key_dirs", "snippets"}};
+///        `ui` 是裁决 7.172 新开的第九域（`SPEC.FEAT.WS.12` 的下拉式终端），对象形态、按普通
+///        键值对读写；它排在四分类之后、结构域之前，与 `Settings` 的字段次序一致。
+constexpr std::array<std::string_view, 9> kDomainKeys{
+    {"appearance", "terminal", "connection", "shortcuts", "ui", "profiles", "tunnels", "key_dirs", "snippets"}};
 
 constexpr std::array<std::string_view, 4> kSshAuthMethods{"password", "privatekey", "agent", "keyboard-interactive"};
 
@@ -584,6 +586,29 @@ auto put_enum(Value &node, std::string_view key, std::span<const EnumName> names
     return node;
 }
 
+/// @brief 写界面域（`SPEC.FEAT.WS.12`，裁决 7.172）：全字段无条件写，读侧无需版本分叉。
+///
+/// `hotkey` 原样写字符串：合法性归 `KeyCombo::from()` 在注册那一刻判，装载侧只判类型——
+/// 与 `terminal.encoding` 同一条「建议项不硬校验」的分工（面板不该让一个拼错的组合键存不进去，
+/// 否则用户连「先存下来再去别处查写法」这条路都没有）。
+[[nodiscard]] auto quick_terminal_to_json(const QuickTerminalSettings &quake) -> Value {
+    auto node = Value::object();
+    put(node, "enabled", quake.enabled);
+    put(node, "hotkey", quake.hotkey);
+    put_enum(node, "anchor", kQuakeAnchorNames, static_cast<std::int64_t>(quake.anchor));
+    put(node, "cross_ratio", quake.cross_ratio);
+    put(node, "along_ratio", quake.along_ratio);
+    put(node, "auto_hide", quake.auto_hide);
+    put(node, "focus_settle_ms", static_cast<std::int64_t>(quake.focus_settle_ms));
+    return node;
+}
+
+[[nodiscard]] auto ui_to_json(const UiSettings &ui) -> Value {
+    auto node = Value::object();
+    node.set("quick_terminal", quick_terminal_to_json(ui.quick_terminal));
+    return node;
+}
+
 /// @brief 凭据写给哪种文档：本机存储（保留句柄）还是换机导出（只留询问哨兵）。
 enum class CredentialProjection : std::uint8_t {
     Stored,   ///< 配置文件、快照与回滚：句柄在本机有效，原样写。
@@ -987,6 +1012,32 @@ enum class CredentialProjection : std::uint8_t {
         scope.command_overrides("overrides", defaults.shortcuts.overrides));
     scope.collect_unknown();
     return shortcuts;
+}
+
+/// @brief 读界面域（`SPEC.FEAT.WS.12`，裁决 7.172）。
+///
+/// 两个占比照 `ui::kQuakeRatioMin` / `kQuakeRatioMax` 把守（与面板步进器同一对常量，改一处即两处
+/// 同步）；越域回落缺省并留痕，而不是夹取——夹取会让「0.001 宽」静默变成「5% 宽」，
+/// 用户看不到自己那份配置与生效值不是一个数。
+[[nodiscard]] auto read_ui(ScopeReader &scope, const Settings &defaults) -> UiSettings {
+    // 局部名不叫 `ui`：那会遮住 `borealis::ui` 命名空间，后文那两个占比常量就取不到了。
+    UiSettings settings{};
+    auto quake = scope.enter("quick_terminal");
+    const auto &d = defaults.ui.quick_terminal;
+    settings.quick_terminal.enabled = quake.boolean("enabled", d.enabled);
+    settings.quick_terminal.hotkey = quake.text("hotkey", d.hotkey);
+    settings.quick_terminal.anchor = static_cast<QuakeAnchor>(
+        quake.enumerated("anchor", kQuakeAnchorNames, static_cast<std::int64_t>(d.anchor)));
+    settings.quick_terminal.cross_ratio =
+        quake.real("cross_ratio", d.cross_ratio, ui::kQuakeRatioMin, ui::kQuakeRatioMax);
+    settings.quick_terminal.along_ratio =
+        quake.real("along_ratio", d.along_ratio, ui::kQuakeRatioMin, ui::kQuakeRatioMax);
+    settings.quick_terminal.auto_hide = quake.boolean("auto_hide", d.auto_hide);
+    settings.quick_terminal.focus_settle_ms =
+        static_cast<int>(quake.integer("focus_settle_ms", d.focus_settle_ms, 0, 5000));
+    quake.collect_unknown();
+    scope.collect_unknown();
+    return settings;
 }
 
 /// @brief 读凭据句柄（CONN.09）：只还原引用/哨兵，绝不触达明文。
@@ -1453,6 +1504,8 @@ enum class CredentialProjection : std::uint8_t {
             settings.terminal = read_terminal(scope, defaults);
         } else if (domain == "connection") {
             settings.connection = read_connection(scope, defaults);
+        } else if (domain == "ui") {
+            settings.ui = read_ui(scope, defaults);
         } else if (domain == "profiles") {
             settings.profiles = read_profiles(is_domain ? node : nullptr, report);
         } else if (domain == "tunnels") {
@@ -1500,6 +1553,7 @@ enum class CredentialProjection : std::uint8_t {
     root.set("terminal", terminal_to_json(settings.terminal));
     root.set("connection", connection_to_json(settings.connection));
     root.set("shortcuts", shortcuts_to_json(settings.shortcuts));
+    root.set("ui", ui_to_json(settings.ui));
     root.set("profiles", profiles_to_json(settings.profiles, projection));
     root.set("tunnels", tunnels_to_json(settings.tunnels));
     root.set("key_dirs", key_dirs_to_json(settings.key_dirs));
@@ -1860,6 +1914,7 @@ struct Store::Impl {
         prefs.set("terminal", terminal_to_json(next.terminal));
         prefs.set("connection", connection_to_json(next.connection));
         prefs.set("shortcuts", shortcuts_to_json(next.shortcuts));
+        prefs.set("ui", ui_to_json(next.ui));
         prefs.set("profiles", profiles_to_json(next.profiles, CredentialProjection::Stored));
         prefs.set("tunnels", tunnels_to_json(next.tunnels));
         prefs.set("key_dirs", key_dirs_to_json(next.key_dirs));

@@ -97,6 +97,15 @@ inline constexpr std::array<EnumName, 2> kAmbiguousWidthNames{{
     {"wide", static_cast<std::int64_t>(term::AmbiguousWidth::Wide)},
 }};
 
+// 下拉式终端的贴边档（`SPEC.FEAT.WS.12`，裁决 7.172）：四边各一个落盘名。`top` 排首即缺省，
+// 它也是需求原文「从屏幕顶部下拉」那一档；落盘名一旦写下即对外契约。
+inline constexpr std::array<EnumName, 4> kQuakeAnchorNames{{
+    {"top", static_cast<std::int64_t>(QuakeAnchor::Top)},
+    {"bottom", static_cast<std::int64_t>(QuakeAnchor::Bottom)},
+    {"left", static_cast<std::int64_t>(QuakeAnchor::Left)},
+    {"right", static_cast<std::int64_t>(QuakeAnchor::Right)},
+}};
+
 inline constexpr std::array<EnumName, 3> kUnrepresentableNames{{
     {"replace", static_cast<std::int64_t>(term::UnrepresentablePolicy::Replace)},
     {"drop", static_cast<std::int64_t>(term::UnrepresentablePolicy::DropWithNotice)},

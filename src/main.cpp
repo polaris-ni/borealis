@@ -51,6 +51,7 @@
 #include "borealis/ui/font_choice.h"
 #include "borealis/ui/monitor_binding.h"
 #include "borealis/ui/osc7.h"
+#include "borealis/ui/quake.h"
 #include "borealis/ui/shortcuts_table.h"
 #include "borealis/ui/settings_form.h"
 #include "borealis/ui/tab_strip.h"
@@ -509,17 +510,30 @@ struct PendingProfileConnect {
 /// @brief 造一扇工作区窗的地基：后端窗口 + 浮层宿主 + 撑满窗宽的根 Column。
 /// @param title 窗口标题初值（真值随后由逐窗标题差分腿改写）。
 /// @param creation_index 本窗的创建序（稿 D9 的几何键来源，主窗是 0）。
+/// @param quake 按下拉式终端（`SPEC.FEAT.WS.12`，裁决 7.172）的形态造这一扇：无边框、置顶、建窗即隐藏。
 /// @return 建窗失败即空指针（后端错误原文已在工厂里落日志），调用方**不得**接着登记宿主——
 ///         稿 §5 的「建窗」不变量：没建成窗就不许留下半个账目。
-[[nodiscard]] auto open_workspace_window(std::string title, std::size_t creation_index)
+[[nodiscard]] auto open_workspace_window(std::string title, std::size_t creation_index, bool quake = false)
     -> std::unique_ptr<WorkspaceWindow> {
     auto out = std::make_unique<WorkspaceWindow>();
     out->options.size = au::Size{.width = 960.0F, .height = 640.0F};
     out->options.title = std::move(title);
-    // 几何键在建窗**之前**写好：框架的恢复腿读的是 `opts.persist_id`，而 `create_native_window` 吃
-    // 的就是同一份 options（`SPEC.FEAT.WS.03` 稿 D9／§0 的 F26）。失败的那一扇不留账——本跳只写了
-    // 一个字符串，没建成窗就没有宿主、也就没有下一次保存。
-    out->options.persist_id = borealis::config::window_persist_id(creation_index);
+    if (quake) {
+        // 三档都是**建窗期一次定档**：无边框没有运行期入口，置顶一并写成初值（运行期那一口留给呼出时
+        // 重申），可见性取 `Hidden` 而不是「先显示再隐藏」——后者会先闪一帧 960×640 的普通窗口，而
+        // 呼出那一步才把落位与尺寸算出来（`apply_quake_intent` 的 Show 分支）。
+        out->options.style.frameless = true;
+        out->options.style.always_on_top = true;
+        out->options.visibility = au::WindowVisibility::Hidden;
+        // 空白 `persist_id`：框架的几何恢复腿按这个键回放上次的位置与尺寸，而帘子的矩形由占比与工作区
+        // 每次呼出现算——两者同写一份几何，恢复腿就会把算出的落位盖掉。同一枚空键也让它不进几何保存：
+        // 帘子不是用户拖出来的工作区，没有可延续的几何。
+    } else {
+        // 几何键在建窗**之前**写好：框架的恢复腿读的是 `opts.persist_id`，而 `create_native_window` 吃
+        // 的就是同一份 options（`SPEC.FEAT.WS.03` 稿 D9／§0 的 F26）。失败的那一扇不留账——本跳只写了
+        // 一个字符串，没建成窗就没有宿主、也就没有下一次保存。
+        out->options.persist_id = borealis::config::window_persist_id(creation_index);
+    }
     auto created = au::create_native_window(out->options);
     if (!created) {
         AURORA_LOG_ERROR("main", "native window creation failed: ", created.error().message);
@@ -852,6 +866,57 @@ auto main(int argc, char **argv) -> int {
     // 不是本层的）。
     std::size_t next_window_index = 0U;
 
+    // ---- 下拉式终端（`SPEC.FEAT.WS.12`，裁决 7.172）-----------------------------------------------
+    // 四道闸全部排在**建窗之前**：无边框是 `WindowStyleOptions` 的建窗初值、框架没有运行期入口，于是
+    // 「这台机器上能不能开帘子」只在造窗那一刻定得下来。任一闸不过就退回普通窗口并落一条 WARN——不
+    // 静默降级成「热键按了没反应」：
+    //   ① 配置开关（设置页标「下次启动」：窗形与全局热键都在建窗期定，改它要重启）；
+    //   ② 运行期显隐与置顶能力（`capabilities()`；帘子的呼出与收起全靠这两口，Win32／D3D11 之外全 false）；
+    //   ③ 全局热键后端（无焦点也要能呼出，这是 quake 的定义；没有它就没有任何入口）；
+    //   ④ 组合键文本可解析（`KeyCombo::from` 与显示串逐字节往返，畸形即整条降级）。
+    const borealis::config::QuickTerminalSettings &quick_terminal = settings.ui.quick_terminal;
+    borealis::ui::QuakeToggle quake_toggle{quick_terminal.auto_hide,
+                                           std::chrono::milliseconds{quick_terminal.focus_settle_ms}};
+    // 热键闭包与失焦回调共用的唯一出口。声明留空、等宿主登记之后才赋值：Show 分支要那扇窗的 surface
+    // 才算得出落位。热键只在帧循环里被排空（见 `set_on_frame` 顶部），而那时这里已经就位。
+    std::function<void(borealis::ui::QuakeIntent)> apply_quake_intent;
+    std::unique_ptr<au::OsHotkeyRegistry> quake_hotkeys;
+    bool quake_enabled = quick_terminal.enabled;
+    std::optional<au::KeyCombo> quake_combo;
+    if (quake_enabled) {
+        quake_combo = au::KeyCombo::from(quick_terminal.hotkey);
+        const au::PlatformCapabilities capabilities = au::platform().capabilities();
+        if (!capabilities.runtime_visibility || !capabilities.runtime_always_on_top) {
+            AURORA_LOG_WARN("main", "quick terminal disabled: this backend lacks runtime visibility or always-on-top");
+            quake_enabled = false;
+        } else if (!au::OsHotkeyRegistry::enabled()) {
+            AURORA_LOG_WARN("main", "quick terminal disabled: no OS-wide hotkey backend");
+            quake_enabled = false;
+        } else if (!quake_combo.has_value()) {
+            AURORA_LOG_WARN("main", "quick terminal disabled: unparsable hotkey \"", quick_terminal.hotkey, "\"");
+            quake_enabled = false;
+        }
+    }
+    if (quake_enabled) {
+        quake_hotkeys = std::make_unique<au::OsHotkeyRegistry>();
+        // 动作只翻转状态机并交意图，不在这里碰窗口：命中由框架的共享消息窗收进队列、帧内排空
+        // （`Application::step_frame` 只排它自己那份注册表，本仓自持的这份在 `on_frame` 里自己排），
+        // 于是改几何与显隐时栈上没有窗口过程帧。
+        const au::Result<au::OsHotkeyHandle> registered =
+            quake_hotkeys->add(*quake_combo, [&quake_toggle, &apply_quake_intent]() -> void {
+                if (apply_quake_intent) {
+                    apply_quake_intent(quake_toggle.on_hotkey(borealis::ui::QuakeToggle::Clock::now()));
+                }
+            });
+        if (!registered.ok()) {
+            // 注册失败排在造窗之前 ⇒ 这一扇还没按帘子形态造，回退到普通窗口是完整的一档。
+            AURORA_LOG_WARN("main", "quick terminal disabled: hotkey registration failed: ",
+                            registered.error().message);
+            quake_hotkeys.reset();
+            quake_enabled = false;
+        }
+    }
+
     // 工作区窗的持有（稿 §2／§6 批 1）：`unique_ptr` 的 **vector** 而不是按值 vector——装配层的成员
     // 与那二十来条闭包按引用吃第一扇窗（下面那批别名），按值容器一次扩容就把对象搬走、引用当场悬垂。
     // 本批生产仍只开一扇 ⇒ 行为与批 1-A 之前逐字相同；开第二扇的入口在批 3（稿 §6）。
@@ -862,7 +927,7 @@ auto main(int argc, char **argv) -> int {
     // 得更晚**，不会让视口活过自己的会话。真正会出事的是 `perform_close` 那条中途撤账的路径（根上还
     // 持着同一份时必须先摘根再 erase，那边已按这条写）。批 4「退出序遍历全部窗」要显式化的就是这
     // 一整段：一扇窗的呈现半区要在它还认得自己那些会话的时候散掉。
-    auto first_workspace = open_workspace_window("Borealis", next_window_index++);
+    auto first_workspace = open_workspace_window("Borealis", next_window_index++, quake_enabled);
     if (first_workspace == nullptr) {
         return 1;  // 建窗失败原文已由工厂落日志；这里不建宿主、不读盘、不起会话。
     }
@@ -2139,6 +2204,63 @@ auto main(int argc, char **argv) -> int {
         return target != nullptr ? target->focus() : app.focus();
     };
 
+    // 帘子的装配腿（`SPEC.FEAT.WS.12`，裁决 7.172）：状态机 → 框架那三口的唯一出口。
+    // 状态与意图的账全在 `QuakeToggle`（只有它认得「这次失焦是不是自己刚造的」），本跳只把意图翻成
+    // OS 调用。几何**每次 Show 现算**：贴边与两向占比是即时生效档，改完下一次呼出就该按新值落位。
+    apply_quake_intent = [&settings, &workspace_windows](const borealis::ui::QuakeIntent intent) -> void {
+        WorkspaceWindow *const window = workspace_windows.empty() ? nullptr : workspace_windows.front().get();
+        au::Surface *const surface = window == nullptr ? nullptr : window->surface;
+        if (surface == nullptr) {
+            return;  // 帘子窗已被关掉：没有可显隐的对象；状态机那侧的账由下一次热键自然纠正。
+        }
+        if (intent == borealis::ui::QuakeIntent::Hide) {
+            surface->set_visible(false);
+            return;
+        }
+        if (intent != borealis::ui::QuakeIntent::Show) {
+            return;
+        }
+        const borealis::config::QuickTerminalSettings &quick = settings.ui.quick_terminal;
+        // 主屏工作区（已扣任务栏，物理像素）：帘子只贴这一块，副屏不参与。
+        const au::Display display = au::app::primary_display();
+        const borealis::ui::QuakeTarget target = borealis::ui::quake_target_rect(borealis::ui::QuakeGeometryRequest{
+            .work_area = borealis::ui::QuakeWorkArea{.origin_x = display.work_area.origin.x,
+                                                     .origin_y = display.work_area.origin.y,
+                                                     .width = display.work_area.size.width,
+                                                     .height = display.work_area.size.height},
+            .scale_factor = display.scale_factor,
+            .anchor = quick.anchor,
+            .cross_ratio = quick.cross_ratio,
+            .along_ratio = quick.along_ratio,
+        });
+        // 先定几何再显示：反序会先以建窗尺寸露一帧、再被 SetWindowPos 挪走。两个单位故意不同——原点
+        // 物理 px、尺寸逻辑 dp（框架那两口的实现口径，见 `QuakeTarget` 的注释）。
+        surface->set_position(au::Point{.x = static_cast<float>(target.origin_x),
+                                        .y = static_cast<float>(target.origin_y)});
+        surface->set_size(au::Size{.width = static_cast<float>(target.width_dp),
+                                   .height = static_cast<float>(target.height_dp)});
+        surface->set_always_on_top(true);
+        surface->set_visible(true);
+        // 显示档刻意不抢焦点（`Surface::set_visible` 头注释）：呼出要能接管键入，必须显式补这一口。
+        surface->focus_window();
+        if (!surface->is_visible()) {
+            // 会话策略挡下（如非交互桌面）：如实留痕，不把「没显示出来」记成已呼出。
+            AURORA_LOG_WARN("main", "quick terminal show did not take effect; window stayed hidden");
+        }
+    };
+    if (quake_enabled) {
+        // 失焦即隐（`auto_hide`）：框架把「可见但失焦」归成 `Occluded` 并按**转移**上报，`Hidden` 是
+        // 隐藏/最小化而不是失焦，故不在此列。自己发起的那次显隐所引出的 `Occluded`（`SW_SHOWNA` 不激活，
+        // 状态从 `Hidden` 落到 `Occluded`）由状态机的过渡窗吞掉——那条竞态正是 `QuakeToggle` 的存在理由。
+        app.set_on_window_state([&quake_toggle, &apply_quake_intent](const au::WindowState state) -> void {
+            if (state == au::WindowState::Occluded) {
+                if (apply_quake_intent) {
+                    apply_quake_intent(quake_toggle.on_focus_lost(borealis::ui::QuakeToggle::Clock::now()));
+                }
+            }
+        });
+    }
+
     // 「命令该落哪一扇窗」的记录器（`SPEC.FEAT.WS.03` 稿 D7）：框架既不给活动窗查询，也不把派发来源
     // 带进快捷键闭包（稿 §0 的 F4／F5、稿 §3 的 G42），故本仓自持这一枚最近记录器，落点由**事实**决定。
     borealis::ui::ActiveWindowTracker active_window_tracker{app.main_window()};
@@ -2401,9 +2523,12 @@ auto main(int argc, char **argv) -> int {
         sync_clipboard_gate();
         return reason;
     };
-    hooks.broadcast = [&tab_workspaces, &workspace_windows, &store, &catalog,
+    hooks.broadcast = [&tab_workspaces, &workspace_windows, &store, &catalog, &quake_toggle,
                        &apply_chrome_scheme](const borealis::ui::SettingsForm &form) -> void {
         const borealis::config::Settings next = borealis::config::apply_form(form, store.settings());
+        // 帘子的失焦开关（即时生效）：状态机是这一档的唯一持有者。贴边与两向占比不必在这里转发——
+        // 它们由 Show 分支每次现读 `store`，转发一份反而成了第二处真值源。
+        quake_toggle.set_auto_hide_on_focus_lost(next.ui.quick_terminal.auto_hide);
         // 外壳明暗档先落地（稿 §3 第 2 步）：本函数跑在面板按钮回调里，换肤只改活动档与共享主题状态，
         // 面板自身的重建已由 `apply_chrome_scheme` 排到下一帧，这里不必也不该重入面板。
         apply_chrome_scheme(borealis::ui::resolve_chrome_scheme(
@@ -4978,7 +5103,13 @@ auto main(int argc, char **argv) -> int {
                       &show_log_notice, &startup_mutex, &startup_queue, &apply_startup_request,
                       &frame_bytes, &reply_wire, &credential_prompt, &restore_waiting_for_secret,
                       &restore_secret_sink, &tab_kind, &crash_facts, &monitor_panel, &bell_policy,
-                      &ring_bell]() -> void {
+                      &ring_bell, &quake_hotkeys]() -> void {
+        // 帘子热键的排空（`SPEC.FEAT.WS.12`，裁决 7.172）：框架的 `step_frame` 只排它**自己**那份
+        // 注册表，本仓自持的这一份要在帧边界自己排——同一条理由：命中不在消息泵里同步执行，回调要
+        // 改几何与显隐，不能在窗口过程帧里重入。
+        if (quake_hotkeys != nullptr) {
+            static_cast<void>(quake_hotkeys->drain_pending());
+        }
         // 恢复的凭据挂起兜底（`SPEC.FEAT.WS.11` 批 5-C）：问句被**静默关掉**（Esc、搬窗时
         // `set_overlay_host` 的 close、宿主散了）不会回调 `on_cancel`，而那个缺口会让泵永远停在
         // 「等一个不会来的答案」上。帧边界是唯一能看见「框已经不在了」的地方：认领并中止余下重放，
@@ -5382,6 +5513,15 @@ auto main(int argc, char **argv) -> int {
         // 读者，最后一次提交就是唯一有意义的那一份。
         flush_workspace_snapshot();
     });
+
+    // 帘子的首发（`SPEC.FEAT.WS.12`，裁决 7.172）：帘子窗建出来就是 `Hidden`，进循环之前走**与热键
+    // 完全同一条**路（同一个状态机、同一个 Show 分支）把它放到屏上——本应用没有托盘也没有第二个入口，
+    // 起手就藏等于没有窗口。放在这里而不是建窗那一刻：全部接线已就绪，首帧即有内容。排在冷启动请求与
+    // 启动重放**之前**是硬要求：那两条都可能弹凭据问答，而浮层画在帘子窗里——窗不显示，问句就没人
+    // 看得见，重放泵会永远停在「等一个不会来的答案」上。
+    if (quake_enabled) {
+        apply_quake_intent(quake_toggle.on_hotkey(borealis::ui::QuakeToggle::Clock::now()));
+    }
 
     // 冷启动请求在接线齐备之后、进循环之前执行一次（稿 §5.4）：首帧直接画出目标标签或那一刀切分，
     // 不出现「先空一帧再补一格」。唤醒指针同样在这一刻交出去——此前入队的转交请求随首帧排空。

@@ -189,6 +189,9 @@ auto collect_leaves(const au::json::Value &node, std::string &prefix, std::vecto
     if (key.starts_with("shortcuts.")) {
         return SettingsPage::Shortcuts;
     }
+    if (key.starts_with("ui.")) {
+        return SettingsPage::QuickTerminal;
+    }
     return std::nullopt;
 }
 
@@ -302,8 +305,9 @@ AURORA_TEST_CASE(table_covers_exactly_the_written_schema_keys) {
     // 连接」，与 `connection.local_shell`／`startup_directory` 同域，故归连接页而非外观页），
     // CONN.02 的两枚算法表（`kex_algorithms` / `host_key_algorithms`）随裁决 7.144 进表，
     // PREF.01 的界面外壳明暗档 `appearance.chrome_theme` 随 `UI_CHROME.draft.md` D5 进表，
-    // 故停在 74。
-    AURORA_TEST_CHECK_EQ(keys.size(), 74U);
+    // WS.12 的七枚下拉式终端键（`ui.quick_terminal.*`）随裁决 7.172 进表（新开的第九域与第五页），
+    // 故停在 81。
+    AURORA_TEST_CHECK_EQ(keys.size(), 81U);
 }
 
 AURORA_TEST_CASE(restore_sessions_is_a_wired_next_launch_connection_switch) {
@@ -595,7 +599,10 @@ AURORA_TEST_CASE(units_are_declared_only_where_the_sketch_draws_them) {
     const std::vector<std::pair<std::string, std::string>> expected{{"appearance.font_size_pt", "pt"},
                                                                     {"appearance.font_line_height", "×"},
                                                                     {"appearance.font_letter_spacing_dp", "dp"},
-                                                                    {"appearance.cursor_blink_period_ms", "ms"}};
+                                                                    {"appearance.cursor_blink_period_ms", "ms"},
+                                                                    // WS.12 的稳定时长与游标闪烁同单位同含义（毫秒），
+                                                                    // 面板因此与那一条一样带 `ms` 后缀（裁决 7.172）。
+                                                                    {"ui.quick_terminal.focus_settle_ms", "ms"}};
     std::vector<std::string> declared;
     for (const auto &control : borealis::ui::settings_catalog()) {
         if (!control.unit.empty()) {

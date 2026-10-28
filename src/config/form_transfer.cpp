@@ -439,6 +439,36 @@ auto assign_shortcuts(Settings &settings, const FormValue &value) -> void {
 
         // ---- 快捷键 ----
         Binding{"shortcuts.overrides", &shortcut_rows, &assign_shortcuts},
+
+        // ---- 界面（下拉式终端，`SPEC.FEAT.WS.12`，裁决 7.172）----
+        // 行序照 `ui::settings_catalog()`：桥逐行覆盖核对表，两处不同序会让那条证人在第一行就红。
+        Binding{"ui.quick_terminal.enabled",
+                [](const Settings &s) -> FormValue { return FormValue::boolean(s.ui.quick_terminal.enabled); },
+                [](Settings &s, const FormValue &v) { assign(s.ui.quick_terminal.enabled, v); }},
+        Binding{"ui.quick_terminal.hotkey",
+                [](const Settings &s) -> FormValue { return FormValue::text(s.ui.quick_terminal.hotkey); },
+                [](Settings &s, const FormValue &v) { assign(s.ui.quick_terminal.hotkey, v); }},
+        Binding{"ui.quick_terminal.anchor",
+                [](const Settings &s) -> FormValue {
+                    return enumerated(s.ui.quick_terminal.anchor, kQuakeAnchorNames);
+                },
+                [](Settings &s, const FormValue &v) {
+                    assign_enum(s.ui.quick_terminal.anchor, v, kQuakeAnchorNames);
+                }},
+        Binding{"ui.quick_terminal.cross_ratio",
+                [](const Settings &s) -> FormValue { return FormValue::real(s.ui.quick_terminal.cross_ratio); },
+                [](Settings &s, const FormValue &v) { assign(s.ui.quick_terminal.cross_ratio, v); }},
+        Binding{"ui.quick_terminal.along_ratio",
+                [](const Settings &s) -> FormValue { return FormValue::real(s.ui.quick_terminal.along_ratio); },
+                [](Settings &s, const FormValue &v) { assign(s.ui.quick_terminal.along_ratio, v); }},
+        Binding{"ui.quick_terminal.auto_hide",
+                [](const Settings &s) -> FormValue { return FormValue::boolean(s.ui.quick_terminal.auto_hide); },
+                [](Settings &s, const FormValue &v) { assign(s.ui.quick_terminal.auto_hide, v); }},
+        Binding{"ui.quick_terminal.focus_settle_ms",
+                [](const Settings &s) -> FormValue {
+                    return FormValue::integral(static_cast<std::int64_t>(s.ui.quick_terminal.focus_settle_ms));
+                },
+                [](Settings &s, const FormValue &v) { assign(s.ui.quick_terminal.focus_settle_ms, v); }},
     };
     return bindings;
 }

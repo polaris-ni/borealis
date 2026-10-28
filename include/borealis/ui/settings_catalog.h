@@ -36,10 +36,11 @@ namespace borealis::ui {
 
 /// @brief 设置面板的页（裁决 7.26① 的四分类，与 `config::Settings` 的四个域一一对应）。
 enum class SettingsPage : std::uint8_t {
-    Appearance,  ///< 外观页。
-    Terminal,    ///< 终端页。
-    Connection,  ///< 连接页。
-    Shortcuts,   ///< 快捷键页。
+    Appearance,    ///< 外观页。
+    Terminal,      ///< 终端页。
+    Connection,    ///< 连接页。
+    Shortcuts,     ///< 快捷键页。
+    QuickTerminal, ///< 下拉式终端页（`SPEC.FEAT.WS.12`，裁决 7.172）。
 };
 
 /// @brief 控件形态。延后与灰置的处置**不在本枚举里**（那由 `consumer` 给出，见 S15），

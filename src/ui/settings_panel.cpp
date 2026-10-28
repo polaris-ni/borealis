@@ -354,7 +354,7 @@ public:
                           {{"configured", std::string{configured}}, {"actual", choice.family}});
 }
 
-/// @brief 页 → 导航按钮的词条 key（`settings.page.<域>`，与 `SettingsPage` 四档一一对应）。
+/// @brief 页 → 导航按钮的词条 key（`settings.page.<域>`，与 `SettingsPage` 五档一一对应）。
 [[nodiscard]] auto page_title_key(SettingsPage page) -> std::string_view {
     switch (page) {
         case SettingsPage::Appearance:
@@ -365,6 +365,8 @@ public:
             return "settings.page.connection";
         case SettingsPage::Shortcuts:
             return "settings.page.shortcuts";
+        case SettingsPage::QuickTerminal:
+            return "settings.page.quick_terminal";
     }
     return "settings.page.appearance";
 }
@@ -406,6 +408,9 @@ constexpr GroupNote kGroupNotes[] = {
     {"connection.ssh.kex_algorithms", "settings.note.ssh_algorithms"},
     {"connection.serial.baud", "settings.note.serial"},
     {"shortcuts.overrides", "settings.note.shortcuts"},
+    // 下拉式终端那一页整页只有一簇键，旁注因此挂在首行即组顶：它要说清的是「开着之后窗口换成
+    // 什么形态」与「哪几枚改了要重启」，而不是逐行各解释一遍（裁决 7.172）。
+    {"ui.quick_terminal.enabled", "settings.note.quick_terminal"},
 };
 
 [[nodiscard]] auto make_group_note(const std::string &text) -> aurora::Node {
@@ -887,11 +892,12 @@ auto SettingsPanel::build_card() -> aurora::Node {
             const float height = std::clamp(c.max.height - 2.0F * kCardMarginDp, 320.0F, kCardMaxHeightDp);
 
             std::vector<aurora::Node> nav;
-            nav.reserve(4U);
+            nav.reserve(5U);
             for (const SettingsPage page : {SettingsPage::Appearance,
                                             SettingsPage::Terminal,
                                             SettingsPage::Connection,
-                                            SettingsPage::Shortcuts}) {
+                                            SettingsPage::Shortcuts,
+                                            SettingsPage::QuickTerminal}) {
                 auto props = aurora::ButtonProps{};
                 props.label = settings_text(page_title_key(page));
                 props.color = page == page_ ? chrome().accent : chrome().nav_bg;

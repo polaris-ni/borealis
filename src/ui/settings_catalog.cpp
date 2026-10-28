@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include "borealis/ui/quake.h"  // kQuakeRatioMin/Max：面板步进范围与装载闸同一对常量
+
 namespace borealis::ui {
 namespace {
 
@@ -75,7 +77,7 @@ namespace {
 
 [[nodiscard]] auto build_catalog() -> std::vector<SettingsControl> {
     std::vector<SettingsControl> catalog;
-    catalog.reserve(58U);
+    catalog.reserve(81U);
 
     // ---- 外观页（§2 表的次序：主题 → 语言 → 调色板 → 字体与排版 → 视口 → 光标 → 侧栏与标签 → 状态栏）----
     // 主题名虽然只有八套预置，但候选的唯一来源是 `config/themes.h`；本行不留名字，否则色值表与
@@ -459,6 +461,52 @@ namespace {
                           {},
                           ConsumerStatus::Absent,
                           EffectLevel::Immediate));
+
+    // ---- 下拉式终端页（`SPEC.FEAT.WS.12`，裁决 7.172）----
+    // 自成一页而不是塞进外观页：这一簇改的是**窗口形态**与全局热键，外观页那一簇改的是窗口里的
+    // 内容；页与键的对应钉在「键首段 = 域」这条双向闸上（`utest_settings_catalog` 的 `page_of`）。
+    // 生效档分两档，理由都是「值在哪一刻被读走」：
+    //  · enabled 与 hotkey 在建窗**之前**读（无边框是一次性建窗选项，热键注册也必须在建窗之前
+    //    证明可用），面板改了只能重启——`NextLaunch`；
+    //  · focus_settle_ms 是状态机构造参数、`ui::QuakeToggle` 没有运行期改它的入口——`NextLaunch`；
+    //  · anchor 与两个占比在每次呼出时现读现算，auto_hide 由装配层的设置广播腿即时灌进状态机——
+    //    这三类（五枚）取 `Immediate`。
+    catalog.push_back(toggle("ui.quick_terminal.enabled", SettingsPage::QuickTerminal, ConsumerStatus::Wired,
+                             EffectLevel::NextLaunch));
+    // 组合键按自由文本收：合法性归装配层的 `KeyCombo::from()` 判（解析失败按关档启动并留 WARN），
+    // 面板不拒收一个拼错的写法——与 `terminal.link_schemes` 同一条「只判类型不判域」的分工。
+    catalog.push_back(row("ui.quick_terminal.hotkey",
+                          SettingsPage::QuickTerminal,
+                          ControlKind::TextInput,
+                          ValueDomain::FreeText,
+                          {},
+                          {},
+                          ConsumerStatus::Wired,
+                          EffectLevel::NextLaunch));
+    catalog.push_back(dropdown("ui.quick_terminal.anchor",
+                               SettingsPage::QuickTerminal,
+                               {"top", "bottom", "left", "right"},
+                               ConsumerStatus::Wired,
+                               EffectLevel::Immediate));
+    // 两个占比与装载侧把守的是同一对常量（`ui::kQuakeRatioMin` / `kQuakeRatioMax`）：面板让步进
+    // 范围与装载闸同源，改一处即两处同步。
+    catalog.push_back(real_step("ui.quick_terminal.cross_ratio",
+                                SettingsPage::QuickTerminal,
+                                kQuakeRatioMin,
+                                kQuakeRatioMax,
+                                ConsumerStatus::Wired,
+                                EffectLevel::Immediate));
+    catalog.push_back(real_step("ui.quick_terminal.along_ratio",
+                                SettingsPage::QuickTerminal,
+                                kQuakeRatioMin,
+                                kQuakeRatioMax,
+                                ConsumerStatus::Wired,
+                                EffectLevel::Immediate));
+    catalog.push_back(toggle("ui.quick_terminal.auto_hide", SettingsPage::QuickTerminal, ConsumerStatus::Wired,
+                             EffectLevel::Immediate));
+    catalog.push_back(with_unit(integer_step("ui.quick_terminal.focus_settle_ms", SettingsPage::QuickTerminal, 0.0,
+                                             5000.0, ConsumerStatus::Wired, EffectLevel::NextLaunch),
+                                "ms"));
 
     return catalog;
 }

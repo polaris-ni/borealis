@@ -55,6 +55,7 @@ using borealis::term::AmbiguousWidth;
 using borealis::term::ClipboardReadPolicy;
 using borealis::term::CursorShape;
 using borealis::ui::kDefaultMonospaceFamily;
+using borealis::ui::QuakeAnchor;
 using borealis::ui::RgbaColor;
 
 namespace {
@@ -181,6 +182,17 @@ auto write_file(const std::filesystem::path &path, std::string_view text) -> voi
 
     next.shortcuts.overrides["terminal.new_tab"] = "Ctrl+T";
     next.shortcuts.overrides["app.settings"] = "Ctrl+Shift+Comma";
+
+    // 界面域（`SPEC.FEAT.WS.12`，裁决 7.172）：七枚键各取一个与缺省不同的值，写法也离缺省最远——
+    // `enabled` 缺省关、贴边缺省 `top`（这里取 `bottom`）、两个占比缺省 1.0 / 0.5、`auto_hide`
+    // 缺省开（这里取 false）、稳定时长缺省 250。漏写任一键，读回来都会落回缺省而与本份不等。
+    next.ui.quick_terminal.enabled = true;
+    next.ui.quick_terminal.hotkey = "Ctrl+Alt+Backquote";
+    next.ui.quick_terminal.anchor = QuakeAnchor::Bottom;
+    next.ui.quick_terminal.cross_ratio = 0.8;
+    next.ui.quick_terminal.along_ratio = 0.35;
+    next.ui.quick_terminal.auto_hide = false;
+    next.ui.quick_terminal.focus_settle_ms = 400;
 
     // M3 连接档案域：一条非缺省的 SSH 档案，覆盖 profiles 域的往返等值守卫（裁决 7.26① 第五域）。
     conn::Profile gateway;
@@ -732,6 +744,7 @@ AURORA_TEST_CASE(every_value_survives_a_write_read_round_trip) {
     AURORA_TEST_CHECK_TRUE(reader.settings().terminal == next.terminal);
     AURORA_TEST_CHECK_TRUE(reader.settings().connection == next.connection);
     AURORA_TEST_CHECK_TRUE(reader.settings().shortcuts == next.shortcuts);
+    AURORA_TEST_CHECK_TRUE(reader.settings().ui == next.ui);
     AURORA_TEST_CHECK_TRUE(reader.settings().key_dirs == next.key_dirs);
     AURORA_TEST_CHECK_TRUE(reader.settings().snippets == next.snippets);
     AURORA_TEST_CHECK_TRUE(reader.report().rejected_keys.empty());
@@ -1111,10 +1124,11 @@ AURORA_TEST_CASE(missing_domains_are_reported_once_each) {
     AURORA_TEST_CHECK_TRUE(store.report().outcome == LoadOutcome::Loaded);
     AURORA_TEST_CHECK_TRUE(store.settings() == Settings{});
     // 父作用域整体缺失只留痕父键一次：逐子键刷屏会让截断文件报出几十条噪声。
-    // 八域（裁决 7.106 D2③ 起，snippets 域随后加入）：缺省文件形态只带 schema_version，八域全落空。
-    AURORA_TEST_CHECK_EQ(store.report().rejected_keys.size(), 8U);
-    for (std::string_view domain :
-         {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels", "key_dirs", "snippets"}) {
+    // 九域（裁决 7.106 D2③ 起，snippets 域随后加入、ui 域随裁决 7.172 加入）：缺省文件形态只带
+    // schema_version，九域全落空。
+    AURORA_TEST_CHECK_EQ(store.report().rejected_keys.size(), 9U);
+    for (std::string_view domain : {"appearance", "terminal", "connection", "shortcuts", "ui", "profiles", "tunnels",
+                                    "key_dirs", "snippets"}) {
         AURORA_TEST_CHECK_MSG(holds(store.report().rejected_keys, domain), std::string{domain});
     }
     AURORA_TEST_CHECK_TRUE(store.report().unknown_keys.empty());
@@ -1240,9 +1254,9 @@ AURORA_TEST_CASE(stored_file_is_a_single_json_with_all_schema_domains) {
     std::ranges::sort(domains);
     AURORA_TEST_CHECK_TRUE((domains == std::vector<std::string>{"appearance", "connection", "key_dirs", "profiles",
                                                                 "schema_version", "shortcuts", "snippets", "terminal",
-                                                                "tunnels"}));
-    for (std::string_view domain :
-         {"appearance", "terminal", "connection", "shortcuts", "profiles", "tunnels", "key_dirs", "snippets"}) {
+                                                                "tunnels", "ui"}));
+    for (std::string_view domain : {"appearance", "terminal", "connection", "shortcuts", "ui", "profiles", "tunnels",
+                                    "key_dirs", "snippets"}) {
         const au::json::Value *node = root.at(domain);
         AURORA_TEST_REQUIRE(node != nullptr);
         AURORA_TEST_CHECK_MSG(node->is_object(), std::string{domain});

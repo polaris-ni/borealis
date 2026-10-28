@@ -34,6 +34,7 @@
 #include "borealis/term/width.h"
 #include "borealis/ui/font_choice.h"
 #include "borealis/ui/palette.h"
+#include "borealis/ui/quake.h"
 #include "borealis/ui/right_click.h"
 #include "borealis/ui/tab_strip.h"
 #include "borealis/ui/url.h"
@@ -98,6 +99,13 @@ using ui::TabNamePriority;
 /// 配置侧只作别名，与上面三条同口径（裁决 7.41 的单一真值源迁移先例）。缺省 `AskOnce` 就是
 /// 需求那句「首次确认并记住同域」。
 using ui::LinkConfirmPolicy;
+
+/// @brief 帘子贴哪条边（`SPEC.FEAT.WS.12`，裁决 7.172）。
+///
+/// 取值与语义的唯一定义在 `ui::QuakeAnchor`（贴边矩形的折算发生在 `ui::quake_target_rect()` 里），
+/// 配置侧只作别名，与上面四条同口径（裁决 7.41 的单一真值源先例）。缺省 `Top` 是 Guake / Yakuake
+/// 那一档下拉式，也就是需求原文「从屏幕顶部下拉」那半句。
+using ui::QuakeAnchor;
 
 /// @brief 状态栏各项的开关（裁决 7.25⑧：每项一个开关，缺省全开）。
 ///
@@ -346,16 +354,63 @@ struct ShortcutsSettings {
     [[nodiscard]] auto operator==(const ShortcutsSettings &other) const noexcept -> bool = default;
 };
 
+/// @brief 下拉式终端（quake 模式）的七枚键（`SPEC.FEAT.WS.12`，裁决 7.172）。
+///
+/// 全量缺省就是「像 Guake 那样用」：开着、`Meta+Backquote` 呼出、贴顶、占满宽、落下半屏、
+/// 失焦即隐。`enabled` 缺省 **false** 而其余六键仍给全值：这一档决定的是**建窗形态**
+/// （无边框 + 置顶 + 不进会话恢复），而框架的 `frameless` 是建窗期一次的选项、运行期改不回来——
+/// 故它只能在建窗之前读定，面板上改了要重启才换窗形（`EffectLevel::NextLaunch` 也是这个理由）。
+/// 关着的时候主窗口仍是既有的带框窗口，与 `SPEC.FEAT.WS.12` 落地前逐位相同。
+struct QuickTerminalSettings {
+    bool enabled{false};  ///< 关＝不注册热键、按普通带框窗口启动（本键落地前的形态）。
+    /// @brief 呼出/收回的全局组合键（框架 `KeyCombo::to_string()` 形态）。
+    ///
+    /// 解析失败**不静默**：装配层在注册热键那一刻用 `KeyCombo::from()` 判，解析不出或注册被系统
+    /// 拒绝时留 WARN 并按 `enabled=false` 的形态启动，而不是让用户以为「热键坏了」。
+    std::string hotkey{"Meta+Backquote"};
+    QuakeAnchor anchor{QuakeAnchor::Top};   ///< 贴哪条边。
+    double cross_ratio{1.0};                ///< 跨边方向占比，域 `[kQuakeRatioMin, kQuakeRatioMax]`。
+    double along_ratio{0.5};                ///< 落下方向占比，同上。
+    /// @brief 失焦即隐（D7 缺省开）。关掉后只由热键收发，窗口像普通窗口一样留驻。
+    bool auto_hide{true};
+    /// @brief 呼出/隐藏后的焦点稳定时长（ms）：这段时间里的失焦事件一律吞掉。
+    ///
+    /// 理由见 `ui::QuakeToggle` 的头注释（Tilix 那条「按热键隐藏后窗口自己弹回」的故障）；
+    /// 域 `[0, 5000]`，0 即关掉过渡窗（此时失焦立刻参与判定）。
+    int focus_settle_ms{250};
+
+    /// @brief 逐字段全等比较（配置往返断言用）。
+    [[nodiscard]] auto operator==(const QuickTerminalSettings &other) const noexcept -> bool = default;
+};
+
+/// @brief 界面域：今天只有下拉式终端一簇（`SPEC.FEAT.WS.12`）。
+///
+/// 单开一个域而不是塞进 `appearance`：这一簇改的是**窗口形态**（无边框、置顶、全局热键），
+/// 外观域那一簇改的是窗口里的内容。面板上它也因此自成一页（`SettingsPage::QuickTerminal`）——
+/// 页与键的对应由「键首段 = 域」这条既有惯例决定，塞进外观域就得在页里混两类东西。
+struct UiSettings {
+    QuickTerminalSettings quick_terminal{};
+
+    /// @brief 逐字段全等比较（配置往返断言用）。
+    [[nodiscard]] auto operator==(const UiSettings &other) const noexcept -> bool = default;
+};
+
 /// @brief 一份完整配置：四分类各一域 + 连接档案域（M3 的 `SPEC.FEAT.CONN.03`）
 ///        + 隧道定义域（M3 的 `SPEC.FEAT.CONN.08`，裁决 7.97 D3①）
 ///        + 密钥目录域（M3 的 `SPEC.FEAT.CONN.10`，裁决 7.106 D2③）
-///        + 快捷片段域（`SPEC.FEAT.CONN.07` 的延后子项，稿 `UI_SNIPPETS.draft.md` D2），
+///        + 快捷片段域（`SPEC.FEAT.CONN.07` 的延后子项，稿 `UI_SNIPPETS.draft.md` D2）
+///        + 界面域（`SPEC.FEAT.WS.12` 的下拉式终端，裁决 7.172），
 ///        `Settings{}` 即 `SPEC.FEAT.PREF.06` 的首次启动形态。
 struct Settings {
     AppearanceSettings appearance{};
     TerminalSettings terminal{};
     ConnectionSettings connection{};
     ShortcutsSettings shortcuts{};
+    /// @brief 界面域：下拉式终端（`SPEC.FEAT.WS.12`）。
+    ///
+    /// 排在四个 PREF 域之后、结构域之前：它是**行为**偏好（窗口形态与热键），不是结构数据。
+    /// 落盘为顶层 `ui` 对象，故 `kDomainKeys` 与面板页序各有一处新值要同步（裁决 7.172）。
+    UiSettings ui{};
     /// @brief 连接档案（SSH/本地终端的分组、收藏、搜索、quick connect、ssh config 导入）。
     ///        凭据按 `SPEC.FEAT.CONN.09` 只以 `SecretHandle` 引用/哨兵形态落盘，绝不存明文。
     std::vector<conn::Profile> profiles{};
