@@ -4,7 +4,7 @@
 ///           右键第四条 → `ui::plan_link_open` → 确认一问 → `open_url` 接缝」这条链
 ///           （`SPEC.FEAT.INTERACT.05` 的界面腿，稿 D4①／D7①／D11①／D12①／D13①）。断的是**链路**
 ///           而非识别件与决策件本身（两者各有 `utest_ui_url` / `utest_right_click` 逐条覆盖），
-///           值得单独证的有八件事：
+///           值得单独证的有九件事：
 ///           ① 悬停两层同现同隐（游程 accent 线 + 左下目标条），条上显示的恒是**目标全文**而非屏上
 ///              文字（判据 1／4，OSC 8 那一档的证人）；
 ///           ② 白名单外的一串整条链路 inert：无线、无条、Ctrl 击不响（判据 5）；
@@ -18,7 +18,9 @@
 ///           ⑦ 提示条的两条非模态纪律：装不下**整条不画**而不截断（判据 3 前半），且它一枚命中盒都
 ///              不交——条下那一格照常起选区（后半）；
 ///           ⑧ 生产确认框的三枚按钮**经真实命中链点到**（G26 回货的接货证人）：取消不开、仅本次不
-///              开账、记住即写名单；点遮罩既不关闭也不打开（F12）。
+///              开账、记住即写名单；点遮罩既不关闭也不打开（F12）；
+///           ⑨ 落点列在「网格有、这一行没有」的那一段上时什么都不命中，而不是把越界列喂给
+///              `grid::Row::cell`（真机走查撞到的越界读：新标签会话仍是标称列数而视口已按像素变宽）。
 ///           生产打开腿**永不参与**：`Presentation::open_url` 刻意没有默认实现（稿 D11①／F15 那次真开
 ///           浏览器的一手事故），本文件每一处都装替身，于是「自动化不开浏览器」由构造保证而非纪律。
 ///           悬停线用「带内等于 accent 的像素数」判而不是帧间差分：底色与字形全取自缺省色板（各通道
@@ -71,6 +73,7 @@ using borealis::session::Size;
 using borealis::term::UnicodeWidthPolicy;
 using borealis::ui::CellPixels;
 using borealis::ui::GridGeometry;
+using borealis::ui::GridSize;
 using borealis::ui::LinkConfirmPolicy;
 using borealis::ui::LinkHit;
 using borealis::ui::LinkSource;
@@ -94,6 +97,11 @@ constexpr int kWindowWidth = 640;
 constexpr int kWindowHeight = 440;
 /// @brief 窄窗档：够格放「docs」四个字，却装不下一条长 URI——「让位不画」那一档靠它成立。
 constexpr int kNarrowWidth = 140;
+/// @brief 宽窗档：按 11 dp 单宽量出 100 列以上，比会话的标称 80 列更宽。
+///
+/// 「落点有网格坐标、行里却没有那一格」只在网格列数超过行宽时才成立，故这一档是那条越界列
+/// 证人的承重前置（配合 `hold_session_size` 把下发吞掉，模拟防抖晚一帧的那段时间）。
+constexpr int kWideWindowWidth = 1200;
 /// @brief 提示条的横向内缩（与 `kLinkNoticeInsetDp` 同值）：判据 3 那句「贴左下」的落点。
 constexpr double kExpectedInset = 8.0;
 
@@ -173,10 +181,13 @@ class FakeConnection final : public Connection {
 }
 
 /// @brief 驱动台：会话 + 替身连接 + 视口控件 + 浮层宿主 + 无头窗口 + 名单本体 + 两条打开接缝的替身。
+///
+/// @p hold_session_size 置真即把网格尺寸的下发口吞掉：会话停在标称 80 列而视口按像素量出更多列，
+/// 于是「落点有网格坐标、却没有那一格」这一形可以在无头里复现（生产里它是防抖晚一帧的窗口）。
 class Harness {
   public:
     explicit Harness(const TerminalView::InteractionOptions &options = link_options(), bool with_host = true,
-                     bool stub_link = true, int width = kWindowWidth)
+                     bool stub_link = true, int width = kWindowWidth, bool hold_session_size = false)
         : window_(make_window(width)),
           window_width_(width),
           session_(std::make_unique<Session>(own_connection(), kNominalSize, kScrollback, width_policy)),
@@ -209,6 +220,11 @@ class Harness {
             };
         }
         view_->set_presentation(std::move(presentation));
+        if (hold_session_size) {
+            // 吞掉下发：不装这一枚，帧 0 的 `request_grid_size` 就直接 `session_->resize`，行宽与网格
+            // 同时长大，越界列那条前置就永远不成立（本文件那条证人随之变成空转）。
+            view_->set_grid_size_sink([](GridSize) -> void {});
+        }
         session_->start();
         focus_.set_root(&root_.widget());
         focus_.set_focus(view_.get());
@@ -581,6 +597,26 @@ AURORA_TEST_CASE(a_scheme_outside_the_whitelist_stays_inert) {
     wide.feed_at(2U, "get ftp://example.com/pub now");
     wide.hover(2U, 8U);
     AURORA_TEST_REQUIRE(wide.hover_link().has_value());
+}
+
+AURORA_TEST_CASE(a_column_beyond_the_line_hovers_nothing_rather_than_reaching_the_row) {
+    // 真机走查（2026-10-29）一手撞出的那一形：新标签的会话还停在标称 80 列，视口却已按像素量出
+    // 更多列（`request_grid_size` 经工作区层的防抖晚一帧）。悬停腿把落点列直接喂给
+    // `link_base_column` → `grid::Row::cell`，而它的前置条件是「列号 < `columns()`」且不查界，
+    // 于是越界读。收口在 `scan_link_at` 开头：与 `find_link_at` 同一条「该行没有这一列」的口径。
+    Harness h(link_options(), true, true, kWideWindowWidth, true);
+    AURORA_TEST_REQUIRE(h.preflight());
+    // 承重前置：网格比行宽，才有「网格内有、行里没有」的那一段列。
+    AURORA_TEST_REQUIRE(h.geometry().columns > kNominalSize.columns);
+    h.feed_at(2U, "see http://example.com/a now");
+    h.hover(2U, 6U);
+    AURORA_TEST_REQUIRE(h.hover_link().has_value());  // 正例：串内照常命中，证人不是空转
+    h.hover(2U, kNominalSize.columns);                // 同一行、越过行宽的第一列
+    AURORA_TEST_CHECK_FALSE(h.hover_link().has_value());
+    AURORA_TEST_CHECK_FALSE(h.notice_box().has_value());
+    AURORA_TEST_CHECK_EQ(h.accent_pixels_in(2U, 4U, 24U), 0U);  // 先前那条线也摘了
+    h.hover(2U, h.geometry().columns - 1U);            // 网格右沿那一格同样不落进行
+    AURORA_TEST_CHECK_FALSE(h.hover_link().has_value());
 }
 
 // ============================================================

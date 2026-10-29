@@ -2383,6 +2383,13 @@ auto TerminalView::scan_link_at(const GridCellPos &storage_cell) -> std::optiona
     if (row == nullptr) {
         return std::nullopt;  // 行不在可见窗内：既画不到也点不到，这是回看深一度的天然边界
     }
+    if (storage_cell.column >= row->columns()) {
+        // 落点在「本帧网格有、这一行没有」的那一段列上。两条路径都会走到：新标签的镜像还停在标称
+        // 80 列而窗口更宽（`request_grid_size` 经防抖晚一帧），以及缩宽过程中行尚未被截短。
+        // `grid::Row::cell` 的前置条件是「列号 < `columns()`」且不查界，先在这里收口，理由与
+        // `find_link_at` 开头那条同宽守卫一样——越界列既画不到也不该命中。
+        return std::nullopt;
+    }
     std::optional<std::u32string> osc8;
     if (const auto link_id = row->hyperlink(link_base_column(*row, storage_cell.column));
         link_id != grid::kNoHyperlink) {
