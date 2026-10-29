@@ -54,7 +54,7 @@ constexpr float kRejectedListHeightDp = 160.0F;
         .content = std::move(text),
         .font = aurora::Font{.size_pt = size_pt, .weight = bold ? 700 : 400},
         .text_color = color});
-    label->modifier.set(aurora::Modifier{}.fill_max_width());
+    label->set_modifier(aurora::Modifier{}.fill_max_width());
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(label))};
 }
 
@@ -180,10 +180,10 @@ auto StartupNotice::show_if_needed(const config::LoadReport &report) -> bool {
         }
         auto list = std::make_shared<aurora::Column>(
             aurora::ColumnProps{.children = std::move(keys), .gap = 2.0F});
-        list->modifier.set(aurora::Modifier{}.fill_max_width());
+        list->set_modifier(aurora::Modifier{}.fill_max_width());
         auto scroller = std::make_shared<aurora::Scroll>(aurora::ScrollProps{
             .child = aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(list))}});
-        scroller->modifier.set(aurora::Modifier{}.fill_max_width().height(kRejectedListHeightDp));
+        scroller->set_modifier(aurora::Modifier{}.fill_max_width().height(kRejectedListHeightDp));
         children.push_back(
             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(scroller))});
     }
@@ -202,7 +202,7 @@ auto StartupNotice::show_if_needed(const config::LoadReport &report) -> bool {
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(ack))});
 
     auto box = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(children), .gap = kGapDp});
-    box->modifier.set(aurora::Modifier{}.width(kBoxWidthDp)
+    box->set_modifier(aurora::Modifier{}.width(kBoxWidthDp)
                           .background(chrome.roles.surface, 8.0F)
                           .padding(aurora::EdgeInsets{
                               .left = kBoxPaddingDp,

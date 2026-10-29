@@ -34,7 +34,7 @@ constexpr float kListHeightDp = 260.0F;
         .content = std::move(text),
         .font = aurora::Font{.size_pt = size_pt, .weight = bold ? 700 : 400},
         .text_color = color});
-    label->modifier.set(aurora::Modifier{}.fill_max_width());
+    label->set_modifier(aurora::Modifier{}.fill_max_width());
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(label))};
 }
 
@@ -169,10 +169,10 @@ auto DebugPanel::toggle(const std::vector<DebugSessionSnapshot> &sessions) -> vo
         }
     }
     auto list = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(rows), .gap = 2.0F});
-    list->modifier.set(aurora::Modifier{}.fill_max_width());
+    list->set_modifier(aurora::Modifier{}.fill_max_width());
     auto scroller = std::make_shared<aurora::Scroll>(aurora::ScrollProps{
         .child = aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(list))}});
-    scroller->modifier.set(aurora::Modifier{}.fill_max_width().height(kListHeightDp));
+    scroller->set_modifier(aurora::Modifier{}.fill_max_width().height(kListHeightDp));
 
     std::vector<aurora::Node> children;
     children.push_back(make_text(settings_text("diagnostics.title"), chrome.roles.on_surface, kTitleSizePt, true));
@@ -191,7 +191,7 @@ auto DebugPanel::toggle(const std::vector<DebugSessionSnapshot> &sessions) -> vo
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(close_button))});
 
     auto box = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(children), .gap = kGapDp});
-    box->modifier.set(aurora::Modifier{}.width(kBoxWidthDp)
+    box->set_modifier(aurora::Modifier{}.width(kBoxWidthDp)
                           .background(chrome.roles.surface, 8.0F)
                           .padding(aurora::EdgeInsets{
                               .left = kBoxPaddingDp,

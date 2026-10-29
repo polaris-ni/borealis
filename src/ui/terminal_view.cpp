@@ -2553,7 +2553,7 @@ auto TerminalView::ask_open_link_dialog(const LinkOpenRequest &request,
             .content = settings_text(key, std::move(args)),
             .text_color = color,
         });
-        text->modifier.set(aurora::Modifier{}.fill_max_width());
+        text->set_modifier(aurora::Modifier{}.fill_max_width());
         return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(text))};
     };
     const auto button = [this, &chrome, answer](std::string_view key, const aurora::Color &bg,
@@ -2612,7 +2612,7 @@ auto TerminalView::ask_open_link_dialog(const LinkOpenRequest &request,
         .gap = 6.0F,
     });
     // 内容盒外的点击要被吸收：模态层底下就是正文，穿透就会一边答话一边起一段选区（同键位绑定框）。
-    content->modifier.set(aurora::Modifier{}
+    content->set_modifier(aurora::Modifier{}
                               .padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
                               .background(chrome.card_bg, 8.0F)
                               .border(1.0F, chrome.card_line)

@@ -65,15 +65,12 @@ namespace {
 
 /// @brief 就地改写一枚已挂载 `Text` 的文本（原位刷新腿唯一的写入口）。
 ///
-/// WHY 不走 `Text::set_content()`：它是 `content = s`，而 `Reactive<T>` 全族没有「写穿到当前状态
-/// 节点」的赋值运算符——这条赋值走的是编译器生成的那个，把隐式构造出的临时 `Reactive` 的**状态节点
-/// 整个换掉**（实测 `&content.state()` 前后不同值），挂载期登记的观察边仍留在旧节点上，此后写谁都不
-/// 通知 → 本控件永不标脏 → 布局缓存里的旧文本一直摆在屏上。`content.set(s)` 写的是**同一个**状态节点，
-/// `State::set` 会 `notify()` 到那条 Effect（框架自己的 `deserialize_props` 走的也是这条），故这里
-/// 绕开赋值而不改框架。缺口登记见 `codespec/SPECIFICATIONS.md` 附录 A.2 的 G49；框架侧回货后这一格
-/// 可换回 `set_content`。
+/// 走 `Text::set_content()` 而不是属性直写：展示属性在框架侧已收作私有来源，`set_content` 换源时
+/// 会 `resubscribe_signals()` 把挂载期登记的观察边搬到新源上，并顺带两脏（布局 + 绘制）。
+/// 旧形态（`content = s` 直写 `Reactive<T>` 属性字段）只换掉字段里那枚临时句柄的节点，挂载期
+/// 登记的边仍留在旧节点上，写谁都不通知——那一格缺口（附录 A.2 的 G49）已由框架侧回货闭合。
 auto set_cell_text(aurora::Text &cell, std::string content) -> void {
-    cell.content.set(std::move(content));
+    cell.set_content(std::move(content));
 }
 
 [[nodiscard]] auto make_button(std::string label, aurora::Color bg, aurora::Color fg, float min_width,
@@ -414,7 +411,7 @@ auto SessionMonitorPanel::install_overlay() -> void {
                                                               const aurora::Rect &box) -> void {
         painter.fill_rect(box, c.window_bg);
     });
-    mask->modifier.set(aurora::Modifier{}.fill_max_size().clickable([this]() -> void { close(); }));
+    mask->set_modifier(aurora::Modifier{}.fill_max_size().clickable([this]() -> void { close(); }));
     auto card = build_overlay();
     auto layer = std::make_shared<aurora::Stack>(
         std::vector<aurora::Node>{node(std::static_pointer_cast<aurora::Widget>(std::move(mask))),
@@ -509,18 +506,18 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
     // ---- 开关行：时间戳前缀（缺省开）+ 暂停刷新（缺省关）+ 文本视图（缺省关，稿 D26①）
     //      + 报文边界（缺省关，稿 §13 D46①）----
     // 新增的一枚**排在最后**：集成用例按 `find("Switch", N)` 的树序取件，前面几枚的序号不能因为新增而挪位。
-    auto timestamp_switch = std::make_shared<aurora::Switch>(aurora::Reactive<bool>{timestamp_prefix_});
+    auto timestamp_switch = std::make_shared<aurora::Switch>(aurora::State<bool>{timestamp_prefix_});
     timestamp_switch->set_on_changed(
         [this](bool next) -> void { on_timestamp_changed(next); });
-    auto pause_switch = std::make_shared<aurora::Switch>(aurora::Reactive<bool>{paused_});
+    auto pause_switch = std::make_shared<aurora::Switch>(aurora::State<bool>{paused_});
     pause_switch->set_on_changed([this](bool next) -> void { on_pause_changed(next); });
-    auto text_switch = std::make_shared<aurora::Switch>(aurora::Reactive<bool>{text_view_});
+    auto text_switch = std::make_shared<aurora::Switch>(aurora::State<bool>{text_view_});
     text_switch->set_on_changed([this](bool next) -> void { on_text_view_changed(next); });
-    auto boundary_switch = std::make_shared<aurora::Switch>(aurora::Reactive<bool>{boundary_rows_});
+    auto boundary_switch = std::make_shared<aurora::Switch>(aurora::State<bool>{boundary_rows_});
     boundary_switch->set_on_changed([this](bool next) -> void { on_boundary_changed(next); });
     for (auto &sw : {timestamp_switch, pause_switch, text_switch, boundary_switch}) {
         // 锁高的理由与设置面板开关同款：滑块直径按自身盒高算，行交叉轴居中给的是紧约束。
-        sw->modifier.set(aurora::Modifier{}.height(24.0F));
+        sw->set_modifier(aurora::Modifier{}.height(24.0F));
         sw->set_active_color(chrome.accent);
         sw->set_inactive_color(chrome.control_bg);
         sw->set_border(chrome.card_line, 1.0F);
@@ -578,18 +575,18 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
     const auto dropped = notice();
     if (!dropped.empty()) {
         auto line = make_text(dropped, chrome.text_dim);
-        line->modifier.set(aurora::Modifier{}.fill_max_width());
+        line->set_modifier(aurora::Modifier{}.fill_max_width());
         dropped_cell_ = line;
         children.push_back(node(std::move(line)));
     }
     auto privacy = make_text(settings_label("session.monitor.notice.privacy"), chrome.text_dim);
-    privacy->modifier.set(aurora::Modifier{}.fill_max_width());
+    privacy->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::move(privacy)));
 
     // ---- 行区：`LazyList` 虚拟化（D10①），只实例化可见窗口；条目内容按折出的窗口快照闭包 ----
     if (painted_rows_.empty()) {
         auto empty = make_text(settings_label("session.monitor.empty"), chrome.text_dim);
-        empty->modifier.set(aurora::Modifier{}.fill_max_width().expand());
+        empty->set_modifier(aurora::Modifier{}.fill_max_width().expand());
         children.push_back(node(std::move(empty)));
     } else {
         // 条目 builder 捕获**这一份**窗口（与面板共持、可就地替换内容），而不是回头读 `painted_rows_`：
@@ -603,7 +600,7 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
             },
             kMonitorRowExtent);
         list->set_cache_extent(200.0F);
-        list->modifier.set(aurora::Modifier{}.fill_max_width().expand());
+        list->set_modifier(aurora::Modifier{}.fill_max_width().expand());
         // 冻结判据的入口：偏移一落定就问一次几何（原先靠 `tick()` 逐帧轮询，见 `on_scroll_changed()`）。
         list->set_on_scroll_changed([this](float) -> void { on_scroll_changed(); });
         // 落位：`nullopt`＝跟尾，向控件要「末尾」这一份意图（未布局时记进待定偏移，首次可滚动布局
@@ -625,7 +622,7 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
     // 记账，动作腿当场改的是状态量，差一帧上屏（D8①／§4.5 第 25 条要的次序）。
     if (!painted_feedback_.empty()) {
         auto line = make_text(painted_feedback_, chrome.text_dim);
-        line->modifier.set(aurora::Modifier{}.fill_max_width());
+        line->set_modifier(aurora::Modifier{}.fill_max_width());
         feedback_cell_ = line;
         children.push_back(node(std::move(line)));
     }
@@ -634,7 +631,7 @@ auto SessionMonitorPanel::refresh_overlay() -> void {
         .children = std::move(children),
         .gap = 8.0F,
     });
-    card->modifier.set(aurora::Modifier{}
+    card->set_modifier(aurora::Modifier{}
                            .width(640.0F)  // D5①：54 字符 × 11 dp = 594 dp，加 12 dp 双侧内边距。
                            .fill_max_height()
                            .padding(aurora::EdgeInsets{12.0F, 12.0F, 12.0F, 12.0F})

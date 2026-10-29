@@ -80,7 +80,7 @@ auto ConnectionSidebar::open() -> void {
         [chrome = settings_chrome()](aurora::Painter &painter, const aurora::Rect &box) -> void {
             painter.fill_rect(box, chrome.window_bg);
         });
-    mask->modifier.set(
+    mask->set_modifier(
         aurora::Modifier{}.fill_max_size().clickable([this]() -> void { close(); }));
 
     auto card = build_overlay();
@@ -122,7 +122,7 @@ auto ConnectionSidebar::refresh_rows() -> void {
         [chrome = settings_chrome()](aurora::Painter &painter, const aurora::Rect &box) -> void {
             painter.fill_rect(box, chrome.window_bg);
         });
-    mask->modifier.set(
+    mask->set_modifier(
         aurora::Modifier{}.fill_max_size().clickable([this]() -> void { close(); }));
     auto card = build_overlay();
     auto layer = std::make_shared<aurora::Stack>(
@@ -245,7 +245,7 @@ auto ConnectionSidebar::build_overlay() -> std::shared_ptr<aurora::Column> {
     // ---- 标题行 + 关闭 ----
     auto title = std::make_shared<aurora::Text>(
         aurora::TextProps{.content = settings_label("connections.title"), .text_color = chrome.text});
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
     auto close_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
         .label = settings_label("connections.action.close"),
         .color = chrome.control_bg,
@@ -269,7 +269,7 @@ auto ConnectionSidebar::build_overlay() -> std::shared_ptr<aurora::Column> {
     quick_input_->set_focused_border_color(chrome.accent);
     quick_input_->set_text_color(chrome.text);
     quick_input_->set_placeholder(settings_label("connections.quick.placeholder"));
-    quick_input_->modifier.set(aurora::Modifier{}.width(200.0F));
+    quick_input_->set_modifier(aurora::Modifier{}.width(200.0F));
     auto quick_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
         .label = settings_label("connections.action.connect"),
         .color = chrome.accent,
@@ -293,7 +293,7 @@ auto ConnectionSidebar::build_overlay() -> std::shared_ptr<aurora::Column> {
     search_input_->set_focused_border_color(chrome.accent);
     search_input_->set_text_color(chrome.text);
     search_input_->set_placeholder(settings_label("connections.search.placeholder"));
-    search_input_->modifier.set(aurora::Modifier{}.fill_max_width());
+    search_input_->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(search_input_)});
 
     // ---- 三视图 chips（D7）----
@@ -352,7 +352,7 @@ auto ConnectionSidebar::build_overlay() -> std::shared_ptr<aurora::Column> {
     if (!notice_.empty()) {
         auto notice_text = std::make_shared<aurora::Text>(
             aurora::TextProps{.content = notice_, .text_color = chrome.text_dim});
-        notice_text->modifier.set(aurora::Modifier{}.fill_max_width());
+        notice_text->set_modifier(aurora::Modifier{}.fill_max_width());
         children.push_back(aurora::Node{
             std::static_pointer_cast<aurora::Widget>(std::move(notice_text))});
     }
@@ -366,7 +366,7 @@ auto ConnectionSidebar::build_overlay() -> std::shared_ptr<aurora::Column> {
         .child = aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(rows_column))},
         .step = 32.0F,
     });
-    rows_scroll->modifier.set(aurora::Modifier{}.fill_max_width().expand());
+    rows_scroll->set_modifier(aurora::Modifier{}.fill_max_width().expand());
     children.push_back(
         aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(rows_scroll))});
 
@@ -409,7 +409,7 @@ auto ConnectionSidebar::build_overlay() -> std::shared_ptr<aurora::Column> {
         .children = std::move(children),
         .gap = 8.0F,
     });
-    card->modifier.set(aurora::Modifier{}
+    card->set_modifier(aurora::Modifier{}
                            .width(320.0F)
                            .fill_max_height()
                            .padding(aurora::EdgeInsets{12.0F, 12.0F, 12.0F, 12.0F})

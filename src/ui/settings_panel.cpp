@@ -415,7 +415,7 @@ constexpr GroupNote kGroupNotes[] = {
 
 [[nodiscard]] auto make_group_note(const std::string &text) -> aurora::Node {
     auto note = make_text(text, chrome().text_dim);
-    note.widget().modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+    note.widget().set_modifier(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
         .left = 16.0F, .top = 4.0F, .right = 16.0F, .bottom = 4.0F}));
     return note;
 }
@@ -795,8 +795,8 @@ auto SettingsPanel::family_view() const -> FamilyView {
     // 而本件漏掉一次刷新时现算值照样正确——那正是判据最该抓到的那一类陈旧。
     FamilyView out;
     out.configured = configured_family();
-    out.effective = font_trigger_ != nullptr ? font_trigger_->label.get().text : std::string{};
-    out.notice = font_notice_ != nullptr ? font_notice_->content.get().text : std::string{};
+    out.effective = font_trigger_ != nullptr ? font_trigger_->label().get().text : std::string{};
+    out.notice = font_notice_ != nullptr ? font_notice_->content().get().text : std::string{};
     out.choices = family_choices();
     out.popup_open = font_popup_ != nullptr && font_popup_->is_open();
     return out;
@@ -867,7 +867,7 @@ auto SettingsPanel::rebuild_overlay() -> void {
     auto scrim = std::make_shared<aurora::Canvas>([](aurora::Painter &painter, const aurora::Rect &bounds) -> void {
         painter.fill_rect(bounds, chrome().scrim);
     });
-    scrim->modifier.set(aurora::Modifier{}.fill_max_size().clickable([this]() -> void {
+    scrim->set_modifier(aurora::Modifier{}.fill_max_size().clickable([this]() -> void {
         // A4-c：候选浮层开着时，第一次「浮层之外」的点击只关浮层。遮罩在浮层之下，本闭包跑起来时用户点的
         // 正是浮层之外那一片，直接 `close()` 会把整块面板一起撤掉。框架那条自动关闭（`handle_outside_click`）
         // 在 Aurora 全仓无调用点（裁决 7.41③ 的同一条实测），故这一腿归本件自驱。
@@ -914,7 +914,7 @@ auto SettingsPanel::build_card() -> aurora::Node {
                 .children = std::move(nav),
                 .gap = 2.0F,
             });
-            nav_column->modifier.set(aurora::Modifier{}.width(kNavWidthDp).fill_max_height().background(chrome().nav_bg));
+            nav_column->set_modifier(aurora::Modifier{}.width(kNavWidthDp).fill_max_height().background(chrome().nav_bg));
 
             // 行区是 `Scroll` + `Column` 而不是 `LazyList`：后者的 `item_extent` 是**全局**固定行高，
             // 而外观页的四类专用区段（主题卡 / 16 格色板 / 字体族 / 回退链）各自要占多行高度。
@@ -942,11 +942,11 @@ auto SettingsPanel::build_card() -> aurora::Node {
                 .children = std::move(row_nodes),
                 .gap = 0.0F,
             });
-            rows_column->modifier.set(aurora::Modifier{}.fill_max_width());
+            rows_column->set_modifier(aurora::Modifier{}.fill_max_width());
             auto rows = std::make_shared<aurora::Scroll>(aurora::ScrollProps{
                 .child = aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(rows_column))},
             });
-            rows->modifier.set(aurora::Modifier{}.fill_max_width().expand());
+            rows->set_modifier(aurora::Modifier{}.fill_max_width().expand());
 
             auto body = std::make_shared<aurora::Row>(aurora::RowProps{
                 .children = {aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(nav_column))},
@@ -954,12 +954,12 @@ auto SettingsPanel::build_card() -> aurora::Node {
                 .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
                 .gap = 0.0F,
             });
-            body->modifier.set(aurora::Modifier{}.fill_max_width().expand());
+            body->set_modifier(aurora::Modifier{}.fill_max_width().expand());
 
             auto title = make_text(settings_label("settings.title"), chrome().text);
-            title.widget().modifier.set(aurora::Modifier{}.expand());  // 标题吃掉剩余宽度，副标题与按钮靠右
+            title.widget().set_modifier(aurora::Modifier{}.expand());  // 标题吃掉剩余宽度，副标题与按钮靠右
             auto subtitle = make_text(settings_label("settings.subtitle"), chrome().text_dim);
-            subtitle.widget().modifier.set(aurora::Modifier{}.width(kStatusWidthDp));
+            subtitle.widget().set_modifier(aurora::Modifier{}.width(kStatusWidthDp));
 
             auto close_button = std::make_shared<aurora::Button>(aurora::ButtonProps{
                 .label = settings_text("settings.close"),
@@ -1005,7 +1005,7 @@ auto SettingsPanel::build_card() -> aurora::Node {
                 .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
                 .gap = 12.0F,
             });
-            header->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+            header->set_modifier(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
                 .left = 16.0F, .top = 12.0F, .right = 16.0F, .bottom = 12.0F}));
 
             std::vector<aurora::Node> card_children;
@@ -1015,7 +1015,7 @@ auto SettingsPanel::build_card() -> aurora::Node {
                 // 而用户正要点的那一枚按钮会跑位。
                 auto notice = std::make_shared<aurora::Text>(
                     aurora::TextProps{.content = config_notice_text_, .text_color = chrome().text_dim});
-                notice->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+                notice->set_modifier(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
                     .left = 16.0F, .top = 0.0F, .right = 16.0F, .bottom = 4.0F}));
                 config_notice_ = notice;
                 card_children.push_back(
@@ -1034,7 +1034,7 @@ auto SettingsPanel::build_card() -> aurora::Node {
                 .children = std::move(card_children),
                 .gap = 0.0F,
             });
-            card->modifier.set(aurora::Modifier{}.size(width, height).background(chrome().card_bg, 8.0F).border(
+            card->set_modifier(aurora::Modifier{}.size(width, height).background(chrome().card_bg, 8.0F).border(
                 1.0F, chrome().card_line));
             // 状态列指针在这里登记（`build_row` 已把每行的状态列建好），故本处**不得**再清空——
             // 行区改全量实例化之后，构建与这段代码在同一次布局里先后发生，倒空就把刚登记的指针抹掉了。
@@ -1073,7 +1073,7 @@ auto SettingsPanel::build_row(std::size_t ordinal) -> aurora::Node {
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
         .gap = 12.0F,
     });
-    row->modifier.set(aurora::Modifier{}.fill_max_width().height(kRowExtentDp).padding(aurora::EdgeInsets{
+    row->set_modifier(aurora::Modifier{}.fill_max_width().height(kRowExtentDp).padding(aurora::EdgeInsets{
         .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(row))};
 }
@@ -1082,11 +1082,11 @@ auto SettingsPanel::build_header(std::size_t ordinal, const SettingsControl &con
     -> std::pair<aurora::Node, aurora::Node> {
     auto label = std::make_shared<aurora::Text>(
         aurora::TextProps{.content = settings_text(control.key), .text_color = editable ? chrome().text : chrome().text_dim});
-    label->modifier.set(aurora::Modifier{}.expand());
+    label->set_modifier(aurora::Modifier{}.expand());
 
     auto status = std::make_shared<aurora::Text>(aurora::TextProps{
         .content = badge_text(control), .text_color = chrome().text_dim, .text_align = aurora::TextAlign::Right});
-    status->modifier.set(aurora::Modifier{}.width(kStatusWidthDp));
+    status->set_modifier(aurora::Modifier{}.width(kStatusWidthDp));
     if (ordinal < status_texts_.size()) {
         status_texts_[ordinal] = status;  // 条目构建器只在序号有效时才登记指针
     }
@@ -1102,7 +1102,7 @@ auto SettingsPanel::build_theme_section(std::size_t ordinal) -> aurora::Node {
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
         .gap = 12.0F,
     });
-    header->modifier.set(aurora::Modifier{}.fill_max_width());
+    header->set_modifier(aurora::Modifier{}.fill_max_width());
 
     // `LayoutBuilder` 在约束变化时会重跑整棵子树，故本区段的派生态指针在这里先清——
     // 不清就会一轮比一轮长，而刷新腿只认最后那批。
@@ -1119,7 +1119,7 @@ auto SettingsPanel::build_theme_section(std::size_t ordinal) -> aurora::Node {
         // 点击挂在画布上而不是外层 `Stack` 上：链上「只有可点或含可点后代者入链」，纯展示的画布根本
         // 不会被派发交回（`Widget::hit_test_chain`），那样 `theme_card()` 就点不到。画布 `fill_max_size`
         // 铺满整张卡，故落点即使在卡名那一档也一样命中它——`Text` 无可点语义，链会继续往下找。
-        canvas->modifier.set(aurora::Modifier{}.fill_max_size().clickable(
+        canvas->set_modifier(aurora::Modifier{}.fill_max_size().clickable(
             [this, name]() -> void { apply_theme(name); }));
         theme_canvases_.push_back(canvas);
 
@@ -1128,7 +1128,7 @@ auto SettingsPanel::build_theme_section(std::size_t ordinal) -> aurora::Node {
                                                        ? chrome().text
                                                        : chrome().text_dim});
         // 卡名落在下沿那一档：画布的样例四格在上半部、分隔线在中线，名字不能压到它们。
-        card_label->modifier.set(aurora::Modifier{}.padding(
+        card_label->set_modifier(aurora::Modifier{}.padding(
             aurora::EdgeInsets{.left = 10.0F, .top = 36.0F, .right = 0.0F, .bottom = 0.0F}));
         theme_labels_.push_back(card_label);
 
@@ -1137,7 +1137,7 @@ auto SettingsPanel::build_theme_section(std::size_t ordinal) -> aurora::Node {
         auto card = std::make_shared<aurora::Stack>(std::vector<aurora::Node>{
             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(canvas))},
             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(card_label))}});
-        card->modifier.set(aurora::Modifier{}
+        card->set_modifier(aurora::Modifier{}
                                .height(kThemeCardHeightDp)
                                .expand()
                                .clickable([this, name]() -> void { apply_theme(name); }));
@@ -1152,19 +1152,19 @@ auto SettingsPanel::build_theme_section(std::size_t ordinal) -> aurora::Node {
         }
         auto row = std::make_shared<aurora::Row>(
             aurora::RowProps{.children = std::move(band), .gap = kSectionGapDp});
-        row->modifier.set(aurora::Modifier{}.fill_max_width());
+        row->set_modifier(aurora::Modifier{}.fill_max_width());
         bands.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(row))});
     }
 
     auto body = std::make_shared<aurora::Column>(
         aurora::ColumnProps{.children = std::move(bands), .gap = kSectionGapDp});
-    body->modifier.set(aurora::Modifier{}.fill_max_width());
+    body->set_modifier(aurora::Modifier{}.fill_max_width());
     auto section = std::make_shared<aurora::Column>(aurora::ColumnProps{
         .children = {aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(header))},
                      aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(body))}},
         .gap = kSectionGapDp,
     });
-    section->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+    section->set_modifier(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
         .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(section))};
 }
@@ -1177,7 +1177,7 @@ auto SettingsPanel::build_swatch_section(std::size_t ordinal) -> aurora::Node {
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
         .gap = 12.0F,
     });
-    header->modifier.set(aurora::Modifier{}.fill_max_width());
+    header->set_modifier(aurora::Modifier{}.fill_max_width());
 
     swatch_canvases_.clear();
     std::vector<aurora::Node> swatch_nodes;
@@ -1188,7 +1188,7 @@ auto SettingsPanel::build_swatch_section(std::size_t ordinal) -> aurora::Node {
                                                                  const aurora::Rect &box) -> void {
                 paint_swatch(painter, box, slot);
             });
-        tile->modifier.set(
+        tile->set_modifier(
             aurora::Modifier{}.clickable([this, slot]() -> void { select_swatch(slot); }));
         swatch_canvases_.push_back(tile);
         swatch_nodes.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(tile))});
@@ -1201,7 +1201,7 @@ auto SettingsPanel::build_swatch_section(std::size_t ordinal) -> aurora::Node {
             band.push_back(std::move(swatch_nodes[i]));
         }
         auto row = std::make_shared<aurora::Row>(aurora::RowProps{.children = std::move(band), .gap = 4.0F});
-        row->modifier.set(aurora::Modifier{}.fill_max_width());
+        row->set_modifier(aurora::Modifier{}.fill_max_width());
         bands.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(row))});
     }
 
@@ -1221,7 +1221,7 @@ auto SettingsPanel::build_swatch_section(std::size_t ordinal) -> aurora::Node {
     editor->commit = [this](const std::string &text) -> void {
         commit_slot(kPaletteKey, selected_swatch_, text);
     };
-    editor->modifier.set(aurora::Modifier{}.width(120.0F));
+    editor->set_modifier(aurora::Modifier{}.width(120.0F));
     swatch_editor_ = editor;
     sync_swatch_editor();
 
@@ -1245,7 +1245,7 @@ auto SettingsPanel::build_swatch_section(std::size_t ordinal) -> aurora::Node {
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
         .gap = 6.0F,
     });
-    editor_row->modifier.set(aurora::Modifier{}.fill_max_width());
+    editor_row->set_modifier(aurora::Modifier{}.fill_max_width());
 
     std::vector<aurora::Node> children;
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(header))});
@@ -1255,7 +1255,7 @@ auto SettingsPanel::build_swatch_section(std::size_t ordinal) -> aurora::Node {
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(editor_row))});
     auto section = std::make_shared<aurora::Column>(
         aurora::ColumnProps{.children = std::move(children), .gap = kSectionGapDp});
-    section->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+    section->set_modifier(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
         .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(section))};
 }
@@ -1293,12 +1293,12 @@ auto SettingsPanel::build_family_section(std::size_t ordinal) -> aurora::Node {
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
         .gap = 12.0F,
     });
-    header_row->modifier.set(aurora::Modifier{}.fill_max_width());
+    header_row->set_modifier(aurora::Modifier{}.fill_max_width());
 
     // 留痕行：A4-b 要的是字体行**下方**那一条独立留痕。`Configured` 档写空串而不撤掉这一行（文件头②的
     // 代价：这一行恒占高度，换来「不用 `show` 翻转、因此不需要补布局脏」）。
     auto notice = std::make_shared<aurora::Text>(aurora::TextProps{.content = std::string{}, .text_color = chrome().text_dim});
-    notice->modifier.set(aurora::Modifier{}.fill_max_width());
+    notice->set_modifier(aurora::Modifier{}.fill_max_width());
     font_notice_ = notice;
 
     std::vector<aurora::Node> children;
@@ -1306,7 +1306,7 @@ auto SettingsPanel::build_family_section(std::size_t ordinal) -> aurora::Node {
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(notice)});  // 交副本：成员要留着刷新
     auto section = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(children),
                                                                         .gap = kSectionGapDp});
-    section->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+    section->set_modifier(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
         .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
     refresh_family_views();
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(section))};
@@ -1357,7 +1357,7 @@ auto SettingsPanel::build_chain_section(std::size_t ordinal) -> aurora::Node {
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
         .gap = 12.0F,
     });
-    header->modifier.set(aurora::Modifier{}.fill_max_width());
+    header->set_modifier(aurora::Modifier{}.fill_max_width());
 
     // 条目指针表在本函数开头清一次：卡片是 `LayoutBuilder`，本闭包在每次布局都会重跑（裁决 7.61 在
     // 主题卡那一区撞过的同一条），不清就会留下上一版的孤儿指针并被刷新腿写值。
@@ -1367,17 +1367,17 @@ auto SettingsPanel::build_chain_section(std::size_t ordinal) -> aurora::Node {
     chain_candidates_.clear();
     candidate_names_.clear();
 
-    chain_items_ = std::make_shared<aurora::State<std::vector<std::string>>>(chain_items_from_form());
+    chain_items_ = aurora::State<std::vector<std::string>>{chain_items_from_form()};
     chain_list_ = std::make_shared<aurora::ReorderableList<std::string>>(
-        chain_items_,
+        *chain_items_,
         [this](const std::string &family, int index) -> aurora::Node {
             const std::size_t i = static_cast<std::size_t>(index);
-            const std::size_t count = chain_items_ == nullptr ? 0U : chain_items_->get().size();
+            const std::size_t count = chain_items_.has_value() ? chain_items_->get().size() : 0U;
 
             auto ordinal_text = make_text(std::to_string(i + 1U), chrome().text_dim);
-            ordinal_text.widget().modifier.set(aurora::Modifier{}.width(kChainOrdinalWidthDp));
+            ordinal_text.widget().set_modifier(aurora::Modifier{}.width(kChainOrdinalWidthDp));
             auto name_text = make_text(family, chrome().text);
-            name_text.widget().modifier.set(aurora::Modifier{}.expand());
+            name_text.widget().set_modifier(aurora::Modifier{}.expand());
 
             // 三枚按钮全部落在手柄带之左：`set_drag_handle(true)` 让列表把右侧 48 dp 收作自己的
             // 起拖区（带内的落点连条目都拿不到，文件头②），带内由本件自绘一幅 grip 点阵。
@@ -1391,11 +1391,11 @@ auto SettingsPanel::build_chain_section(std::size_t ordinal) -> aurora::Node {
                     .border_width = 1.0F,
                     .min_width = kChainButtonWidthDp,
                 });
-                button->label = settings_text(key);
+                button->set_label(settings_text(key));
                 button->set_disabled_colors(chrome().control_bg, chrome().text_dim);
                 button->set_enabled(enabled);
                 button->set_on_click(std::move(action));
-                button->modifier.set(aurora::Modifier{}.width(kChainButtonWidthDp));
+                button->set_modifier(aurora::Modifier{}.width(kChainButtonWidthDp));
                 return button;
             };
             auto up = make_arrow("settings.chain.up", i > 0U, [this, i]() -> void { move_chain_item(i, -1); });
@@ -1420,7 +1420,7 @@ auto SettingsPanel::build_chain_section(std::size_t ordinal) -> aurora::Node {
                 .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
                 .gap = 6.0F,
             });
-            item->modifier.set(aurora::Modifier{}.fill_max_width().height(kChainItemHeightDp));
+            item->set_modifier(aurora::Modifier{}.fill_max_width().height(kChainItemHeightDp));
             return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(item))};
         },
         0.0F);
@@ -1436,7 +1436,7 @@ auto SettingsPanel::build_chain_section(std::size_t ordinal) -> aurora::Node {
         .children = {aurora::Node{std::static_pointer_cast<aurora::Widget>(chain_list_)}},
         .gap = 0.0F,
     });
-    chain_list_holder_->modifier.set(aurora::Modifier{}.fill_max_width().height(
+    chain_list_holder_->set_modifier(aurora::Modifier{}.fill_max_width().height(
         chain_section_height_dp(chain_items_->get().size())));
 
     // 过滤框：普通 `TextInput` 而不是 `BlurCommitText`——它的内容**永不进表单**（文件头「添加族」段），
@@ -1454,10 +1454,10 @@ auto SettingsPanel::build_chain_section(std::size_t ordinal) -> aurora::Node {
         chain_filter_text_ = text;
         refresh_chain_candidates();
     });
-    chain_filter_->modifier.set(aurora::Modifier{}.width(kChainFilterWidthDp));
+    chain_filter_->set_modifier(aurora::Modifier{}.width(kChainFilterWidthDp));
 
-    // 候选池是**常驻**的 N 枚按钮，换候选只改标签与 `show`（文件头「添加族」段：200+ 族不能撑开一个
-    // 无上限浮层，而 `Reactive<bool> show` 为假时该控件量成零盒且不参与命中与绘制，故不需要销毁重建，
+    // 候选池是**常驻**的 N 枚按钮，换候选只改标签与可见性（文件头「添加族」段：200+ 族不能撑开一个
+    // 无上限浮层，而可见性来源为假时该控件量成零盒且不参与命中与绘制，故不需要销毁重建，
     // 命中序号因此稳定）。槽位号在闭包里捕获，点击时按 `candidate_names_` 的当前内容取族名。
     std::vector<aurora::Node> candidate_nodes;
     candidate_nodes.reserve(kChainCandidateRows);
@@ -1475,17 +1475,17 @@ auto SettingsPanel::build_chain_section(std::size_t ordinal) -> aurora::Node {
                 append_chain_family(candidate_names_[slot]);
             }
         });
-        button->modifier.set(aurora::Modifier{}.fill_max_width().height(kChainItemHeightDp));
-        button->show = false;  // 建好即隐藏：只有过滤出候选时才现形
+        button->set_modifier(aurora::Modifier{}.fill_max_width().height(kChainItemHeightDp));
+        button->set_show(false);  // 建好即隐藏：只有过滤出候选时才现形
         chain_candidates_.push_back(button);
         candidate_names_.emplace_back();
         candidate_nodes.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(button))});
     }
     auto pool = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(candidate_nodes), .gap = 4.0F});
-    pool->modifier.set(aurora::Modifier{}.fill_max_width());
+    pool->set_modifier(aurora::Modifier{}.fill_max_width());
 
     chain_hint_ = std::make_shared<aurora::Text>(aurora::TextProps{.content = std::string{}, .text_color = chrome().text_dim});
-    chain_hint_->modifier.set(aurora::Modifier{}.fill_max_width());
+    chain_hint_->set_modifier(aurora::Modifier{}.fill_max_width());
 
     std::vector<aurora::Node> children;
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(header))});
@@ -1497,7 +1497,7 @@ auto SettingsPanel::build_chain_section(std::size_t ordinal) -> aurora::Node {
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(chain_hint_)});
     auto section = std::make_shared<aurora::Column>(
         aurora::ColumnProps{.children = std::move(children), .gap = kSectionGapDp});
-    section->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+    section->set_modifier(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
         .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
 
     refresh_chain_candidates();
@@ -1534,7 +1534,7 @@ auto SettingsPanel::build_shortcuts_section(std::size_t ordinal) -> aurora::Node
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
         .gap = 12.0F,
     });
-    header->modifier.set(aurora::Modifier{}.fill_max_width());
+    header->set_modifier(aurora::Modifier{}.fill_max_width());
 
     std::vector<ShortcutCommandEntry> entries =
         hooks_.commands ? hooks_.commands() : std::vector<ShortcutCommandEntry>{};
@@ -1554,7 +1554,7 @@ auto SettingsPanel::build_shortcuts_section(std::size_t ordinal) -> aurora::Node
 
     const auto make_cell = [](std::string text, aurora::Color color, float width_dp) -> aurora::Node {
         auto cell = make_text(text, color);
-        cell.widget().modifier.set(width_dp > 0.0F
+        cell.widget().set_modifier(width_dp > 0.0F
                                        ? aurora::Modifier{}.width(width_dp)
                                        : aurora::Modifier{}.expand());
         return cell;
@@ -1571,7 +1571,7 @@ auto SettingsPanel::build_shortcuts_section(std::size_t ordinal) -> aurora::Node
             .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
             .gap = 12.0F,
         });
-        line->modifier.set(aurora::Modifier{}.fill_max_width().height(kShortcutRowHeightDp));
+        line->set_modifier(aurora::Modifier{}.fill_max_width().height(kShortcutRowHeightDp));
         return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(line))};
     };
 
@@ -1616,7 +1616,7 @@ auto SettingsPanel::build_shortcuts_section(std::size_t ordinal) -> aurora::Node
             .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
             .gap = 12.0F,
         });
-        row_node->modifier.set(aurora::Modifier{}.fill_max_width().height(kShortcutRowHeightDp));
+        row_node->set_modifier(aurora::Modifier{}.fill_max_width().height(kShortcutRowHeightDp));
         children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(row_node))});
         
         shortcuts_rows_.push_back(ShortcutRowView{
@@ -1645,12 +1645,12 @@ auto SettingsPanel::build_shortcuts_section(std::size_t ordinal) -> aurora::Node
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
         .gap = 12.0F,
     });
-    footer->modifier.set(aurora::Modifier{}.fill_max_width());
+    footer->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(footer))});
 
     auto section = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(children),
                                                                        .gap = kSectionGapDp});
-    section->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+    section->set_modifier(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
         .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(section))};
 }
@@ -1663,10 +1663,10 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
         switch (control.kind) {
             case ControlKind::Toggle: {
                 const bool on = value != nullptr && value->as_boolean().value_or(false);
-                auto sw = std::make_shared<aurora::Switch>(aurora::Reactive<bool>{on});
+                auto sw = std::make_shared<aurora::Switch>(aurora::State<bool>{on});
                 // 行高 56 dp 扣掉上下各 8 dp 内边距后给子项的是**紧约束 40 dp**，而开关的滑块直径按
                 // 自身盒高算（`bounds.height − 2×inset`），不锁高度就会被拉成 36 dp 的白饼、轨道只剩两侧细边。
-                sw->modifier.set(aurora::Modifier{}.height(24.0F));
+                sw->set_modifier(aurora::Modifier{}.height(24.0F));
                 sw->set_active_color(chrome().accent);
                 sw->set_inactive_color(chrome().control_bg);
                 sw->set_border(chrome().card_line, 1.0F);
@@ -1740,7 +1740,7 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
                 }
                 box->set_on_submit([this, key](const std::string &text) -> void { commit_text(key, text); });
                 box->commit = [this, key](const std::string &text) -> void { commit_text(key, text); };
-                box->modifier.set(aurora::Modifier{}.width(control.kind == ControlKind::TextInput ? 280.0F
+                box->set_modifier(aurora::Modifier{}.width(control.kind == ControlKind::TextInput ? 280.0F
                                                                                                     : 120.0F));
 
                 std::vector<aurora::Node> children;
@@ -1818,8 +1818,7 @@ auto SettingsPanel::set_status(std::size_t ordinal, const aurora::LocalizedStrin
     if (ordinal >= status_texts_.size() || status_texts_[ordinal] == nullptr) {
         return;  // 该行此刻不在可见窗口内、条目已被回收；下次进入窗口时按角标重建
     }
-    status_texts_[ordinal]->content = text;
-    status_texts_[ordinal]->mark_needs_paint();
+    status_texts_[ordinal]->set_content(text);
 }
 
 auto SettingsPanel::badge_for(const SettingsControl &control) -> std::string {
@@ -2049,7 +2048,7 @@ auto SettingsPanel::chain_items_from_form() const -> std::vector<std::string> {
 }
 
 auto SettingsPanel::rebuild_chain_rows(std::vector<std::string> next) -> void {
-    if (chain_items_ == nullptr || chain_list_ == nullptr) {
+    if (!chain_items_.has_value() || chain_list_ == nullptr) {
         return;  // 区段没画（当前页不是外观页，或面板关着）：结构性改动无从发生
     }
     const std::size_t count = next.size();
@@ -2063,7 +2062,7 @@ auto SettingsPanel::rebuild_chain_rows(std::vector<std::string> next) -> void {
     // 立刻自己调一次：重建本发生在下一次布局里，拉到此处是为了让本函数返回时按钮指针与数据同序。
     chain_list_->rebuild_if_needed();
     if (chain_list_holder_ != nullptr) {
-        chain_list_holder_->modifier.set(aurora::Modifier{}.fill_max_width().height(chain_section_height_dp(count)));
+        chain_list_holder_->set_modifier(aurora::Modifier{}.fill_max_width().height(chain_section_height_dp(count)));
     }
     refresh_chain_views();
 }
@@ -2075,7 +2074,7 @@ auto SettingsPanel::refresh_chain_views() -> void {
 }
 
 auto SettingsPanel::refresh_chain_candidates() -> void {
-    const std::vector<std::string> items = chain_items_ != nullptr ? chain_items_->get() : chain_items_from_form();
+    const std::vector<std::string> items = chain_items_.has_value() ? chain_items_->get() : chain_items_from_form();
     const std::string needle = ascii_lower(chain_filter_text_);
     // 空过滤时**不列任何候选**：目录里 200+ 族，摆哪 N 档都是一次没有依据的挑选（而且用户看不到剩下的），
     // 故池子只在过滤文本非空时现形，此时列出的就是「按目录次序的前 N 个匹配项」。
@@ -2102,41 +2101,25 @@ auto SettingsPanel::refresh_chain_candidates() -> void {
 
     const bool at_capacity = items.size() >= kChainCapacity;
     candidate_names_.assign(chain_candidates_.size(), std::string{});
-    std::vector<aurora::Button *> shifted;
     for (std::size_t slot = 0; slot < chain_candidates_.size(); ++slot) {
         const bool visible = slot < matched.size();
-        if (chain_candidates_[slot]->show.get() != visible) {
-            shifted.push_back(chain_candidates_[slot].get());
-        }
         if (visible) {
             candidate_names_[slot] = matched[slot];
         }
         chain_candidates_[slot]->set_label(visible ? matched[slot] : std::string{});
         chain_candidates_[slot]->set_enabled(visible && !at_capacity);  // 达上限时追加口关死（A5-a）
-        chain_candidates_[slot]->show = visible;
-    }
-    if (!shifted.empty()) {
-        // 翻转 `show` 必须**手工补布局脏**：框架把 `show` 当测量输入（`Widget::layout` 在 show 为假时直接
-        // 回零盒，且该早返回早于布局缓存那一支），但写它不标脏布局，于是祖先按缓存复用「零盒」那次的尺寸，
-        // 候选按钮从此量不出高度、进不了命中链（实测：过滤出两档后 `size()` 恒 0x0）。框架文档自陈
-        // 「`mark_needs_layout()` 只能沿显式标脏路径失效缓存」，补脏归调用方。
-        // 只标叶子即可：脏沿 `layout_parent_` 上溯到渲染根，而那条父链自 **G32** 回货（Aurora `1b3fe58c`：
-        // `Node` 析构不再清父指针，改由父侧在真正摘除时清）之后不会再被临时句柄抹断。登记时这里还多标一层
-        // 卡片外层的 `LayoutBuilder` 以绕过断链，框架侧的变异自证把那种「应用侧顺手多标祖先脏」判为**掩盖而
-        // 非修复**，故随回货一并撤除。
-        for (aurora::Button *button : shifted) {
-            button->mark_needs_layout();
-        }
+        // `set_show` 自带布局脏与绘制脏（框架侧换源即 `mark_needs_layout/mark_needs_paint`），
+        // 这里不再手工补脏——那是 G49 之前「写属性字段不标脏」时代的代偿。
+        chain_candidates_[slot]->set_show(visible);
     }
 
     if (chain_hint_ != nullptr) {
-        chain_hint_->content = chain_hint_text(items, chain_filter_text_, matched.size());
-        chain_hint_->mark_needs_paint();
+        chain_hint_->set_content(chain_hint_text(items, chain_filter_text_, matched.size()));
     }
 }
 
 auto SettingsPanel::commit_chain() -> void {
-    if (chain_items_ == nullptr) {
+    if (!chain_items_.has_value()) {
         return;
     }
     // 表单是唯一权威：一次结构性改动交一次提交，于是「已接线 ∧ 即时」的该行在一次改链里恰好落盘一次、
@@ -2146,7 +2129,7 @@ auto SettingsPanel::commit_chain() -> void {
 }
 
 auto SettingsPanel::move_chain_item(std::size_t index, int delta) -> void {
-    if (chain_items_ == nullptr || chain_list_ == nullptr) {
+    if (!chain_items_.has_value() || chain_list_ == nullptr) {
         return;
     }
     const std::size_t count = chain_items_->get().size();
@@ -2162,7 +2145,7 @@ auto SettingsPanel::move_chain_item(std::size_t index, int delta) -> void {
 }
 
 auto SettingsPanel::remove_chain_item(std::size_t index) -> void {
-    if (chain_items_ == nullptr) {
+    if (!chain_items_.has_value()) {
         return;
     }
     std::vector<std::string> next = chain_items_->get();
@@ -2175,7 +2158,7 @@ auto SettingsPanel::remove_chain_item(std::size_t index) -> void {
 }
 
 auto SettingsPanel::append_chain_family(const std::string &family) -> void {
-    if (chain_items_ == nullptr) {
+    if (!chain_items_.has_value()) {
         return;
     }
     std::vector<std::string> next = chain_items_->get();
@@ -2223,7 +2206,7 @@ auto SettingsPanel::open_family_popup(aurora::Point anchor) -> void {
             .min_width = kFontPopupWidthDp,
         });
         item->set_on_click([this, family]() -> void { choose_family(family); });
-        item->modifier.set(aurora::Modifier{}.height(kFontItemHeightDp));
+        item->set_modifier(aurora::Modifier{}.height(kFontItemHeightDp));
         font_candidates_.push_back(item);
         rows.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(item))});
     }
@@ -2235,7 +2218,7 @@ auto SettingsPanel::open_family_popup(aurora::Point anchor) -> void {
         .child = aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(list))},
         .step = kFontItemHeightDp,
     });
-    viewport->modifier.set(aurora::Modifier{}
+    viewport->set_modifier(aurora::Modifier{}
                                .width(kFontPopupWidthDp)
                                .height(kFontItemHeightDp * std::min(choices.size(), kFontPopupVisibleRows))
                                .background(chrome().control_bg)
@@ -2266,19 +2249,15 @@ auto SettingsPanel::choose_family(const std::string &family) -> void {
 
 auto SettingsPanel::refresh_family_views() -> void {
     const FontFamilyChoice choice = family_choice();
-    if (font_trigger_ != nullptr && font_trigger_->label.get().text != choice.family) {
-        // 标签是 `on_layout` 的测宽输入（框架经 `resolved_label()` 量宽），而 `set_label` 只赋值不标脏，
-        // 故两处脏都要补；只在值真变的那一次补，否则每次提交都会让整块行区重排。
+    if (font_trigger_ != nullptr && font_trigger_->label().get().text != choice.family) {
+        // 标签是 `on_layout` 的测宽输入（框架经 `resolved_label()` 量宽）；`set_label` 换源即两脏，
+        // 这里只在值真变的那一次调用，否则每次提交都会让整块行区重排。
         font_trigger_->set_label(choice.family);
-        font_trigger_->mark_needs_layout();
-        font_trigger_->mark_needs_paint();
     }
     if (font_notice_ != nullptr) {
         const std::string notice = family_notice_text(choice, configured_family());
-        if (font_notice_->content.get().text != notice) {
-            font_notice_->content = notice;
-            font_notice_->mark_needs_layout();
-            font_notice_->mark_needs_paint();
+        if (font_notice_->content().get().text != notice) {
+            font_notice_->set_content(notice);
         }
     }
 }
@@ -2404,13 +2383,13 @@ auto SettingsPanel::open_binding_dialog(const std::string &command_id, std::size
         binding_input_->set_border_color(chrome().card_line);
         binding_input_->set_focused_border_color(chrome().accent);
         binding_input_->set_text_color(chrome().text);
-        binding_input_->modifier.set(aurora::Modifier{}.width(280.0F));
+        binding_input_->set_modifier(aurora::Modifier{}.width(280.0F));
         
         // 冲突提示文本
         conflict_notice_ = std::make_shared<aurora::Text>(aurora::TextProps{
             .content = {},
         });
-        conflict_notice_->modifier.set(aurora::Modifier{}.fill_max_width());
+        conflict_notice_->set_modifier(aurora::Modifier{}.fill_max_width());
         
         // 确定按钮
         auto ok_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
@@ -2461,7 +2440,7 @@ auto SettingsPanel::open_binding_dialog(const std::string &command_id, std::size
         // `OverlayHost` 继续往下问，于是落在卡片留白处的那一击穿透模态层、打到面板的行区上（实测
         // 读数：卡片内一处留白 → 链尾是行区 `Scroll` 而非本对话框）。按裁决 7.61③ 的口径，可点语义
         // 必须落在绘制者身上，故吸收与底色都挂在画这张卡片的那一位自己身上，而不另铺一层透明板。
-        content->modifier.set(aurora::Modifier{}.padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
+        content->set_modifier(aurora::Modifier{}.padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
                                              .background(chrome().card_bg, 8.0F)
                                              .border(1.0F, chrome().card_line)
                                              .clickable([]() -> void {}));
@@ -2521,7 +2500,7 @@ auto SettingsPanel::update_conflict_notice(const std::string &combo_text) -> voi
     
     const std::vector<std::string> conflicts = detect_conflicts(combo_text, editing_command_id_);
     if (conflicts.empty()) {
-        conflict_notice_->content = {};
+        conflict_notice_->set_content(std::string{});
     } else {
         std::string notice = settings_label("settings.shortcut.conflict_warning") + ": ";
         for (std::size_t i = 0; i < conflicts.size(); ++i) {
@@ -2530,9 +2509,8 @@ auto SettingsPanel::update_conflict_notice(const std::string &combo_text) -> voi
             }
             notice += conflicts[i];
         }
-        conflict_notice_->content = notice;
+        conflict_notice_->set_content(notice);
     }
-    conflict_notice_->mark_needs_paint();
 }
 
 auto SettingsPanel::commit_binding(const std::string &combo_text) -> void {
@@ -2734,12 +2712,12 @@ auto SettingsPanel::build_snapshot_section() -> std::vector<aurora::Node> {
     std::vector<aurora::Node> children;
 
     auto note = make_text(settings_label("settings.snapshot.note"), chrome().text_dim);
-    note.widget().modifier.set(aurora::Modifier{}.fill_max_width());
+    note.widget().set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(std::move(note));
 
     if (snapshots_.empty()) {
         auto empty = make_text(settings_label("settings.snapshot.empty"), chrome().text_dim);
-        empty.widget().modifier.set(aurora::Modifier{}.fill_max_width());
+        empty.widget().set_modifier(aurora::Modifier{}.fill_max_width());
         children.push_back(std::move(empty));
     }
 
@@ -2748,9 +2726,9 @@ auto SettingsPanel::build_snapshot_section() -> std::vector<aurora::Node> {
     for (std::size_t index = 0; index < snapshots_.size(); ++index) {
         const SnapshotEntry &entry = snapshots_[index];
         auto name = make_text(snapshot_name_text(entry.path), chrome().text);
-        name.widget().modifier.set(aurora::Modifier{}.expand());
+        name.widget().set_modifier(aurora::Modifier{}.expand());
         auto size = make_text(snapshot_size_text(entry.size_bytes), chrome().text_dim);
-        size.widget().modifier.set(aurora::Modifier{}.width(kSnapshotSizeWidthDp));
+        size.widget().set_modifier(aurora::Modifier{}.width(kSnapshotSizeWidthDp));
 
         auto rollback = std::make_shared<aurora::Button>(aurora::ButtonProps{
             .label = settings_label("settings.snapshot.rollback"),
@@ -2769,7 +2747,7 @@ auto SettingsPanel::build_snapshot_section() -> std::vector<aurora::Node> {
             .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
             .gap = 12.0F,
         });
-        line->modifier.set(aurora::Modifier{}.fill_max_width().height(kSnapshotRowHeightDp));
+        line->set_modifier(aurora::Modifier{}.fill_max_width().height(kSnapshotRowHeightDp));
         children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(line))});
     }
 
@@ -2788,12 +2766,12 @@ auto SettingsPanel::build_snapshot_section() -> std::vector<aurora::Node> {
         .children = {std::move(footer_cell)},
         .gap = 0.0F,
     });
-    footer->modifier.set(aurora::Modifier{}.fill_max_width());
+    footer->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(footer))});
 
     auto section = std::make_shared<aurora::Column>(
         aurora::ColumnProps{.children = std::move(children), .gap = kSectionGapDp});
-    section->modifier.set(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
+    section->set_modifier(aurora::Modifier{}.fill_max_width().padding(aurora::EdgeInsets{
         .left = 16.0F, .top = 8.0F, .right = 16.0F, .bottom = 8.0F}));
     return {aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(section))}};
 }
@@ -2863,12 +2841,9 @@ auto SettingsPanel::set_config_notice(std::string text) -> void {
     if (config_notice_ == nullptr) {
         return;
     }
-    // 框架的 `Text::set_content()` 只改值不带脏标记（只有 `set_enabled()` 无条件标脏），故比较后自标
-    // 两脏（与回退链提示、快捷键行表同一处卫生）。
-    if (config_notice_->content.get().text != config_notice_text_) {
-        config_notice_->content = config_notice_text_;
-        config_notice_->mark_needs_layout();
-        config_notice_->mark_needs_paint();
+    // 比较后才写：`set_content` 换源即两脏（布局 + 绘制），无谓重写会让整块头部留痕反复重排。
+    if (config_notice_->content().get().text != config_notice_text_) {
+        config_notice_->set_content(config_notice_text_);
     }
 }
 

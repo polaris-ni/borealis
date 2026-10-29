@@ -70,14 +70,14 @@ constexpr std::array<std::uint16_t, 3> kRsaBits{2048U, 3072U, 4096U};
     input->set_border_color(chrome.card_line);
     input->set_focused_border_color(chrome.accent);
     input->set_text_color(chrome.text);
-    input->modifier.set(aurora::Modifier{}.width(width));
+    input->set_modifier(aurora::Modifier{}.width(width));
     return input;
 }
 
 /// @brief 行内/框内一枚定宽短标（溢出交给 Text 自己的 Clip，行右侧的按钮才点得到）。
 [[nodiscard]] auto chip(std::string text, aurora::Color color, float width) -> aurora::Node {
     auto widget = make_text(std::move(text), color);
-    widget->modifier.set(aurora::Modifier{}.width(width));
+    widget->set_modifier(aurora::Modifier{}.width(width));
     return node(std::move(widget));
 }
 
@@ -237,7 +237,7 @@ auto KeysPanel::install_overlay() -> void {
         [c = chrome](aurora::Painter &painter, const aurora::Rect &box) -> void {
             painter.fill_rect(box, c.window_bg);
         });
-    mask->modifier.set(
+    mask->set_modifier(
         aurora::Modifier{}.fill_max_size().clickable([this]() -> void { close(); }));
     auto card = build_overlay();
     auto layer = std::make_shared<aurora::Stack>(
@@ -314,7 +314,7 @@ auto KeysPanel::build_row(const KeyRow &row) -> aurora::Node {
 
     // ---- 次行：指纹 + 全路径（行唯一键的可见兑现，D2③ 细则⑷）----
     auto secondary = make_text(key_secondary_line(row.key), chrome.text_dim);
-    secondary->modifier.set(aurora::Modifier{}.width(330.0F));
+    secondary->set_modifier(aurora::Modifier{}.width(330.0F));
     auto line1 = std::make_shared<aurora::Row>(aurora::RowProps{
         .children = std::move(line1_children),
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
@@ -369,7 +369,7 @@ auto KeysPanel::build_row(const KeyRow &row) -> aurora::Node {
     // ---- 顶行留痕（判据 4 的「已复制」、判据 5 的「生成中」、各家失败都走这一格）----
     if (!notice_text_.empty()) {
         auto notice = make_text(notice_text_, chrome.text_dim);
-        notice->modifier.set(aurora::Modifier{}.fill_max_width());
+        notice->set_modifier(aurora::Modifier{}.fill_max_width());
         children.push_back(node(std::move(notice)));
     }
 
@@ -381,7 +381,7 @@ auto KeysPanel::build_row(const KeyRow &row) -> aurora::Node {
         }
         auto note = make_text(settings_label(note_key, {{"path", dir.path}}),
                               chrome.text_dim);
-        note->modifier.set(aurora::Modifier{}.fill_max_width());
+        note->set_modifier(aurora::Modifier{}.fill_max_width());
         children.push_back(node(std::move(note)));
     }
 
@@ -397,14 +397,14 @@ auto KeysPanel::build_row(const KeyRow &row) -> aurora::Node {
         .child = node(std::static_pointer_cast<aurora::Widget>(std::move(rows_column))),
         .step = 32.0F,
     });
-    scroll->modifier.set(aurora::Modifier{}.fill_max_width().expand());
+    scroll->set_modifier(aurora::Modifier{}.fill_max_width().expand());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(scroll))));
 
     auto card = std::make_shared<aurora::Column>(aurora::ColumnProps{
         .children = std::move(children),
         .gap = 8.0F,
     });
-    card->modifier.set(aurora::Modifier{}
+    card->set_modifier(aurora::Modifier{}
                            .width(520.0F)
                            .fill_max_height()
                            .padding(aurora::EdgeInsets{12.0F, 12.0F, 12.0F, 12.0F})
@@ -499,7 +499,7 @@ auto KeysPanel::close_generate() -> void {
     auto children = std::vector<aurora::Node>{};
 
     auto title = make_text(settings_label("keys.generate.title"), chrome.text);
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::move(title)));
 
     // ---- 两卡定字段集（判据 5：只有 RSA 卡出位数下拉；换卡＝就地重建，同隧道三式）----
@@ -538,7 +538,7 @@ auto KeysPanel::close_generate() -> void {
             bits_index_ = static_cast<std::size_t>(index);
             draft_.rsa_bits = kRsaBits[static_cast<std::size_t>(index)];
         });
-        bits_box->modifier.set(aurora::Modifier{}.width(150.0F));
+        bits_box->set_modifier(aurora::Modifier{}.width(150.0F));
         children.push_back(
             field_row(settings_label("keys.generate.field.bits"),
                       node(std::static_pointer_cast<aurora::Widget>(std::move(bits_box)))));
@@ -595,7 +595,7 @@ auto KeysPanel::close_generate() -> void {
 
     // ---- 红提示（空＝无）----
     generate_notice_ = make_text(std::string{}, aurora::colors::AURORA_RED);
-    generate_notice_->modifier.set(aurora::Modifier{}.fill_max_width());
+    generate_notice_->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(generate_notice_)));
 
     // ---- 生成 / 取消 ----
@@ -615,7 +615,7 @@ auto KeysPanel::close_generate() -> void {
         .children = std::move(children),
         .gap = 8.0F,
     });
-    card->modifier.set(aurora::Modifier{}
+    card->set_modifier(aurora::Modifier{}
                            .width(440.0F)
                            .padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
                            .background(chrome.card_bg, 0.0F)
@@ -719,7 +719,7 @@ auto KeysPanel::close_push() -> void {
     auto children = std::vector<aurora::Node>{};
 
     auto title = make_text(settings_label("keys.push.title"), chrome.text);
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::move(title)));
 
     // ---- 目标那一行的复述：推送的是哪把钥匙，得上屏说清 ----
@@ -727,7 +727,7 @@ auto KeysPanel::close_push() -> void {
                                  [&](const auto &row) { return row.path == push_path_; });
     if (it != snapshot_.rows.end()) {
         auto target = make_text(it->basename + "  " + it->fingerprint, chrome.text_dim);
-        target->modifier.set(aurora::Modifier{}.fill_max_width());
+        target->set_modifier(aurora::Modifier{}.fill_max_width());
         children.push_back(node(std::move(target)));
     }
 
@@ -767,7 +767,7 @@ auto KeysPanel::close_push() -> void {
         push_profile_index_ = static_cast<std::size_t>(index);
         push_profile_id_ = push_profiles_[push_profile_index_].id;
     });
-    box->modifier.set(aurora::Modifier{}.width(240.0F));
+    box->set_modifier(aurora::Modifier{}.width(240.0F));
     children.push_back(
         field_row(settings_label("keys.push.field.profile"),
                   node(std::static_pointer_cast<aurora::Widget>(std::move(box)))));
@@ -791,7 +791,7 @@ auto KeysPanel::close_push() -> void {
 
     // ---- 留痕（失败七档／已在授权表里／已追加；措辞唯一来源是 `keys_format`）----
     push_notice_ = make_text(wording(snapshot_.notice_key, snapshot_.notice_arg), chrome.text_dim);
-    push_notice_->modifier.set(aurora::Modifier{}.fill_max_width());
+    push_notice_->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(push_notice_)));
 
     // ---- 推送 / 关闭 ----
@@ -818,7 +818,7 @@ auto KeysPanel::close_push() -> void {
         .children = std::move(children),
         .gap = 8.0F,
     });
-    card->modifier.set(aurora::Modifier{}
+    card->set_modifier(aurora::Modifier{}
                            .width(440.0F)
                            .padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
                            .background(chrome.card_bg, 0.0F)
@@ -841,7 +841,7 @@ auto KeysPanel::open_delete_confirm(std::string path) -> void {
     const auto *row = find_row(painted_rows_, pending_delete_path_);
     auto line_of = [&chrome](std::string text) -> aurora::Node {
         auto widget = make_text(std::move(text), chrome.text);
-        widget->modifier.set(aurora::Modifier{}.fill_max_width());
+        widget->set_modifier(aurora::Modifier{}.fill_max_width());
         return node(std::move(widget));
     };
     auto children = std::vector<aurora::Node>{
@@ -877,7 +877,7 @@ auto KeysPanel::open_delete_confirm(std::string path) -> void {
     auto content =
         std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(children),
                                                              .gap = 8.0F});
-    content->modifier.set(aurora::Modifier{}
+    content->set_modifier(aurora::Modifier{}
                               .width(420.0F)
                               .padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
                               .background(chrome.card_bg, 0.0F)

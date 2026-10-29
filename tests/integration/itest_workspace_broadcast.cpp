@@ -183,7 +183,7 @@ class Rig {
         router_.set_change_hook([this]() -> void { refresh_ui(); });
 
         root_column_ = std::make_shared<au::Column>();
-        root_column_->modifier.set(au::Modifier{}.fill_max_size());
+        root_column_->set_modifier(au::Modifier{}.fill_max_size());
         root_column_->set_cross_axis_alignment(au::CrossAxisAlignment::Stretch);
         root_column_->child_nodes_mut().push_back(au::Node{banner_});
         root_ = au::Node{root_column_};
@@ -278,7 +278,7 @@ class Rig {
         auto &nodes = root_column_->child_nodes_mut();
         nodes.resize(1);  // 横幅常驻 index 0；工作区按需替换
         au::Node workspace_node{found->second.workspace};
-        workspace_node.widget().modifier.set(au::Modifier{}.expand(1.0F));
+        workspace_node.widget().set_modifier(au::Modifier{}.expand(1.0F));
         nodes.push_back(std::move(workspace_node));
         root_column_->mark_needs_layout();
         root_column_->mark_needs_paint();

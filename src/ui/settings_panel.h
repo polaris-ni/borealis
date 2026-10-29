@@ -103,7 +103,7 @@
 // 把 200+ 档塞进**行内**下拉既违该约束也不是可判形态；`LazyList` 按序号回收条目而过滤会把命中序号交给
 // 派发链；框架的链上限截断发生在绘制侧而对用户不可见（`TextLayoutOpts::with_fallback_chain` 截到
 // `AURORA_TEXT_FALLBACK_CHAIN_MAX`）。故换成**过滤输入框 + 固定候选行池**：常驻 N 枚按钮，按键时只改
-// `set_label` 与 `show`（`Reactive<bool> show` 为假时尺寸是零盒且不进命中链，零盒仍占布局故不属上面那条
+// `set_label` 与 `set_show`（可见性来源为假时尺寸是零盒且不进命中链，零盒仍占布局故不属上面那条
 // 形态约束），代价是候选区一次最多列 N 项、且不再是下拉。
 //
 // 字体族选择器（A4，人已拍板：行内按钮 + 浮层，裁决 7.69）走的是**另一条**形态：行内一枚常驻按钮
@@ -914,7 +914,7 @@ private:
 
     std::vector<FontFamilyEntry> family_catalog_{};  ///< 每次建浮层时经 `Hooks::families` 现取（S16 的同源目录）。
     /// 列表的**数据源**（框架的 `ReorderableList` 直接改写它）；与表单之间以本件为中介，见 `commit_chain()`。
-    std::shared_ptr<aurora::State<std::vector<std::string>>> chain_items_{};
+    std::optional<aurora::State<std::vector<std::string>>> chain_items_{};
     std::shared_ptr<aurora::ReorderableList<std::string>> chain_list_{};  ///< 重排列表本体；`Escape` 的抓取腿问它。
     std::shared_ptr<aurora::Column> chain_list_holder_{};  ///< 包裹列表的那一栏，区段高度挂在它上面。
     std::shared_ptr<aurora::TextInput> chain_filter_{};    ///< 候选过滤框（不进表单，见文件头「添加族」段）。

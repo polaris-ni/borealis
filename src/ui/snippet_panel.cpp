@@ -69,7 +69,7 @@ constexpr float kSearchBand = 52.0F;
     input->set_border_color(chrome.card_line);
     input->set_focused_border_color(chrome.accent);
     input->set_text_color(chrome.text);
-    input->modifier.set(aurora::Modifier{}.width(width));
+    input->set_modifier(aurora::Modifier{}.width(width));
     return input;
 }
 
@@ -77,7 +77,7 @@ constexpr float kSearchBand = 52.0F;
 [[nodiscard]] auto field_row(std::string label, aurora::Node control) -> aurora::Node {
     const auto chrome = settings_chrome();
     auto tag = make_text(std::move(label), chrome.text_dim);
-    tag->modifier.set(aurora::Modifier{}.width(84.0F));
+    tag->set_modifier(aurora::Modifier{}.width(84.0F));
     return node(std::make_shared<aurora::Row>(aurora::RowProps{
         .children = {node(std::static_pointer_cast<aurora::Widget>(std::move(tag))),
                      std::move(control)},
@@ -216,7 +216,7 @@ auto SnippetPanel::install_overlay() -> void {
         [c = chrome](aurora::Painter &painter, const aurora::Rect &box) -> void {
             painter.fill_rect(box, c.window_bg);
         });
-    mask->modifier.set(
+    mask->set_modifier(
         aurora::Modifier{}.fill_max_size().clickable([this]() -> void { close(); }));
     auto card = build_overlay();
     auto layer = std::make_shared<aurora::Stack>(
@@ -260,7 +260,7 @@ auto SnippetPanel::install_overlay() -> void {
     notice_text_.reset();
     if (!notice_.empty()) {
         notice_text_ = make_text(notice_, chrome.text_dim);
-        notice_text_->modifier.set(aurora::Modifier{}.fill_max_width());
+        notice_text_->set_modifier(aurora::Modifier{}.fill_max_width());
         notice_slot_->add(node(std::static_pointer_cast<aurora::Widget>(notice_text_)));
     }
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(notice_slot_)));
@@ -293,7 +293,7 @@ auto SnippetPanel::install_overlay() -> void {
         group_ = (position == 0U || position > groups.size()) ? std::string{} : groups[position - 1U];
         refresh_rows();
     });
-    group_dropdown_->modifier.set(aurora::Modifier{}.width(160.0F));
+    group_dropdown_->set_modifier(aurora::Modifier{}.width(160.0F));
 
     // ---- 行区（Stack 的下层）----
     rows_column_ = std::make_shared<aurora::Column>(aurora::ColumnProps{.gap = 8.0F});
@@ -301,13 +301,13 @@ auto SnippetPanel::install_overlay() -> void {
         .child = node(std::static_pointer_cast<aurora::Widget>(rows_column_)),
         .step = 32.0F,
     });
-    scroll->modifier.set(aurora::Modifier{}.fill_max_width().expand());
+    scroll->set_modifier(aurora::Modifier{}.fill_max_width().expand());
     // 顶部让出搜索带：搜索行叠在行区之上，行内容从它下沿开始。
     auto body = std::make_shared<aurora::Column>(aurora::ColumnProps{
         .children = {node(std::static_pointer_cast<aurora::Widget>(std::move(scroll)))},
         .gap = 0.0F,
     });
-    body->modifier.set(aurora::Modifier{}
+    body->set_modifier(aurora::Modifier{}
                            .fill_max_width()
                            .fill_max_height()
                            .padding(aurora::EdgeInsets{.top = kSearchBand}));
@@ -331,7 +331,7 @@ auto SnippetPanel::install_overlay() -> void {
         .children = {node(std::static_pointer_cast<aurora::Widget>(std::move(search_bar)))},
         .gap = 0.0F,
     });
-    search_row->modifier.set(aurora::Modifier{}
+    search_row->set_modifier(aurora::Modifier{}
                                  .height(kSearchBand)
                                  .fill_max_width()
                                  .background(chrome.card_bg, 0.0F)
@@ -341,14 +341,14 @@ auto SnippetPanel::install_overlay() -> void {
             node(std::static_pointer_cast<aurora::Widget>(std::move(body))),
             node(std::static_pointer_cast<aurora::Widget>(std::move(search_row)))},
         aurora::Alignment::TopLeft);
-    stack->modifier.set(aurora::Modifier{}.fill_max_width().expand());
+    stack->set_modifier(aurora::Modifier{}.fill_max_width().expand());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(stack))));
 
     auto card = std::make_shared<aurora::Column>(aurora::ColumnProps{
         .children = std::move(children),
         .gap = 8.0F,
     });
-    card->modifier.set(aurora::Modifier{}
+    card->set_modifier(aurora::Modifier{}
                            .width(520.0F)
                            .fill_max_height()
                            .padding(aurora::EdgeInsets{12.0F, 12.0F, 12.0F, 12.0F})
@@ -390,15 +390,15 @@ auto SnippetPanel::refresh_rows() -> void {
     auto line1_children = std::vector<aurora::Node>{};
     auto group_text = make_text(snippet.group.empty() ? std::string{"--"} : snippet.group,
                                 chrome.text_dim);
-    group_text->modifier.set(aurora::Modifier{}.width(84.0F));
+    group_text->set_modifier(aurora::Modifier{}.width(84.0F));
     line1_children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(group_text))));
     auto name_text = make_text(snippet.name, chrome.text);
-    name_text->modifier.set(aurora::Modifier{}.width(150.0F));
+    name_text->set_modifier(aurora::Modifier{}.width(150.0F));
     line1_children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(name_text))));
     if (placeholder_count > 0U) {
         // 纯 ASCII 徽标：占位符语法本身就是 `{{name}}`，这里只是它的个数。
         auto badge = make_text("{{" + std::to_string(placeholder_count) + "}}", chrome.accent);
-        badge->modifier.set(aurora::Modifier{}.width(48.0F));
+        badge->set_modifier(aurora::Modifier{}.width(48.0F));
         line1_children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(badge))));
     }
     line1_children.push_back(node(make_button(
@@ -412,7 +412,7 @@ auto SnippetPanel::refresh_rows() -> void {
         [this, id = snippet.id]() -> void { open_delete_confirm(id); }, chrome.card_line)));
 
     auto preview = make_text(preview_line(snippet.body), chrome.text_dim);
-    preview->modifier.set(aurora::Modifier{}.width(440.0F));
+    preview->set_modifier(aurora::Modifier{}.width(440.0F));
     auto line1 = std::make_shared<aurora::Row>(aurora::RowProps{
         .children = std::move(line1_children),
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
@@ -474,17 +474,15 @@ auto SnippetPanel::set_notice(std::string text) -> void {
         return;
     }
     if (notice_text_ != nullptr) {
+        // `set_content` 换源即标两脏（含布局），显示缓存与无障碍名同帧重算，应用侧不再补脏。
         notice_text_->set_content(notice_);
-        // `set_content` 只换响应式值，不标脏；不重排则 `display_text_`（无障碍名与绘制缓存源）
-        // 仍停在上一句留痕上。
-        notice_text_->mark_needs_layout();
         return;
     }
     if (notice_slot_ == nullptr) {
         return;
     }
     notice_text_ = make_text(notice_, settings_chrome().text_dim);
-    notice_text_->modifier.set(aurora::Modifier{}.fill_max_width());
+    notice_text_->set_modifier(aurora::Modifier{}.fill_max_width());
     notice_slot_->adopt_children(std::vector<aurora::Node>{node(
         std::static_pointer_cast<aurora::Widget>(notice_text_))});
     notice_slot_->mark_needs_layout();
@@ -536,7 +534,7 @@ auto SnippetPanel::close_editor() -> void {
     auto title = make_text(settings_label(existing != nullptr ? "snippets.editor.title.edit"
                                                             : "snippets.editor.title_create"),
                            chrome.text);
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(title))));
 
     name_input_ = make_input(300.0F);
@@ -566,11 +564,11 @@ auto SnippetPanel::close_editor() -> void {
     // 片段正文按纯文本进配置文件：编辑框固定把这条代价说出来（稿 F13/§6 第 6 条）。
     auto warning = make_text(settings_label("snippets.editor.plain_text_warning"),
                              chrome.text_dim);
-    warning->modifier.set(aurora::Modifier{}.fill_max_width());
+    warning->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(warning))));
 
     editor_notice_ = make_text(std::string{}, aurora::colors::AURORA_RED);
-    editor_notice_->modifier.set(aurora::Modifier{}.fill_max_width());
+    editor_notice_->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(editor_notice_)));
 
     auto save = make_button(settings_label("snippets.editor.action.save"), chrome.accent,
@@ -588,7 +586,7 @@ auto SnippetPanel::close_editor() -> void {
         .children = std::move(children),
         .gap = 8.0F,
     });
-    card->modifier.set(aurora::Modifier{}
+    card->set_modifier(aurora::Modifier{}
                            .width(440.0F)
                            .padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
                            .background(chrome.card_bg, 0.0F)
@@ -599,8 +597,7 @@ auto SnippetPanel::close_editor() -> void {
 
 auto SnippetPanel::show_editor_notice(const std::string &text) -> void {
     if (editor_notice_ != nullptr) {
-        editor_notice_->set_content(text);
-        editor_notice_->mark_needs_layout();  // 同 `set_notice`：换内容须重排才会重算显示缓存。
+        editor_notice_->set_content(text);  // 同 `set_notice`：换源自带布局脏，不再补脏。
     }
 }
 
@@ -688,7 +685,7 @@ auto SnippetPanel::close_fill() -> void {
     fill_inputs_.clear();
     auto children = std::vector<aurora::Node>{};
     auto title = make_text(settings_label("snippets.fill.title"), chrome.text);
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(title))));
 
     for (const auto &name : fill_names_) {
@@ -712,7 +709,7 @@ auto SnippetPanel::close_fill() -> void {
         .children = std::move(children),
         .gap = 8.0F,
     });
-    card->modifier.set(aurora::Modifier{}
+    card->set_modifier(aurora::Modifier{}
                            .width(440.0F)
                            .padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
                            .background(chrome.card_bg, 0.0F)
@@ -772,7 +769,7 @@ auto SnippetPanel::close_delete_confirm() -> void {
     const auto chrome = settings_chrome();
     auto children = std::vector<aurora::Node>{};
     auto title = make_text(settings_label("snippets.remove.title"), chrome.text);
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(title))));
 
     const conn::Snippet *snippet = find_snippet(pending_delete_id_);
@@ -780,7 +777,7 @@ auto SnippetPanel::close_delete_confirm() -> void {
                                          {{"name", snippet != nullptr ? snippet->name
                                                                              : pending_delete_id_}}),
                           chrome.text);
-    body->modifier.set(aurora::Modifier{}.fill_max_width());
+    body->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(body))));
 
     auto confirm = std::make_shared<aurora::Button>(aurora::ButtonProps{
@@ -802,7 +799,7 @@ auto SnippetPanel::close_delete_confirm() -> void {
         .children = std::move(children),
         .gap = 8.0F,
     });
-    card->modifier.set(aurora::Modifier{}
+    card->set_modifier(aurora::Modifier{}
                            .width(420.0F)
                            .padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
                            .background(chrome.card_bg, 0.0F)

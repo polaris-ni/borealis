@@ -72,13 +72,13 @@ auto CredentialPrompt::ask(conn::SecretAsk kind, const std::string &profile_name
     input_->set_focused_border_color(chrome.accent);
     input_->set_text_color(chrome.text);
     input_->set_obscure_text(true);  // 掩码：肩后窥屏看不到材料。
-    input_->modifier.set(aurora::Modifier{}.width(280.0F));
+    input_->set_modifier(aurora::Modifier{}.width(280.0F));
 
     auto title = std::make_shared<aurora::Text>(aurora::TextProps{
         .content = settings_label(title_key_for(kind), {{"subject", profile_name}}),
         .text_color = chrome.text,
     });
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
 
     auto ok_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
         .label = settings_label("connections.action.confirm"),
@@ -129,7 +129,7 @@ auto CredentialPrompt::ask(conn::SecretAsk kind, const std::string &profile_name
     });
     // 底色 + 空点击吸收：照键位绑定对话框的实测口径（内容盒外的击中要被吸收，
     // 否则穿透模态层打到侧栏行区）。
-    content->modifier.set(aurora::Modifier{}
+    content->set_modifier(aurora::Modifier{}
                               .padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
                               .background(chrome.card_bg, 8.0F)
                               .border(1.0F, chrome.card_line)

@@ -1862,7 +1862,7 @@ struct FontPick {
         if (button == nullptr) {
             continue;
         }
-        const std::string family = button->label.get().text;
+        const std::string family = button->label().get().text;
         if (family == avoid) {
             continue;
         }
@@ -4122,7 +4122,7 @@ auto enter_snapshot_view(Harness &h, SettingsPanel &panel) -> void {
 [[nodiscard]] auto painted_notice(const SettingsPanel &panel) -> std::string {
     auto *text = dynamic_cast<au::Text *>(panel.config_notice_widget());
     AURORA_TEST_REQUIRE_MSG(text != nullptr, "the notice line is not a Text on the dispatch tree");
-    return text->content.get().text;
+    return text->content().get().text;
 }
 
 /// @brief 六条接缝**成组**才画三枚动作按钮（7.38⑥ F-b：不给会失灵的按钮）。
@@ -4234,7 +4234,7 @@ AURORA_TEST_CASE(an_empty_snapshot_list_says_so_and_offers_no_rollback) {
     const std::string wanted = borealis::ui::settings_label("settings.snapshot.empty");
     const HitSpot line = h.find_first("Text", 0.0F, [&wanted](au::Widget *widget) -> bool {
         auto *text = dynamic_cast<au::Text *>(widget);
-        return text != nullptr && text->content.get().text == wanted;
+        return text != nullptr && text->content().get().text == wanted;
     });
     AURORA_TEST_REQUIRE_MSG(line.widget != nullptr, "the empty-snapshot wording is not painted in the row area");
     panel->close();

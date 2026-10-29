@@ -714,8 +714,8 @@ AURORA_TEST_CASE(the_bar_degrades_through_three_tiers) {
         AURORA_TEST_REQUIRE(harness.overlay()->prev_button() != nullptr);
         AURORA_TEST_REQUIRE(harness.overlay()->next_button() != nullptr);
         // CJK-LITERAL: locale-output - 紧凑档的两枚跳转是符号档，逐字断言是本条判据的全部内容。
-        AURORA_TEST_CHECK_STREQ(harness.overlay()->prev_button()->label.get().text, "↑");
-        AURORA_TEST_CHECK_STREQ(harness.overlay()->next_button()->label.get().text, "↓");
+        AURORA_TEST_CHECK_STREQ(harness.overlay()->prev_button()->label().get().text, "↑");
+        AURORA_TEST_CHECK_STREQ(harness.overlay()->next_button()->label().get().text, "↓");
         AURORA_TEST_CHECK_STREQ(harness.overlay()->prev_button()->explicit_accessibility_label(),
                                 borealis::ui::settings_label("search.prev"));
         AURORA_TEST_CHECK_STREQ(harness.overlay()->next_button()->explicit_accessibility_label(),
@@ -769,8 +769,8 @@ AURORA_TEST_CASE(the_chips_show_symbols_and_read_as_chinese) {
     AURORA_TEST_REQUIRE(harness.overlay() != nullptr);
     AURORA_TEST_REQUIRE(harness.overlay()->case_toggle() != nullptr);
     AURORA_TEST_REQUIRE(harness.overlay()->regex_toggle() != nullptr);
-    AURORA_TEST_CHECK_STREQ(harness.overlay()->case_toggle()->label.get().text, "Aa");
-    AURORA_TEST_CHECK_STREQ(harness.overlay()->regex_toggle()->label.get().text, ".*");
+    AURORA_TEST_CHECK_STREQ(harness.overlay()->case_toggle()->label().get().text, "Aa");
+    AURORA_TEST_CHECK_STREQ(harness.overlay()->regex_toggle()->label().get().text, ".*");
     // 朗读名读**显式声明**那一口：`Button::accessibility_label()` 覆写为可见标签（即 "Aa" /
     // ".*"），拿它比中文词条测的是可见串而不是朗读名。
     AURORA_TEST_CHECK_STREQ(harness.overlay()->case_toggle()->explicit_accessibility_label(),

@@ -204,7 +204,7 @@ auto SearchOverlay::build_bar(SearchTier tier, float width) -> aurora::Node {
     input->set_padding(kInputPadding);
     input->set_on_changed([this](const std::string &text) -> void { on_text_changed(text); });
     // 刻意**不装** `set_on_submit`：那条回调拿不到 Shift，装了也分不出前进与后退（见 `SearchInput`）。
-    input->modifier.set(aurora::Modifier{}.height(kBarItemHeightDp).expand());
+    input->set_modifier(aurora::Modifier{}.height(kBarItemHeightDp).expand());
 
     // —— 计数槽（B0 ~ B5）：定宽、右对齐，于是「按 Enter 应用」这种长串是被钳住的而不是把条挤走 ——
     const float count_width = tier == SearchTier::Compact ? kCountCompactWidthDp : kCountWidthDp;
@@ -213,7 +213,7 @@ auto SearchOverlay::build_bar(SearchTier tier, float width) -> aurora::Node {
         .text_color = chrome.text,
         .text_align = aurora::TextAlign::Right,
     });
-    count->modifier.set(aurora::Modifier{}.width(count_width).height(kBarItemHeightDp));
+    count->set_modifier(aurora::Modifier{}.width(count_width).height(kBarItemHeightDp));
 
     // —— 两枚 chip：可视标签是 ASCII 符号、朗读标签是中文词条（A1-d + 文件头⑤）——
     const auto make_chip = [this, &chrome](std::shared_ptr<aurora::Button> &slot, std::string_view symbol,
@@ -231,7 +231,7 @@ auto SearchOverlay::build_bar(SearchTier tier, float width) -> aurora::Node {
         // 朗读名交**已解析**的显示串：`set_accessibility_label` 收 `std::string`，而 `tr()` 造的实例
         // 那份 `text` 恒空（裁决 7.59⑥ 的失败模式），交过去就是一枚没有名字的按钮。
         chip->set_accessibility_label(settings_label(a11y_key));
-        chip->modifier.set(aurora::Modifier{}.height(kBarItemHeightDp));
+        chip->set_modifier(aurora::Modifier{}.height(kBarItemHeightDp));
         slot = std::move(chip);
         return node(slot);
     };
@@ -260,7 +260,7 @@ auto SearchOverlay::build_bar(SearchTier tier, float width) -> aurora::Node {
         });
         button->set_accessibility_label(std::move(a11y));
         button->set_on_click([this, direction]() -> void { view_.advance_search(direction); });
-        button->modifier.set(aurora::Modifier{}.height(kBarItemHeightDp));
+        button->set_modifier(aurora::Modifier{}.height(kBarItemHeightDp));
         slot = std::move(button);
         return node(slot);
     };
@@ -276,7 +276,7 @@ auto SearchOverlay::build_bar(SearchTier tier, float width) -> aurora::Node {
         .min_width = kCloseWidthDp,
     });
     close_button->set_on_click([this]() -> void { close(); });
-    close_button->modifier.set(aurora::Modifier{}.height(kBarItemHeightDp));
+    close_button->set_modifier(aurora::Modifier{}.height(kBarItemHeightDp));
     close_ = std::move(close_button);
 
     std::vector<aurora::Node> children;
@@ -334,7 +334,7 @@ auto SearchOverlay::build_bar(SearchTier tier, float width) -> aurora::Node {
             .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
             .gap = kItemGapDp,
         });
-        top->modifier.set(aurora::Modifier{}.height(kBarItemHeightDp));
+        top->set_modifier(aurora::Modifier{}.height(kBarItemHeightDp));
 
         std::vector<aurora::Node> row_two;
         row_two.push_back(node(count_));
@@ -345,14 +345,14 @@ auto SearchOverlay::build_bar(SearchTier tier, float width) -> aurora::Node {
             .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
             .gap = kItemGapDp,
         });
-        bottom->modifier.set(aurora::Modifier{}.height(kBarItemHeightDp));
+        bottom->set_modifier(aurora::Modifier{}.height(kBarItemHeightDp));
 
         auto bar = std::make_shared<aurora::Column>(aurora::ColumnProps{
             .children = {node(std::move(top)), node(std::move(bottom))},
             .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Stretch},
             .gap = 0.0F,  // 66 dp ＝ 11 + 22 + 22 + 11：两行之间不再留缝，否则条高对不上判据
         });
-        bar->modifier.set(chain());
+        bar->set_modifier(chain());
         return node(std::move(bar));
     }
 
@@ -361,7 +361,7 @@ auto SearchOverlay::build_bar(SearchTier tier, float width) -> aurora::Node {
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
         .gap = kItemGapDp,
     });
-    bar->modifier.set(chain());
+    bar->set_modifier(chain());
     return node(std::move(bar));
 }
 
@@ -449,9 +449,8 @@ auto SearchOverlay::sync_state() -> void {
 
     const std::string shown = count_text();
     // 以控件自己的现值当「上一次写过什么」：计数有六档措辞，而复制一份字符串就是第二份状态。
-    if (count_ != nullptr && count_->content.get().text != shown) {
+    if (count_ != nullptr && count_->content().get().text != shown) {
         count_->set_content(shown);
-        count_->mark_needs_paint();  // `Text::set_content` 不标脏（文件头的三处写入口之一）
     }
 
     const SearchMatches *matches = view_.search_matches();
@@ -565,7 +564,10 @@ auto SearchOverlay::refresh_toggles() -> void {
                                const SettingsChrome &colors) -> void {
         chip->background(on ? colors.accent : colors.control_bg);
         chip->text_color(on ? colors.window_bg : colors.text_dim);
-        chip->mark_needs_paint();  // 这两处写入口只改值不标脏（文件头的三处之一）
+        // `background()` 走 `set_background_source`，换源自带绘制脏；`text_color()` 仍是直写
+        // `on_color` 且不标脏（Aurora `button.h` 的现状），故这枚 mark 只留给它——两处一起去掉
+        // 会让 chip 的文字色停在上一档。
+        chip->mark_needs_paint();
     };
     if (case_toggle_ != nullptr && query.case_sensitive != painted_case_) {
         painted_case_ = query.case_sensitive;

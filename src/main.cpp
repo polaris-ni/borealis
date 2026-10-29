@@ -547,7 +547,7 @@ struct PendingProfileConnect {
     // 纵向容器承载：OverlayHost 只管理浮层，常规内容须走普通容器；交叉轴 Stretch 使标签栏与工作区
     // 均撑满窗宽。
     out->root_column = std::make_shared<au::Column>();
-    out->root_column->modifier.set(au::Modifier{}.fill_max_size());
+    out->root_column->set_modifier(au::Modifier{}.fill_max_size());
     out->root_column->set_cross_axis_alignment(au::CrossAxisAlignment::Stretch);
     return out;
 }
@@ -1838,7 +1838,7 @@ auto main(int argc, char **argv) -> int {
             if (it != workspaces.end() && it->second.owner == &window) {
                 // 工作区占满标签栏以下的全部剩余高度（expand 权重交 FlexLayouter 分配）。
                 aurora::Node ws{it->second.workspace};
-                ws.widget().modifier.set(au::Modifier{}.expand(1.0F));
+                ws.widget().set_modifier(au::Modifier{}.expand(1.0F));
                 nodes.push_back(std::move(ws));
             }
         }
@@ -2150,9 +2150,9 @@ auto main(int argc, char **argv) -> int {
 
     // 活动档主题的共享状态（稿 §3 第 1／2 步）：每扇窗的 `ThemeScope` 共用这一枚，换档只 `set()` 一次
     // 就让**已有**窗口在下一帧整体重渲，不必逐窗找 `ThemeScope` 改值。声明排在首扇窗的场景之前，
-    // 生命周期随装配层到进程尾；`shared_ptr` 同时被各窗的 ThemeScope 持有，故不靠这里的变量续命。
-    auto chrome_theme_state =
-        std::make_shared<aurora::State<aurora::Theme>>(borealis::ui::settings_chrome_theme());
+    // 生命周期随装配层到进程尾；句柄按值复制进各窗的 ThemeScope，副本与原句柄共享同一枚来源，
+    // 故换档只需对下面那一枚 `set()`。
+    auto chrome_theme_state = aurora::State<aurora::Theme>{borealis::ui::settings_chrome_theme()};
     // 场景根的造法按窗一份（稿 §2）：chrome 主题挂浮层宿主外面那一层，面板与后续界面件读同一份
     // `Theme`，而它**刻意不随终端主题联动**（裁决 7.52 的 S5① / N6：切配色主题时整窗跟着变会让用户
     // 以为丢了设置）。第二扇窗必须拿到**自己**的一枚 Scene：`Application::open_window` 收的是场景本体
@@ -2475,7 +2475,7 @@ auto main(int argc, char **argv) -> int {
             return;
         }
         borealis::ui::set_chrome_scheme(scheme);
-        chrome_theme_state->set(borealis::ui::chrome_theme(scheme));
+        chrome_theme_state.set(borealis::ui::chrome_theme(scheme));
         // 逐窗叫醒：`Application::request_wake_all()` 是私有腿（公共面只有各窗自己的 surface）。
         // 主题变化已把子树标脏，这里补的是「帧循环正睡在某个 surface 上、等不到下一次事件」那一档；
         // OS 那条通知跑在平台消息泵里、那一帧本就醒了，需要这段的是来自点击的广播腿——两者共用一条腿，
@@ -4462,7 +4462,7 @@ auto main(int argc, char **argv) -> int {
             .content = title,
             .text_color = borealis::ui::settings_chrome().text,
         });
-        head->modifier.set(au::Modifier{}.fill_max_width());
+        head->set_modifier(au::Modifier{}.fill_max_width());
         rows.push_back(au::Node{std::static_pointer_cast<au::Widget>(std::move(head))});
         // 十四档按四列三行半排（稿 §2 C 屏的档位单选框）；当前档不做特殊标记，标题行给的就是它。
         for (std::size_t start = 0; start < borealis::conn::kSerialBaudRates.size(); start += 4U) {

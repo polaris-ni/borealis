@@ -877,7 +877,7 @@ auto SftpPanel::build_root() -> std::shared_ptr<aurora::Stack> {
         [bg = chrome.window_bg](aurora::Painter &painter, const aurora::Rect &box) -> void {
             painter.fill_rect(box, bg);
         });
-    mask->modifier.set(aurora::Modifier{}.fill_max_size().clickable([this]() -> void { close(); }));
+    mask->set_modifier(aurora::Modifier{}.fill_max_size().clickable([this]() -> void { close(); }));
     auto card = build_card();
     return std::make_shared<aurora::Stack>(
         std::vector<aurora::Node>{aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(mask))},
@@ -891,7 +891,7 @@ auto SftpPanel::build_card() -> std::shared_ptr<aurora::Column> {
 
     // 标题行：面板名 + 关闭。
     auto title = make_text(settings_label("sftp.title"), chrome.text);
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
     auto close_button =
         make_button(settings_label("sftp.action.close"), 48.0F, [this]() -> void { close(); });
     children.emplace_back(std::static_pointer_cast<aurora::Widget>(std::move(title)));
@@ -899,7 +899,7 @@ auto SftpPanel::build_card() -> std::shared_ptr<aurora::Column> {
 
     // 状态行：连接态（+ 错误词条），失败档给重试。
     auto status = make_text(status_display_text(), chrome.text_dim);
-    status->modifier.set(aurora::Modifier{}.fill_max_width());
+    status->set_modifier(aurora::Modifier{}.fill_max_width());
     children.emplace_back(std::static_pointer_cast<aurora::Widget>(std::move(status)));
     if (state_ == ConnState::Failed) {
         children.emplace_back(std::static_pointer_cast<aurora::Widget>(
@@ -950,7 +950,7 @@ auto SftpPanel::build_card() -> std::shared_ptr<aurora::Column> {
             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(upload_button))},
             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(download_button))}},
         .gap = 4.0F});
-    transfer_column->modifier.set(aurora::Modifier{}.width(kTransferColumnWidth));
+    transfer_column->set_modifier(aurora::Modifier{}.width(kTransferColumnWidth));
 
     auto panes_row = std::make_shared<aurora::Row>(aurora::RowProps{
         .children = std::vector<aurora::Node>{
@@ -959,7 +959,7 @@ auto SftpPanel::build_card() -> std::shared_ptr<aurora::Column> {
             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(remote_pane))}},
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Stretch},
         .gap = 4.0F});
-    panes_row->modifier.set(aurora::Modifier{}.fill_max_width().expand());
+    panes_row->set_modifier(aurora::Modifier{}.fill_max_width().expand());
     children.emplace_back(std::static_pointer_cast<aurora::Widget>(std::move(panes_row)));
 
     // 传输条：仅在已连接且有传输在跑 / 在排队时出现。
@@ -996,13 +996,13 @@ auto SftpPanel::build_card() -> std::shared_ptr<aurora::Column> {
                                     {"fail", static_cast<std::int64_t>(batch_trace_.failed)}});
         }
         auto trace_note = make_text(std::move(trace), chrome.text_dim);
-        trace_note->modifier.set(aurora::Modifier{}.fill_max_width());
+        trace_note->set_modifier(aurora::Modifier{}.fill_max_width());
         children.emplace_back(std::static_pointer_cast<aurora::Widget>(std::move(trace_note)));
     }
 
     auto card = std::make_shared<aurora::Column>(aurora::ColumnProps{
         .children = std::move(children), .gap = 8.0F});
-    card->modifier.set(aurora::Modifier{}
+    card->set_modifier(aurora::Modifier{}
                            .width(kCardWidth)
                            .fill_max_height()
                            .padding(aurora::EdgeInsets{12.0F, 12.0F, 12.0F, 12.0F})
@@ -1041,7 +1041,7 @@ auto SftpPanel::build_pane(bool remote) -> std::shared_ptr<aurora::Column> {
     std::vector<aurora::Node> children;
 
     auto caption = make_text(settings_label(remote ? "sftp.column.remote" : "sftp.column.local"), chrome.text);
-    caption->modifier.set(aurora::Modifier{}.fill_max_width());
+    caption->set_modifier(aurora::Modifier{}.fill_max_width());
     children.emplace_back(std::static_pointer_cast<aurora::Widget>(std::move(caption)));
 
     // 面包屑行：向上 / 刷新 / 当前路径。
@@ -1051,7 +1051,7 @@ auto SftpPanel::build_pane(bool remote) -> std::shared_ptr<aurora::Column> {
                                       [this, remote]() -> void { refresh_pane(remote); });
     const std::string &path = remote ? remote_path_ : local_path_;
     auto path_text = make_text(path.empty() ? std::string{"..."} : path, chrome.text_dim);
-    path_text->modifier.set(aurora::Modifier{}.fill_max_width());
+    path_text->set_modifier(aurora::Modifier{}.fill_max_width());
     auto crumb_row = std::make_shared<aurora::Row>(aurora::RowProps{
         .children = std::vector<aurora::Node>{
             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(up_button))},
@@ -1065,7 +1065,7 @@ auto SftpPanel::build_pane(bool remote) -> std::shared_ptr<aurora::Column> {
     std::vector<aurora::Node> header;
     const auto header_text = [&chrome](const char *key, float width) -> aurora::Node {
         auto cell = make_text(settings_label(key), chrome.text_dim);
-        cell->modifier.set(aurora::Modifier{}.width(width));
+        cell->set_modifier(aurora::Modifier{}.width(width));
         return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(cell))};
     };
     header.push_back(header_text("sftp.column.name", kNameWidth));
@@ -1092,7 +1092,7 @@ auto SftpPanel::build_pane(bool remote) -> std::shared_ptr<aurora::Column> {
     auto scroll = std::make_shared<aurora::Scroll>(aurora::ScrollProps{
         .child = aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(rows))},
         .step = 32.0F});
-    scroll->modifier.set(aurora::Modifier{}.fill_max_width().expand());
+    scroll->set_modifier(aurora::Modifier{}.fill_max_width().expand());
     children.emplace_back(std::static_pointer_cast<aurora::Widget>(std::move(scroll)));
 
     // 条目操作行：远端栏专属（连接后才有可操作对象）。
@@ -1102,7 +1102,7 @@ auto SftpPanel::build_pane(bool remote) -> std::shared_ptr<aurora::Column> {
 
     auto pane = std::make_shared<aurora::Column>(aurora::ColumnProps{
         .children = std::move(children), .gap = 6.0F});
-    pane->modifier.set(aurora::Modifier{}.width(kPaneWidth).fill_max_height());
+    pane->set_modifier(aurora::Modifier{}.width(kPaneWidth).fill_max_height());
     return pane;
 }
 
@@ -1124,12 +1124,12 @@ auto SftpPanel::build_remote_row(const conn::SftpEntry &entry) -> aurora::Node {
     auto size_cell = make_text(
         entry.kind == conn::SftpEntryKind::File ? human_size(entry.size_bytes) : std::string{},
         chrome.text_dim);
-    size_cell->modifier.set(aurora::Modifier{}.width(kSizeWidth));
+    size_cell->set_modifier(aurora::Modifier{}.width(kSizeWidth));
     auto mtime_cell = make_text(format_mtime_local(entry.mtime), chrome.text_dim);
-    mtime_cell->modifier.set(aurora::Modifier{}.width(kMtimeWidth));
+    mtime_cell->set_modifier(aurora::Modifier{}.width(kMtimeWidth));
     auto perm_cell = make_text(format_permissions(entry.permissions, entry.kind), chrome.text_dim);
     // D5①：八进制 tooltip（含 setuid 一类特殊位，掩 07777）。
-    perm_cell->modifier.set(
+    perm_cell->set_modifier(
         aurora::Modifier{}.width(kPermWidth).tooltip(format_octal(entry.permissions)));
 
     auto row = std::make_shared<aurora::Row>(aurora::RowProps{
@@ -1161,9 +1161,9 @@ auto SftpPanel::build_local_row(const LocalEntry &entry) -> aurora::Node {
     auto size_cell = make_text(
         (!entry.is_directory && !entry.is_symlink) ? human_size(entry.size_bytes) : std::string{},
         chrome.text_dim);
-    size_cell->modifier.set(aurora::Modifier{}.width(kSizeWidth));
+    size_cell->set_modifier(aurora::Modifier{}.width(kSizeWidth));
     auto mtime_cell = make_text(format_mtime_local(entry.mtime), chrome.text_dim);
-    mtime_cell->modifier.set(aurora::Modifier{}.width(kMtimeWidth));
+    mtime_cell->set_modifier(aurora::Modifier{}.width(kMtimeWidth));
 
     auto row = std::make_shared<aurora::Row>(aurora::RowProps{
         .children = std::vector<aurora::Node>{
@@ -1199,12 +1199,12 @@ auto SftpPanel::build_transfer_bar() -> std::shared_ptr<aurora::Row> {
         settings_label(transfer_is_download_ ? "sftp.transfer.downloading" : "sftp.transfer.uploading",
                        {{"name", transfer_label_}}),
         chrome.text);
-    transfer_text_->modifier.set(aurora::Modifier{}.fill_max_width());
+    transfer_text_->set_modifier(aurora::Modifier{}.fill_max_width());
 
     progress_bar_ = std::make_shared<aurora::ProgressIndicator>();
     progress_bar_->set_color(chrome.accent);
     progress_bar_->set_thickness(6.0F);
-    progress_bar_->modifier.set(aurora::Modifier{}.width(140.0F));
+    progress_bar_->set_modifier(aurora::Modifier{}.width(140.0F));
 
     // 取消＝整批止（稿 §1）：旗标掐当前件与后续件，闸上若有未答的首败问也即刻按「中止」自答。
     auto cancel_button = make_button(settings_label("sftp.action.cancel"), 48.0F,
@@ -1475,10 +1475,10 @@ auto SftpPanel::show_name_prompt(const std::string &title_key, const std::string
     prompt_input_->set_focused_border_color(chrome.accent);
     prompt_input_->set_text_color(chrome.text);
     prompt_input_->set_placeholder(settings_label("sftp.input.name"));
-    prompt_input_->modifier.set(aurora::Modifier{}.width(240.0F));
+    prompt_input_->set_modifier(aurora::Modifier{}.width(240.0F));
 
     auto title = make_text(settings_label(title_key), chrome.text);
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
 
     auto confirm = [this, on_confirm]() -> void {
         const std::string name = prompt_text_;
@@ -1521,10 +1521,10 @@ auto SftpPanel::show_delete_confirm(const std::string &name, bool is_directory) 
     close_dialog();
 
     auto title = make_text(settings_label("sftp.remove.title"), chrome.text);
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
     auto body = make_text(settings_label("sftp.remove.body", {{"name", name}}),
                           chrome.text);
-    body->modifier.set(aurora::Modifier{}.fill_max_width());
+    body->set_modifier(aurora::Modifier{}.fill_max_width());
 
     auto confirm = [this, name, is_directory]() -> void {
         close_dialog();
@@ -1553,7 +1553,7 @@ auto SftpPanel::show_delete_confirm(const std::string &name, bool is_directory) 
         aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(body))}};
     if (is_directory) {
         auto note = make_text(settings_label("sftp.remove.dir_note"), chrome.text_dim);
-        note->modifier.set(aurora::Modifier{}.fill_max_width());
+        note->set_modifier(aurora::Modifier{}.fill_max_width());
         children.emplace_back(std::static_pointer_cast<aurora::Widget>(std::move(note)));
     }
     children.emplace_back(std::static_pointer_cast<aurora::Widget>(std::make_shared<aurora::Row>(
@@ -1576,10 +1576,10 @@ auto SftpPanel::show_batch_confirm(bool download, const std::string &name) -> vo
     close_dialog();
 
     auto title = make_text(settings_label("sftp.batch.confirm.title"), chrome.text);
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
     // D5①：覆盖警示（D2/D3① 的后果面）必须先于动作可见，文案点名目录名与「同名覆盖」。
     auto body = make_text(settings_label("sftp.batch.confirm.body", {{"name", name}}), chrome.text);
-    body->modifier.set(aurora::Modifier{}.fill_max_width());
+    body->set_modifier(aurora::Modifier{}.fill_max_width());
 
     auto confirm = [this, download, name]() -> void {
         close_dialog();
@@ -1637,7 +1637,7 @@ auto SftpPanel::show_batch_ask(const std::string &name, conn::SftpError error) -
     close_dialog();
 
     auto title = make_text(settings_label("sftp.batch.ask.title"), chrome.text);
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
     std::string error_text;
     const std::string_view error_key = sftp_error_key(error);
     if (!error_key.empty()) {
@@ -1647,7 +1647,7 @@ auto SftpPanel::show_batch_ask(const std::string &name, conn::SftpError error) -
         settings_label("sftp.batch.ask.body",
                        {{"name", name}, {"error", std::move(error_text)}}),
         chrome.text);
-    body->modifier.set(aurora::Modifier{}.fill_max_width());
+    body->set_modifier(aurora::Modifier{}.fill_max_width());
 
     auto skip_button = make_button(settings_label("sftp.batch.ask.skip"), 64.0F,
                                    [this]() -> void {

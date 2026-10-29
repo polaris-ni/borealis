@@ -127,14 +127,14 @@ constexpr std::array<conn::TunnelKind, 3> kKindCycle{
     input->set_border_color(chrome.card_line);
     input->set_focused_border_color(chrome.accent);
     input->set_text_color(chrome.text);
-    input->modifier.set(aurora::Modifier{}.width(width));
+    input->set_modifier(aurora::Modifier{}.width(width));
     return input;
 }
 
 /// @brief 「标签 + 控件」一行（同 wizard 的 make_field_row 形态；标签列宽一致）。
 [[nodiscard]] auto field_row(std::string label, aurora::Node control) -> aurora::Node {
     auto label_text = make_text(std::move(label), settings_chrome().text_dim);
-    label_text->modifier.set(aurora::Modifier{}.width(110.0F));
+    label_text->set_modifier(aurora::Modifier{}.width(110.0F));
     return node(std::make_shared<aurora::Row>(aurora::RowProps{
         .children = {node(std::move(label_text)), std::move(control)},
         .flex = aurora::Flex{.cross_axis = aurora::CrossAxisAlignment::Center},
@@ -195,7 +195,7 @@ auto TunnelPanel::open() -> void {
         [c = chrome](aurora::Painter &painter, const aurora::Rect &box) -> void {
             painter.fill_rect(box, c.window_bg);
         });
-    mask->modifier.set(
+    mask->set_modifier(
         aurora::Modifier{}.fill_max_size().clickable([this]() -> void { close(); }));
     auto card = build_overlay();
     auto layer = std::make_shared<aurora::Stack>(
@@ -257,7 +257,7 @@ auto TunnelPanel::refresh_overlay() -> void {
         [c = chrome](aurora::Painter &painter, const aurora::Rect &box) -> void {
             painter.fill_rect(box, c.window_bg);
         });
-    mask->modifier.set(
+    mask->set_modifier(
         aurora::Modifier{}.fill_max_size().clickable([this]() -> void { close(); }));
     auto card = build_overlay();
     auto layer = std::make_shared<aurora::Stack>(
@@ -277,7 +277,7 @@ auto TunnelPanel::build_row(const TunnelRow &row) -> aurora::Node {
     // ---- 首行：徽标 + 名称 + 状态 + 启停/编辑/删除 ----
     auto badge = make_text(std::string{tunnel_kind_badge(row.spec.kind)}, chrome.accent);
     auto name = make_text(row.spec.name, chrome.text);
-    name->modifier.set(aurora::Modifier{}.width(110.0F));
+    name->set_modifier(aurora::Modifier{}.width(110.0F));
     auto state = make_text(settings_label(tunnel_state_key(row.runtime.state)),
                            state_color(row.runtime.state, chrome));
     auto line1_children = std::vector<aurora::Node>{
@@ -292,18 +292,18 @@ auto TunnelPanel::build_row(const TunnelRow &row) -> aurora::Node {
             {{"attempt", static_cast<std::int64_t>(row.runtime.attempt)},
              {"seconds", static_cast<std::int64_t>(tunnel_retry_wait_s(row))}});
         auto note = make_text(reason + " " + wait, chrome.text_dim);
-        note->modifier.set(aurora::Modifier{}.width(150.0F));
+        note->set_modifier(aurora::Modifier{}.width(150.0F));
         line1_children.push_back(node(std::move(note)));
     } else if (row.runtime.state == conn::TunnelState::Failed &&
                row.runtime.error != conn::TunnelError::None) {
         auto note = make_text(settings_label(tunnel_error_key(row.runtime.error)),
                               chrome.text_dim);
-        note->modifier.set(aurora::Modifier{}.width(150.0F));
+        note->set_modifier(aurora::Modifier{}.width(150.0F));
         line1_children.push_back(node(std::move(note)));
     } else if (row.runtime.autostart_skipped) {
         // D8 细则：启动序跳过的 autostart 隧道行内提示（询问型凭据未静默可解）。
         auto note = make_text(settings_label("tunnel.row.autostart_skipped"), chrome.text_dim);
-        note->modifier.set(aurora::Modifier{}.width(190.0F));
+        note->set_modifier(aurora::Modifier{}.width(190.0F));
         line1_children.push_back(node(std::move(note)));
     }
 
@@ -334,7 +334,7 @@ auto TunnelPanel::build_row(const TunnelRow &row) -> aurora::Node {
 
     // ---- 次行：监听点 → 目标 + 注记 + 承载档案 ----
     auto endpoint = make_text(tunnel_endpoint_line(row), chrome.text_dim);
-    endpoint->modifier.set(aurora::Modifier{}.width(280.0F));
+    endpoint->set_modifier(aurora::Modifier{}.width(280.0F));
     auto line2_children = std::vector<aurora::Node>{node(std::move(endpoint))};
     const auto note_key = tunnel_endpoint_note_key(row);
     if (!note_key.empty()) {
@@ -395,7 +395,7 @@ auto TunnelPanel::build_row(const TunnelRow &row) -> aurora::Node {
     // ---- 留痕行（落盘失败等；空则不占）----
     if (!notice_.empty()) {
         auto notice = make_text(notice_, chrome.text_dim);
-        notice->modifier.set(aurora::Modifier{}.fill_max_width());
+        notice->set_modifier(aurora::Modifier{}.fill_max_width());
         children.push_back(node(std::move(notice)));
     }
 
@@ -411,14 +411,14 @@ auto TunnelPanel::build_row(const TunnelRow &row) -> aurora::Node {
         .child = node(std::static_pointer_cast<aurora::Widget>(std::move(rows_column))),
         .step = 32.0F,
     });
-    scroll->modifier.set(aurora::Modifier{}.fill_max_width().expand());
+    scroll->set_modifier(aurora::Modifier{}.fill_max_width().expand());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(std::move(scroll))));
 
     auto card = std::make_shared<aurora::Column>(aurora::ColumnProps{
         .children = std::move(children),
         .gap = 8.0F,
     });
-    card->modifier.set(aurora::Modifier{}
+    card->set_modifier(aurora::Modifier{}
                            .width(520.0F)
                            .fill_max_height()
                            .padding(aurora::EdgeInsets{12.0F, 12.0F, 12.0F, 12.0F})
@@ -545,7 +545,7 @@ auto TunnelPanel::close_editor() -> void {
         settings_label(editing_id_.empty() ? "tunnel.editor.title_new"
                                            : "tunnel.editor.title_edit"),
         chrome.text);
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::move(title)));
 
     // ---- 三式类型卡（标号 5：卡片决定字段集）----
@@ -641,16 +641,16 @@ auto TunnelPanel::close_editor() -> void {
         profile_index_ = static_cast<std::size_t>(index);
         draft_.profile_id = profiles_cache_[profile_index_].id;
     });
-    profile_box->modifier.set(aurora::Modifier{}.width(240.0F));
+    profile_box->set_modifier(aurora::Modifier{}.width(240.0F));
     children.push_back(field_row(settings_label("tunnel.editor.field.profile"),
                                  node(std::static_pointer_cast<aurora::Widget>(
                                      std::move(profile_box)))));
 
     // ---- 自动启动开关（D8②）：拨动只改草稿，字段集不随它变，故不重建对话框 ----
     auto autostart_switch =
-        std::make_shared<aurora::Switch>(aurora::Reactive<bool>{draft_.autostart});
+        std::make_shared<aurora::Switch>(aurora::State<bool>{draft_.autostart});
     // 锁高的理由与设置面板开关同款：滑块直径按自身盒高算，行交叉轴居中给的是紧约束。
-    autostart_switch->modifier.set(aurora::Modifier{}.height(24.0F));
+    autostart_switch->set_modifier(aurora::Modifier{}.height(24.0F));
     autostart_switch->set_active_color(chrome.accent);
     autostart_switch->set_inactive_color(chrome.control_bg);
     autostart_switch->set_border(chrome.card_line, 1.0F);
@@ -685,12 +685,12 @@ auto TunnelPanel::close_editor() -> void {
         .gap = 6.0F,
     })));
     auto hint = make_text(settings_label("tunnel.editor.retry.hint"), chrome.text_dim);
-    hint->modifier.set(aurora::Modifier{}.fill_max_width());
+    hint->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::move(hint)));
 
     // ---- 校验/冲突红提示（空＝无）----
     editor_notice_ = make_text(std::string{}, chrome.text_dim);
-    editor_notice_->modifier.set(aurora::Modifier{}.fill_max_width());
+    editor_notice_->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(node(std::static_pointer_cast<aurora::Widget>(editor_notice_)));
 
     // ---- 保存 / 取消 ----
@@ -709,7 +709,7 @@ auto TunnelPanel::close_editor() -> void {
         .children = std::move(children),
         .gap = 8.0F,
     });
-    card->modifier.set(aurora::Modifier{}
+    card->set_modifier(aurora::Modifier{}
                            .width(460.0F)
                            .padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
                            .background(chrome.card_bg, 0.0F)
@@ -809,10 +809,10 @@ auto TunnelPanel::open_delete_confirm(std::string id) -> void {
     }
 
     auto title = make_text(settings_label("tunnel.confirm.title"), chrome.text);
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
     auto body = make_text(settings_label("tunnel.confirm.body", {{"name", name}}),
                           chrome.text);
-    body->modifier.set(aurora::Modifier{}.fill_max_width());
+    body->set_modifier(aurora::Modifier{}.fill_max_width());
     auto confirm_button = std::make_shared<aurora::Button>(aurora::ButtonProps{
         .label = settings_label("tunnel.confirm.action"),
         .color = aurora::colors::AURORA_RED,  // 危险红（sftp D6① 同口径）
@@ -838,7 +838,7 @@ auto TunnelPanel::open_delete_confirm(std::string id) -> void {
                          .gap = 8.0F}))},
         .gap = 8.0F,
     });
-    content->modifier.set(aurora::Modifier{}
+    content->set_modifier(aurora::Modifier{}
                               .width(360.0F)
                               .padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
                               .background(chrome.card_bg, 0.0F)

@@ -184,7 +184,7 @@ class DeviceDropdown final : public aurora::Dropdown {
     const auto chrome = settings_chrome();
     auto label_text = std::make_shared<aurora::Text>(
         aurora::TextProps{.content = label, .text_color = chrome.text_dim});
-    label_text->modifier.set(aurora::Modifier{}.width(96.0F));
+    label_text->set_modifier(aurora::Modifier{}.width(96.0F));
     auto row = std::make_shared<aurora::Row>(aurora::RowProps{
         .children = {
             aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(label_text))},
@@ -203,7 +203,7 @@ class DeviceDropdown final : public aurora::Dropdown {
     input->set_border_color(chrome.card_line);
     input->set_focused_border_color(chrome.accent);
     input->set_text_color(chrome.text);
-    input->modifier.set(aurora::Modifier{}.width(width));
+    input->set_modifier(aurora::Modifier{}.width(width));
     return input;
 }
 
@@ -332,7 +332,7 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
                                                       : "connections.wizard.title_edit"),
         .text_color = chrome.text,
     });
-    title->modifier.set(aurora::Modifier{}.fill_max_width());
+    title->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(title))});
 
     if (step_ == 0) {
@@ -418,8 +418,7 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
                         break;
                     }
                 }
-                auth_button_->set_label(auth_display(draft_.auth_method));
-                auth_button_->mark_needs_paint();
+                auth_button_->set_label(auth_display(draft_.auth_method));  // 换源自带两脏。
             });
             children.push_back(
                 make_field_row(settings_label("connections.field.auth"), aurora::Node{std::static_pointer_cast<aurora::Widget>(auth_button_)}));
@@ -454,8 +453,7 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
                 auto button = slot;
                 button->set_on_click([this, button, advance = std::move(advance)]() -> void {
                     collect_draft();  // 先收文本字段，别让循环按钮丢掉未提交的输入（auth_button_ 同口径）。
-                    button->set_label(advance());
-                    button->mark_needs_paint();
+                    button->set_label(advance());  // 换源自带两脏。
                 });
                 children.push_back(make_field_row(
                     settings_label(label_key),
@@ -491,7 +489,7 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
                 device_dropdown_->set_box_color(chrome.control_bg);
                 device_dropdown_->set_border_color(chrome.card_line);
                 device_dropdown_->set_text_color(chrome.text);
-                device_dropdown_->modifier.set(aurora::Modifier{}.width(240.0F));
+                device_dropdown_->set_modifier(aurora::Modifier{}.width(240.0F));
                 last_selectable_port_ = initial;
                 // 不可达行的否决：基类 `select()` 不是虚函数，回退只能落在变更回调上
                 // （`vetoing_port_choice_` 防自召——回退本身又会进一次 on_change）。
@@ -619,7 +617,7 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
 
     // 校验留痕行（常驻：通过时为空，失败时给可读文案）。
     notice_ = std::make_shared<aurora::Text>(aurora::TextProps{.content = {}, .text_color = chrome.accent});
-    notice_->modifier.set(aurora::Modifier{}.fill_max_width());
+    notice_->set_modifier(aurora::Modifier{}.fill_max_width());
     children.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(notice_)});
 
     // 按钮行：步骤 0 只有「取消」；步骤 1 是「保存 + 取消」。
@@ -662,7 +660,7 @@ auto ConnectionWizard::build_content() -> std::shared_ptr<aurora::Column> {
         .children = std::move(children),
         .gap = 8.0F,
     });
-    content->modifier.set(aurora::Modifier{}
+    content->set_modifier(aurora::Modifier{}
                               .padding(aurora::EdgeInsets{16.0F, 16.0F, 16.0F, 16.0F})
                               .background(chrome.card_bg, 8.0F)
                               .border(1.0F, chrome.card_line)
