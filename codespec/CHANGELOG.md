@@ -4,6 +4,34 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.175（2026-10-29）**真机走查首批：四个面的读数取到，同轮抓到一个只在真机路径出现的越界读（点「＋」后指针一动即 Debug 断言 `vector subscript out of range`）——`TerminalView::scan_link_at` 缺列闸，按既有同形补闸并配无头证人（裁决 **7.175**；本地提交＝本笔）**
+
+**动机**：`SPEC.NF.PKG.01` 的打包、`CONN.05` 的监视卡、`WS.12` 的 quake 等条目都已「代码落、只欠真机」，按 §4.4 第 33 条不真机走查不得称「可用」。首轮走查先验通道：7.31① 说「会话锁屏时 `SetForegroundWindow`／`SendInput` 静默失效」——当日 `LogonUI`／`LockApp` 均未运行，对照实验是「点『＋』真的建出第二张标签」，故前提不成立，真实点击与键盘都落地。
+
+**落地形态**：（a）四个面的读数如裁决 7.175② 所记（设置面板五页与第五页七枚键、命令面板中文命令名、搜索浮层无泄漏、建标签腿三项）；（b）缺陷修在 `src/ui/terminal_view.cpp` 的 `scan_link_at`：`mirror_line_of()` 之后先判 `storage_cell.column >= row->columns()` 即早退，形态与 `ui::find_link_at` 开头那条同宽守卫一致；（c）证人落在 `tests/integration/itest_url_link.cpp`：新增 ⑨ 案 `a_column_beyond_the_line_hovers_nothing_rather_than_reaching_the_row`，harness 长出第 5 形参 `hold_session_size`（吞掉 `request_grid_size`）与 `kWideWindowWidth`，文件头的「值得单独证的有八件事」改九件事。
+
+**口径**：① 越界窗口的真实来源是「布局比会话宽」：`cell_at_point` 的列按视口自己的 `geometry_.columns`（像素宽÷格宽）算，而新格会话起在标称 80×24、`request_grid_size()` 又经 `GridSizeDebounce` 延迟下发；`grid::Row::cell(column)` 前置条件是「列号 < `columns()`」且不查界，Release 档 `noexcept` ⇒ 静默越界读。② 修法照抄既有形态而不是发明新闸：绘制侧与 `find_link_at` 都早判过，只有 `scan_link_at` 这一处漏了。③ 证人必须让前置成立，否则是空转：无头环境里帧 0 的下发会立刻 `session_->resize`、行宽与网格同时长大，故用 `hold_session_size` 吞掉下发；断言三连＝越界列无命中、无提示条、条下无 accent 像素，末列同样无命中。④ 崩溃的现场栈（cdb）：`Win32Host::on_mouse(Move, x=1427, y=63)` → `on_pointer_event` → `update_hover_link` → `scan_link_at` → `link_base_column` → `Row::cell(column=0x53)`。
+
+**变异自证**：M1＝删掉 `scan_link_at` 的列闸 ⇒ 只有 ⑨ 案红，且是 fail-fast（`0xC0000409`：`vector subscript out of range`）；逐字节还原后复绿。
+
+**验收读数**：`cmake --build build --parallel 14` 通过（EXIT=0）；`ctest --test-dir build -E etest_ -j 14 --timeout 240` **127/127**（179.46 s，终版读数）；`borealis_test_runner --run itest_url_link` **20/20**（1142.98 ms，含 ⑨ 案）。
+
+**边界与新账**：修后那份 exe 未再上真机复跑「＋」与悬停下划线（GUI 自动化已按用户物理 Esc 停手，代码侧证人只到无头层）；首批走查只覆盖四个面，监视卡／quake／设置页余下键的真机读数仍欠 ⇒ `SPEC.FEAT.CONN.05` 等条目**仍不称「可用」**；本笔无新增框架缺口。
+
+## v0.174（2026-10-29）**Aurora 状态模型两词化接货并整批迁移：203 处 `modifier.set(...)` → `set_modifier(...)`（15 个文件），展示属性的直读直写换成「访问器读 ＋ `set_*` 换源」，G49 缺口随之闭合、应用侧 15 枚手工补脏删除（裁决 **7.174**；G49 出账；本地提交＝本笔）**
+
+**动机**：Aurora 活动分支到 `c3d499c7` 把状态模型两词化（`Reactive<T>` → 可写的 `State<T>` ＋ 只读的 `ReadOnlyState<T>`），展示属性（`Text::content`／`Button::label`／`Widget::show`／`Widget::modifier`）收作私有来源、只留访问器与 `set_*` 换源腿。本仓 15 个文件 203 处 `modifier.set(...)` 全线 C2228，exe 与 runner 都编不出来——真机走查就在此时被卡住（v0.175 的走查因此跑的是上一份产物）。同一笔回货顺手闭合了 G49：换源腿内部 `resubscribe_signals()` ＋ 两脏，正是任务书要求的形态②（保留换源语义、观察边随迁），故「拿到已挂载句柄就地改文本」的老缺口不再需要应用侧绕道。
+
+**落地形态**：（a）`x.modifier.set(V)` → `x.set_modifier(V)` 203 处，分布在 `src/main.cpp`、13 个 `src/ui/*.cpp` 与 `tests/integration/itest_workspace_broadcast.cpp`；（b）读侧 `content.get` 6／`label.get` 7／`show.get` 1 改访问器调用，写侧 `content =` 7／`label =` 1／`show =` 2 改 `set_content`／`set_label`／`set_show`；（c）`Reactive<bool>` → `State<bool>` 五处（`session_monitor_panel.cpp` 4／`tunnel_panel.cpp` 1），`session_monitor_panel.cpp` 的 `set_cell_text()` 撤掉 `content.set()` 绕道、改走 `Text::set_content()`（G49 撤回点）；（d）`src/main.cpp` 的 `std::make_shared<State<Theme>>` → 值句柄 `State<Theme>`，`apply_chrome_scheme` 只剩一次 `.set()`；（e）`settings_panel.h` 的 `chain_items_` 改 `std::optional<State<std::vector<std::string>>>`（`ReorderableList` 的构造改收值句柄，`== nullptr` 一族的判空随之改 `.has_value()`）；（f）代偿撤除：12 处写入点上 15 枚手工 `mark_needs_layout()`／`mark_needs_paint()` 删除（`settings_panel.cpp` 10／`search_overlay.cpp` 1／`snippet_panel.cpp` 2／`connection_wizard.cpp` 2），链候选刷新那段 `shifted` 指针表与补脏循环整段消失。
+
+**口径**：① 只清编译错误列表会留下读侧的哑雷——MSVC 对「访问器遮住同名成员」只报写侧，读侧得靠 grep 全量扫。② 真机制是 C++ 名字遮蔽：访问器与同名成员并存，`x->content.get()`／`x->content = v` 一律 ill-formed，`x->content()` 合法且返回只读句柄。③ G49 的闭合按反向实证读：v0.171 的 M1 曾把 `set_cell_text()` 换成 `set_content()` 并红 2 案，今天这条替换就是生产形态且 ⑰ 案全绿。④ 代偿撤除与迁移是同一意图的两半：`set_*` 换源即两脏，应用侧再补就是重复标脏，拆开做会留下双写。⑤ `State<T>` 是共享来源的值类型，跨窗共享靠副本而非指针。
+
+**变异自证**：本笔的证人是「删掉补偿后仍全绿」这条反向量化——`itest_session_monitor_panel` ⑰ 案、`itest_settings_panel` 的链候选案、`itest_search_overlay` 的计数案、`itest_snippet_panel` 的留痕案、`itest_connection_wizard` 的认证轮换案若框架的 `set_*` 不自脏，删掉那 15 枚手工补脏就会红；五案全绿 ⇒ 换源腿确实自带两脏（只写成员、不标脏的 `Button::text_color`／`Text::text_color` 一类保持补脏不动，见 `search_overlay.cpp` 的 chip 注）。G49 闭合本身另有 v0.171 M1 的红 2 案作前向对照（那时不重订阅即红）。
+
+**验收读数**：`cmake --build build --parallel 14` 通过（EXIT=0）；`ctest --test-dir build -E etest_ -j 14 --timeout 240` **127/127**（179.46 s，终版读数）。同批首次全量跑出一次 `utest_form_transfer` 单案红（`Store::replace` 返回错误、0.92 s 早退），单跑该套件 **10/10**、全量复跑 **127/127** 全绿——判为并行负载下的偶发写盘被拒，与本迁移无因果，登记为观察。
+
+**边界与新账**：本条不改任何用户可见行为；`Reactive` 一词在 `src/`／`tests/` 只余 `session_monitor_panel.cpp` 头注里的一处历史说明；框架侧 `Text`／`Button` 的「挂载后换源」没有专案用例（现役证人是本仓 ⑰ 案与设置面板链候选案），按观察登记、不新开缺口号。
+
 ## v0.173（2026-10-28）**CONN.02 的最后一处代码侧欠项清零：`itest_ssh_connection` 的 ⑥ 案两腿同跑——Win32 腿的替身 agent 落成命名管道回显服务器（裁决 **7.173**；`TODO(SPEC.*)` 自此零开放；本地提交＝本笔）**
 
 **动机**：v0.167 把三件 SSH 集成套件去 `posix` 前缀时，agent 反向通道那一案仍按平台缺件留在 `#ifndef _WIN32` 内——Win32 侧的生产腿 `src/platform/win/agent_socket.cpp` 只认命名管道，而夹具的三件（`SSH_AUTH_SOCK` 改写、AF_UNIX 监听点、`/tmp` 下的 socket 路径）都是 POSIX 形态。于是 `TODO(SPEC.FEAT.CONN.02)` 成了代码侧在册的最后一处开放挂账：CONN.02 的 agent 转发腿在 Windows 上「生产腿已编译、却没有本机侧证人」。本棒把替身 agent 的 Win32 腿补上，⑥ 案两腿同跑，这条账清零。

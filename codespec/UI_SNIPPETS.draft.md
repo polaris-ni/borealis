@@ -18,7 +18,7 @@
 | F3 | `Session::send_text(std::u32string_view)` 的头注明写「键入、输入法 commit、粘贴与快捷片段都走这里，不得绕过去直接发字节」，并做**一处**行尾折算 | `include/borealis/session/session.h` | 片段只经这条路径发送；`enter` 追加的 `\n` 也由会话折算，面板不自行拼 `\r\n` |
 | F4 | `TerminalView` 的公开发送面只有 `send_broadcast_key` / `send_broadcast_text`；UTF-8→码点的 `to_code_points` 是 `terminal_view.cpp` 的匿名命名空间函数 | `src/ui/terminal_view.{h,cpp}` | 需新增一个公开的 UTF-8 发送接缝（批 3），内部复用同一个解码件，不复制第二份 |
 | F5 | `TextInput` 有 `set_value` / `set_on_changed` / `set_on_submit` / `set_placeholder`，单行；`Dialog::show()` 压焦点作用域并自动聚焦首个可聚焦控件 | Aurora `text_input.h`、`dialog.h` | 编辑框与占位符填充框都可用现成控件；搜索框可拿 Enter 作为「唯一候选发送」 |
-| F6 | `Dropdown` 收「选项串数组 + 初始序号」，`set_on_change(int)` 回序号；`Switch` 收 `Reactive<bool>` 或 `set_on_changed` | Aurora `dropdown.h`、`switch.h`；`keys_panel.cpp` 先例 | 分组过滤与「发送后回车」开关都不需要新控件 |
+| F6 | `Dropdown` 收「选项串数组 + 初始序号」，`set_on_change(int)` 回序号；`Switch` 收 `State<bool>` 或 `set_on_changed` | Aurora `dropdown.h`、`switch.h`；`keys_panel.cpp` 先例 | 分组过滤与「发送后回车」开关都不需要新控件（本条调研时原写作 `Reactive<bool>`，随 Aurora 状态模型两词化改口，裁决 **7.174**） |
 | F7 | `CommandRegistry::add` 同 id 覆盖且保序，命令可带 `default_binding`；全仓 `src/` 未见 `KeyCode::K` 的绑定 | Aurora `commands.h`；全仓 grep | `snippets.open` 用 `Ctrl+Shift+K`，与保留键表无冲突 |
 | F8 | 活动窗当前标签的焦点格取法已有先例：`command_tab_id()` → `tab_workspaces` → `workspace->view_of(workspace->focused_pane())` | `src/main.cpp` 的 `quick_select.open` 落点 | 片段只发焦点格，不广播、不猜 1 号格 |
 | F9 | 面板是 app 级单实例；打开前 `retarget_panel(panel)` 搬窗，关窗链里 `retire_panel(&panel)` 撤账 | `src/main.cpp` 的 `keys.open` 与 `window_closed` 钩子 | snippets 面板照抄这两条腿，不新增窗口生命周期机制 |
@@ -173,7 +173,9 @@ codespec/{SPECIFICATIONS,CHANGELOG,PLAN,ARCHITECTURE}.md 改 —— 裁决、版
 
 **实装期的两处布局修正**：搜索行与行区必须叠成 `Stack`——`Scroll` 恒认领命中，平铺时下拉与
 行区会互相抢命中；`Text::set_content` 只写响应式值不标脏，换留痕文本后须显式 `mark_needs_layout()`,
-否则无障碍名与显示缓存停在上一句。两处都写进了批 3 的提交正文。
+否则无障碍名与显示缓存停在上一句。两处都写进了批 3 的提交正文。（2026-10-29 追记：第二处的成因是
+缺口 **G49**，随 Aurora 状态模型收口 `c3d499c7` 闭合——`set_content` 换源时自行 `resubscribe_signals()`
+并标两脏，「换文本后手工补脏」自此是多余动作；本段的补偿在裁决 **7.174** 里已随同类代偿一并撤除。）
 
 **变异自证（四处，各有指名红案）**：占位符替换丢值 ⇒ `utest_snippet` 1 案红；过滤忽略查询 ⇒
 `itest_snippet_panel` 2 案红；`enter` 不追加换行 ⇒ `itest_snippet_panel` 1 案红；直发截断为首字节
