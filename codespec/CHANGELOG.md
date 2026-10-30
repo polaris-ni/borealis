@@ -4,6 +4,20 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.176（2026-10-30）**设置页 19 枚下拉行改判为「常驻按钮 ＋ 共享 `Popup`」：行内框架下拉「点开看不见、点了不算」，真机复验通过；同批撤 G29–G31 的仓内证人（框架契约归 Aurora `utest_dropdown`）、补三案三变异，另登记一条「提交后行文本偶发空白」的待查现象（裁决 **7.176**；本地提交＝本笔）**
+
+**动机**：真机走查批二在终端页撞到的第一条硬缺陷——`au::Dropdown` 的候选面板「覆盖绘制但不占布局」，而行区是 `Scroll` ＋ `Column`：`Scroll` 的局部重录只按后代**绘制盒**合并脏带，候选面板不在任何一行的盒里；命中链又按视觉层次从上层兄弟行先命中。catalog 里 19 行下拉（`dropdown()` 18 行 ＋ `terminal.encoding` 的 `FreeText` 一行）在旧形态下逐行都是「点开看不见、点了不算」。
+
+**落地形态**：（a）行内改为「常驻 `Button` 显示现值 ＋ 点击锚到按钮下沿的 `Popup` 候选列」，与字体行**共用同一只** `picker_popup_`（同时最多开一只；两只各记浮层序号会在 `remove_overlay` 的按表 erase 上互相错位）；`choice_key_` 记浮层服务哪一行，同行再点＝收起、另一行点开＝换内容；选中走既有 `commit()`，角标／落盘／广播三条腿一行未改（`src/ui/settings_panel.{h,cpp}`）。（b）判据腿重写三案并改口上色案的取行方式（`tests/integration/itest_settings_panel.cpp`）；G29／G30／G31 三案按预诺退役——它们钉的是面板内 `Dropdown` 的命中与原点，形态撤掉后测的不再是本仓行为。
+
+**口径**：① 形态判据来自框架的「列表行内不得使用覆盖绘制不占布局的控件」约束，不是口味；本形态落在该约束射程之外（行内按钮正常占布局、覆盖绘制在场景根浮层里）。② 共用一只浮层的代价是「字体行与下拉行不能同时展开」，换来的是浮层序号只有一份。③ 真机读数：候选画在触发器下沿之下、逐条可点；点 `narrow` 后按钮文字即换、无需翻页，`%LOCALAPPDATA%orealis.json` 的 `ambiguous_width` 由 `wide` 落成 `narrow`；同行再点只收、配置不动；`Escape` 只收浮层、面板仍在。**配置现场是 `%LOCALAPPDATA%orealis.json`**，`build/src/borealis.json` 只是旧构建残留。
+
+**变异自证**：M1 删 `refresh_choice_views()` 的换标签腿 ⇒ 只 ① 案红（标签停在旧值）；M2 取反「同行再点」的键相等判据 ⇒ 只 ② 案红；M3 删 Escape 收浮层后的 `return` ⇒ 只 ③ 案红（面板一并关掉）。逐字节还原后复绿；重链前删 `build/**/*.ilk`。
+
+**验收读数**：`cmake --build --preset msvc` 无工作可做（EXIT=0）；`borealis_test_runner --run=itest_settings_panel` **65/65**（101.37 s）；`ctest --test-dir build -E etest_ -j 14 --timeout 240` **127/127**（117.70 s）。
+
+**边界与新账**：① 新账一条待查现象——提交一次候选之后，行区偶发「某行的行名与角标整块空白」且该行内容相对下方行下移约 7 px，再捕获不恢复、切页重建即恢复；根因未验证，推断落在 `Scroll` 局部重录与行内 `Text`／`Button` 换源重排的交叉口，归属（Aurora 或本仓调用时序）尚未定 ⇒ 设置面板**仍不称「可用」**（§4.4 第 33 条）。② `connection_wizard.cpp`／`keys_panel.cpp`／`snippet_panel.cpp`／`tunnel_panel.cpp` 仍直接用 `au::Dropdown`，是否落在 `Scroll` 行内需各自复核，本轮不改不动。③ 本笔无新增框架缺口。
+
 ## v0.175（2026-10-29）**真机走查首批：四个面的读数取到，同轮抓到一个只在真机路径出现的越界读（点「＋」后指针一动即 Debug 断言 `vector subscript out of range`）——`TerminalView::scan_link_at` 缺列闸，按既有同形补闸并配无头证人（裁决 **7.175**；本地提交＝本笔）**
 
 **动机**：`SPEC.NF.PKG.01` 的打包、`CONN.05` 的监视卡、`WS.12` 的 quake 等条目都已「代码落、只欠真机」，按 §4.4 第 33 条不真机走查不得称「可用」。首轮走查先验通道：7.31① 说「会话锁屏时 `SetForegroundWindow`／`SendInput` 静默失效」——当日 `LogonUI`／`LockApp` 均未运行，对照实验是「点『＋』真的建出第二张标签」，故前提不成立，真实点击与键盘都落地。
