@@ -1553,7 +1553,27 @@ public:
     [[nodiscard]] auto find_first(std::string_view type_name, float room_below_dp = 0.0F,
                                   const std::function<bool(au::Widget *)> &accept = {},
                                   float start_x_dp = 220.0F) -> HitSpot {
-        for (float y = kCardEdgeDp + 4.0F; y < static_cast<float>(kWindowHeight) - kCardEdgeDp; y += 4.0F) {
+        return scan(type_name, room_below_dp, accept, start_x_dp, /*bottom_up=*/false);
+    }
+
+    /// @brief 同 `find_first`，但从**最下**一行往上扫，取最靠下的那一个。
+    ///
+    /// 需要它的场合是「只有末行才唯一决定档位」那种判据：状态栏那十枚在外观页末尾连续排着，而接线
+    /// 是分档的（裁决 7.179：稿面条上画了格的七枚已接线、没画的三枚仍延后），于是「带内第一个开着态」
+    /// 不再等于「延后的那一枚」——末行 `show_input_latency` 才是，它没有消费方。
+    [[nodiscard]] auto find_last(std::string_view type_name, float room_below_dp = 0.0F,
+                                 const std::function<bool(au::Widget *)> &accept = {},
+                                 float start_x_dp = 220.0F) -> HitSpot {
+        return scan(type_name, room_below_dp, accept, start_x_dp, /*bottom_up=*/true);
+    }
+
+    /// @brief 两个方向的扫描共用一条算式（挑行启发与门槛都不许在两处各写一遍）。
+    [[nodiscard]] auto scan(std::string_view type_name, float room_below_dp,
+                            const std::function<bool(au::Widget *)> &accept, float start_x_dp,
+                            bool bottom_up) -> HitSpot {
+        const float top = kCardEdgeDp + 4.0F;
+        const float bottom = static_cast<float>(kWindowHeight) - kCardEdgeDp - 4.0F;
+        for (float y = bottom_up ? bottom : top; y >= top && y <= bottom; y += bottom_up ? -4.0F : 4.0F) {
             for (float x = start_x_dp; x < static_cast<float>(kWindowWidth) - kCardEdgeDp; x += 4.0F) {
                 au::Widget *widget = hit(x, y);
                 if (widget == nullptr || type_name != widget->type_name()) {
@@ -3693,18 +3713,21 @@ AURORA_TEST_CASE(a_runtime_appended_overlay_subtree_is_mounted_at_the_next_layou
     AURORA_TEST_CHECK_EQ(leaf->unmounts, 0);
 }
 
-/// @brief 延后档位是**真控件而只落盘**：状态栏那十枚开关按真实派发点得动，而界面上的延后表达是两处文字。
+/// @brief 延后档位是**真控件而只落盘**：状态栏尚未接线的那三枚开关按真实派发点得动，界面上的延后表达是两处文字。
 ///
 /// 裁决 7.68③ 拍的是「有键而无消费方的行一律可改、照常过校验、照常落盘，只是不广播」，于是判据文里
 /// 那句「灰置」就地作废（S15① / B3-a / C2-a）。灰置形态下本例会立刻红——禁用态的 `Switch` 虽仍在命中链里
 /// （7.62④ 同族：框架只按 `wants_click()` 分档），但点了不翻值也不落盘，故「计数不变」就是那条误读的证人。
 /// 既有的 `a_persist_only_change_writes_but_does_not_broadcast` 走的是编程入口，测的是表单与生效档位；
 /// 本例补的是它测不到的那一半：**这一行在真实浮层树上抓得住、按得下**。
+/// 裁决 7.179 之后本组只剩三枚延后（条上画了格的七枚已接状态栏件），本例挑的是其中位置确定的末行那一枚。
 ///
-/// 取控件不按 key 而按「滚到底之后带内第一个开着态开关」：外观页末尾连续十行都是状态栏，而它们缺省全为真
-/// （`StatusBarSettings` 十枚 `= true`），故「滚到内容下沿 + 挑开着的那枚」就把候选收窄到本组。同页另有
-/// 三枚开关（`bold_is_bright` / `min_contrast_enabled` / `sidebar_collapsed`）都在其上若干行， offset 钳位后
-/// 已出带。这一「挑的是哪一组」不靠推断，由下面的落盘差分逐字钉住。
+/// 取控件不按 key 而按「滚到底之后**最下**那一枚开着态开关」：外观页末尾连续十行都是状态栏，而它们缺省全
+/// 为真（`StatusBarSettings` 十枚 `= true`），末行因此唯一落在 `show_input_latency`。这一挑法在十枚全延后
+/// 时与「带内第一个开着态」等价，但裁决 7.179 把其中七枚接上状态栏件之后就不等价了——接线是分档的，
+/// 「带内第一个」此刻落在哪一枚取决于视口高度与行高，而本例的「不广播」只在**延后那一档**成立。
+/// 同页另有三枚开关（`bold_is_bright` / `min_contrast_enabled` / `sidebar_collapsed`）都在其上行，
+/// offset 钳位后已出带；「点的正是末行那一枚」不靠推断，由下面的逐字段落盘差分钉住。
 ///
 /// 一条判据边界如实登记：`visible_notes()` 比的是**说明文字与该页的对应**，而「这段文字真的进了树」本例
 /// 结构上抓不到（`Text` 无可点语义，`reachable_box` 一类的真实派发量法对它无效，裁决 7.61 那条「为判据开
@@ -3729,7 +3752,7 @@ AURORA_TEST_CASE(the_deferred_status_bar_toggles_are_real_controls_and_only_pers
     }
     h.render();
 
-    const HitSpot spot = h.find_first("Switch", 0.0F, [](au::Widget *widget) -> bool {
+    const HitSpot spot = h.find_last("Switch", 0.0F, [](au::Widget *widget) -> bool {
         auto *sw = dynamic_cast<au::Switch *>(widget);
         return sw != nullptr && sw->value();
     });
@@ -3753,13 +3776,18 @@ AURORA_TEST_CASE(the_deferred_status_bar_toggles_are_real_controls_and_only_pers
     AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
     AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
 
-    // ⑵ 点的确实是状态栏那一组（而`sidebar_collapsed` 那行同样 `Absent`、同样在外观页，故必须差分到位）。
+    // ⑵ 点的正是该组末行那一枚（`show_input_latency`）：逐字段差分，组内另九枚一位都不许跟着翻——
+    // 「挑的是哪一枚」此刻决定 ⑶ 成不成立（同组已接线的那七枚是要广播的），故不能只判「进了这一组」。
+    // 同页另有 `sidebar_collapsed` 那行同样 `Absent`，它在上面若干行，一并差分把它排除。
     AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 1U);
-    AURORA_TEST_CHECK_FALSE(probe.persisted.back().appearance.status_bar == before.appearance.status_bar);
+    borealis::config::StatusBarSettings expected = before.appearance.status_bar;
+    expected.show_input_latency = !expected.show_input_latency;
+    AURORA_TEST_CHECK_TRUE(probe.persisted.back().appearance.status_bar == expected);
     AURORA_TEST_CHECK_TRUE(probe.persisted.back().appearance.sidebar_collapsed ==
                            before.appearance.sidebar_collapsed);
 
-    // ⑶ 无消费方 ⇒ 没有可广播的对象：落盘一次而广播零次（裁决 7.68③ 的「只落盘」）。
+    // ⑶ 无消费方 ⇒ 没有可广播的对象：落盘一次而广播零次（裁决 7.68③ 的「只落盘」，档位算法本身由
+    //     `utest_settings_form` 的 `only_wired_immediate_rows_broadcast` 逐键核算）。
     AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
 
     // ⑷ 连接页的四组各有自己的说明，且次序＝该页行序（SSH 段在前、串口段在中、日志段在后）而非「按页推出」；

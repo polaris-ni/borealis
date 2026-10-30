@@ -408,13 +408,15 @@ AURORA_TEST_CASE(dirty_keys_follow_the_catalog_layout_order) {
 AURORA_TEST_CASE(only_wired_immediate_rows_broadcast) {
     SettingsForm form{entries_for_whole_catalog()};
     // 四个代表值各挡一条折叠规则；两列具名集合的漂移由 `utest_settings_catalog` 守。
+    // 第四条取的是状态栏里**条上没画格**的那一枚（`show_reconnect`，裁决 7.179：同组七枚已接线，
+    // 拿 `show_theme` 当「延后档」的代表值会在下一棒接线时静默失效）。
     AURORA_TEST_CHECK_EQ(form.apply_scope("appearance.font_size_pt").value_or(ApplyScope::PersistOnly),
                          ApplyScope::PersistAndApplyNow);
     AURORA_TEST_CHECK_EQ(form.apply_scope("terminal.scrollback_limit").value_or(ApplyScope::PersistAndApplyNow),
                          ApplyScope::PersistOnly);
     AURORA_TEST_CHECK_EQ(form.apply_scope("appearance.cursor_shape").value_or(ApplyScope::PersistAndApplyNow),
                          ApplyScope::PersistOnly);
-    AURORA_TEST_CHECK_EQ(form.apply_scope("appearance.status_bar.show_theme").value_or(ApplyScope::PersistAndApplyNow),
+    AURORA_TEST_CHECK_EQ(form.apply_scope("appearance.status_bar.show_reconnect").value_or(ApplyScope::PersistAndApplyNow),
                          ApplyScope::PersistOnly);
     AURORA_TEST_CHECK_FALSE(form.apply_scope("appearance.not_a_schema_key").has_value());
 
