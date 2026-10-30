@@ -163,6 +163,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -545,7 +546,27 @@ public:
     [[nodiscard]] auto font_notice_text() const -> aurora::Widget *;
 
     /// @brief 候选浮层本体的控件（未建时为空）。
-    [[nodiscard]] auto font_popup() const -> aurora::Widget *;
+    ///
+    /// 字体族与通用下拉行共用**同一只**浮层：两者都只在「点开」那一刻建内容，同时最多开一只，
+    /// 共用一只就不必维护第二份浮层序号（`remove_overlay` 按当前子节点表 erase，两只各自记号的
+    /// 摘除次序会互相错位）。
+    [[nodiscard]] auto picker_popup() const -> aurora::Widget *;
+
+    /// @brief 通用下拉行的当前状态（该键不在本页或本页没有这一行时各列为空）。
+    struct ChoiceView {
+        std::string label{};                 ///< 触发按钮上的文字，即表单现值（逐字）。
+        std::vector<std::string> choices{};  ///< 这一行的候选（次序即 catalog 给的次序）。
+        bool popup_open{};                   ///< 候选浮层此刻是否服务这一行且开着。
+    };
+
+    /// @brief 下拉行的当前状态：触发器标签、候选次序与浮层归属（用例按它判「点中的是哪一档」）。
+    [[nodiscard]] auto choice_view(std::string_view key) const -> ChoiceView;
+
+    /// @brief 下拉行触发按钮的控件；该行不在当前页时为空。
+    [[nodiscard]] auto choice_button(std::string_view key) const -> aurora::Widget *;
+
+    /// @brief 下拉浮层第 index 档候选按钮的控件；越界或浮层未建时为空。
+    [[nodiscard]] auto choice_candidate(std::size_t index) const -> aurora::Widget *;
 
     /// @brief 快捷键只读表的一行（判据文 D1-a 的三列 + D2-a 的那一列标注，全是已解析的显示串）。
     ///
@@ -666,8 +687,24 @@ private:
     /// @param anchor 触发按钮在**窗口坐标**里那份盒的下沿（经框架 `Widget::window_bounds()` 现取，A4-e）。
     auto open_family_popup(aurora::Point anchor) -> void;
 
+    /// @brief 弹通用下拉的候选浮层：按 choices 建一列按钮，并贴到 anchor（触发按钮下沿）落位。
+    /// @param key 这一行在 catalog 里的配置键（选中后按它提交，也是「浮层归谁」的判据）。
+    /// @param choices 候选串（次序即浮层里的次序）。
+    /// @param anchor 触发按钮在**窗口坐标**里那份盒的下沿（与字体行同一条锚点来源）。
+    auto open_choice_popup(std::string key, const std::vector<std::string> &choices, aurora::Point anchor)
+        -> void;
+
+    /// @brief 点中一档候选：收浮层并把该串提交进表单（落盘与广播走 `after_commit` 的既有腿）。
+    auto choose_choice(const std::string &value) -> void;
+
     /// @brief 收候选浮层：只 `Popup::close()` 而不摘浮层（见文件头那条「派发栈内销毁正在派发的按钮」）。
-    auto close_family_popup() -> void;
+    auto close_picker_popup() -> void;
+
+    /// @brief 刷新各下拉行触发按钮的标签（该页建好、以及任一键提交通过之后各一次）。
+    auto refresh_choice_views() -> void;
+
+    /// @brief 放掉下拉行的派生句柄（关面板与重建浮层两处；浮层本体由 `clear_family_state()` 摘）。
+    auto clear_choice_state() -> void;
 
     /// @brief 点中一档候选：收浮层并把该族名提交进表单（落盘与广播走 `after_commit` 的既有腿）。
     /// @param family 该档的族名（逐字节，即候选池里那一串）。
@@ -908,9 +945,15 @@ private:
 
     std::shared_ptr<aurora::Button> font_trigger_{};  ///< 字体行那枚常驻触发按钮（锚点经框架 `window_bounds()` 现取）。
     std::shared_ptr<aurora::Text> font_notice_{};     ///< 字体行**下方**那一行回落留痕（A4-b）。
-    std::shared_ptr<aurora::Popup> font_popup_{};     ///< 候选浮层本体：跨开合复用一只，见文件头③末段。
-    std::optional<std::size_t> font_popup_index_{};   ///< 它在宿主子节点里的序号（降序摘除用）。
+    std::shared_ptr<aurora::Popup> picker_popup_{};   ///< 候选浮层本体：字体行与下拉行共用，跨开合复用一只。
+    std::optional<std::size_t> picker_popup_index_{}; ///< 它在宿主子节点里的序号（降序摘除用）。
     std::vector<std::shared_ptr<aurora::Button>> font_candidates_{};  ///< 当前浮层里的候选按钮，按池内序。
+
+    /// 下拉行的派生面：触发器按配置键登记，浮层里的候选按钮另记一份（服务哪一行由 `choice_key_` 记）。
+    /// 两者与字体行那几枚同生同灭——留在旧树上就是 G34 那条「活在容器之外被摘走」的告警档。
+    std::map<std::string, std::shared_ptr<aurora::Button>> choice_triggers_{};
+    std::vector<std::shared_ptr<aurora::Button>> choice_items_{};
+    std::string choice_key_{};  ///< 浮层当前服务的那一行；空串＝浮层没开或开的是字体行的候选。
 
     std::vector<FontFamilyEntry> family_catalog_{};  ///< 每次建浮层时经 `Hooks::families` 现取（S16 的同源目录）。
     /// 列表的**数据源**（框架的 `ReorderableList` 直接改写它）；与表单之间以本件为中介，见 `commit_chain()`。

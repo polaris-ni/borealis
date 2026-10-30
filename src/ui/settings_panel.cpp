@@ -129,6 +129,12 @@ constexpr float kFontPopupWidthDp = 260.0F;    ///< 候选浮层宽（含浮层�
 constexpr float kFontItemHeightDp = 30.0F;     ///< 浮层一档候选的行高。
 constexpr std::size_t kFontPopupVisibleRows = 8;  ///< 一次显几档，超出靠浮层内部 `Scroll`（A4-d）。
 
+// ---- 通用下拉行（「按钮 + 候选浮层」）的排版量：形态与字体行同源，故数值不另起一套 ----
+constexpr float kChoiceButtonWidthDp = 200.0F;   ///< 触发按钮的最小宽（长候选名不至于把行挤成一团）。
+constexpr float kChoicePopupWidthDp = 240.0F;    ///< 候选浮层宽（含浮层描边与滚动一侧的余量）。
+constexpr float kChoiceItemHeightDp = 30.0F;     ///< 浮层一档候选的行高。
+constexpr std::size_t kChoicePopupVisibleRows = 8;  ///< 一次显几档，超出靠浮层内部 `Scroll`。
+
 // ---- 快捷键只读表（D 页）的排版量：四列里三列定宽、动作名列吃掉余量 ----
 constexpr float kShortcutRowHeightDp = 24.0F;   ///< 数据行与列名行同高（一张表里两种行高没有理由）。
 constexpr float kShortcutCategoryWidthDp = 128.0F;
@@ -546,8 +552,8 @@ auto SettingsPanel::open() -> void {
                                                  close_binding_dialog();
                                                  return;
                                              }
-                                             if (font_popup_ != nullptr && font_popup_->is_open()) {
-                                                 close_family_popup();
+                                             if (picker_popup_ != nullptr && picker_popup_->is_open()) {
+                                                 close_picker_popup();
                                                  return;
                                              }
                                              if (chain_list_ != nullptr && chain_list_->cancel_keyboard_grab()) {
@@ -590,6 +596,8 @@ auto SettingsPanel::close() -> void {
     clear_binding_state();
     // 候选浮层比面板浮层**后**加进宿主（序号更大），而 `remove_overlay` 是按当前子节点表 erase 的：
     // 先摘面板会让浮层序号整体前移一格、此后那个号就指到别的节点上。故按序号降序摘，浮层在前。
+    // 下拉行的句柄没有自己的浮层（与字体行共用一只），故它只放句柄、不碰序号。
+    clear_choice_state();
     clear_family_state();
     shortcuts_rows_.clear();
     // 编辑按钮与行投影同生同灭：留着句柄就在摘浮层那一刻落进 G34 那条「活在容器之外被摘走」的告警档
@@ -798,7 +806,8 @@ auto SettingsPanel::family_view() const -> FamilyView {
     out.effective = font_trigger_ != nullptr ? font_trigger_->label().get().text : std::string{};
     out.notice = font_notice_ != nullptr ? font_notice_->content().get().text : std::string{};
     out.choices = family_choices();
-    out.popup_open = font_popup_ != nullptr && font_popup_->is_open();
+    // 浮层由字体行与下拉行共用：开着但服务的是下拉行时，不算字体行的浮层开着。
+    out.popup_open = picker_popup_ != nullptr && picker_popup_->is_open() && choice_key_.empty();
     return out;
 }
 
@@ -814,8 +823,31 @@ auto SettingsPanel::font_notice_text() const -> aurora::Widget * {
     return font_notice_.get();
 }
 
-auto SettingsPanel::font_popup() const -> aurora::Widget * {
-    return font_popup_.get();
+auto SettingsPanel::picker_popup() const -> aurora::Widget * {
+    return picker_popup_.get();
+}
+
+auto SettingsPanel::choice_view(std::string_view key) const -> ChoiceView {
+    ChoiceView out;
+    const auto found = choice_triggers_.find(std::string{key});
+    if (found == choice_triggers_.end() || found->second == nullptr) {
+        return out;  // 该行不在当前页（或本页没有下拉行）
+    }
+    out.label = found->second->label().get().text;
+    if (const SettingsControl *control = find_settings_control(key); control != nullptr) {
+        out.choices = control->choices;
+    }
+    out.popup_open = picker_popup_ != nullptr && picker_popup_->is_open() && choice_key_ == key;
+    return out;
+}
+
+auto SettingsPanel::choice_button(std::string_view key) const -> aurora::Widget * {
+    const auto found = choice_triggers_.find(std::string{key});
+    return found == choice_triggers_.end() ? nullptr : found->second.get();
+}
+
+auto SettingsPanel::choice_candidate(std::size_t index) const -> aurora::Widget * {
+    return index < choice_items_.size() ? choice_items_[index].get() : nullptr;
 }
 
 auto SettingsPanel::collect_rows() const -> std::vector<const SettingsControl *> {
@@ -851,6 +883,8 @@ auto SettingsPanel::rebuild_overlay() -> void {
     clear_binding_state();
     // 候选浮层比面板浮层**后**加进宿主（序号更大），而 `remove_overlay` 是按当前子节点表 erase 的：
     // 先摘面板会让浮层序号整体前移一格、此后那个号就指到别的节点上。故按序号降序摘，浮层在前。
+    // 下拉行的句柄没有自己的浮层（与字体行共用一只），故它只放句柄、不碰序号。
+    clear_choice_state();
     clear_family_state();
     shortcuts_rows_.clear();
     // 编辑按钮与行投影同生同灭：留着句柄就在摘浮层那一刻落进 G34 那条「活在容器之外被摘走」的告警档
@@ -871,8 +905,8 @@ auto SettingsPanel::rebuild_overlay() -> void {
         // A4-c：候选浮层开着时，第一次「浮层之外」的点击只关浮层。遮罩在浮层之下，本闭包跑起来时用户点的
         // 正是浮层之外那一片，直接 `close()` 会把整块面板一起撤掉。框架那条自动关闭（`handle_outside_click`）
         // 在 Aurora 全仓无调用点（裁决 7.41③ 的同一条实测），故这一腿归本件自驱。
-        if (font_popup_ != nullptr && font_popup_->is_open()) {
-            close_family_popup();
+        if (picker_popup_ != nullptr && picker_popup_->is_open()) {
+            close_picker_popup();
             return;
         }
         close();
@@ -1700,26 +1734,29 @@ auto SettingsPanel::build_control(const SettingsControl &control, bool editable)
                 return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(spin))};
             }
             case ControlKind::Dropdown: {
+                // 下拉行**不能**用框架的 `Dropdown`：它把候选面板画在自己盒外、却不占布局，而行区是
+                // `Scroll` + `Column`（`widget.h` 的「形态约束（列表行内禁用）」那一段）——面板既不在
+                // 行区的脏带里，点击也会先落到视觉更上层的兄弟行。故照字体行那条先例改成「常驻按钮 +
+                // 候选浮层」：按钮只显示现值，候选挂在宿主上的 `Popup` 里、按按压点贴住按钮下沿。
                 const auto current = value != nullptr ? value->as_text() : std::nullopt;
-                int initial = 0;
-                for (std::size_t i = 0; i < control.choices.size(); ++i) {
-                    if (current.has_value() && control.choices[i] == *current) {
-                        initial = static_cast<int>(i);
-                        break;
-                    }
-                }
-                auto box = std::make_shared<aurora::Dropdown>(control.choices, initial);
-                box->set_box_color(chrome().control_bg);
-                box->set_border_color(chrome().card_line);
-                box->set_text_color(chrome().text);
-                box->set_arrow_color(chrome().text_dim);
-                box->set_accent_color(chrome().accent);
-                box->set_on_change([this, key, choices = control.choices](int index) -> void {
-                    if (index >= 0 && static_cast<std::size_t>(index) < choices.size()) {
-                        commit(key, FormValue::text(choices[static_cast<std::size_t>(index)]));
-                    }
+                auto button = std::make_shared<aurora::Button>(aurora::ButtonProps{
+                    .label = current.value_or(std::string{}),
+                    .color = chrome().control_bg,
+                    .on_color = chrome().text,
+                    .border_color = chrome().card_line,
+                    .border_width = 1.0F,
+                    .min_width = kChoiceButtonWidthDp,
                 });
-                return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(box))};
+                button->set_on_click([this, key, choices = control.choices, anchor = button.get()]() -> void {
+                    const std::optional<aurora::Rect> box = anchor->window_bounds();
+                    if (!box.has_value()) {
+                        return;  // 与字体行同一条：查不到有效窗口盒就没有可信锚点，宁可不弹也不猜位置
+                    }
+                    open_choice_popup(key, choices,
+                                      aurora::Point{.x = box->origin.x, .y = box->origin.y + box->size.height});
+                });
+                choice_triggers_[key] = button;
+                return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(button))};
             }
             case ControlKind::HexInput:
             case ControlKind::OptionalHexInput:
@@ -1794,9 +1831,11 @@ auto SettingsPanel::after_commit(std::string_view key, const SettingsControl &co
     }
     set_status(ordinal, badge_text(control));
     // 三个区段的当前值都在 `form_` 里，故每次成功提交都要重跑那些派生态腿：画布重绘、卡名亮度、
-    // 恢复按钮可用性与主题行的「自定义」角标，以及字体行的按钮标签与下方那一行回落留痕。
+    // 恢复按钮可用性与主题行的「自定义」角标，以及字体行的按钮标签与下方那一行回落留痕；
+    // 下拉行的触发按钮同理——它就是这一行的显示值。
     refresh_palette_views();
     refresh_family_views();
+    refresh_choice_views();
     if (!form_.is_dirty(key)) {
         return;  // 改了又改回来：既不落盘也不广播
     }
@@ -2196,6 +2235,9 @@ auto SettingsPanel::open_family_popup(aurora::Point anchor) -> void {
 
     std::vector<aurora::Node> rows;
     rows.reserve(choices.size());
+    // 浮层两条腿共用：换内容之前先放掉另一条腿对候选按钮的持有（G34 的口径，同 `clear_family_state()`）。
+    choice_items_.clear();
+    choice_key_.clear();
     font_candidates_.clear();
     for (const std::string &family : choices) {
         auto item = std::make_shared<aurora::Button>(aurora::ButtonProps{
@@ -2225,17 +2267,80 @@ auto SettingsPanel::open_family_popup(aurora::Point anchor) -> void {
                                .border(1.0F, chrome().card_line));
 
     // 同一只 `Popup` 跨开合复用：每次打开都按**当前**表单重建候选（置顶那档随配置值走）。
-    if (font_popup_ == nullptr) {
-        font_popup_ = std::make_shared<aurora::Popup>();
-        font_popup_index_ = host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(font_popup_)});
+    if (picker_popup_ == nullptr) {
+        picker_popup_ = std::make_shared<aurora::Popup>();
+        picker_popup_index_ = host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(picker_popup_)});
     }
-    font_popup_->set_content(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(viewport))});
-    static_cast<void>(font_popup_->open_at(anchor));
+    picker_popup_->set_content(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(viewport))});
+    static_cast<void>(picker_popup_->open_at(anchor));
 }
 
-auto SettingsPanel::close_family_popup() -> void {
-    if (font_popup_ != nullptr) {
-        font_popup_->close();
+auto SettingsPanel::close_picker_popup() -> void {
+    if (picker_popup_ != nullptr) {
+        picker_popup_->close();
+    }
+}
+
+auto SettingsPanel::open_choice_popup(std::string key, const std::vector<std::string> &choices,
+                                      aurora::Point anchor) -> void {
+    if (choices.empty()) {
+        return;  // 没有候选（catalog 写错了行）就不弹空板：空浮层只会被读成「面板坏了」
+    }
+    // 同一行再点一次＝收起：按钮不是开关，这里补上用户预期的另一半（换行点开则直接换内容）。
+    if (picker_popup_ != nullptr && picker_popup_->is_open() && choice_key_ == key) {
+        close_picker_popup();
+        choice_key_.clear();
+        return;
+    }
+
+    std::vector<aurora::Node> rows;
+    rows.reserve(choices.size());
+    // 换内容之前先放掉字体行那一批候选的持有（G34 的口径：它们随旧内容一起析构）。
+    font_candidates_.clear();
+    choice_items_.clear();
+    for (const std::string &value : choices) {
+        auto item = std::make_shared<aurora::Button>(aurora::ButtonProps{
+            .label = value,
+            .color = chrome().control_bg,
+            .on_color = chrome().text,
+            .corner_radius = 0.0F,  // 相邻条目拼成一块整板（与字体行候选同口径）
+            .min_width = kChoicePopupWidthDp,
+        });
+        item->set_on_click([this, value]() -> void { choose_choice(value); });
+        item->set_modifier(aurora::Modifier{}.height(kChoiceItemHeightDp));
+        choice_items_.push_back(item);
+        rows.push_back(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(item))});
+    }
+    auto list = std::make_shared<aurora::Column>(aurora::ColumnProps{.children = std::move(rows), .gap = 0.0F});
+
+    // 视口尺寸自锁：理由与 `open_family_popup()` 同段（`Popup` 给内容的是宽松约束）。
+    auto viewport = std::make_shared<aurora::Scroll>(aurora::ScrollProps{
+        .child = aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(list))},
+        .step = kChoiceItemHeightDp,
+    });
+    viewport->set_modifier(aurora::Modifier{}
+                               .width(kChoicePopupWidthDp)
+                               .height(kChoiceItemHeightDp * std::min(choices.size(), kChoicePopupVisibleRows))
+                               .background(chrome().control_bg)
+                               .border(1.0F, chrome().card_line));
+
+    if (picker_popup_ == nullptr) {
+        picker_popup_ = std::make_shared<aurora::Popup>();
+        picker_popup_index_ =
+            host_->add_overlay(aurora::Node{std::static_pointer_cast<aurora::Widget>(picker_popup_)});
+    }
+    picker_popup_->set_content(aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(viewport))});
+    choice_key_ = std::move(key);
+    static_cast<void>(picker_popup_->open_at(anchor));
+}
+
+auto SettingsPanel::choose_choice(const std::string &value) -> void {
+    // 与 `choose_family()` 同一条：只 close 不摘（派发栈内销毁正在派发的按钮会踩到派发器）。
+    const std::string key = choice_key_;
+    close_picker_popup();
+    choice_key_.clear();
+    if (!key.empty()) {
+        commit(key, FormValue::text(value));
     }
 }
 
@@ -2243,7 +2348,7 @@ auto SettingsPanel::choose_family(const std::string &family) -> void {
     // 只 `close()` 而不 `remove_overlay`：那会在派发栈内销毁正在派发的这只按钮（`OverlayHost` 的
     // `children_.erase` 之后派发器还要读该子节点）。关掉即 `on_paint` 早返回、命中链回空表，
     // 既不可见也不可达，而控件仍由本件持有故不悬垂（文件头③末段）。
-    close_family_popup();
+    close_picker_popup();
     commit(kFontFamilyKey, FormValue::text(family));
 }
 
@@ -2262,17 +2367,39 @@ auto SettingsPanel::refresh_family_views() -> void {
     }
 }
 
+auto SettingsPanel::refresh_choice_views() -> void {
+    for (const auto &[key, trigger] : choice_triggers_) {
+        if (trigger == nullptr) {
+            continue;
+        }
+        const FormValue *value = form_.value(key);
+        const std::string next = value != nullptr ? form_value_as_text(value) : std::string{};
+        if (trigger->label().get().text != next) {
+            // 同 `refresh_family_views()`：标签是测宽输入，只在真变那一次换源，免掉每次提交的整块重排。
+            trigger->set_label(next);
+        }
+    }
+}
+
+auto SettingsPanel::clear_choice_state() -> void {
+    // 先放本件自持的句柄（浮层本体由 `clear_family_state()` 随后摘除）：候选按钮若仍被面板持有却又
+    // 从容器摘走，就正是框架 G34 那条告警逐子刷屏的那一形。
+    choice_triggers_.clear();
+    choice_items_.clear();
+    choice_key_.clear();
+}
+
 auto SettingsPanel::clear_family_state() -> void {
     // 先放本件自持的句柄，再摘浮层：与 `rebuild_overlay()` 开头同一条口径——候选按钮若仍被面板持有却又
     // 从容器摘走，就正是框架 G34 那条告警逐子刷屏的那一形。
     font_trigger_.reset();
     font_notice_.reset();
     font_candidates_.clear();
-    if (font_popup_ != nullptr && font_popup_index_.has_value()) {
-        host_->remove_overlay(*font_popup_index_);
+    if (picker_popup_ != nullptr && picker_popup_index_.has_value()) {
+        host_->remove_overlay(*picker_popup_index_);
     }
-    font_popup_.reset();
-    font_popup_index_.reset();
+    picker_popup_.reset();
+    picker_popup_index_.reset();
 }
 
 auto SettingsPanel::family_choices() const -> std::vector<std::string> {

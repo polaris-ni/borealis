@@ -19,21 +19,15 @@
 ///              派发，卡片外那一点命中的是遮罩层本身，卡片内那一点命中的是卡片里的控件，点遮罩即关
 ///              面板。`Dialog` / `Scroll` 那两类不写 bounds 的容器（缺口 G26 / G27）在本用例里会直接
 ///              表现为「命中不到、点了不关」。
-///           ⑦ **下拉的选项走真实派发**（缺口 G29 的接货复验，裁决 7.59）：选项面板是「覆盖绘制不占布局」
-///              的区域，回货前它进不了真实派发的命中链（祖先按 `child.bounds()` 判包含），本套件当时以此
-///              留一条现状钉子。框架补上 `Widget::extra_hit_box()` 与祖先下降闸的合并判定后，钉子翻成正向
-///              判据：盒外那一段选项带按链能命中该 `Dropdown`，其上的真实单击选中另一档、收起面板、只落盘
-///              不广播。**回货只闭合了一层**——追加盒当时只并「直接子」的申报，孙辈的申报不随祖先上传，故
-///              面板伸出所在行之外的那一段仍不可达，本套件据此另留一条钉子（新缺口 G30）。G30 的回货把这一句
-///              翻正：`covers_extra_hit_box()` 升级为**子树聚合**（自身 ∪ 逐子节点按 `bounds().origin` 折算递归，
-///              折算与 `on_hit_test_chain` 的下降式同构），那一段因此**可达**（`the_option_panel_below_the_
-///              enclosing_row_now_reaches_the_dispatch_chain_G30`）。可达之后曾仍**点不准**：祖先的内边距平移
-///              没进 `HitNode.origin`，派发器据以本地化的坐标比该控件的绘制位置大 8 dp，`Dropdown` 按本地纵
-///              坐标反算的选项序号因此整体下移一格（缺口 **G31**）。G31 的回货把命中侧与绘制侧收敛为**同一个
-///              `content_origin`**（`bounds.origin + 修饰链平移`），故那条现状钉子翻成
-///              `a_real_click_below_the_enclosing_row_picks_the_option_under_it_G31`：真点行外那一段的第一条
-///              选项带即选中该档并走完整条提交腿。两条用例各判一层（可达 / 点得准），合成一例就会在只回货
-///              其一时不知道该翻哪一半。
+///           ⑦ **下拉行取「常驻按钮 + 候选浮层」**（裁决 7.176 的真机走查结论）：框架 `au::Dropdown` 把候选
+///              面板画在自身布局盒之外却不占布局（`widget.h` 的「形态约束（列表行内禁用）」），而行区是
+///              `Scroll` + `Column`——面板既不在行区重录的脏带里（`Widget::dirty_bounds()` 非虚，只含绘制盒
+///              与聚焦环），点击也会先落到视觉更上层的兄弟行；走查里十九行下拉**全部**「点开却是空的」。
+///              修复照字体行那条先例改成「按钮 + 宿主上的 `Popup`」，两条腿共用同一只浮层。本套件因此把
+///              G29 / G30 / G31 三条 `au::Dropdown` **在面板内**的接货复验撤下，换成
+///              `a_choice_row_opens_a_popup_below_its_trigger_and_commits_the_picked_value` 等三例
+///              （点开与提交 / 同键收起与换行 / `Escape` 的交接）。G29–G31 那三条框架事实仍由 Aurora 的
+///              `tests/unit/utest_dropdown.cpp` 守住——那条契约属于框架控件本身，不再由本件的行形态消费。
 ///           ⑧ **按钮标签由框架查表**（缺口 G28 的接货复验，裁决 7.59）：本件那三枚按钮原样交回
 ///              `LocalizedString` 之后，显示串仍是词条表给的那一条；查表没发生就回退到实例自己的 `text`，
 ///              而 `tr()` 造出的实例那份 text 恒空。
@@ -105,7 +99,6 @@
 #include "aurora/i18n/message_catalog.h"
 #include "aurora/render/font_engine.h"
 #include "aurora/widget/button.h"
-#include "aurora/widget/dropdown.h"
 #include "aurora/widget/popup.h"
 #include "aurora/widget/reorderable_list.h"
 #include "aurora/widget/scroll.h"
@@ -2126,23 +2119,17 @@ AURORA_TEST_CASE(a_text_row_commits_only_when_focus_leaves) {
     AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
 }
 
-/// @brief G29 的接货复验（可达的那一段）：展开的下拉选项面板进了真实派发链，于是「真点一个选项即提交」
-///        写成正向判据。
+/// @brief 下拉行换形之后的开与提交：常驻按钮点开宿主上的候选浮层，真点一档即走完整条提交腿。
 ///
-/// 本例曾是「框架现状不支持什么」的钉子（钉子在裁决 7.57④⑤，CHANGELOG v0.57 / v0.58 在册并明写「回货后
-/// 必须转红」）。回货形态是 `Widget::extra_hit_box(ctx)` 把「画在自身布局盒之外、仍归本件接管」的那片矩形
-/// **交给祖先的下降闸**（`child.bounds().contains(local) || child.covers_extra_hit_box(local - origin, ctx)`），
-/// 而 `Dropdown` 的覆写取的就是它与 `on_hit_test` 同源的那一份 `panel_box()`（缺省 `nullopt` ⇒ 未覆写的控件
-/// 与改动前逐位等价）。于是本例两头都翻向正向：按链走场景根**能**命中该 `Dropdown`，且那一点上的真实单击
-/// 选中 0 号档、收起面板、并把提交交回表单。
-///
-/// 目标选项固定取 0 号，故装载基线预置成 `Wide`（1 号）；探的那一点取在自身布局盒**之外**的那一段选项带里
-/// （回货前那一段永远进不了链，盒内的那一段本来就可达，拿它翻正向等于什么都没翻）。落盘而非广播是因为这一行
-/// `terminal.ambiguous_width` 是「已接线 ∧ 下次会话生效」——构造期注入的接缝已开（裁决 7.76②），但 `apply_scope()`
-/// 仍把它折成只落盘（判据文 B3-a），所以面板改了它也不该动运行中的视口：这一例因此同时是那条折叠算式的证人。
-/// 选项行高 26 dp 是框架缺省且本件未改（`set_item_height` 未被调用）。
-/// 本例只闭合到「那一格仍属所在行」为止，再往外的残段见下一条用例。
-AURORA_TEST_CASE(clicking_an_open_dropdown_option_in_its_own_extra_hit_box_commits_G29) {
+/// 换形的理由与框架事实见文件头⑦（裁决 7.176）。判据取五句：
+/// ① 终端页**不再画** `au::Dropdown`——缺陷形态的结构性钉子，换回框架下拉即转红；
+/// ② 触发按钮的标签逐字等于表单现值，且候选逐字取自 catalog（显示名与存储值不分家）；
+/// ③ 点开之后浮层开着、`choice_view()` 认领这一行，且候选浮层在按钮窗口盒**之下**（锚点＝按钮下沿）；
+/// ④ 真点 0 号候选：值、标签、落盘一次次、零广播、脏标记推进五处同判——这一行是 `Wired ∧ NextSession`，
+///    `apply_scope()` 把它折成只落盘（判据文 B3-a），故本例同时是那条折叠算式的证人；
+/// ⑤ 浮层关掉而不摘除（宿主仍是两层、那一档已从派发链上消失），重开复用同一只、不追加第三层。
+/// 目标档固定取 0 号，故装载基线预置成 `Wide`（1 号），否则「点 0 号」可能因为值没变而什么都不写。
+AURORA_TEST_CASE(a_choice_row_opens_a_popup_below_its_trigger_and_commits_the_picked_value) {
     borealis::ui::install_settings_strings();
     Harness h;
     StoreProbe probe;
@@ -2152,220 +2139,189 @@ AURORA_TEST_CASE(clicking_an_open_dropdown_option_in_its_own_extra_hit_box_commi
     // 下拉行集中在终端页，面板默认落在外观页，故先翻页再探。
     panel->select_page(SettingsPage::Terminal);
     h.render();
-    // 认行：终端页只有 `terminal.ambiguous_width` 是两档下拉（`paste_newlines` / `right_click` 各三档，
-    // `long_line` 因未接线只画只读摘要，而 `bell` 随可听铃声接线后也是三档下拉——裁决 7.159）。
-    const HitSpot spot = h.find_first("Dropdown", 40.0F, [](au::Widget *widget) -> bool {
-        const auto *dropdown = dynamic_cast<au::Dropdown *>(widget);
-        return dropdown != nullptr && dropdown->option_count() == 2U;
-    });
-    AURORA_TEST_REQUIRE(spot.widget != nullptr);
-    auto *dropdown = dynamic_cast<au::Dropdown *>(spot.widget);
-    AURORA_TEST_REQUIRE(dropdown != nullptr);
-    AURORA_TEST_REQUIRE_EQ(dropdown->selected_index(), 1);  // 预置的 Wide 经表单搬进了控件的选中位
 
-    // 开：点主框那一点——它在布局盒之内，命中链可达，所以「展开」这一步是真实的。
-    h.click(spot.x, spot.y);
+    // ① 换形的结构性钉子：行区里不再有框架下拉（它在这里从来没有画出过候选）。
+    AURORA_TEST_CHECK(h.find_first("Dropdown").widget == nullptr);
+
+    auto *trigger = panel->choice_button("terminal.ambiguous_width");
+    AURORA_TEST_REQUIRE(trigger != nullptr);
+    const HitSpot trigger_spot = h.find_first("Button", 0.0F,
+                                              [trigger](au::Widget *widget) -> bool { return widget == trigger; });
+    AURORA_TEST_REQUIRE_MSG(trigger_spot.widget != nullptr, "the choice trigger is not dispatch-reachable");
+    // ② 按钮标签即表单现值（小写的 catalog 值）；候选列也逐字取自同一张表。
+    const SettingsPanel::ChoiceView closed = panel->choice_view("terminal.ambiguous_width");
+    AURORA_TEST_CHECK_EQ(closed.label, std::string{"wide"});
+    check_key_sequence("the choice candidates are the catalog values verbatim", closed.choices, {"narrow", "wide"});
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 1U);  // 只有面板自己那一层
+
+    h.click(trigger_spot.x, trigger_spot.y);
     h.render();
-    AURORA_TEST_REQUIRE(dropdown->is_open());
+    // ③ 浮层开着、服务这一行；候选浮层是**追加**的一层。
+    AURORA_TEST_REQUIRE(panel->choice_view("terminal.ambiguous_width").popup_open);
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 2U);
 
-    const au::Rect layout = dropdown->paint_bounds();  // 只取它的**尺寸**：那是控件自身坐标空间里的量
-    const float option_x = spot.box.origin.x + layout.size.width * 0.5F;
-    // 探的那一点取在自身布局盒**之外**的第一条选项带里：行给下拉的紧约束是 40 dp，而面板贴着框架的
-    // `box_height_`＝30 dp 之后铺开，故盒下沿再往下的 8 dp 仍属第一条选项、也仍属那一行。
-    // 纵坐标以 `spot.box`（窗口坐标，闭态量得）为上沿基准，而非 `layout.origin`（内容坐标）。
-    const au::Point local{.x = layout.size.width * 0.5F, .y = layout.size.height + 4.0F};
-    const float option_y = spot.box.origin.y + local.y;
-    const au::BuildContext ctx{};
+    auto *candidate = dynamic_cast<au::Button *>(panel->choice_candidate(0));
+    AURORA_TEST_REQUIRE(candidate != nullptr);
+    AURORA_TEST_CHECK_EQ(candidate->label().get().text, closed.choices[0]);  // 提交值就取自这一列
+    const HitSpot option_spot = h.find_first("Button", 0.0F,
+                                             [candidate](au::Widget *widget) -> bool { return widget == candidate; });
+    AURORA_TEST_REQUIRE_MSG(option_spot.widget != nullptr, "the choice candidate is not dispatch-reachable");
+    // 反空转：候选确在按钮窗口盒**之下**（锚点＝按钮下沿）。少了这一句，这一击就可能只是又点了一次按钮，
+    // 而「点开与提交」两腿就分不开了。
+    AURORA_TEST_REQUIRE_MSG(
+        option_spot.box.origin.y >= trigger_spot.box.origin.y + trigger_spot.box.size.height - 1.0F,
+        "the candidate is not below the trigger");
 
-    // 量的可达框与控件自报的盒高相差不到 1 dp（`reachable_box` 以 1 dp 步进的量化余量），故下面按窗口坐标
-    // 点出去的那一探针，与该点在控件自身坐标空间里的申报 `local`，指的是同一片区域。相差更多只可能是这一
-    // 行被视口或某个祖先裁掉了一部分，那时本例的前提就不再成立，而不是「判据红」。
-    AURORA_TEST_REQUIRE(std::abs(spot.box.size.height - layout.size.height) <= 1.0F);
-    // 反空转前提：探针点在视口之内（视口下沿＝卡片下沿＝窗口下沿减 `kCardEdgeDp`）。`find_first` 的 40 dp
-    // 余量只是让它别挑到底部那一行，而**判据**是这一句——少了它，「祖先闸不认」就可能被读成 `Scroll`
-    // 的视口裁剪，那种绿测的是裁剪而不是派发。
-    AURORA_TEST_REQUIRE_MSG(option_y < static_cast<float>(kWindowHeight) - kCardEdgeDp,
-                            "the probe point is outside the scroll viewport");
-    // 三条前提逐条钉住，免得正向判据退化成「碰巧命中一个盒内的点」：
-    // ① 这一点由该控件自己申报在追加命中盒之内（G29 的那份声明就在这里）。
-    AURORA_TEST_REQUIRE_MSG(dropdown->covers_extra_hit_box(local, ctx), "the open panel does not cover the probed point");
-    // ② 且它在控件的布局盒之外——回货前祖先只按布局盒判包含，那一段永远进不了链。
-    AURORA_TEST_REQUIRE_MSG(local.y >= layout.size.height, "the probed point is inside the widget's own layout box");
-    // ③ 按真实派发链走场景根**能**命中该控件（回货前恒不成立，是翻转本例的直接证据）。
-    AURORA_TEST_REQUIRE_MSG(h.hit(option_x, option_y) == static_cast<au::Widget *>(dropdown),
-                            "the dispatch chain still does not reach the dropdown through its ancestor");
-
-    // 那一点上的真实单击：选中 0 号、收起、提交交回表单，并按该行的生效档位只落盘不广播。
-    h.click(option_x, option_y);
+    // ④ 真点 0 号候选。
+    h.click(option_spot.x, option_spot.y);
     h.render();
-    AURORA_TEST_CHECK_EQ(dropdown->selected_index(), 0);
-    AURORA_TEST_CHECK_FALSE(dropdown->is_open());
+    const SettingsPanel::ChoiceView after = panel->choice_view("terminal.ambiguous_width");
+    AURORA_TEST_CHECK_FALSE(after.popup_open);
+    AURORA_TEST_CHECK_EQ(after.label, std::string{"narrow"});  // 标签跟着表单走（`refresh_choice_views()`）
     AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
-    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);  // `Wired ∧ NextSession`：只落盘，不动运行中的视口
     AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 1U);
     // 落点归属由「写出去的那一份配置」说话，而不是由排版次序推断。
     AURORA_TEST_CHECK_TRUE(probe.persisted[0].terminal.ambiguous_width == borealis::term::AmbiguousWidth::Narrow);
     AURORA_TEST_REQUIRE(panel->form().value("terminal.ambiguous_width") != nullptr);
     AURORA_TEST_CHECK_TRUE(*panel->form().value("terminal.ambiguous_width")->as_text() == std::string{"narrow"});
     AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());  // 落盘成功后脏标记已推进
-}
 
-/// @brief G30 的回货复验（正向）：面板伸出**所在行之外**的那一段进得了派发链。
-///
-/// 本例曾是「G29 的回货只闭合一层」的钉子（裁决 7.59⑤ 在册，并明写「追加盒沿祖先链并成子树并集回货后
-/// 本例必须转红」）。回货形态是 `covers_extra_hit_box()` 从「只问直接子自己申报」升级为**子树聚合**：
-/// 自身那份申报 ∪ 逐子节点按 `bounds().origin` 折算后递归问同一入口，而折算式与 `on_hit_test_chain` 的
-/// 下降式逐字同构。本件的嵌套是 `Scroll → Column → Row → Dropdown`，登记时门就断在 `Column` / `Row` 那两层
-/// 不申报（控件说自己可达、祖先说不可达），故面板只有仍落在行盒内的那一段可达。聚合之后孙辈的申报随祖先
-/// 上传，那一段因此可达——本例判的正是这一条，而且**只判这一条**。
-///
-/// 为什么把「真实单击即提交」那一半留给下一条用例而不是写在本例里：回货闭合的是「可达」，那一点上的点击
-/// 落进哪一条选项带归**派发本地化**管，而后者当时撞出一处新病灶（附录 A.2 的 **G31**：祖先的内边距平移
-/// 没进 `HitNode.origin`）。两件事各自有证人，合成一例就会在 G31 回货时不知道该翻哪一半——现在它回货了，
-/// 于是本例翻的是「行的记录 origin 与子节点绘制顶同源」那一句，下一例翻的是「真点即选中所点那一档」。
-///
-/// 三条前提照旧逐条钉住，只是第三条换了方向：① 控件自己申报覆盖；② 探点既在自身布局盒**之外**、也在
-/// **所在行的可达框之外**（行高 56 dp、上下内边距各 8 dp；仍属本行的那一段由上一条 G29 用例守，拿它翻
-/// 正向等于什么都没翻）；③ 探点在**视口**之内——`Scroll` 的聚合覆写带视口钳位，视口外那段的不可达测的是
-/// 裁剪而不是祖先链，那种红/绿都算假。回货同批给 `Dropdown` 加了限高 / 翻转 / 滚动，本行两档共 52 dp 远在
-/// 视口高之内，故本例判的仍是「那一段可达」而不是滚动偏移。
-AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_now_reaches_the_dispatch_chain_G30) {
-    borealis::ui::install_settings_strings();
-    Harness h;
-    StoreProbe probe;
-    probe.base.terminal.ambiguous_width = borealis::term::AmbiguousWidth::Wide;
-    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
-    h.open(*panel);
-    panel->select_page(SettingsPage::Terminal);
+    // ⑤ 关掉而不摘除：与字体行同一条（`choose_family()` 的注释：派发栈内不能 erase 正在派发的按钮）。
+    AURORA_TEST_REQUIRE(panel->picker_popup() != nullptr);
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 2U);
+    AURORA_TEST_CHECK(h.hit(option_spot.x, option_spot.y) != option_spot.widget);
+
+    // 重开一次：浮层跨开合复用，宿主不多一层，且重开不是第二次提交。
+    const HitSpot again = h.find_first("Button", 0.0F,
+                                       [trigger](au::Widget *widget) -> bool { return widget == trigger; });
+    AURORA_TEST_REQUIRE(again.widget != nullptr);
+    h.click(again.x, again.y);
     h.render();
-    const HitSpot spot = h.find_first("Dropdown", 40.0F, [](au::Widget *widget) -> bool {
-        const auto *dropdown = dynamic_cast<au::Dropdown *>(widget);
-        return dropdown != nullptr && dropdown->option_count() == 2U;
-    });
-    AURORA_TEST_REQUIRE(spot.widget != nullptr);
-    auto *dropdown = dynamic_cast<au::Dropdown *>(spot.widget);
-    AURORA_TEST_REQUIRE(dropdown != nullptr);
-    AURORA_TEST_REQUIRE_EQ(dropdown->selected_index(), 1);
-
-    // 闭态先量出所在行：沿派发链从最深一格往回找最近的一个 `Row`（行区的嵌套是 `Scroll → Column → Row`）。
-    // 取它的记录 origin 当**行给子节点的内容顶**。G31 回货后这一读数与绘制同源（`content_origin`＝
-    // bounds origin + 修饰链平移，行那 8 dp 上内边距已经折进去），于是它与下拉的绘制顶**逐字相等**；
-    // 登记时两者差的恰是那份内边距，故下面那两条断言在回货前后各成立一侧。
-    const std::vector<au::HitNode> closed = h.chain_at(spot.x, spot.y);
-    const au::HitNode *row_node = nullptr;
-    for (std::size_t i = closed.size(); i-- > 1;) {
-        if (std::string_view{closed[i].ptr->type_name()} == std::string_view{"Row"}) {
-            row_node = &closed[i];
-            break;
-        }
-    }
-    AURORA_TEST_REQUIRE(row_node != nullptr);
-    const float row_top = row_node->origin.y;
-
-    h.click(spot.x, spot.y);
-    h.render();
-    AURORA_TEST_REQUIRE(dropdown->is_open());
-
-    const au::Rect layout = dropdown->paint_bounds();  // 只取它的**尺寸**：那是控件自身坐标空间里的量
-    const float option_x = spot.box.origin.x + layout.size.width * 0.5F;
-    const au::Point local{.x = layout.size.width * 0.5F, .y = layout.size.height + 12.0F};
-    const float option_y = spot.box.origin.y + local.y;
-    const au::BuildContext ctx{};
-
-    AURORA_TEST_REQUIRE(std::abs(spot.box.size.height - layout.size.height) <= 1.0F);
-    // 行的记录 origin ＝ 下拉的绘制顶：行的 8 dp 上内边距已经折进 `HitNode.origin`（G31 的回货形态）。
-    // 登记时这一句差 8 dp，而那 8 dp 正是 G31 的病灶量；两侧的断言各自只能成立一侧，故本例在回货前红、
-    // 回货后绿，不是同义反复。
-    AURORA_TEST_REQUIRE_MSG(std::abs(spot.box.origin.y - row_top) <= 1.0F,
-                            "the enclosing row's recorded origin is not its content top");
-    // 反空转：探点在视口之内（视口下沿＝卡片下沿＝窗口下沿减 `kCardEdgeDp`）。
-    AURORA_TEST_REQUIRE_MSG(option_y < static_cast<float>(kWindowHeight) - kCardEdgeDp,
-                            "the probe point is outside the scroll viewport");
-    // 反空转：探点确在**所在行之外**——少了这一句，本例就退化成重复上一条 G29 用例守的那一段。行给子项的
-    // 内容高是 56 − 2×8 ＝ 40 dp，而 `row_top` 如今就是内容顶，故行外界的算式随同源这条一起就地更正。
-    AURORA_TEST_REQUIRE_MSG(option_y > row_top + kRowExtentDp - 2.0F * kRowPaddingDp,
-                            "the probe point is still inside the enclosing row");
-    AURORA_TEST_REQUIRE_MSG(dropdown->covers_extra_hit_box(local, ctx), "the open panel does not cover the probed point");
-    AURORA_TEST_REQUIRE_MSG(local.y >= layout.size.height, "the probed point is inside the widget's own layout box");
-
-    // 回货前后唯一翻转的那一句：登记时按链走场景根拿到的是祖先（行），回货后是这只下拉自己。
-    AURORA_TEST_REQUIRE_MSG(h.hit(option_x, option_y) == static_cast<au::Widget *>(dropdown),
-                            "the extra hit box still does not propagate up the ancestor chain");
-    // 而且是以「祖先开闸 + 自身入链」两段的合取进来的：链上仍留着那一行作为它的祖先。
-    const std::vector<au::HitNode> open = h.chain_at(option_x, option_y);
-    AURORA_TEST_REQUIRE_EQ(open.back().ptr, static_cast<au::Widget *>(dropdown));
-    AURORA_TEST_REQUIRE(std::any_of(open.begin(), open.end(),
-                                    [row_node](const au::HitNode &node) { return node.ptr == row_node->ptr; }));
-    // 面板未被限高/翻转（回货同批新增的两条）：本行两档共 52 dp 远在一个 506 dp 的视口之内。
-    AURORA_TEST_REQUIRE_EQ(dropdown->selected_index(), 1);
-    AURORA_TEST_CHECK_TRUE(dropdown->is_open());
-}
-
-/// @brief G31 的回货复验（正向）：行外那一段上的真实单击，选中的是**眼睛看到的那一档**。
-///
-/// 本例曾是现状钉子（裁决 7.62⑤ 在册，并明写「回货后差值归零、本例转红，正半随 G30 那条一起翻」）。
-/// 回货形态是命中链与绘制**共用同一个 `content_origin`**：`Widget::hit_test` / `hit_test_chain` 的
-/// `self_box.origin` 取 `bounds.origin + tf.translation`，而 `render_into` 给子节点的正是这同一份平移量，
-/// `Modifier::transform` 把 Padding / PaddingEdges / Align / Offset 一律折进 `translation`（框架据此禁止
-/// 命中侧再写一份「要不要加内边距」）。
-///
-/// 判据的承重那一句是**选项序号**而不是「点得动」——可达由上一条用例守。`Dropdown` 按派发器写来的本地纵
-/// 坐标反算序号，本行的量值是算好的：行给下拉的紧约束盒 40 dp、面板从框架自己的 `box_height_` ＝ 30 dp
-/// 起铺、选项行高 26 dp ⇒ 第一条带占窗口坐标 [绘制顶 + 30, 绘制顶 + 56)。探点取 `绘制顶 + 40 + 12`，即
-/// 第一条带内距其下沿 4 dp 处。若 origin 仍缺行那 8 dp 上内边距，控件收到的本地纵坐标就是 60 而落进第二条
-/// 带 [56, 82)，而第二条带恰是**当前已选**的那档（`Wide`）——于是「少一份平移」的实现在本例里表现为
-/// 序号一动不动、面板不收起、也不落盘，与回货后的读数结构上不可能同时为绿。这就是本例的非空转根据。
-///
-/// 行为那一半判四条：真点之后 ① 选中的是第一条（`narrow`）、② 面板收起、③ 恰一次落盘且**零广播**
-/// （该键 `Wired ∧ NextSession`，判据文 §4 B3-a 的两条标签不冲突）、④ 表单读回 `narrow` 且脏标记随落盘
-/// 成功推进。origin 与绘制顶同源另判一句，且以**真实派发量出来的可达框**为基准而不是取实现的输出。
-AURORA_TEST_CASE(a_real_click_below_the_enclosing_row_picks_the_option_under_it_G31) {
-    borealis::ui::install_settings_strings();
-    Harness h;
-    StoreProbe probe;
-    probe.base.terminal.ambiguous_width = borealis::term::AmbiguousWidth::Wide;
-    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
-    h.open(*panel);
-    panel->select_page(SettingsPage::Terminal);
-    h.render();
-    const HitSpot spot = h.find_first("Dropdown", 40.0F, [](au::Widget *widget) -> bool {
-        const auto *dropdown = dynamic_cast<au::Dropdown *>(widget);
-        return dropdown != nullptr && dropdown->option_count() == 2U;
-    });
-    AURORA_TEST_REQUIRE(spot.widget != nullptr);
-    auto *dropdown = dynamic_cast<au::Dropdown *>(spot.widget);
-    AURORA_TEST_REQUIRE(dropdown != nullptr);
-    AURORA_TEST_REQUIRE_EQ(dropdown->selected_index(), 1);
-
-    h.click(spot.x, spot.y);
-    h.render();
-    AURORA_TEST_REQUIRE(dropdown->is_open());
-
-    const au::Rect layout = dropdown->paint_bounds();  // 只取它的**尺寸**：那是控件自身坐标空间里的量
-    const float option_x = spot.box.origin.x + layout.size.width * 0.5F;
-    const au::Point local{.x = layout.size.width * 0.5F, .y = layout.size.height + 12.0F};
-    const float option_y = spot.box.origin.y + local.y;
-    const au::BuildContext ctx{};
-
-    // 三条前提：可达、在自身布局盒之外、且申报覆盖为真（缺任何一条，下面的单击就测不到「行外那一段」）。
-    AURORA_TEST_REQUIRE_MSG(local.y >= layout.size.height, "the probed point is inside the widget's own layout box");
-    AURORA_TEST_REQUIRE_MSG(dropdown->covers_extra_hit_box(local, ctx), "the open panel does not cover the probed point");
-    const std::vector<au::HitNode> open = h.chain_at(option_x, option_y);
-    AURORA_TEST_REQUIRE_EQ(open.back().ptr, static_cast<au::Widget *>(dropdown));
-    // 同源的那一句：链上写的 origin 与真实派发量出来的绘制顶一致（登记时差 8 dp，即行的上内边距）。
-    AURORA_TEST_CHECK_NEAR(open.back().origin.y, spot.box.origin.y, 1.0F);
-
-    h.click(option_x, option_y);
-    h.render();
-    AURORA_TEST_CHECK_EQ(dropdown->selected_index(), 0);
-    AURORA_TEST_CHECK_FALSE(dropdown->is_open());
+    AURORA_TEST_CHECK_TRUE(panel->choice_view("terminal.ambiguous_width").popup_open);
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 2U);
     AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
+}
+
+/// @brief 同一枚触发按钮再点一次＝收起；改点另一行＝直接换内容，并按**新行**的生效档位提交。
+///
+/// 收起那一半是本件补上的：按钮不是开关，用户预期的另一半（再点一次关掉）没有框架默认可继承。判据取
+/// 三句：① 再点同一枚只关浮层——不落盘、不广播、表单不动；② 改点另一行时宿主仍是两层（两条腿共用
+/// 同一只 `Popup`，不按行数累加），`choice_view()` 的两份视图一问便知谁在服务；③ 新行的候选逐字换成
+/// 该行的 catalog 列，点中一档后落盘一次并广播一次——`terminal.paste_newlines` 是 `Wired ∧ Immediate`，
+/// 与上一条用例的 `NextSession`（零广播）互为对照。
+AURORA_TEST_CASE(clicking_the_same_choice_trigger_again_closes_the_popup_and_another_row_takes_it_over) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    panel->select_page(SettingsPage::Terminal);
+    h.render();
+
+    const auto spot_of = [&h](au::Widget *trigger) -> HitSpot {
+        return h.find_first("Button", 0.0F, [trigger](au::Widget *widget) -> bool { return widget == trigger; });
+    };
+
+    auto *width_trigger = panel->choice_button("terminal.ambiguous_width");
+    AURORA_TEST_REQUIRE(width_trigger != nullptr);
+    const HitSpot width_spot = spot_of(width_trigger);
+    AURORA_TEST_REQUIRE_MSG(width_spot.widget != nullptr, "the choice trigger is not dispatch-reachable");
+    h.click(width_spot.x, width_spot.y);
+    h.render();
+    AURORA_TEST_REQUIRE(panel->choice_view("terminal.ambiguous_width").popup_open);
+
+    // ① 再点同一枚：只关浮层。表单现值（`narrow`）与落盘计数都不许动。
+    h.click(width_spot.x, width_spot.y);
+    h.render();
+    AURORA_TEST_CHECK_FALSE(panel->choice_view("terminal.ambiguous_width").popup_open);
+    AURORA_TEST_CHECK_EQ(panel->choice_view("terminal.ambiguous_width").label, std::string{"narrow"});
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);
     AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 2U);  // 关而不摘，与上一条用例同口径
+
+    // ② 改点另一行：浮层换内容而不是再开一只。第三行之后的行在 offset 0 可能被视口裁掉，故滚到可见为止
+    // （档数不写死，理由同本文件那两条滚动用例：内容高度随表长）。
+    auto *paste_trigger = panel->choice_button("terminal.paste_newlines");
+    AURORA_TEST_REQUIRE(paste_trigger != nullptr);
+    HitSpot paste_spot = spot_of(paste_trigger);
+    const HitSpot anchor = h.find_first("SpinBox");
+    AURORA_TEST_REQUIRE(anchor.widget != nullptr);
+    for (int notch = 0; notch < 40 && paste_spot.widget == nullptr; ++notch) {
+        h.scroll(anchor.x, anchor.y, -1.0F);
+        h.render();
+        paste_spot = spot_of(paste_trigger);
+    }
+    AURORA_TEST_REQUIRE_MSG(paste_spot.widget != nullptr, "the second choice trigger is not dispatch-reachable");
+    h.click(paste_spot.x, paste_spot.y);
+    h.render();
+    const SettingsPanel::ChoiceView width_view = panel->choice_view("terminal.ambiguous_width");
+    const SettingsPanel::ChoiceView paste_view = panel->choice_view("terminal.paste_newlines");
+    AURORA_TEST_CHECK_FALSE(width_view.popup_open);
+    AURORA_TEST_REQUIRE(paste_view.popup_open);
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 2U);
+    check_key_sequence("the popup switched its candidates to the new row", paste_view.choices,
+                       {"as_is", "filter", "convert"});
+    AURORA_TEST_CHECK_EQ(paste_view.label, std::string{"as_is"});
+
+    // ③ 点中 1 号（`filter`）：该行 `Wired ∧ Immediate`，一次落盘一次广播。
+    auto *choice = dynamic_cast<au::Button *>(panel->choice_candidate(1));
+    AURORA_TEST_REQUIRE(choice != nullptr);
+    AURORA_TEST_CHECK_EQ(choice->label().get().text, paste_view.choices[1]);
+    const HitSpot choice_spot = spot_of(choice);
+    AURORA_TEST_REQUIRE_MSG(choice_spot.widget != nullptr, "the new rows candidate is not dispatch-reachable");
+    h.click(choice_spot.x, choice_spot.y);
+    h.render();
+    AURORA_TEST_CHECK_FALSE(panel->choice_view("terminal.paste_newlines").popup_open);
+    AURORA_TEST_CHECK_EQ(panel->choice_view("terminal.paste_newlines").label, std::string{"filter"});
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
+    AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 1U);
     AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 1U);
+    AURORA_TEST_CHECK_TRUE(probe.persisted[0].terminal.paste_newlines == borealis::term::PasteNewlinePolicy::Filter);
+    // 收起那一次并没有顺手提交旧行：`ambiguous_width` 仍在装载基线 `narrow`。
     AURORA_TEST_CHECK_TRUE(probe.persisted[0].terminal.ambiguous_width == borealis::term::AmbiguousWidth::Narrow);
-    AURORA_TEST_REQUIRE(panel->form().value("terminal.ambiguous_width") != nullptr);
-    AURORA_TEST_CHECK_TRUE(*panel->form().value("terminal.ambiguous_width")->as_text() == std::string{"narrow"});
-    AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
+}
+
+/// @brief 候选浮层的 `Escape` 交接：第一次只关浮层，第二次才撤面板（下拉行也走这条逐层交接）。
+///
+/// 交接闭包在 `open()` 里从最里一层往外问（对话框 → 候选浮层 → 链的键盘抓取 → 快照视图 → 面板），因为
+/// 全局快捷键在任何控件之前消费——不先问浮层，`Escape` 会把整块面板一起撤掉。字体行那一侧已有同形用例
+/// （`a_font_popup_takes_the_scrim_and_escape_before_they_reach_the_panel`），本例补下拉行这一条：两行
+/// 共用同一只浮层，「问浮层开着没有」在两条腿之间不能靠另一个键的残余状态兜底。
+///
+/// 判据：第一次按 `Escape` 之后浮层关、面板开、落盘零、关闭键仍在；第二次才关面板并按降序摘掉两层浮层。
+AURORA_TEST_CASE(escape_closes_a_choice_popup_before_the_panel) {
+    borealis::ui::install_settings_strings();
+    Harness h;
+    StoreProbe probe;
+    std::unique_ptr<SettingsPanel> panel = h.attach(probe);
+    h.open(*panel);
+    // 外观页没有下拉行 ⇒ 翻到终端页。
+    panel->select_page(SettingsPage::Terminal);
+    h.render();
+
+    auto *trigger = panel->choice_button("terminal.ambiguous_width");
+    AURORA_TEST_REQUIRE(trigger != nullptr);
+    const HitSpot spot = h.find_first("Button", 0.0F,
+                                      [trigger](au::Widget *widget) -> bool { return widget == trigger; });
+    AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr, "the choice trigger is not dispatch-reachable");
+    h.click(spot.x, spot.y);
+    h.render();
+    AURORA_TEST_REQUIRE(panel->choice_view("terminal.ambiguous_width").popup_open);
+
+    AURORA_TEST_REQUIRE(h.shortcuts().handle(escape_press(), false));
+    AURORA_TEST_CHECK_FALSE(panel->choice_view("terminal.ambiguous_width").popup_open);
+    AURORA_TEST_CHECK_TRUE(panel->is_open());
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 2U);
+    AURORA_TEST_CHECK_EQ(h.shortcuts().count(), 1U);  // 解绑只发生在关面板那一刻
+    AURORA_TEST_CHECK_EQ(probe.persist_calls, 0U);    // 关浮层不是提交，也不撤销表单
+
+    // 第二次：没有浮层挡着，才撤面板并把两层一起摘掉。
+    AURORA_TEST_REQUIRE(h.shortcuts().handle(escape_press(), false));
+    AURORA_TEST_CHECK_FALSE(panel->is_open());
+    AURORA_TEST_CHECK_EQ(h.overlay_count(), 0U);
+    AURORA_TEST_CHECK_EQ(h.shortcuts().count(), 0U);
+    AURORA_TEST_CHECK(panel->picker_popup() == nullptr);
 }
 
 /// @brief 行区滚下去之后仍然点得动：滚动偏移非零时，按量出来的新位置真点一行开关即提交。
@@ -2444,9 +2400,11 @@ AURORA_TEST_CASE(a_row_control_still_commits_after_the_row_area_has_been_scrolle
 /// @brief chrome 色值交接：六类通用行控件必须吃本仓自己的深色 chrome，而不是框架控件的浅色主题缺省。
 ///
 /// S5 立的是「界面配色不随**终端主题**联动」，不是「随控件缺省」：框架侧 `TextInput` 的聚焦态底色缺省
-/// `{245,248,255}`、`SpinBox` / `Dropdown` 的框底 `255`、开关关闭态轨道 `{180,180,180}` 都是浅色时代的常数，
-/// 落在深色卡片上最坏的一处是**白底白字**（本件文本色是 `kText`，近白）。本例逐件在真实帧缓冲上取一个
-/// 「一定是底色」的点（盒内靠上，避开字形与 1 dp 描边），断它不亮。
+/// `{245,248,255}`、`SpinBox` 的框底 `255`、开关关闭态轨道 `{180,180,180}` 都是浅色时代的常数，落在深色
+/// 卡片上最坏的一处是**白底白字**（本件文本色是 `kText`，近白）。本例逐件在真实帧缓冲上取一个「一定是
+/// 底色」的点（盒内靠上，避开字形与 1 dp 描边），断它不亮。下拉行自换形之后（裁决 7.176）不再有框架
+/// `Dropdown` 的浅色框底，故那一腿改判**本件的触发按钮**：它仍是行区里唯一会展开的控件，chrome 交接的
+/// 消费面没有变。
 ///
 /// 两处刻意的前提：开关只取**关闭态**那一枚（开启态轨道是本仓的强调色 `kAccent{189,147,249}`，拿「不亮」
 /// 判它会把正确实现读成红）；步进器与开关两腿放在**终端页**，因为外观页 #114 的两个区段把第 8 行以后的
@@ -2485,14 +2443,18 @@ AURORA_TEST_CASE(the_editable_controls_paint_the_chrome_colors_not_the_light_def
     AURORA_TEST_REQUIRE(spin_spot.widget != nullptr);
     AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(spin_spot, 0.5, 0.12)));
 
-    // 下拉主框（选项面板与主框共用同一份 `box_color_`，故主框这一读也守住了展开的那一片）。
-    // 取在**滚之前**：本腿按框内分数 (0.5, 0.12) 采的是主框顶边那条无字带，而 `find_first` 量出的可达框
-    // 是**被视口裁过**的那一段——内容一滚，第一枚下拉的可见框只剩 17 dp，同一个分数就落到标签字形上
+    // 下拉行的触发按钮（候选浮层与它共用同一份 `control_bg` / `card_line`，故按钮这一读也守住了展开的
+    // 那一片）。按指针认行而不是按类型取第一枚：卡片右上角那枚关闭按钮同属 `Button`。
+    // 取在**滚之前**：本腿按框内分数 (0.5, 0.12) 采的是按钮顶边那条无字带，而 `find_first` 量出的可达框
+    // 是**被视口裁过**的那一段——内容一滚，触发按钮的可见框变矮，同一个分数就可能落到标签字形上
     // （实测读到 {243,243,238}，正是本件的文本色：红得对，但判的已经不是 chrome）。offset 0 时终端页
-    // 第 2 行那枚下拉完整可见，取点与「滚了几档」无关；下面那腿非滚不可，故两腿不再共用一次滚动。
-    const HitSpot dropdown_spot = h.find_first("Dropdown");
-    AURORA_TEST_REQUIRE(dropdown_spot.widget != nullptr);
-    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(dropdown_spot, 0.5, 0.12)));
+    // 第 2 行那枚按钮完整可见，取点与「滚了几档」无关；下面那腿非滚不可，故两腿不再共用一次滚动。
+    auto *choice_trigger = panel->choice_button("terminal.ambiguous_width");
+    AURORA_TEST_REQUIRE(choice_trigger != nullptr);
+    const HitSpot trigger_spot = h.find_first("Button", 0.0F,
+                                              [choice_trigger](au::Widget *widget) -> bool { return widget == choice_trigger; });
+    AURORA_TEST_REQUIRE(trigger_spot.widget != nullptr);
+    AURORA_TEST_CHECK_TRUE(chrome_is_dark(h.probe(trigger_spot, 0.5, 0.12)));
 
     // 开关关闭态轨道：缺省 {180,180,180} 是全部浅色缺省里最低的一档，仍必须被这条线抓住。
     // 档数同样不写死（理由与本文件上一条用例一致：内容高度随表长，契约只是「滚到一枚关闭态开关」）。
@@ -3211,7 +3173,7 @@ AURORA_TEST_CASE(clicking_the_font_trigger_anchors_a_popup_at_that_press_below_t
     h.click(trigger.x, trigger.y);
     h.render();
 
-    auto *popup = dynamic_cast<au::Popup *>(panel->font_popup());
+    auto *popup = dynamic_cast<au::Popup *>(panel->picker_popup());
     AURORA_TEST_REQUIRE_MSG(popup != nullptr, "the candidate layer is not the framework's Popup");
     AURORA_TEST_CHECK_TRUE(popup->is_open());
     AURORA_TEST_CHECK_TRUE(panel->family_view().popup_open);
@@ -3287,7 +3249,7 @@ AURORA_TEST_CASE(a_real_click_on_a_font_candidate_commits_that_family_and_only_c
     AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
 
     // 关掉而不摘除：宿主上仍是两层，而那一档已从派发链上消失。
-    AURORA_TEST_REQUIRE(panel->font_popup() != nullptr);
+    AURORA_TEST_REQUIRE(panel->picker_popup() != nullptr);
     AURORA_TEST_CHECK_EQ(h.overlay_count(), 2U);
     AURORA_TEST_CHECK(h.hit(pick.spot.x, pick.spot.y) != pick.spot.widget);
 
@@ -3355,7 +3317,7 @@ AURORA_TEST_CASE(a_font_popup_takes_the_scrim_and_escape_before_they_reach_the_p
     AURORA_TEST_CHECK_FALSE(panel->is_open());
     AURORA_TEST_CHECK_EQ(h.overlay_count(), 0U);
     AURORA_TEST_REQUIRE_EQ(h.shortcuts().count(), 0U);
-    AURORA_TEST_CHECK(panel->font_popup() == nullptr);  // 摘除发生在 `close()`，两层一起下树
+    AURORA_TEST_CHECK(panel->picker_popup() == nullptr);  // 摘除发生在 `close()`，两层一起下树
     AURORA_TEST_CHECK(panel->font_button() == nullptr);
 
     // ③ 重开面板与浮层，走键盘那一腿：第一次 `Escape` 只关浮层。
@@ -4716,15 +4678,15 @@ AURORA_TEST_CASE(a_text_row_commits_only_when_focus_leaves) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
-AURORA_TEST_CASE(clicking_an_open_dropdown_option_in_its_own_extra_hit_box_commits_G29) {
+AURORA_TEST_CASE(a_choice_row_opens_a_popup_below_its_trigger_and_commits_the_picked_value) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
-AURORA_TEST_CASE(the_option_panel_below_the_enclosing_row_now_reaches_the_dispatch_chain_G30) {
+AURORA_TEST_CASE(clicking_the_same_choice_trigger_again_closes_the_popup_and_another_row_takes_it_over) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
-AURORA_TEST_CASE(a_real_click_below_the_enclosing_row_picks_the_option_under_it_G31) {
+AURORA_TEST_CASE(escape_closes_a_choice_popup_before_the_panel) {
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 }
 
