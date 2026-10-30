@@ -455,7 +455,7 @@ class KeysWorker final {
 /// @brief 一扇工作区窗的「呈现半区 + 逐窗账目」（`SPEC.FEAT.WS.03` 批 1，稿 §2 那份「每窗一份」清单）。
 ///
 /// 成员只放稿 §2 判给每窗的那几件：后端窗口与其 surface、宿主登记的 `WindowId`、浮层宿主、根
-/// Column、标签栏控件、广播横幅、状态栏、本窗的标签真值源与闭包栈、本窗当前标签号。应用级那一份（Settings /
+/// Column、标签栏控件、广播横幅、中段行与常驻列、状态栏、本窗的标签真值源与闭包栈、本窗当前标签号。应用级那一份（Settings /
 /// Store、四张 `TabId` 连接表、`next_tab_id`、广播组本体、凭据链、四面板）不进这里。
 ///
 /// **批 1 的归属、批 3 的可复用**：`tab_bar` 与 `banner` 两支仍由装配层填进成员，但填它们的
@@ -470,8 +470,18 @@ struct WorkspaceWindow {
     au::WindowId id = au::AURORA_INVALID_WINDOW_ID;  ///< 登记进 `Application` 之后才有效
     std::shared_ptr<au::OverlayHost> overlay_host{};
     std::shared_ptr<au::Column> root_column{};
+    /// @brief 屏 1 那一幅的中段行（常驻列 + 分栏工作区），根 Column 里 `expand(1)` 的那一格。
+    ///
+    /// 常驻列与工作区共用这一行而不是把列塞进工作区：稿那条 34 dp 图标列的纵向范围是
+    /// `y=104..872`＝标签条与横幅之下、状态栏之上，正是这一行的矩形（裁决 7.180）。
+    std::shared_ptr<au::Row> content_row{};
     std::shared_ptr<borealis::ui::TabBarWidget> tab_bar{};
     std::shared_ptr<borealis::ui::BroadcastBanner> banner{};
+    /// @brief 屏 1 判据 ③ 那条常驻列（折叠 34 dp 轨／展开 320 dp，`SPEC.FEAT.CONN.07`＋裁决 7.180）。
+    ///
+    /// **每窗一份**而不是 app 级单实例：一枚控件节点只容得下一个父节点，常驻列不像浮层那样可以「搬过去」
+    /// ——一搬就把发起窗自己的骨架抽掉。开合档按窗各自记，落盘那份取 `appearance.sidebar_collapsed`。
+    std::shared_ptr<borealis::ui::ConnectionSidebar> sidebar{};
     /// @brief 屏 1 判据 ⑨／⑩ 那条 28 dp 读数条（`SPEC.FEAT.PREF.02` 的即时反馈面），常驻根 Column 末位。
     ///
     /// 与横幅同一条形态：常驻节点而不是按需增删——摘除会让它随「有没有读数」显隐，而判据要的是
@@ -1834,21 +1844,33 @@ auto main(int argc, char **argv) -> int {
     auto rebuild_root_children = [](WorkspaceWindow &window,
                                     const std::map<borealis::ui::TabId, TabWorkspace> &workspaces)
         -> void {
-        // 保留前两个子节点（标签栏 + 广播横幅），替换第三个（工作区）。横幅是常驻节点（D10），
+        // 保留前两个子节点（标签栏 + 广播横幅），替换第三个（中段行）与第四个（状态栏）。横幅是常驻节点（D10），
         // 组空时高 0 也不摘除——摘除会让显隐走「增删子节点」这条分叉。
         auto &nodes = window.root_column->child_nodes_mut();
         if (nodes.size() < 2) {
             return;  // 还没初始化完
         }
         nodes.resize(2);
-        if (window.current_tab_id.has_value()) {
-            const auto it = workspaces.find(window.current_tab_id.value());
-            if (it != workspaces.end() && it->second.owner == &window) {
-                // 工作区占满标签栏以下的全部剩余高度（expand 权重交 FlexLayouter 分配）。
-                aurora::Node ws{it->second.workspace};
-                ws.widget().set_modifier(au::Modifier{}.expand(1.0F));
-                nodes.push_back(std::move(ws));
+        // 中段行自己也是常驻节点：换标签换的是**行里那一格工作区**，而不是行本身——行一摘，挂在行里的
+        // 常驻列（屏 1 判据 ③）就跟着散一次，而它按 D10 的口径与横幅、状态栏同档：骨架不随内容起伏。
+        if (window.content_row) {
+            std::vector<aurora::Node> row_children{};
+            // 常驻列排第一（34 dp 或 320 dp，槽内在轨与面板之间换）；侧栏还没建成的那一帧不占位。
+            if (window.sidebar) {
+                row_children.push_back(aurora::Node{window.sidebar->slot_widget()});
             }
+            if (window.current_tab_id.has_value()) {
+                const auto it = workspaces.find(window.current_tab_id.value());
+                if (it != workspaces.end() && it->second.owner == &window) {
+                    // 工作区吃掉这一行里除常驻列以外的全部宽度（expand 权重交 FlexLayouter 分配）。
+                    aurora::Node ws{it->second.workspace};
+                    ws.widget().set_modifier(au::Modifier{}.expand(1.0F));
+                    row_children.push_back(std::move(ws));
+                }
+            }
+            window.content_row->child_nodes_mut() = std::vector<aurora::Node>{std::move(row_children)};
+            window.content_row->mark_needs_layout();
+            nodes.push_back(aurora::Node{window.content_row});
         }
         // 状态栏排在末位、自报 28 dp 高（屏 1 判据 ⑨），因此**不参与** expand 的分母：上面那一格
         // expand(1.0) 吃掉除 28 dp 以外的全部剩余高度。与横幅同一条常驻纪律——没有读数的那一帧
@@ -2149,6 +2171,12 @@ auto main(int argc, char **argv) -> int {
     // 一扇窗的**内容入根**（稿 §6 批 3）：标签栏 → 广播横幅 → 当前工作区 → 状态栏，次序是承重的（横幅常驻
     // index 1，D10），故这一段整体复用而不是让第二扇窗各写一遍。根 Column 交进浮层宿主排在三件之后，
     // 与主窗原先那段次序逐字相同（裁决 7.41③：场景根是浮层宿主而不是视口）。
+    /// @brief 按窗建那条常驻列（屏 1 判据 ③），先声明后赋值（`wizard_ref` / `report_dispatch` 同一形态）。
+    ///
+    /// 它的实体在档案表与向导都建好之后才写（下面 `sidebar_hooks` 那一块），而首扇窗的内容装配排在
+    /// 那之前——故这里只能判「赋值了没有」：主窗的那一列由赋值处回头补建，第二扇窗之后走这一支。
+    std::function<void(WorkspaceWindow &)> make_sidebar;
+
     auto assemble_window_content = [&](WorkspaceWindow &window) -> void {
         make_tab_bar(window);
         // 主窗那一枚横幅在首标签创建**之前**就要存在（`refresh_broadcast_ui` 在 `router.attach` 那一刻
@@ -2157,14 +2185,24 @@ auto main(int argc, char **argv) -> int {
             window.banner = make_broadcast_banner(window);
         }
         // 状态栏没有「必须在首标签之前存在」那一层理由（它只被 `refresh_status_bar_ui` 逐帧写），故一律
-        // 在这里按窗造；入根由 `rebuild_root_children` 那一句负责，本处不自己 push，否则两处的次序会
+        // 在这里按窗造；入根由 `rebuild_root_children()` 那一句负责，本处不自己 push，否则两处的次序会
         // 在下一次重建时互相掀掉（那边按 `resize(2)` 起步重排）。
         if (!window.status_bar) {
             window.status_bar = std::make_shared<borealis::ui::StatusBar>();
         }
+        // 中段行（常驻列 + 工作区）与状态栏同一条理由：入根交给 `rebuild_root_children()`，本处只造本体。
+        // 交叉轴拉满高度＝屏 1 那条列从横幅下沿一直走到状态栏上沿（稿面 `y=104..872`）。
+        if (!window.content_row) {
+            window.content_row = std::make_shared<au::Row>();
+            window.content_row->set_cross_axis_alignment(au::CrossAxisAlignment::Stretch);
+            window.content_row->set_modifier(au::Modifier{}.expand(1.0F).fill_max_size());
+        }
         window.root_column->child_nodes_mut().push_back(aurora::Node{window.tab_bar});
         window.root_column->child_nodes_mut().push_back(aurora::Node{window.banner});
         window.overlay_host->child_nodes_mut().push_back(aurora::Node{window.root_column});
+        if (make_sidebar) {
+            make_sidebar(window);
+        }
         rebuild_root_children(window, tab_workspaces);
     };
 
@@ -2682,10 +2720,18 @@ auto main(int argc, char **argv) -> int {
         // 面板的控件色值构建期取定，换档必须重建浮层才换色；但这条腿可能正跑在面板自己的按钮回调里
         // （保存即换档），当场 `remove_overlay()` 会撤掉**正在派发**的控件（G34 那一族时序），故排到
         // 下一帧调度器。面板届时已被用户关掉时 `refresh_chrome()` 自己空操作。
-        static_cast<void>(
-            app.scheduler().set_timeout(au::Scheduler::Duration::zero(), [&settings_panel]() -> void {
+        static_cast<void>(app.scheduler().set_timeout(
+            au::Scheduler::Duration::zero(),
+            [&settings_panel, &workspace_windows]() -> void {
                 if (settings_panel != nullptr) {
                     settings_panel->refresh_chrome();
+                }
+                // 常驻列同一档：展开态那些控件也是构建期取定的色值，要重建那一列才换色；折叠态那枚轨
+                // 每次重绘现读色板，`refresh_chrome()` 在那里自己空操作。
+                for (const std::unique_ptr<WorkspaceWindow> &window : workspace_windows) {
+                    if (window->sidebar != nullptr) {
+                        window->sidebar->refresh_chrome();
+                    }
                 }
             }));
     };
@@ -2727,6 +2773,15 @@ auto main(int argc, char **argv) -> int {
         // 面板自身的重建已由 `apply_chrome_scheme` 排到下一帧，这里不必也不该重入面板。
         apply_chrome_scheme(borealis::ui::resolve_chrome_scheme(
             borealis::config::chrome_theme_tag(next.appearance.chrome_theme), aurora::os_color_scheme()));
+        // 常驻列的开合档（`appearance.sidebar_collapsed`，接线见裁决 **7.180**）：设置页那条腿的语义是
+        // 「改的是全局配置」，故按即时档作用到**每一扇窗**的那一条列——与配色同一条口径，只改落点窗会把
+        // 「全局开关」在交互面上降级成「本窗开关」。轨上或命令上的那一次点击走的是另一条腿（只改本窗、
+        // 记住全局），两条腿都收在 `set_collapsed()`，它按当前档空操作，因此不会互相掀。
+        for (const std::unique_ptr<WorkspaceWindow> &window : workspace_windows) {
+            if (window->sidebar != nullptr) {
+                window->sidebar->set_collapsed(next.appearance.sidebar_collapsed);
+            }
+        }
         // 广播到**每一扇窗的当前标签**的所有视口（一格一会话之后仍是「工作区里可能有多个 pane」）。
         // 为什么按窗而不是按落点窗：设置页是应用级单实例（稿 D6），这一条腿的语义是「刚落盘的配置即时
         // 生效」，而生效面天然是全部可见的工作现场——把它按 tracker 解析成「最近被碰过的那一扇」就变成
@@ -3763,14 +3818,8 @@ auto main(int argc, char **argv) -> int {
         return !store.replace(std::move(next)).has_value();
     };
     sidebar_hooks.connect = connect_profile;
-    sidebar_hooks.create_new = [&wizard, &retarget_panel]() -> void {
-        retarget_panel(*wizard);
-        wizard->open_new();
-    };
-    sidebar_hooks.edit = [&wizard, &retarget_panel](const borealis::conn::Profile &profile) -> void {
-        retarget_panel(*wizard);
-        wizard->open_edit(profile);
-    };
+    // `create_new` / `edit` / `note_window_press` / `persist_collapsed` 四枚按窗不同（常驻列每窗一份，
+    // 而向导仍是 app 级单实例），故在下面的 `make_sidebar` 里逐窗补，不在这张应用级表上。
     // `~/.ssh/config` 只读导入（D5）：读盘 + parse_ssh_config + 确定性 id 去重；单向不回写。
     sidebar_hooks.import_ssh_config = [&store]() -> std::size_t {
         const char *home = std::getenv("HOME");
@@ -3811,17 +3860,64 @@ auto main(int argc, char **argv) -> int {
         }
         return ids;
     };
-    auto sidebar = std::make_shared<borealis::ui::ConnectionSidebar>(*host, std::move(sidebar_hooks));
+    // 常驻列按窗各建一份（裁决 7.180 改判的落点）：槽位钉在这一扇的中段行里，搬不走——一枚控件节点
+    // 只有一个父节点，把列从 A 窗搬到 B 窗就是让 A 窗的骨架缺一条腿，那与浮层「搬过去」是两件事。
+    // 应用级那几条接缝整张复制过来，四枚按窗不同的在这里逐窗补。
+    make_sidebar = [&store, &sidebar_hooks, &workspace_windows, &tab_workspaces, &wizard,
+                    &retarget_panel_to, &report_dispatch](WorkspaceWindow &window) -> void {
+        if (window.sidebar != nullptr) {
+            return;  // 一扇窗一条列：回头装配（切标签、开窗撤账）不许再建第二条
+        }
+        auto hooks = sidebar_hooks;
+        hooks.create_new = [&wizard, &retarget_panel_to, &window]() -> void {
+            retarget_panel_to(*wizard, &window);  // 向导仍是 app 级单实例：开在这一扇窗的浮层上
+            wizard->open_new();
+        };
+        hooks.edit = [&wizard, &retarget_panel_to,
+                      &window](const borealis::conn::Profile &profile) -> void {
+            retarget_panel_to(*wizard, &window);
+            wizard->open_edit(profile);
+        };
+        hooks.persist_collapsed = [&store](bool collapsed) -> void {
+            // 只写盘，不广播：本条腿的来向是用户点了某一扇窗的轨或命令，而 `Store::replace()` 本身
+            // 不回流到 UI（回流那一条是设置页的 `hooks.broadcast`）。同值不写，省一次落盘与快照。
+            auto next = store.settings();
+            if (next.appearance.sidebar_collapsed == collapsed) {
+                return;
+            }
+            next.appearance.sidebar_collapsed = collapsed;
+            static_cast<void>(store.replace(std::move(next)));
+        };
+        hooks.note_window_press = [&report_dispatch, &window]() -> void {
+            // 稿 D7 的又一处上报点：点过这一扇的轨，下一条全局快捷键就该落这一扇。
+            if (report_dispatch) {
+                report_dispatch(window);
+            }
+        };
+        window.sidebar = std::make_shared<borealis::ui::ConnectionSidebar>(std::move(hooks));
+        // 起步档取落盘那份（N1：折叠缺省，展开态被记住）。走 `set_collapsed` 而不是 `open`——配置是
+        // 来向，回写它就是把刚读到的值再写回去一次。
+        window.sidebar->set_collapsed(store.settings().appearance.sidebar_collapsed);
+    };
+    // 主窗的内容装配排在本段之前（`assemble_window_content` 那时 `make_sidebar` 还没赋值），
+    // 故已经活着的那些窗在这里回头补建，并各自重排一次中段行把槽位挂进去。
+    for (const std::unique_ptr<WorkspaceWindow> &window : workspace_windows) {
+        make_sidebar(*window);
+        rebuild_root_children(*window, tab_workspaces);
+    }
 
-    // 打开入口（Q4/Q5）：走命令层（快捷键 / 命令面板 / 菜单的共同真源，同 `settings.open`）；
-    // 默认不绑死键位（进 PREF.04 体系后用户自行绑定）。
+    // 打开入口（Q4/Q5 改判，裁决 7.180）：仍走命令层（快捷键 / 命令面板 / 菜单的共同真源，同
+    // `settings.open`），但开合的对象换成**发起命令那一扇窗**自己的列——旧腿是「搬浮层到落点窗再 toggle」，
+    // 常驻列不搬，落点窗那一条本来就在。默认不绑死键位（进 PREF.04 体系后用户自行绑定）。
     au::Command toggle_connections;
     toggle_connections.id = "connections.toggle";
     toggle_connections.title = borealis::ui::settings_label("connections.title");
     toggle_connections.category = "terminal";
-    toggle_connections.action = [&sidebar, &retarget_panel]() -> void {
-        retarget_panel(*sidebar);  // 搬窗（稿 D6）：先挂到发起命令那一扇的宿主上，再走既有开合腿
-        sidebar->toggle();
+    toggle_connections.action = [&command_window]() -> void {
+        WorkspaceWindow *const target = command_window ? command_window() : nullptr;
+        if (target != nullptr && target->sidebar != nullptr) {
+            target->sidebar->toggle();
+        }
     };
     toggle_connections.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(toggle_connections));
@@ -4894,7 +4990,7 @@ auto main(int argc, char **argv) -> int {
     toggle_session_monitor.action =
         [&monitor_panel, &monitor_tab, &monitor_pane, &monitor_session, &retarget_panel, &command_tab_id,
          &focused_pane_session, &focused_pane_of, &show_monitor_notice]() -> void {
-        retarget_panel(monitor_panel);  // 搬窗（稿 D6，本件是面板族第八只）：先挂到发起命令那一扇
+        retarget_panel(monitor_panel);  // 搬窗（稿 D6，本件是面板族第七只——侧栏改常驻列后出了族，裁决 7.180）
         if (monitor_panel.is_open()) {
             monitor_panel.toggle();
             return;
@@ -5588,7 +5684,7 @@ auto main(int argc, char **argv) -> int {
     app.set_on_window_closed([&workspace_windows, &perform_close, &erase_tab_ledger, &tab_workspaces,
                               &broadcast_router, &active_window_tracker, &fallback_window,
                               &startup_wake, &retarget_panel_to, &abandon_destination_to,
-                              &remount_overlay, &sidebar, &wizard, &credential_prompt, &panel,
+                              &remount_overlay, &wizard, &credential_prompt, &panel,
                               &tunnel_panel, &sftp_panel, &keys_panel, &snippet_panel, &debug_panel,
                               &notice, &monitor_panel,
                               &command_palette, &serial_baud_dialog, &log_dialog, &palette_mount,
@@ -5672,7 +5768,7 @@ auto main(int argc, char **argv) -> int {
                     remount_overlay(widget, state, *landing_window->overlay_host);
                 }
             };
-        retire_panel(sidebar.get());
+        // 常驻列不在这张表里：它随本窗一起散（每窗一份，成员析构就是撤账，没有要搬到别处的浮层）。
         retire_panel(wizard.get());
         retire_panel(credential_prompt.get());
         retire_panel(&panel);

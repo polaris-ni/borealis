@@ -1,10 +1,11 @@
 // ============================================================
 // 连接管理器侧栏实现（src/ui/connection_sidebar.cpp）
 // ------------------------------------------------------------
-// 形态要点（对照设计稿判据标号）：左侧 320dp 停靠卡片，标题行 + quick connect
-// 行（标号 2）+ 搜索框 + 三视图 chips（D7）+ 滚动行区（标号 1：名字 + 类型图标
-// + 星标）+ 底部动作行（新建/导入）。最近连接（标号 3）是行区上方独立小节，
-// 与 WS.10 撤销关闭栈无关（数据源都是装配层搬的 connection.recent）。
+// 形态要点（对照设计稿判据标号）：屏 1 那条**常驻列**（裁决 7.180 改判，旧形态是浮层卡片）——
+// 折叠＝34 dp 图标轨，展开＝同一条列变宽到 320 dp：标题行 + quick connect 行（标号 2）+ 搜索框 +
+// 三视图 chips（D7）+ 滚动行区（标号 1：名字 + 类型图标 + 星标）+ 底部动作行（新建/导入）。
+// 最近连接（标号 3）是行区上方独立小节，与 WS.10 撤销关闭栈无关（数据源都是装配层搬的 connection.recent）。
+// 两态互斥地占同一个槽位，开合只在 `slot_` 内换那一枚子节点——槽位本身从建窗起不换（理由见头文件）。
 // 「一个点了没反应的按钮」口径：Hooks 缺席的入口整枚不画（7.38⑥ F-b 同款）。
 // ============================================================
 
@@ -14,9 +15,6 @@
 #include <utility>
 
 #include "aurora/widget/button.h"
-#include "aurora/widget/alignment.h"
-#include "aurora/widget/canvas.h"
-#include "aurora/widget/stack.h"
 #include "aurora/widget/containers.h"
 #include "aurora/widget/text.h"
 
@@ -26,22 +24,46 @@
 
 namespace borealis::ui {
 
-ConnectionSidebar::ConnectionSidebar(aurora::OverlayHost &host, Hooks hooks)
-    : host_{&host}, hooks_{std::move(hooks)} {}
+namespace {
 
-// 换宿主即「先摘后换」（头文件那条判据的落点）：`close()` 用的是记在 `overlay_index_` 里的旧宿主序号，
-// 它必须发生在改 `host_` 之前。换完不自动重挂——重挂由调用方的 open/toggle 走既有那条建层腿，
-// 于是本件只有一份建浮层的代码，搬窗不会开出第二种浮层形态。
-auto ConnectionSidebar::set_overlay_host(aurora::OverlayHost &host) -> void {
-    if (host_ == &host) {
-        return;
-    }
-    close();
-    host_ = &host;
+/// @brief 展开态那一列的宽（屏 2 与 §2.2 那行都是 320 dp；折叠态的 34 dp 住在 `sidebar_rail.cpp`）。
+constexpr float kPanelWidthDp = 320.0F;
+
+}  // namespace
+
+// 三件一次建齐：槽位（不换）、折叠态那枚轨、展开态那一列。缺省折叠（§4 N1），于是新窗口先看见那条轨，
+// 面板内容直到第一次展开才建——`rebuild_panel()` 里的控件色值是构建期取定的，晚报一次就少一次换肤欠账。
+ConnectionSidebar::ConnectionSidebar(Hooks hooks) : hooks_{std::move(hooks)} {
+    slot_ = std::make_shared<aurora::Column>();
+    slot_->set_modifier(aurora::Modifier{}.fill_max_height());
+    rail_ = std::make_shared<SidebarRail>(SidebarRailHooks{
+        .select_view = [this](conn::SidebarViewMode mode) -> void { expand_to(mode); },
+        .note_press = [this]() -> void {
+            if (hooks_.note_window_press != nullptr) {
+                hooks_.note_window_press();
+            }
+        },
+    });
+    panel_ = std::make_shared<aurora::Column>(aurora::ColumnProps{.gap = 8.0F});
+    mount_slot();
 }
 
-ConnectionSidebar::~ConnectionSidebar() {
-    close();
+ConnectionSidebar::~ConnectionSidebar() = default;
+
+/// @brief 两态互斥占同一格的唯一机制：按开合档把槽里那枚子节点换成轨或面板。
+auto ConnectionSidebar::mount_slot() -> void {
+    // 两枚都**copy** 进槽：本件按生命周期持有它们（`rebuild_panel` 与 `set_active_view` 都要再碰），
+    // 搬进 `Node` 就把成员掏空了，下一次展开会对着空指针建内容。
+    const std::shared_ptr<aurora::Widget> current =
+        open_ ? std::static_pointer_cast<aurora::Widget>(panel_)
+              : std::static_pointer_cast<aurora::Widget>(rail_);
+    auto &nodes = slot_->child_nodes_mut();
+    nodes.clear();
+    nodes.push_back(aurora::Node{current});
+    // 34 dp ↔ 320 dp 是「同一条列变宽」，根 Row 的第一格宽度因此要重算：只标脏绘制会把分栏列
+    // 留在旧宽度上（面板压住终端或轨身后留一条空缝）。
+    slot_->mark_needs_layout();
+    slot_->mark_needs_paint();
 }
 
 auto ConnectionSidebar::search_text() const -> std::string {
@@ -50,11 +72,32 @@ auto ConnectionSidebar::search_text() const -> std::string {
 
 auto ConnectionSidebar::set_view_mode(conn::SidebarViewMode mode) -> void {
     mode_ = mode;
+    rail_->set_active_view(mode);  // 两态指向同一个视图档：面板的 chips 与轨上亮的那一枚不许错位
     refresh_rows();
+}
+
+auto ConnectionSidebar::rail_active_view() const noexcept -> conn::SidebarViewMode {
+    return rail_->active_view();
 }
 
 auto ConnectionSidebar::visible_rows() const -> std::vector<conn::SidebarRow> {
     return conn::sidebar_rows(store_, mode_, query_);
+}
+
+auto ConnectionSidebar::expand_to(conn::SidebarViewMode mode) -> void {
+    if (open_ && mode_ == mode) {
+        return;  // 已经是那一档而且已经展开：再点同一枚图标不该把行区重建一次
+    }
+    mode_ = mode;
+    rail_->set_active_view(mode);
+    if (!open_) {
+        apply_open();
+        if (hooks_.persist_collapsed != nullptr) {
+            hooks_.persist_collapsed(false);
+        }
+    } else {
+        refresh_rows();
+    }
 }
 
 auto ConnectionSidebar::open() -> void {
@@ -62,6 +105,35 @@ auto ConnectionSidebar::open() -> void {
         refresh_rows();
         return;
     }
+    apply_open();
+    if (hooks_.persist_collapsed != nullptr) {
+        hooks_.persist_collapsed(false);
+    }
+}
+
+auto ConnectionSidebar::close() -> void {
+    if (!open_) {
+        return;
+    }
+    apply_close();
+    if (hooks_.persist_collapsed != nullptr) {
+        hooks_.persist_collapsed(true);
+    }
+}
+
+auto ConnectionSidebar::set_collapsed(bool collapsed) -> void {
+    // 配置是**来向**而不是去向：这条腿不回写 `persist_collapsed`，否则广播一进来就又发一次广播。
+    if (collapsed == !open_) {
+        return;
+    }
+    if (collapsed) {
+        apply_close();
+    } else {
+        apply_open();
+    }
+}
+
+auto ConnectionSidebar::apply_open() -> void {
     store_ = conn::ProfileStore{hooks_.load != nullptr ? hooks_.load()
                                                        : std::vector<conn::Profile>{}};
     query_.clear();
@@ -75,36 +147,15 @@ auto ConnectionSidebar::open() -> void {
             }
         }
     }
-
-    auto mask = std::make_shared<aurora::Canvas>(
-        [chrome = settings_chrome()](aurora::Painter &painter, const aurora::Rect &box) -> void {
-            painter.fill_rect(box, chrome.window_bg);
-        });
-    mask->set_modifier(
-        aurora::Modifier{}.fill_max_size().clickable([this]() -> void { close(); }));
-
-    auto card = build_overlay();
-    auto layer = std::make_shared<aurora::Stack>(
-        std::vector<aurora::Node>{aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(mask))},
-                                  aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(card))}},
-        aurora::Alignment::CenterLeft);
-
-    dialog_ = std::make_shared<aurora::Dialog>(
-        aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(layer))});
-    overlay_index_ = host_->add_overlay(
-        aurora::Node{std::static_pointer_cast<aurora::Widget>(dialog_)});
-    dialog_->show();
     open_ = true;
+    rail_->set_active_view(mode_);
+    rebuild_panel();
+    mount_slot();
 }
 
-auto ConnectionSidebar::close() -> void {
-    if (!open_) {
-        return;
-    }
-    if (dialog_ != nullptr) {
-        dialog_->close();
-    }
+auto ConnectionSidebar::apply_close() -> void {
     clear_state();
+    mount_slot();
 }
 
 auto ConnectionSidebar::refresh_rows() -> void {
@@ -112,28 +163,15 @@ auto ConnectionSidebar::refresh_rows() -> void {
         return;
     }
     query_ = search_input_ != nullptr ? search_input_->value() : query_;
-    // 整块重建（同 SettingsPanel::select_page 的口径：行序变了就地改计数会错位）。
-    if (overlay_index_.has_value()) {
-        host_->remove_overlay(*overlay_index_);
-        overlay_index_.reset();
+    // 整块重建（同 SettingsPanel::select_page 的口径：行序变了就地改计数会错位），槽位与面板本体都不换。
+    rebuild_panel();
+}
+
+auto ConnectionSidebar::refresh_chrome() -> void {
+    if (!open_) {
+        return;  // 折叠态那枚轨的色值每次重绘现读 `settings_chrome()`，没有重建的必要
     }
-    dialog_.reset();
-    auto mask = std::make_shared<aurora::Canvas>(
-        [chrome = settings_chrome()](aurora::Painter &painter, const aurora::Rect &box) -> void {
-            painter.fill_rect(box, chrome.window_bg);
-        });
-    mask->set_modifier(
-        aurora::Modifier{}.fill_max_size().clickable([this]() -> void { close(); }));
-    auto card = build_overlay();
-    auto layer = std::make_shared<aurora::Stack>(
-        std::vector<aurora::Node>{aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(mask))},
-                                  aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(card))}},
-        aurora::Alignment::CenterLeft);
-    dialog_ = std::make_shared<aurora::Dialog>(
-        aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(layer))});
-    overlay_index_ = host_->add_overlay(
-        aurora::Node{std::static_pointer_cast<aurora::Widget>(dialog_)});
-    dialog_->show();
+    rebuild_panel();
 }
 
 auto ConnectionSidebar::toggle_favorite(const std::string &id) -> void {
@@ -236,16 +274,20 @@ auto ConnectionSidebar::build_row(const conn::SidebarRow &row) -> aurora::Node {
     return aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(row_widget))};
 }
 
-auto ConnectionSidebar::build_overlay() -> std::shared_ptr<aurora::Column> {
+auto ConnectionSidebar::rebuild_panel() -> void {
     const auto chrome = settings_chrome();
     star_buttons_.clear();
     row_buttons_.clear();
     auto children = std::vector<aurora::Node>{};
 
-    // ---- 标题行 + 关闭 ----
+    // ---- 标题行 + 收起（词条仍是 `connections.action.close`：屏 2 画的就是「关闭」，而改判后它关掉的是
+    //      这一列的展开态，折回那条 34 dp 轨——文案不在本轮改判范围内，裁决 7.180 记这一处口径转移）----
     auto title = std::make_shared<aurora::Text>(
         aurora::TextProps{.content = settings_label("connections.title"), .text_color = chrome.text});
-    title->set_modifier(aurora::Modifier{}.fill_max_width());
+    // 主轴权重而不是 `fill_max_width()`：行内那一枚「宽轴 min=max=父级上限」会把标题顶成整幅 296 dp，
+    // 于是紧随其后的收起钮落在 308 dp 之外、被 320 dp 的列裁掉（旧浮层形态下同一处没有证人，
+    // 常驻列的宽度判据把它抓了出来——钮必须点得到，因为收起只剩这一枚）。
+    title->set_modifier(aurora::Modifier{}.expand(1.0F));
     auto close_btn = std::make_shared<aurora::Button>(aurora::ButtonProps{
         .label = settings_label("connections.action.close"),
         .color = chrome.control_bg,
@@ -405,31 +447,30 @@ auto ConnectionSidebar::build_overlay() -> std::shared_ptr<aurora::Column> {
     children.push_back(
         aurora::Node{std::static_pointer_cast<aurora::Widget>(std::move(actions))});
 
-    auto card = std::make_shared<aurora::Column>(aurora::ColumnProps{
-        .children = std::move(children),
-        .gap = 8.0F,
-    });
-    card->set_modifier(aurora::Modifier{}
-                           .width(320.0F)
-                           .fill_max_height()
-                           .padding(aurora::EdgeInsets{12.0F, 12.0F, 12.0F, 12.0F})
-                           .background(chrome.card_bg, 0.0F)
-                           .border(1.0F, chrome.card_line)
-                           .clickable([]() -> void {}));
-    return card;
+    auto &nodes = panel_->child_nodes_mut();
+    // 那一列的本体修饰（宽 320、通高、卡片底与一条描边）每次重建时现取活动档：色值是构建期定下的，
+    // 换肤那条腿就走在这里（`refresh_chrome()` ⇒ `rebuild_panel()`），而不是刻在建窗那一刻。
+    panel_->set_modifier(aurora::Modifier{}
+                             .width(kPanelWidthDp)
+                             .fill_max_height()
+                             .padding(aurora::EdgeInsets{12.0F, 12.0F, 12.0F, 12.0F})
+                             .background(chrome.card_bg, 0.0F)
+                             .border(1.0F, chrome.card_line)
+                             .clickable([]() -> void {}));
+    // 就地换子里那一批：`panel_` 这一枚从建窗起就钉在槽里，宽度与底/描边那层修饰也留在它身上
+    // （旧形态是整张浮层重挂，改判后没有可摘的浮层了）。
+    nodes = std::move(children);
+    panel_->mark_needs_layout();
+    panel_->mark_needs_paint();
 }
 
 auto ConnectionSidebar::clear_state() -> void {
-    if (overlay_index_.has_value()) {
-        host_->remove_overlay(*overlay_index_);
-        overlay_index_.reset();
-    }
-    dialog_.reset();
+    open_ = false;
     search_input_.reset();
     quick_input_.reset();
     star_buttons_.clear();
     row_buttons_.clear();
-    open_ = false;
+    panel_->child_nodes_mut().clear();
 }
 
 }  // namespace borealis::ui

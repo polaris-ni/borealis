@@ -7,10 +7,13 @@
 // utest_profile_views，这里锁的是「UI 只消费」那一侧的两条行为承诺。
 // 驱动台形态照 itest_connection_wizard 的 Harness（`present_root` 排真实布局 +
 // `hit_test_chain` 取命中 + EventDispatcher 发真事件）；串问泵腿在 main（裁决 7.83），
-// 无自动化证人，按既句式源码审查＋真机走查担保。
+// 无自动化证人，按既句式源码审查＋真机走查担保。侧栏改常驻列后（裁决 7.180），这台把它的
+// `slot_widget()` 摆进根 Row 第一格——不再是从 `OverlayHost` 摘挂的那张卡片，本文件因此多一条
+// `SPEC.FEAT.CONN.07` 的形态面判据（两态同槽、宽度真让位、开合与落盘的分工）。
 // ============================================================
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -43,17 +46,28 @@ namespace au = aurora;
 
 constexpr int kWindowWidth = 900;
 constexpr int kWindowHeight = 760;
+constexpr double kRailWidthDp = 34.0;    ///< 折叠态那条图标轨的宽（屏 1 判据 ③，`src/ui/sidebar_rail.cpp`）。
+constexpr double kPanelWidthDp = 320.0;  ///< 展开态同一条列的宽（`UI_OVERVIEW.draft.md` §2.2 与屏 2）。
+
+/// @brief 布局读数比到半 dp：浮点宽度经 `Constraints::constrain` 与 dp/px 往返，逐位等值不是判据。
+[[nodiscard]] auto nearly(double a, double b, double tolerance = 0.51) -> bool {
+    return std::abs(a - b) < tolerance;
+}
 
 /// @brief 装配层替身：档案表 + connect 调用留痕（struct-of-回调同族）。
 struct Probe {
     std::vector<conn::Profile> profiles;
     std::vector<conn::Profile> connected;
+    std::vector<bool> collapsed_writes;
 
     [[nodiscard]] auto hooks() -> ui::ConnectionSidebar::Hooks {
         auto out = ui::ConnectionSidebar::Hooks{};
         out.load = [this]() -> std::vector<conn::Profile> { return profiles; };
         out.connect = [this](const conn::Profile &profile) -> void {
             connected.push_back(profile);
+        };
+        out.persist_collapsed = [this](bool collapsed) -> void {
+            collapsed_writes.push_back(collapsed);
         };
         return out;
     }
@@ -66,14 +80,22 @@ struct HitSpot {
 };
 
 /// @brief 无头窗口 + 真布局 + 真指针派发的驱动台（itest_connection_wizard 同族精简腿）。
+///
+/// 根是一枚 `Row`，与装配层 `rebuild_root_children()` 那一格同形：侧栏的常驻槽位在**第一格**、
+/// 其余宽度归终端区替身（裁决 7.180 后侧栏不再是从浮层宿主摘进摘出的卡片，所以这台也不再需要
+/// `OverlayHost`）。
 class Harness {
   public:
     Harness() {
-        host_ = std::make_shared<au::OverlayHost>();
-        base_ = std::make_shared<au::Text>(
-            aurora::TextProps{.content = std::string{"base"}, .text_color = au::Color{0, 0, 0, 0xFF}});
-        (void)host_->add_overlay(au::Node{base_});  // 占住子节点 [0]：基础内容。
-        root_ = au::Node{std::static_pointer_cast<au::Widget>(host_)};
+        row_ = std::make_shared<au::Row>();
+        row_->set_modifier(au::Modifier{}.fill_max_size());
+        row_->set_cross_axis_alignment(au::CrossAxisAlignment::Stretch);
+        // 终端区替身：吃掉轨/面板之外的全部宽度，让「面板把布局压窄」这件事在命中扫描里可见。
+        terminal_ = std::make_shared<au::Column>();
+        terminal_->set_modifier(au::Modifier{}.expand(1.0F).fill_max_size());
+        auto &nodes = row_->child_nodes_mut();
+        nodes.push_back(au::Node{terminal_});
+        root_ = au::Node{std::static_pointer_cast<au::Widget>(row_)};
         focus_.set_root(&root_.widget());
         render();
     }
@@ -81,19 +103,35 @@ class Harness {
     Harness(const Harness &) = delete;
     auto operator=(const Harness &) -> Harness & = delete;
 
+    /// @brief 建这一扇窗的那一条常驻列，并把槽位摆进根 Row 第一格（装配层在建窗时只做一次）。
     [[nodiscard]] auto attach(Probe &probe) -> std::unique_ptr<ui::ConnectionSidebar> {
-        return std::make_unique<ui::ConnectionSidebar>(*host_, probe.hooks());
+        auto sidebar = std::make_unique<ui::ConnectionSidebar>(probe.hooks());
+        auto &nodes = row_->child_nodes_mut();
+        nodes.insert(nodes.begin(), au::Node{sidebar->slot_widget()});
+        row_->mark_needs_layout();
+        render();
+        return sidebar;
+    }
+
+    /// @brief 终端区替身当前占宽（判「同一条列变宽」是不是**占布局**——浮层形态下这一格从不让位）。
+    [[nodiscard]] auto terminal_width() const -> double {
+        return static_cast<double>(terminal_->size().width);
     }
 
     auto render() -> void {
         static_cast<void>(window_.present_root(root_));
     }
 
-    /// @brief 开侧栏并排两帧（单帧只够入树，布局落 bounds 要第二帧）。
+    /// @brief 排两帧（单帧只够入树，布局落 bounds 要第二帧）。
+    auto settle() -> void {
+        render();
+        render();
+    }
+
+    /// @brief 展开这一列并排两帧。
     auto open(ui::ConnectionSidebar &sidebar) -> void {
         sidebar.open();
-        render();
-        render();
+        settle();
     }
 
     [[nodiscard]] auto chain_at(float x_dp, float y_dp) -> std::vector<au::HitNode> {
@@ -199,8 +237,8 @@ class Harness {
     }
 
     au::Window window_ = make_window();  ///< 最先声明、最后析构：帧缓冲须活到取样结束。
-    std::shared_ptr<au::OverlayHost> host_;
-    std::shared_ptr<au::Text> base_;
+    std::shared_ptr<au::Row> row_;
+    std::shared_ptr<au::Column> terminal_;
     au::Node root_;
     au::FocusManager focus_;
     aurora::EventDispatcher dispatcher_;
@@ -217,6 +255,56 @@ auto click_connect(Harness &h) -> void {
 }
 
 }  // namespace
+
+// ------------------------------------------------------------
+// 判据③（裁决 7.180 的形态面）：常驻列两态占同一个槽位，宽度是真的让位而不是压上去
+// ------------------------------------------------------------
+AURORA_TEST_CASE(the_resident_slot_is_the_rail_when_collapsed_and_the_panel_when_open) {
+    static_cast<void>(ui::install_settings_strings());
+    Probe probe;
+    Harness h;
+    auto sidebar = h.attach(probe);
+
+    // ⑴ 起步折叠（§4 N1）：槽里是那条 34 dp 的轨，面板内容此刻还没建；建列本身不是「改档」，故不写盘。
+    AURORA_TEST_CHECK_FALSE(sidebar->is_open());
+    h.settle();
+    AURORA_TEST_CHECK_TRUE(nearly(sidebar->slot_widget()->size().width, kRailWidthDp));
+    AURORA_TEST_CHECK_TRUE(nearly(h.terminal_width(), kWindowWidth - kRailWidthDp));
+    AURORA_TEST_CHECK_TRUE(probe.collapsed_writes.empty());
+
+    // ⑵ 展开＝同一条列变宽：槽 320 dp、终端区让掉多出来的那 286 dp（旧浮层形态下这一格一寸不让），
+    //     落盘记一次「不折叠」。
+    sidebar->open();
+    h.settle();
+    AURORA_TEST_CHECK_TRUE(sidebar->is_open());
+    AURORA_TEST_CHECK_TRUE(nearly(sidebar->slot_widget()->size().width, kPanelWidthDp));
+    AURORA_TEST_CHECK_TRUE(nearly(h.terminal_width(), kWindowWidth - kPanelWidthDp));
+    AURORA_TEST_REQUIRE_EQ(probe.collapsed_writes.size(), 1U);
+    AURORA_TEST_CHECK_FALSE(probe.collapsed_writes.front());
+
+    // ⑶ 配置是**来向**：`set_collapsed` 折回轨，却一回也不写盘——广播腿把自己再喂回去就是落盘风暴。
+    sidebar->set_collapsed(true);
+    h.settle();
+    AURORA_TEST_CHECK_FALSE(sidebar->is_open());
+    AURORA_TEST_CHECK_TRUE(nearly(sidebar->slot_widget()->size().width, kRailWidthDp));
+    AURORA_TEST_CHECK_EQ(probe.collapsed_writes.size(), 1U);
+
+    // ⑷ 轨上三枚的落点（人已裁的「三个视图直达」）：切到该视图并展开，面板 chips 与轨上亮的那一枚同源。
+    sidebar->expand_to(conn::SidebarViewMode::Favorites);
+    h.settle();
+    AURORA_TEST_CHECK_TRUE(sidebar->is_open());
+    AURORA_TEST_CHECK_TRUE(sidebar->view_mode() == conn::SidebarViewMode::Favorites);
+    AURORA_TEST_CHECK_TRUE(sidebar->rail_active_view() == conn::SidebarViewMode::Favorites);
+    AURORA_TEST_CHECK_TRUE(nearly(sidebar->slot_widget()->size().width, kPanelWidthDp));
+    AURORA_TEST_CHECK_EQ(probe.collapsed_writes.size(), 2U);
+
+    // ⑸ 面板标题行那一枚「收起」走的是同一条腿：折回轨并记一次折叠（旧语义「关掉浮层」的口径转移处）。
+    h.click_and_settle(h.find_button(ui::settings_label("connections.action.close")));
+    AURORA_TEST_CHECK_FALSE(sidebar->is_open());
+    AURORA_TEST_CHECK_TRUE(nearly(sidebar->slot_widget()->size().width, kRailWidthDp));
+    AURORA_TEST_REQUIRE_EQ(probe.collapsed_writes.size(), 3U);
+    AURORA_TEST_CHECK_TRUE(probe.collapsed_writes.back());
+}
 
 // ------------------------------------------------------------
 // 判据①（稿 D5/D7）：`-J` 好值 ⇒ 临时档案带跳链形状交回装配层
