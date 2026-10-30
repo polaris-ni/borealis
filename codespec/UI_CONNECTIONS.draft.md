@@ -34,7 +34,7 @@
 | # | 待决 | 选项 | 结论 | 理由 |
 |---|---|---|---|---|
 | **D1** | 新控件类放哪 | ① `src/ui/connection_sidebar.{h,cpp}` 私有头；② 进 `include/borealis/ui/` | **①** | 裁决 D1①：绘制侧控件含 `au::` 类型，按既有先例（`terminal_view.{h,cpp}`、`search_overlay.{h,cpp}`、`settings_panel.{h,cpp}`）走私有头，不污染公共头 |
-| **D2** | 侧栏怎么打开 | 经 `CommandRegistry` 注册 `connections.toggle`（同族 `settings.open` / `search.open`），绑定侧栏显隐＋快捷键；左侧停靠件，非模态浮层 | **注册命令** | 复用现有命令/快捷键体系，不新造入口；`CommandRegistry::all()` 已被 `settings_panel` 消费，机制现成 |
+| **D2** | 侧栏怎么打开 | 经 `CommandRegistry` 注册 `connections.toggle`（同族 `settings.open` / `search.open`），绑定侧栏显隐＋快捷键；左侧停靠件，非模态浮层 | **注册命令** | 复用现有命令/快捷键体系，不新造入口；`CommandRegistry::all()` 已被 `settings_panel` 消费，机制现成。**2026-10-30 改判（裁决 7.180）**：命令仍在，「非模态浮层」那一半作废——侧栏是屏 1 那条常驻列（折叠 34 dp／展开 320 dp），详见 §8-Q5 的追记 |
 | **D3** | 「连接」动作 | ① Local→本地终端；SSH→本地终端＋自定义命令 `ssh [user@]host [-p port]`（临时通道）；② 本期就搭 libssh 真传输 | **②（libssh 真传输，2026-10-09 改判）** | 初判①复用已落能力最快；改判②：临时通道不能自定义认证与 known_hosts 策略，CONN.04/08/WS.05 全部以真传输为前提，早晚要建；依赖已定走 vcpkg（D8）后②的阻塞解除。CONN.02 由此进本期 |
 | **D4** | 最近连接存储 | ① 持久化：`ConnectionSettings` 增 `recent_profiles`（capped 5，存 id＋时间戳），走 `config::Store`；② 仅内存、重启清空 | **①（建议，待决）** | 用户体验要求跨重启保留；① 需动 `store.cpp` 读写＋测试，属可控改动。最终取舍见 §8-Q2 |
 | **D5** | 导入入口映射 | 读盘 `~/.ssh/config`→`parse_ssh_config()`→逐条 `ProfileStore::add`（`ssh-import:<pattern>` 确定性 id 天然去重/变更检测）；单向不回写 | **如述** | 模型层已就绪（`parse_ssh_config` 纯函数、不碰文件）；调用方负责读盘与「导入不回写」语义 |
@@ -104,3 +104,7 @@ Session（本地终端腿，forkpty/ConPTY；真 SSH 传输待 CONN.02）
 - **Q3（凭据询问）＝原生询问对话框**：libssh 进程内认证没有「系统 ssh 提示」可复用（原 A 选项只在临时通道下成立）；取值只喂本次认证回调，不落盘不进日志。
 - **Q4（快捷键）＝走 PREF.04**：经 `CommandRegistry` 注册 `connections.toggle` 进快捷键体系，默认不绑死键位。
 - **Q5（默认显隐）＝默认隐藏、命令/快捷键唤起**：不占主窗口版面，与 settings_panel 同款交互。
+  - **2026-10-30 改判（裁决 7.180）**：本条作废。侧栏改屏 1 判据 ③ 那条**常驻列**——折叠态 34 dp 图标轨常驻、
+    展开态同一条列变宽到 320 dp（`UI_OVERVIEW.draft.md` §2.2 与 §4 N1 的「折叠缺省、展开态入配置并被记住」），
+    不再占版面这件事由折叠态做到，而不是靠「不上树」。`connections.toggle` 仍在册（Q4 不变），开的对象换成
+    **发起命令那一扇窗**自己的列；旧形态的整窗遮罩与「点窗外即关」随之一并撤销。
