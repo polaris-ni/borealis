@@ -3,7 +3,8 @@
 /// 测试说明: `SPEC.FEAT.PREF.01` 亮/暗 chrome 的纯逻辑腿（`codespec/UI_CHROME.draft.md`）：
 ///           三档选择 × 系统读数的解析表（`system` 不表态回暗、域外值同 `system`）、
 ///           两套色板逐 token 不同（防「亮档漏改某一项」）、正文/次要文本/语义三色/accent 的
-///           WCAG AA 对比度下界，以及活动档切换后 `settings_chrome()` 与 `settings_chrome_theme()`
+///           WCAG AA 对比度下界与 `text_faint` 的 3.0 弱化下界（稿 §2.1 的 `dim`，判据见
+///           `codespec/UI_CHROME.draft.md` §1），以及活动档切换后 `settings_chrome()` 与 `settings_chrome_theme()`
 ///           同步且 `on_primary` 按档取 `window_bg` / `card_bg`（稿 D6）。
 
 #include <algorithm>
@@ -85,6 +86,7 @@ AURORA_TEST_CASE(the_two_palettes_differ_in_every_token) {
     AURORA_TEST_CHECK_FALSE(same(dark.control_bg, light.control_bg));
     AURORA_TEST_CHECK_FALSE(same(dark.text, light.text));
     AURORA_TEST_CHECK_FALSE(same(dark.text_dim, light.text_dim));
+    AURORA_TEST_CHECK_FALSE(same(dark.text_faint, light.text_faint));
     AURORA_TEST_CHECK_FALSE(same(dark.accent, light.accent));
     AURORA_TEST_CHECK_FALSE(same(dark.scrim, light.scrim));
     AURORA_TEST_CHECK_FALSE(same(dark.danger, light.danger));
@@ -93,11 +95,12 @@ AURORA_TEST_CASE(the_two_palettes_differ_in_every_token) {
 }
 
 AURORA_TEST_CASE(the_table_pins_the_sensitive_values) {
-    // 只钉三处「设计稿点过名」的值：暗档三枚取自 `UI_OVERVIEW.draft.md` §2.1（`win` / `mut` / `yellow`），
+    // 只钉几处「设计稿点过名」的值：暗档四枚取自 `UI_OVERVIEW.draft.md` §2.1（`win` / `mut` / `dim` / `yellow`），
     // 亮档 accent 与两档窗口底仍按 `UI_CHROME.draft.md` §1。
     const SettingsChrome dark = ui::chrome_palette(ChromeScheme::Dark);
     const SettingsChrome light = ui::chrome_palette(ChromeScheme::Light);
     AURORA_TEST_CHECK_TRUE(same(dark.text_dim, Color{0x8B, 0x93, 0xA7}));
+    AURORA_TEST_CHECK_TRUE(same(dark.text_faint, Color{0x62, 0x72, 0x8A}));
     AURORA_TEST_CHECK_TRUE(same(dark.warning, Color{0xF1, 0xFA, 0x8C}));
     AURORA_TEST_CHECK_TRUE(same(light.accent, Color{0x7C, 0x3A, 0xED}));
     AURORA_TEST_CHECK_TRUE(same(dark.window_bg, Color{0x1E, 0x1F, 0x29}));
@@ -114,6 +117,21 @@ AURORA_TEST_CASE(both_palettes_meet_wcag_aa_on_the_card_surface) {
         AURORA_TEST_CHECK_MSG(contrast(palette.danger, palette.card_bg) >= 4.5, "danger");
         AURORA_TEST_CHECK_MSG(contrast(palette.success, palette.card_bg) >= 4.5, "success");
         AURORA_TEST_CHECK_MSG(contrast(palette.warning, palette.card_bg) >= 4.5, "warning");
+    }
+}
+
+AURORA_TEST_CASE(the_faint_tone_sits_between_the_decorative_floor_and_text_dim) {
+    // `text_faint` 的值是稿 §2.1 的 `dim`，不是本仓自算的数，所以它天然低于正文级 AA 下界——本条
+    // 因此不要求 4.5，要求的是「还能读」与「确实更弱」：3.0 是 WCAG 对非正文前景的下界，而它必须比
+    // `text_dim` 弱，否则「弱化档」在两档里的某一档成了强调，状态栏的层级就倒过来。
+    for (const ChromeScheme scheme : {ChromeScheme::Dark, ChromeScheme::Light}) {
+        const SettingsChrome palette = ui::chrome_palette(scheme);
+        const double faint = contrast(palette.text_faint, palette.card_bg);
+        AURORA_TEST_CHECK_MSG(faint >= 3.0, "text_faint floor");
+        AURORA_TEST_CHECK_MSG(faint < contrast(palette.text_dim, palette.card_bg), "text_faint < text_dim");
+        // 卡片底之外还有一块真正的落笔面是窗口底（状态栏按稿画在 `card_bg` 上，但同一档前景将来
+        // 若上了窗口底不能悄悄低于下界）。
+        AURORA_TEST_CHECK_MSG(contrast(palette.text_faint, palette.window_bg) >= 3.0, "text_faint on window");
     }
 }
 

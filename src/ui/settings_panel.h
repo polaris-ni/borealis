@@ -215,6 +215,13 @@ struct SettingsChrome {
     aurora::Color control_bg{};  ///< 输入类控件底与次级按钮底（chip 的关档底、选中标签底）。
     aurora::Color text{};        ///< 正文。
     aurora::Color text_dim{};    ///< 副标题、占位符、关档前景、未选标签。
+    /// @brief 弱化档：稿 §2.1 的 `dim`（第三枚文本 token，比 `text_dim` 再暗一档）。
+    ///
+    /// 追加的是**第 13 枚**而不是把 `text_dim` 改暗：`text_dim` 承担着面板副标题与关档 chip 前景这些
+    /// 必须 ≥4.5 的正文级读数（稿 D7 的门槛），一改变两处一起塌。本档只画稿面逐字用了 `dim` 的地方
+    /// ——今日只有屏 1 状态栏的普通读数格；对卡片底实测 3.23:1，低于正文级的 AA 下界，是稿给的
+    /// 值而非本仓自算，`utest_chrome_palette` 因此按 ≥3.0 钉它并在注释里写清可用面。
+    aurora::Color text_faint{};
     aurora::Color accent{};      ///< 选中档（chip 的开档底、聚焦描边、主按钮、下划线）。
     aurora::Color scrim{};       ///< 全屏遮罩（吃掉窗外点击，不挡内容）。
     aurora::Color danger{};      ///< 语义警示：铃铛角标。
