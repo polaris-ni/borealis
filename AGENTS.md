@@ -107,4 +107,4 @@ cmake --preset msvc-bench && cmake --build --preset msvc-bench
 
 - `utest_*`/`itest_*` 沙箱内直接跑；`etest_*` 依赖真实 PTY：Windows 腿投放交互桌面会话、POSIX 腿需 shell 会话（两腿同判据）。
 - 时间/资源门禁不挂 CTest，按脚本自述单独执行。
-- 新增 `.cpp` 经 `CONFIGURE_DEPENDS` GLOB 自动进构建与测试注册。
+- 测试 `.cpp` 走 GLOB 自动注册；实现件须列入 `src/CMakeLists.txt`。
