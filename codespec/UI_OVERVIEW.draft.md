@@ -51,6 +51,8 @@
 
 **UI chrome 与终端主题的关系**：本表是 **UI 侧**色板，终端格子内的颜色另随 `ui::PaletteSpec` 的主题切换；两者是否共用同一套主题切换见 §4 的 N6。
 
+**本表与代码的对应（2026-10-30 起，裁决 7.178）**：本表是 UI 侧色值的**基准来源**，代码侧的承载体是 `ui::SettingsChrome`（12 token）＋ `ui::chrome_palette(ChromeScheme)`，其唯一色值表写在 `codespec/UI_CHROME.draft.md` §1（该表已按本表逐格对齐，两表冲突时以本表为准并回改那份）。同 token 的对应关系：`win`→`window_bg`、`chrome`→`card_bg`、`raised`→`control_bg`、`line2`→`card_line`、`text`→`text`、`mut`→`text_dim`、`accent`→`accent`、`red`→`danger`、`green`→`success`、`yellow`→`warning`。代码侧另有 `nav_bg`（设置页左导航列）与 `scrim`（全屏遮罩）两枚本表没有的格；本表另有 `input` / `sel` / `line` / `dim` 四枚代码侧**尚无消费者**的格，未预加进表（等各自的落地棒次再收，届时 `dim` 需按装饰档 ≥3.0 而不是正文的 4.5 设下界）。亮档由本表同构推导，取值见 `UI_CHROME.draft.md` §1。
+
 ### 2.2 尺寸与排版
 
 | 项 | 规格 | 出处 |

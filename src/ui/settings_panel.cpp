@@ -56,21 +56,24 @@ namespace {
 // ---- chrome 色值（S5①：界面配色不随终端主题联动；`SPEC.FEAT.PREF.01` 起分亮/暗两档）----
 //
 // 两套色板是全仓唯一一张表（`codespec/UI_CHROME.draft.md` §1）：本文件的面板、标签栏与分屏缝隙都从
-// 这里读。`text_dim` 暗档由 `#627280` 提亮到 `#8A8FA3`——旧值对卡片底只有 3.19:1，不达 WCAG AA
-// （稿 D7），`utest_chrome_palette` 按同一算式守这条下界。
+// 这里读。**暗档三枚基准值自 2026-10-30 起改钉在 `codespec/UI_OVERVIEW.draft.md` §2.1 那套 token 上**
+// （裁决见 `SPECIFICATIONS.md` §7）：`window_bg` 取稿 `win`、`text_dim` 取稿 `mut`、`warning` 取稿
+// `yellow`。稿 D7 那条「`text_dim` 提亮到 `#8A8FA3`」的门槛仍在（对卡片底 5.14:1，比旧值更高），
+// 只是取值改成与稿同源，避免「稿一版、码一版」两套基准长期漂移。`utest_chrome_palette` 按同一算式
+// 守对比度下界。亮档三枚不动：层级关系（窗口底比卡片低一档、次要文本 ≥4.5、警示色 ≥4.5）在两档同构。
 constexpr SettingsChrome kDarkChrome{
-    .window_bg = aurora::Color{0x18, 0x19, 0x21},
+    .window_bg = aurora::Color{0x1E, 0x1F, 0x29},
     .card_bg = aurora::Color{0x21, 0x22, 0x2C},
     .nav_bg = aurora::Color{0x1B, 0x1C, 0x24},
     .card_line = aurora::Color{0x4D, 0x4F, 0x63},
     .control_bg = aurora::Color{0x28, 0x2A, 0x36},
     .text = aurora::Color{0xF8, 0xF8, 0xF2},
-    .text_dim = aurora::Color{0x8A, 0x8F, 0xA3},
+    .text_dim = aurora::Color{0x8B, 0x93, 0xA7},
     .accent = aurora::Color{0xBD, 0x93, 0xF9},
     .scrim = aurora::Color{0, 0, 0, 0x99},
     .danger = aurora::Color{0xFF, 0x55, 0x55},
     .success = aurora::Color{0x50, 0xFA, 0x7B},
-    .warning = aurora::Color{0xFF, 0xB8, 0x6C},
+    .warning = aurora::Color{0xF1, 0xFA, 0x8C},
 };
 constexpr SettingsChrome kLightChrome{
     .window_bg = aurora::Color{0xF4, 0xF4, 0xF7},

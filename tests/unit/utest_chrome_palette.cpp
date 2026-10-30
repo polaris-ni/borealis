@@ -93,12 +93,14 @@ AURORA_TEST_CASE(the_two_palettes_differ_in_every_token) {
 }
 
 AURORA_TEST_CASE(the_table_pins_the_sensitive_values) {
-    // 只钉三处「设计稿点过名」的值：D7 的暗档 text_dim 提亮、D2 的亮档 accent、两档的窗口底。
+    // 只钉三处「设计稿点过名」的值：暗档三枚取自 `UI_OVERVIEW.draft.md` §2.1（`win` / `mut` / `yellow`），
+    // 亮档 accent 与两档窗口底仍按 `UI_CHROME.draft.md` §1。
     const SettingsChrome dark = ui::chrome_palette(ChromeScheme::Dark);
     const SettingsChrome light = ui::chrome_palette(ChromeScheme::Light);
-    AURORA_TEST_CHECK_TRUE(same(dark.text_dim, Color{0x8A, 0x8F, 0xA3}));
+    AURORA_TEST_CHECK_TRUE(same(dark.text_dim, Color{0x8B, 0x93, 0xA7}));
+    AURORA_TEST_CHECK_TRUE(same(dark.warning, Color{0xF1, 0xFA, 0x8C}));
     AURORA_TEST_CHECK_TRUE(same(light.accent, Color{0x7C, 0x3A, 0xED}));
-    AURORA_TEST_CHECK_TRUE(same(dark.window_bg, Color{0x18, 0x19, 0x21}));
+    AURORA_TEST_CHECK_TRUE(same(dark.window_bg, Color{0x1E, 0x1F, 0x29}));
     AURORA_TEST_CHECK_TRUE(same(light.window_bg, Color{0xF4, 0xF4, 0xF7}));
 }
 

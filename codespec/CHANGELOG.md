@@ -4,6 +4,20 @@
 > 规格书正文只述需求，不含优先级与交付分期（那部分属 [`PLAN.md`](PLAN.md)）。本文件是历史记录：早期版本条目沿用其**当时**的优先级与里程碑口径原文，不做回填改写，以便对照每一次调整的取舍依据。
 > 现行需求标识规范见 [`SPECIFICATIONS.md`](SPECIFICATIONS.md) §1.4。
 
+## v0.178（2026-10-30）**屏 1「主窗口骨架」按稿改码开棒：人裁「以 `UI_OVERVIEW.draft.md` 为基准反向改代码」，三处冲突逐条裁；本笔兑现第一处——`SPEC.FEAT.PREF.01` 暗档三枚基准值改钉（`window_bg`／`text_dim`／`warning`），亮档与两档结构不动（裁决 **7.178**；代码＋回写同一笔）**
+
+**动机**：本轮走「展示主页 UI」时被人指认「实际实现的与设计稿完全不一致」。逐条核对后分歧分成三桶——稿落后于码（chrome 恒暗→亮/暗两档、暗档色值、侧栏形态、自绘标题栏）、真缺口（状态栏件从未落地）、码有稿未画（17 份后出稿）。人对第一桶给出的口径是**以稿为基准改代码，先做主页**，并逐条裁了正面冲突的三处：①chrome **保留亮/暗两档**而暗档基准值按稿重定；②侧栏改**常驻折叠轨**（34 dp 轨／320 dp 展开）；③标题栏**先查框架能力再定**（已查实 Aurora 有 CSD：`DecorationPolicy::ClientSide` ＋ `ui::TitleBar` ＋ `TitleBarStyle` 缺省高 36 dp ＋ Win32 DWM／`NCHITTEST` 实现与测试；约束＝decoration 是建窗初值无运行期切换、`TitleBar` v1 左槽只收图标位图／动作只收文本 chip、GLFW 与 macOS 腿未接线）。②③随各自棒次落地并另立裁决，本笔只做①。
+
+**为什么不是「以运行时为准回填文档」**（§4.2 第 12 条）：那条守的是**事实**——「现状是什么」只能问运行时；今日分歧在**目标**——「界面该用哪套基准值」没有运行时事实可仲裁，设计稿是设计意图的唯一来源。故本笔让代码向稿走，同时把两份稿的分工定死：`UI_OVERVIEW.draft.md` §2.1 是**暗档基准来源**，`UI_CHROME.draft.md` §1 是**两档的完整承载表**并与代码逐格同源（`ui::chrome_palette()`），两表冲突以 §2.1 为准并回改本表与代码——这样「按稿改码」才有一个不会再漂的落点。
+
+**口径**：① 改钉三枚而不是全套——暗档 `window_bg` `#181921`→`#1E1F29`（稿 `win`）、`text_dim` `#8A8FA3`→`#8B93A7`（稿 `mut`）、`warning` `#FFB86C`→`#F1FA8C`（稿 `yellow`）。这三枚是「码与稿同 token 不同值」的全部交集：其余九枚两稿同值（`card_bg`＝稿 `chrome`、`control_bg`＝稿 `raised`、`card_line`＝稿 `line2`，`text`／`accent`／`danger`／`success` 逐字节相同），`nav_bg`／`scrim` 稿无对应格。② 亮档三枚不动——稿只有暗档一套，亮档是 `UI_CHROME` D2 独立推的，层级关系在两档同构成立且逐 token 与暗档都不同。③ D7 那条 AA 门槛没被改坏：`text_dim`/`card_bg` 由 4.92 升到 **5.14**，`warning`/`card_bg` 由 9.27 升到 **14.13**，两档六项 ≥4.5 全绿。④ **代价登记**：暗档 `window_bg` 与 `card_bg` 的亮度差由 1.11:1 收窄到 **1.04:1**——稿那两格本来只差 3 个单位，「靠底色分层」在暗档上让位给描边与边框，故「场景根底与标签条底／面板外框是否还读得出两层」登记为真机目视项。⑤ **否决一处顺手扩表**：稿有而 `SettingsChrome` 无的四枚（`input #191A21`／`sel #44475A`／`line #3A3C4C`／第三档文本 `dim #62728A`）今日无消费者，不预加（AGENTS §4.1 第 3 条）；其中 `dim` 对 `card_bg` 只有 **3.20:1**，进表时须另设「装饰/占位档 ≥3.0」下界而不是套用正文的 4.5，否则那条 AA 案会把稿自己的值判红。⑥ **在册余项（本笔不动）**：码的 `nav_bg #1B1C24` 与稿 §2.1「侧栏、导航＝`chrome`」不一致，属②那棒的射程。
+
+**落地形态**：`src/ui/settings_panel.cpp` 的 `kDarkChrome` 三格常量＋那段色值注（引用改到稿 §2.1 与本裁决）；`tests/unit/utest_chrome_palette.cpp` 的 `the_table_pins_the_sensitive_values` 三枚改钉并增钉暗档 `warning`；回写四份——`SPECIFICATIONS.md`（§7 新增 7.178、`SPEC.FEAT.PREF.01` 落地现状追记、§7 抬头日期段）、`UI_CHROME.draft.md`（抬头状态段的 7.170／7.178 两处改口＋§1 两套色板表与对比度表刷新）、`UI_OVERVIEW.draft.md`（§2.1 新增「本表与代码的对应」段）。零新增词条、零配置键、零布局改动。
+
+**验证读数**：`tools\msvc_env.bat cmake --build --preset msvc` 通过（EXIT=0，含 `Borealis.exe` 与 runner 链接）；`ctest --preset msvc -R "utest_chrome_palette|itest_tab_bar"` 两件绿；全量 `ctest --preset msvc -E etest_` **127/127**（268.45 s，门禁 `check_agents_size`／`check_display_literals` 同批各 Passed）。首跑 **126/127**——唯一红案 `utest_form_transfer.every_declared_choice_survives_the_config_file`（`Store::replace` 拒写、3417.95 ms），与裁决 7.174⑥ 登记的偶发案**同名同断言**，单跑该套件 **10/10 绿**（5.64 s），复跑全量转全绿——判为并行负载下写盘被拒，与本改钉无因果（该案不读 chrome 色）。runner 未复跑并写明理由：本笔改的常量与钉值案都已随 ctest 的 127 套件逐个跑过，其中 `itest_settings_panel`（268 s，内含逐色像素断言）、`itest_tab_bar`、`itest_render_viewport` 是本改的正面证人面。
+
+**边界与不称可用**：改钉在 `borealis_core` 内、随 runner 编译 ⇒ 与 v0.169／v0.170 那两棒「装配层无证人」不同，本笔**有**自动化判据；钉值案是等值断言，改回旧值即红，非空转不待变异。暗档整屏观感、层级收窄后的两层是否可读、亮/暗/跟随三档切换无色带残留三条真机走查一条没做 ⇒ **`SPEC.FEAT.PREF.01` 继续不称「可用」**（§4.4 第 33 条）；屏 1 余下四条腿（状态栏件／侧栏折叠轨／自绘标题栏／分屏标识目视）随后续棒次。另：本笔顺手把 `SPECIFICATIONS.md` 末尾那句「当前 **v0.175**」的版本指针更正为 v0.178——v0.176／v0.177 两笔回写都漏了它。
+
 ## v0.177（2026-10-30）**真机走查批二续：监视卡六条读数成立；命令面板「点不动」定位到命中链并登记 G50、`confirm`／`alert` 按钮无 i18n 入口登记为 G51；quake 七项受全局热键禁制未做**（裁决 **7.177**；本笔零代码改动，纯回写）
 
 **动机**：批二的范围是「设置页余下键与下拉行 ＋ 监视卡 ＋ quake」，前三者里设置页与下拉行已随 7.176 收口。本笔把监视卡走完、把同轮冒出来的两处缺陷从「现象」推到「机制」，再把 quake 的可做边界钉死——七条走查全部要 Win／Meta 组合键或人工目视，走查通道不具备条件。
