@@ -102,6 +102,8 @@ add_library(borealis_core STATIC
         ui/sftp_format.cpp
         ui/sftp_panel.cpp
         ui/snippet_panel.cpp
+        ui/status_bar.cpp
+        ui/status_bar_format.cpp
         ui/startup_notice.cpp
         ui/tab_bar.cpp
         ui/tab_strip.cpp
