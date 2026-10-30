@@ -84,6 +84,7 @@
 #include "platform/serial.h"
 #include "platform/user_dir.h"
 #include "ui/active_window_tracker.h"
+#include "ui/app_title_bar.h"
 #include "ui/broadcast_banner.h"
 #include "ui/connection_sidebar.h"
 #include "ui/connection_wizard.h"
@@ -475,6 +476,11 @@ struct WorkspaceWindow {
     /// 常驻列与工作区共用这一行而不是把列塞进工作区：稿那条 34 dp 图标列的纵向范围是
     /// `y=104..872`＝标签条与横幅之下、状态栏之上，正是这一行的矩形（裁决 7.180）。
     std::shared_ptr<au::Row> content_row{};
+    /// @brief 屏 1 顶部那条 36 dp 自绘标题栏（`SPEC.FEAT.WS.06` 的「标题栏显示当前会话名」那一腿的载体）。
+    ///
+    /// **按窗一份**：一枚控件节点只容一个父节点，而根 Column 的首格就是它。帘子（`style.frameless`
+    /// 的 quake 那一扇）不挂这条——它没有可拖的标题带，也没有需要显示的窗口标识（`SPEC.FEAT.WS.12`）。
+    std::shared_ptr<borealis::ui::AppTitleBar> title_bar{};
     std::shared_ptr<borealis::ui::TabBarWidget> tab_bar{};
     std::shared_ptr<borealis::ui::BroadcastBanner> banner{};
     /// @brief 屏 1 判据 ③ 那条常驻列（折叠 34 dp 轨／展开 320 dp，`SPEC.FEAT.CONN.07`＋裁决 7.180）。
@@ -546,6 +552,12 @@ struct PendingProfileConnect {
         // 每次呼出现算——两者同写一份几何，恢复腿就会把算出的落位盖掉。同一枚空键也让它不进几何保存：
         // 帘子不是用户拖出来的工作区，没有可延续的几何。
     } else {
+        // **自绘标题栏档**（屏 1 顶部那条 36 dp 带，裁决 7.181）：`Borderless` 撤掉 OS 标题带但留着
+        // 缩放热区与修饰键拖拽兜底（Win32 侧 `WS_OVERLAPPEDWINDOW & ~WS_CAPTION`，热区由 NC 承担、
+        // 阴影由 DWM 合成），且客户区零内缩——那条带因此是**内容**而不是非客户区，色值走 chrome 表、
+        // 三枚钮走 `WindowChrome`。`Frameless` 会把 `WS_SYSMENU` 一族一起去掉（quake 帘子要的就是那
+        // 一档），任务栏与 Alt+F4 那条腿也跟着没了，故普通工作区窗不用它。
+        out->options.style.decoration = au::DecorationPolicy::Borderless;
         // 几何键在建窗**之前**写好：框架的恢复腿读的是 `opts.persist_id`，而 `create_native_window` 吃
         // 的就是同一份 options（`SPEC.FEAT.WS.03` 稿 D9／§0 的 F26）。失败的那一扇不留账——本跳只写了
         // 一个字符串，没建成窗就没有宿主、也就没有下一次保存。
@@ -559,8 +571,8 @@ struct PendingProfileConnect {
     out->window = std::move(created.value());
     out->surface = &out->window->surface();
     // 右键菜单与多行粘贴确认都是浮层，故场景根是浮层宿主而非视口本身（裁决 7.41③）：宿主 [0] 是根
-    // Column，浮层从 [1] 起追加；根 Column 自己的次序是 [0] 标签栏、[1] 广播横幅、[2] 当前工作区、
-    // [3] 状态栏（承重，见 `rebuild_root_children`）。
+    // Column，浮层从 [1] 起追加；根 Column 自己的次序是 [0] 标题栏、[1] 标签栏、[2] 广播横幅、
+    // [3] 中段行、[4] 状态栏（承重，见 `rebuild_root_children`）。
     out->overlay_host = std::make_shared<au::OverlayHost>();
     // 纵向容器承载：OverlayHost 只管理浮层，常规内容须走普通容器；交叉轴 Stretch 使标签栏与工作区
     // 均撑满窗宽。
@@ -1046,7 +1058,8 @@ auto main(int argc, char **argv) -> int {
 
     // ---- 广播组（`SPEC.FEAT.WS.09`，裁决 7.121）----
     // 组与端点表是 app 级一份（D2）：成员 `(TabId, PaneId)` 跨标签保留、不落盘。横幅常驻根 Column
-    // 的 index 1（D10），本处先造控件，稍后与标签条 / 工作区一起入根（顺序见 `root_column` 的组装）。
+    // 的 chrome 前缀之后（D10：原本 index 1，自绘标题栏挂上首格后是 index 2，裁决 7.181），本处先造
+    // 控件，稍后与标题栏 / 标签条 / 工作区一起入根（顺序见 `root_column` 的组装）。
     borealis::ui::BroadcastRouter broadcast_router;
     std::function<void()> refresh_broadcast_ui;
     // 归还键盘焦点按窗取（稿 §6 批 3）：横幅是每窗一枚，点 B 窗的横幅「退出广播」却把焦点还给主窗
@@ -1836,7 +1849,7 @@ auto main(int argc, char **argv) -> int {
         create_new_tab(*workspace_windows.front(), startup_cwd_override);
     }
 
-    // 辅助函数：重建**某一扇窗**根 Column 的子节点列表（标签栏 + 广播横幅 + 当前工作区 + 状态栏）。
+    // 辅助函数：重建**某一扇窗**根 Column 的子节点列表（标题栏 + 标签栏 + 广播横幅 + 中段行 + 状态栏）。
     // 形参从「列 + 全局当前号」换成「窗 + 全表」（稿 §6 批 3）：多窗下那张 `tab_workspaces` 是应用级
     // 一张表（稿 §0 的 F10：号全局唯一），按号查出来的那一格可能属于别的窗——把它塞进本窗的根就是
     // 「两扇窗显示同一格工作区」，而工作区只认一个父节点，两扇的布局会互相掀掉。归属由批 2 那一枚
@@ -1844,13 +1857,15 @@ auto main(int argc, char **argv) -> int {
     auto rebuild_root_children = [](WorkspaceWindow &window,
                                     const std::map<borealis::ui::TabId, TabWorkspace> &workspaces)
         -> void {
-        // 保留前两个子节点（标签栏 + 广播横幅），替换第三个（中段行）与第四个（状态栏）。横幅是常驻节点（D10），
-        // 组空时高 0 也不摘除——摘除会让显隐走「增删子节点」这条分叉。
+        // 保留头部那几格 chrome（标题栏 + 标签栏 + 广播横幅），替换其后两格（中段行、状态栏）。横幅是常驻节点（D10），
+        // 组空时高 0 也不摘除——摘除会让显隐走「增删子节点」这条分叉。标题栏同一条口径：全屏那一档它自报 0 高而不是
+        // 从根上被摘走（裁决 7.181），故这里的格数只按「本窗挂没挂这一条」定，不随窗口形态起伏——帘子（quake）不挂。
+        const std::size_t chrome_prefix = window.title_bar ? 3U : 2U;
         auto &nodes = window.root_column->child_nodes_mut();
-        if (nodes.size() < 2) {
+        if (nodes.size() < chrome_prefix) {
             return;  // 还没初始化完
         }
-        nodes.resize(2);
+        nodes.resize(chrome_prefix);
         // 中段行自己也是常驻节点：换标签换的是**行里那一格工作区**，而不是行本身——行一摘，挂在行里的
         // 常驻列（屏 1 判据 ③）就跟着散一次，而它按 D10 的口径与横幅、状态栏同档：骨架不随内容起伏。
         if (window.content_row) {
@@ -2168,8 +2183,8 @@ auto main(int argc, char **argv) -> int {
             });
     };
 
-    // 一扇窗的**内容入根**（稿 §6 批 3）：标签栏 → 广播横幅 → 当前工作区 → 状态栏，次序是承重的（横幅常驻
-    // index 1，D10），故这一段整体复用而不是让第二扇窗各写一遍。根 Column 交进浮层宿主排在三件之后，
+    // 一扇窗的**内容入根**（稿 §6 批 3）：标题栏 → 标签栏 → 广播横幅 → 中段行 → 状态栏，次序是承重的
+    // （横幅常驻 chrome 前缀之后，D10），故这一段整体复用而不是让第二扇窗各写一遍。根 Column 交进浮层宿主排在三件之后，
     // 与主窗原先那段次序逐字相同（裁决 7.41③：场景根是浮层宿主而不是视口）。
     /// @brief 按窗建那条常驻列（屏 1 判据 ③），先声明后赋值（`wizard_ref` / `report_dispatch` 同一形态）。
     ///
@@ -2178,6 +2193,30 @@ auto main(int argc, char **argv) -> int {
     std::function<void(WorkspaceWindow &)> make_sidebar;
 
     auto assemble_window_content = [&](WorkspaceWindow &window) -> void {
+        // 屏 1 顶部那条 36 dp 带（`SPEC.FEAT.WS.06`＋裁决 7.181）：只在**普通工作区窗**挂——帘子
+        // （quake 那一档 `style.frameless`）没有标题带，也没有要显示的窗口标识。✕ 交回的是装配层
+        // 那一条同一个 `request_close_window`（同一个确认闸门，不因发起方式是鼠标而少问一句），
+        // 故本处按引用捕那枚 `std::function`：它的赋值排在首扇窗装配之后（`report_dispatch` 同形态）。
+        if (!window.options.style.frameless && !window.title_bar) {
+            window.title_bar = std::make_shared<borealis::ui::AppTitleBar>(
+                borealis::ui::AppTitleBar::Hooks{
+                    [&window, &request_close_window]() -> void {
+                        if (request_close_window) {
+                            request_close_window(window);
+                        }
+                    },
+                    [](const borealis::ui::AppTitleBarAction action) -> void {
+                        // 三枚钮的唯一效果观测点：无头后端把 minimize／toggle_maximize 记成空操作，
+                        // 用例与日志只能从这里读到「哪一枚被按过」。真机侧的动作由 `WindowChrome` 落地。
+                        const std::string_view label =
+                            action == borealis::ui::AppTitleBarAction::Minimize
+                                ? "minimize"
+                                : action == borealis::ui::AppTitleBarAction::ToggleMaximize ? "maximize"
+                                                                                            : "close";
+                        AURORA_LOG_INFO("ui", "title bar action: ", label);
+                    },
+                });
+        }
         make_tab_bar(window);
         // 主窗那一枚横幅在首标签创建**之前**就要存在（`refresh_broadcast_ui` 在 `router.attach` 那一刻
         // 就要有可写的横幅），故上面已建；按窗补建只服务第二扇窗之后的入口。
@@ -2186,7 +2225,7 @@ auto main(int argc, char **argv) -> int {
         }
         // 状态栏没有「必须在首标签之前存在」那一层理由（它只被 `refresh_status_bar_ui` 逐帧写），故一律
         // 在这里按窗造；入根由 `rebuild_root_children()` 那一句负责，本处不自己 push，否则两处的次序会
-        // 在下一次重建时互相掀掉（那边按 `resize(2)` 起步重排）。
+        // 在下一次重建时互相掀掉（那边按 chrome 前缀起步重排）。
         if (!window.status_bar) {
             window.status_bar = std::make_shared<borealis::ui::StatusBar>();
         }
@@ -2196,6 +2235,11 @@ auto main(int argc, char **argv) -> int {
             window.content_row = std::make_shared<au::Row>();
             window.content_row->set_cross_axis_alignment(au::CrossAxisAlignment::Stretch);
             window.content_row->set_modifier(au::Modifier{}.expand(1.0F).fill_max_size());
+        }
+        // 标题栏排最前（屏 1 那条带就是 `y=0..36`，其下才是 `y=36..78` 的标签条）。它与标签栏、横幅同
+        // 一档：常驻节点，`rebuild_root_children()` 保留 chrome 前缀那几格而不动它们。
+        if (window.title_bar) {
+            window.root_column->child_nodes_mut().push_back(aurora::Node{window.title_bar});
         }
         window.root_column->child_nodes_mut().push_back(aurora::Node{window.tab_bar});
         window.root_column->child_nodes_mut().push_back(aurora::Node{window.banner});
@@ -5560,6 +5604,31 @@ auto main(int argc, char **argv) -> int {
                         win->set_title(title_utf8);
                     }
                 }
+            }
+            // 屏 1 那条带的上下文串（裁决 7.181）：会话名取上面同一份 `title_utf8`——同一个判定处，
+            // 标签条、OS 标题与这条带不会在手动重命名那一刻分叉。目录那一半只认**本地腿的焦点格**：
+            // SSH／串口／Telnet 的 OSC 7 是远端语义或根本没有，与继承起始目录那一条判据同源。
+            // 逐帧现算，`set_context` 在串没变时即空操作（与状态栏、OS 标题同一条差分纪律）。
+            if (window.title_bar) {
+                std::string directory;
+                const auto owned = tab_workspaces.find(window.current_tab_id.value());
+                const auto kind = tab_kind.find(window.current_tab_id.value());
+                if (owned != tab_workspaces.end() && owned->second.owner == &window &&
+                    kind != tab_kind.end() &&
+                    kind->second == borealis::conn::ConnectionType::Local) {
+                    const std::shared_ptr<borealis::session::Session> focused =
+                        pane_session(window.current_tab_id.value(),
+                                     owned->second.workspace->focused_pane());
+                    if (focused != nullptr && focused->alive()) {
+                        if (const auto parsed = borealis::ui::local_directory_from_osc7(
+                                focused->osc_state().working_directory,
+                                borealis::ui::osc7_path_style())) {
+                            directory = *parsed;
+                        }
+                    }
+                }
+                window.title_bar->set_context(
+                    borealis::ui::format_title_context(directory, title_utf8));
             }
         }
 
