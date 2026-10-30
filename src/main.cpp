@@ -98,6 +98,8 @@
 #include "ui/sftp_panel.h"
 #include "ui/snippet_panel.h"
 #include "ui/startup_notice.h"
+#include "ui/status_bar.h"
+#include "ui/status_bar_format.h"
 #include "ui/tab_bar.h"
 #include "ui/terminal_view.h"
 #include "ui/tunnel_panel.h"
@@ -453,7 +455,7 @@ class KeysWorker final {
 /// @brief 一扇工作区窗的「呈现半区 + 逐窗账目」（`SPEC.FEAT.WS.03` 批 1，稿 §2 那份「每窗一份」清单）。
 ///
 /// 成员只放稿 §2 判给每窗的那几件：后端窗口与其 surface、宿主登记的 `WindowId`、浮层宿主、根
-/// Column、标签栏控件、广播横幅、本窗的标签真值源与闭包栈、本窗当前标签号。应用级那一份（Settings /
+/// Column、标签栏控件、广播横幅、状态栏、本窗的标签真值源与闭包栈、本窗当前标签号。应用级那一份（Settings /
 /// Store、四张 `TabId` 连接表、`next_tab_id`、广播组本体、凭据链、四面板）不进这里。
 ///
 /// **批 1 的归属、批 3 的可复用**：`tab_bar` 与 `banner` 两支仍由装配层填进成员，但填它们的
@@ -470,6 +472,11 @@ struct WorkspaceWindow {
     std::shared_ptr<au::Column> root_column{};
     std::shared_ptr<borealis::ui::TabBarWidget> tab_bar{};
     std::shared_ptr<borealis::ui::BroadcastBanner> banner{};
+    /// @brief 屏 1 判据 ⑨／⑩ 那条 28 dp 读数条（`SPEC.FEAT.PREF.02` 的即时反馈面），常驻根 Column 末位。
+    ///
+    /// 与横幅同一条形态：常驻节点而不是按需增删——摘除会让它随「有没有读数」显隐，而判据要的是
+    /// 「一格没有也留着那条」。内容按窗各折各的（焦点格属于哪扇窗，这一条就读哪扇窗的那一格）。
+    std::shared_ptr<borealis::ui::StatusBar> status_bar{};
     borealis::ui::TabStrip tab_strip;
     borealis::ui::ClosedTabStack closed_tab_stack;
     std::optional<borealis::ui::TabId> current_tab_id;
@@ -541,8 +548,9 @@ struct PendingProfileConnect {
     }
     out->window = std::move(created.value());
     out->surface = &out->window->surface();
-    // 右键菜单与多行粘贴确认都是浮层，故场景根是浮层宿主而非视口本身（裁决 7.41③）：宿主的子节点
-    // [0] 是标签栏，[1] 是广播横幅，[2] 是当前工作区，[3..] 是按需追加的 Popup / Dialog / 面板浮层。
+    // 右键菜单与多行粘贴确认都是浮层，故场景根是浮层宿主而非视口本身（裁决 7.41③）：宿主 [0] 是根
+    // Column，浮层从 [1] 起追加；根 Column 自己的次序是 [0] 标签栏、[1] 广播横幅、[2] 当前工作区、
+    // [3] 状态栏（承重，见 `rebuild_root_children`）。
     out->overlay_host = std::make_shared<au::OverlayHost>();
     // 纵向容器承载：OverlayHost 只管理浮层，常规内容须走普通容器；交叉轴 Stretch 使标签栏与工作区
     // 均撑满窗宽。
@@ -1818,7 +1826,7 @@ auto main(int argc, char **argv) -> int {
         create_new_tab(*workspace_windows.front(), startup_cwd_override);
     }
 
-    // 辅助函数：重建**某一扇窗**根 Column 的子节点列表（标签栏 + 广播横幅 + 当前工作区）。
+    // 辅助函数：重建**某一扇窗**根 Column 的子节点列表（标签栏 + 广播横幅 + 当前工作区 + 状态栏）。
     // 形参从「列 + 全局当前号」换成「窗 + 全表」（稿 §6 批 3）：多窗下那张 `tab_workspaces` 是应用级
     // 一张表（稿 §0 的 F10：号全局唯一），按号查出来的那一格可能属于别的窗——把它塞进本窗的根就是
     // 「两扇窗显示同一格工作区」，而工作区只认一个父节点，两扇的布局会互相掀掉。归属由批 2 那一枚
@@ -1841,6 +1849,12 @@ auto main(int argc, char **argv) -> int {
                 ws.widget().set_modifier(au::Modifier{}.expand(1.0F));
                 nodes.push_back(std::move(ws));
             }
+        }
+        // 状态栏排在末位、自报 28 dp 高（屏 1 判据 ⑨），因此**不参与** expand 的分母：上面那一格
+        // expand(1.0) 吃掉除 28 dp 以外的全部剩余高度。与横幅同一条常驻纪律——没有读数的那一帧
+        // 也留着这一条，否则窗底会随会话状态起伏。
+        if (window.status_bar) {
+            nodes.push_back(aurora::Node{window.status_bar});
         }
         window.root_column->mark_needs_layout();
         window.root_column->mark_needs_paint();
@@ -2132,7 +2146,7 @@ auto main(int argc, char **argv) -> int {
             });
     };
 
-    // 一扇窗的**内容入根**（稿 §6 批 3）：标签栏 → 广播横幅 → 当前工作区，次序是承重的（横幅常驻
+    // 一扇窗的**内容入根**（稿 §6 批 3）：标签栏 → 广播横幅 → 当前工作区 → 状态栏，次序是承重的（横幅常驻
     // index 1，D10），故这一段整体复用而不是让第二扇窗各写一遍。根 Column 交进浮层宿主排在三件之后，
     // 与主窗原先那段次序逐字相同（裁决 7.41③：场景根是浮层宿主而不是视口）。
     auto assemble_window_content = [&](WorkspaceWindow &window) -> void {
@@ -2141,6 +2155,12 @@ auto main(int argc, char **argv) -> int {
         // 就要有可写的横幅），故上面已建；按窗补建只服务第二扇窗之后的入口。
         if (!window.banner) {
             window.banner = make_broadcast_banner(window);
+        }
+        // 状态栏没有「必须在首标签之前存在」那一层理由（它只被 `refresh_status_bar_ui` 逐帧写），故一律
+        // 在这里按窗造；入根由 `rebuild_root_children` 那一句负责，本处不自己 push，否则两处的次序会
+        // 在下一次重建时互相掀掉（那边按 `resize(2)` 起步重排）。
+        if (!window.status_bar) {
+            window.status_bar = std::make_shared<borealis::ui::StatusBar>();
         }
         window.root_column->child_nodes_mut().push_back(aurora::Node{window.tab_bar});
         window.root_column->child_nodes_mut().push_back(aurora::Node{window.banner});
@@ -2202,6 +2222,180 @@ auto main(int argc, char **argv) -> int {
     auto window_focus = [&app](WorkspaceWindow &window) -> au::FocusManager & {
         au::WindowHost *const target = app.window_host(window.id);
         return target != nullptr ? target->focus() : app.focus();
+    };
+
+    // ---- 状态栏的折算腿（屏 1 判据 ⑨／⑩，`SPEC.FEAT.PREF.02` 的即时反馈面）----
+    //
+    // 逐窗各折一份：状态栏读的是「这一扇窗的焦点格」的事实，两扇窗共用一份就是让 B 窗的条上出现
+    // A 窗的行列数。每帧重算而**不会每帧标脏**——`StatusBar::set_state` 值相等即空操作，于是这一腿
+    // 可以无脑跟着帧走，不必为「哪一处改动该刷新状态栏」再立一张账（与逐窗标题差分同一条思路：
+    // 每帧现算，只在变了才下发）。
+    //
+    // 三个刻意取舍：
+    // ① 全部读点**无锁**。编码取 `Session::encoding_name()`（构造期写定、指向静态存储期），格数取
+    //    视口的 `grid_geometry()`（布局侧本帧算好的那一份），其余取 `settings`——一处都不碰
+    //    `Session::read()` 那条临界区。状态栏是每帧都折的面，挂在会话锁上就是拿 §4.5 第 25 条换读数。
+    // ② 十枚开关里今日只有七枚有取处；`reconnect`／`cursor_position`／`input_latency` 三枚交空文本
+    //    即不上屏，理由逐条写在 `status_bar_registration_order()` 的注释里（判据 ⑧ 把断线与重连画在
+    //    pane 上，不是画在这条上）。三枚的**位置仍留在注册次序里**，窄窗时的省略序因此不随数据源漂。
+    // ③ 锚点的键位取注册表那一份而不是在此重述 `Ctrl+Shift+P`：用户改过键位后这条要跟着说真话，而
+    //    框架命令面板显示的也是同一枚 `default_binding`——两个投影不各持一份真值。
+    auto refresh_status_bar_ui = [&]() -> void {
+        const borealis::config::StatusBarSettings &bar = settings.appearance.status_bar;
+        const auto &order = borealis::ui::status_bar_registration_order();
+        std::string palette_combo;
+        if (const au::Command *const command = app.commands().find("command_palette.open");
+            command != nullptr && command->default_binding.has_value()) {
+            palette_combo = command->default_binding->to_string();
+        }
+
+        for (const std::unique_ptr<WorkspaceWindow> &window_ptr : workspace_windows) {
+            WorkspaceWindow &window = *window_ptr;
+            if (!window.status_bar) {
+                continue;  // 还没装配内容的窗（与横幅刷新同一道闸）
+            }
+            // 焦点格：本窗当前标签的 `focused_pane()`。当前号取不到、或那一格属于别的窗（多窗下的
+            // 常态）都只折全局那几格——会话级读数宁缺勿错，读别窗的行列比读不到更容易误导人。
+            borealis::session::Session *session = nullptr;
+            const borealis::ui::TerminalView *view = nullptr;
+            std::optional<borealis::ui::TabId> tab;
+            if (window.current_tab_id.has_value()) {
+                const auto found = tab_workspaces.find(window.current_tab_id.value());
+                if (found != tab_workspaces.end() && found->second.owner == &window) {
+                    tab = window.current_tab_id;
+                    const borealis::ui::PaneId pane = found->second.workspace->focused_pane();
+                    const auto held = found->second.sessions_by_pane.find(pane);
+                    if (held != found->second.sessions_by_pane.end()) {
+                        session = held->second.get();
+                    }
+                    view = found->second.workspace->view_of(pane);
+                }
+            }
+
+            borealis::ui::StatusBarState state;
+            // 一格一调用，形参次序＝`status_bar_registration_order()` 的下标：省略序由那一份注册表
+            // 决定，而这里写下的下标只决定「哪一枚开关管这一格」。开关关掉、或文本为空，都不上屏。
+            auto push = [&state, &order](const std::size_t index, const bool on, std::u32string text,
+                                         const borealis::ui::StatusBarTone tone,
+                                         const bool leading_dot = false,
+                                         const bool leading_separator = false) -> void {
+                if (!on || text.empty() || index >= order.size()) {
+                    return;
+                }
+                state.slots.push_back(borealis::ui::StatusBarSlot{
+                    .id = order[index],
+                    .text = std::move(text),
+                    .tone = tone,
+                    .leading_dot = leading_dot,
+                    .leading_separator = leading_separator,
+                });
+            };
+            // label(key, args) → 码点串：词条表是唯一文案来源（AGENTS §4.3 第 14 条），状态栏上屏的
+            // 每一个字面短语都从这儿过。
+            auto phrase = [&decode_utf8](const char *key,
+                                         std::vector<aurora::MessageArg> args = {}) -> std::u32string {
+                return decode_utf8(borealis::ui::settings_label(key, std::move(args)));
+            };
+
+            // ① 连接态（稿面「已连接 root@web-01:22」＋一枚 `success` 圆点）。目标串的口径照
+            //    `SSH user@host:port`；串口只有设备名（波特率那些档在监视卡上，判据 ⑨ 没点到这条）；
+            //    本地腿没有目标，交档案类型名「本地终端」而不是自造一句「本机 shell」。
+            //    只在会话**活着**时报「已连接」：断线与重连按判据 ⑧ 归 pane 那一腿，稿面在这条上
+            //    没画过断开态，本件因此不备 danger 档的点。
+            std::string target;
+            if (session != nullptr && session->alive() && tab.has_value()) {
+                const auto kind = tab_kind.find(tab.value());
+                if (kind != tab_kind.end()) {
+                    switch (kind->second) {
+                        case borealis::conn::ConnectionType::Local:
+                            target = borealis::ui::settings_label("connections.type.local");
+                            break;
+                        case borealis::conn::ConnectionType::Ssh: {
+                            const auto held = ssh_profile_by_tab.find(tab.value());
+                            if (held != ssh_profile_by_tab.end()) {
+                                const borealis::conn::SshProfile &profile = held->second;
+                                target = profile.user.empty() ? profile.host : profile.user + "@" + profile.host;
+                                target += ":" + std::to_string(profile.port);
+                            }
+                            break;
+                        }
+                        case borealis::conn::ConnectionType::Serial: {
+                            const auto held = serial_by_tab.find(tab.value());
+                            if (held != serial_by_tab.end()) {
+                                target = held->second.profile.device_path;
+                            }
+                            break;
+                        }
+                        case borealis::conn::ConnectionType::Telnet: {
+                            const auto held = telnet_by_tab.find(tab.value());
+                            if (held != telnet_by_tab.end()) {
+                                target = held->second.host + ":" + std::to_string(held->second.port);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            push(0U, bar.show_connection,
+                 target.empty() ? std::u32string{} : phrase("status_bar.connection", {{"target", target}}),
+                 borealis::ui::StatusBarTone::Dim, /*leading_dot=*/true);
+
+            // ③ 编码：取会话的**生效腿**而不是配置里那一名（`SPEC.FEAT.TERM.09` 的 BOM／平台缺省
+            //    折算只发生在会话里），稿面这一格就是个裸名字，不带前缀、不进词条表。
+            push(3U, bar.show_encoding,
+                 session == nullptr ? std::u32string{}
+                                    : decode_utf8(std::string(session->encoding_name())),
+                 borealis::ui::StatusBarTone::Faint);
+
+            // ④ 行列数（稿面「82×24」）：视口本帧算好的那份几何，0 行 0 列（窗最小化）不上屏。
+            if (bar.show_grid_size && view != nullptr) {
+                const std::size_t columns = view->grid_geometry().columns;
+                const std::size_t rows = view->grid_geometry().rows;
+                if (columns > 0U && rows > 0U) {
+                    push(4U, true,
+                         phrase("status_bar.grid_size", {{"cols", static_cast<std::int64_t>(columns)},
+                                                         {"rows", static_cast<std::int64_t>(rows)}}),
+                         borealis::ui::StatusBarTone::Faint);
+                }
+            }
+
+            // ⑤⑥⑦ 三格取自配置：字号／终端主题名／scrollback 容量（稿面「14 pt」「主题 Dracula」
+            //     「scrollback 10,000」——千分位是稿面形态，由 `group_thousands` 折，不是词条）。
+            push(5U, bar.show_font_size,
+                 phrase("status_bar.font_size",
+                        {{"size", borealis::ui::format_font_size(settings.appearance.font_size_pt)}}),
+                 borealis::ui::StatusBarTone::Faint);
+            push(6U, bar.show_theme, phrase("status_bar.theme", {{"name", settings.appearance.theme}}),
+                 borealis::ui::StatusBarTone::Faint);
+            push(7U, bar.show_scrollback,
+                 phrase("status_bar.scrollback",
+                        {{"rows", borealis::ui::group_thousands(settings.terminal.scrollback_limit)}}),
+                 borealis::ui::StatusBarTone::Faint);
+
+            // ⑧ 剪贴板授权三态（`SPEC.FEAT.CONN.12`）：稿面在它前面画了一条 `card_line` 分隔线，把
+            //    「一条授权策略」与前面那串读数分开；黄色只给**禁止**那一档（稿面画的就是它），
+            //    允许与询问是常态，跟着变黄会让这条永远在叫。
+            std::string_view policy_key = "status_bar.clipboard.deny";
+            if (settings.terminal.clipboard_read == borealis::term::ClipboardReadPolicy::Allow) {
+                policy_key = "status_bar.clipboard.allow";
+            } else if (settings.terminal.clipboard_read == borealis::term::ClipboardReadPolicy::Ask) {
+                policy_key = "status_bar.clipboard.ask";
+            }
+            push(8U, bar.show_clipboard_policy,
+                 phrase("status_bar.clipboard_policy", {{"policy", borealis::ui::settings_label(policy_key)}}),
+                 settings.terminal.clipboard_read == borealis::term::ClipboardReadPolicy::Deny
+                     ? borealis::ui::StatusBarTone::Warning
+                     : borealis::ui::StatusBarTone::Faint,
+                 /*leading_dot=*/false, /*leading_separator=*/true);
+
+            // ⑩ 命令面板锚点（右端固定，稿面 `accent` 色）：没有键位读数即整格不占位——`plan` 那边
+            //      reserved 的宽度也就跟着归零，不会为一句画不出来的提示扣掉一格。
+            if (!palette_combo.empty()) {
+                state.anchor =
+                    phrase("status_bar.palette_hint", {{"combo", palette_combo}});
+            }
+            window.status_bar->set_state(std::move(state));
+        }
     };
 
     // 帘子的装配腿（`SPEC.FEAT.WS.12`，裁决 7.172）：状态机 → 框架那三口的唯一出口。
@@ -5103,7 +5297,7 @@ auto main(int argc, char **argv) -> int {
                       &show_log_notice, &startup_mutex, &startup_queue, &apply_startup_request,
                       &frame_bytes, &reply_wire, &credential_prompt, &restore_waiting_for_secret,
                       &restore_secret_sink, &tab_kind, &crash_facts, &monitor_panel, &bell_policy,
-                      &ring_bell, &quake_hotkeys]() -> void {
+                      &ring_bell, &quake_hotkeys, &refresh_status_bar_ui]() -> void {
         // 帘子热键的排空（`SPEC.FEAT.WS.12`，裁决 7.172）：框架的 `step_frame` 只排它**自己**那份
         // 注册表，本仓自持的这一份要在帧边界自己排——同一条理由：命中不在消息泵里同步执行，回调要
         // 改几何与显隐，不能在窗口过程帧里重入。
@@ -5272,7 +5466,12 @@ auto main(int argc, char **argv) -> int {
                 }
             }
         }
-        
+
+        // 状态栏（屏 1 判据 ⑨／⑩）：与上面那条标题差分同一条思路——逐帧现算、值没变即空操作。换标签、
+        // 切焦点格、改字号／主题／scrollback／剪贴板档、会话断线都从这一条腿跟上，而不是在每一处改动
+        // 旁边再补一句「记得刷状态栏」。
+        refresh_status_bar_ui();
+
         // 日志命令的两态标题（`SPEC.FEAT.CONN.11`，裁决 7.116 D6①）：注册表没有改标题的入口，故这里
         // 只在**翻面**时按同 id 整条覆盖重注册（`add` 保序，面板里的位置不动）。逐帧读一次原子旗标
         // 与一次串比较，不去碰文件也不碰会话锁——这是本棒唯一一处标题刷新点，切换标签、重启会话、

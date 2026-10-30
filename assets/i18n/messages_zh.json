@@ -630,7 +630,7 @@
     "settings.note.shortcuts": "入口先于消费方落地：键位重绑尚未开工，覆盖表里的组合键不会生效",
     "settings.note.ssh": "入口先于消费方落地：SSH 连接族尚未开工，本组改动只落盘",
     "settings.note.ssh_algorithms": "逗号分隔；非空即整表替换库缺省。列旧算法（如 ssh-rsa、diffie-hellman-group14-sha1）会降低安全性，仅连旧设备时启用",
-    "settings.note.status_bar": "入口先于消费方落地：关闭状态栏件尚未开工，本组改动只落盘",
+    "settings.note.status_bar": "十枚里七枚已接状态栏件；重连、光标行列与输入时延三枚的消费方尚未开工，关掉它们只落盘",
     "settings.page.appearance": "外观",
     "settings.page.connection": "连接",
     "settings.page.quick_terminal": "下拉式终端",
@@ -893,6 +893,68 @@
     },
     "snippets.search.placeholder": "搜索名称、分组或正文",
     "snippets.title": "快捷片段",
+    "status_bar.clipboard.allow": "允许",
+    "status_bar.clipboard.ask": "每次询问",
+    "status_bar.clipboard.deny": "禁止",
+    "status_bar.clipboard_policy": "剪贴板读取：{policy}",
+    "@status_bar.clipboard_policy": {
+      "placeholders": {
+        "policy": {
+          "type": "string"
+        }
+      }
+    },
+    "status_bar.connection": "已连接 {target}",
+    "@status_bar.connection": {
+      "placeholders": {
+        "target": {
+          "type": "string"
+        }
+      }
+    },
+    "status_bar.font_size": "{size} pt",
+    "@status_bar.font_size": {
+      "placeholders": {
+        "size": {
+          "type": "string"
+        }
+      }
+    },
+    "status_bar.grid_size": "{cols}×{rows}",
+    "@status_bar.grid_size": {
+      "placeholders": {
+        "cols": {
+          "type": "int64"
+        },
+        "rows": {
+          "type": "int64"
+        }
+      }
+    },
+    "status_bar.palette_hint": "命令面板 {combo}",
+    "@status_bar.palette_hint": {
+      "placeholders": {
+        "combo": {
+          "type": "string"
+        }
+      }
+    },
+    "status_bar.scrollback": "scrollback {rows}",
+    "@status_bar.scrollback": {
+      "placeholders": {
+        "rows": {
+          "type": "string"
+        }
+      }
+    },
+    "status_bar.theme": "主题 {name}",
+    "@status_bar.theme": {
+      "placeholders": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
     "tab.action.undo_close": "重开最近关闭的标签",
     "tab.close_confirm.body": "该标签里还有正在运行的进程，关闭会终止它们。确定关闭吗？",
     "tab.close_confirm.title": "关闭标签",
