@@ -673,13 +673,12 @@ AURORA_TEST_CASE(grade_columns_match_the_two_physical_boundaries) {
     // 裁决 7.110 D3①/D4①）随批 3 的向导默认值灌入接线，CONN.11 的日志三键（`session_logging` /
     // `session_log_dir` / `session_log_pattern`）随裁决 7.116 的批 2 接线，WS.04 的 `terminal.bell`
     // 随可听铃声落地（裁决 7.159：帧边界按档点角标 / 响铃），状态栏十枚里的七枚随裁决 7.179 接上
-    // 装配层的 `refresh_status_bar_ui()`（条上画了格且本仓有取处者），故本行停在 11：少的那几条正是
-    // 已接线的，再往回跳就是某个消费方被摘掉了而面板还留着控件。
-    // 留下的 11 条逐条对得上来源：侧栏折叠一枚（`SPEC.FEAT.CONN.07` 的常驻轨未开工）、状态栏三枚
-    // （重连／光标行列／输入时延——前两枚稿面画在 pane 上而非条上，第三枚本仓无 P95 量测源）、
-    // `terminal.long_line` 一枚、SSH 五枚（端口／认证方式／agent 转发／心跳／拨号超时，
-    // 皆因 `SPEC.FEAT.CONN.02` 的 SSH 连接族未开工）、`shortcuts.overrides` 一枚（键位重绑未开工）。
-    AURORA_TEST_CHECK_EQ(rows_with_consumer(ConsumerStatus::Absent).size(), 11U);
+    // 装配层的 `refresh_status_bar_ui()`（条上画了格且本仓有取处者），侧栏折叠一枚随裁决 7.180 接上
+    // 每窗那条常驻列，故本行停在 10：少的那几条正是已接线的，再往回跳就是某个消费方被摘掉了而面板还留着控件。
+    // 留下的 10 条逐条对得上来源：状态栏三枚（重连／光标行列／输入时延——前两枚稿面画在 pane 上而非条上，
+    // 第三枚本仓无 P95 量测源）、`terminal.long_line` 一枚、SSH 五枚（端口／认证方式／agent 转发／心跳／
+    // 拨号超时，皆因 `SPEC.FEAT.CONN.02` 的 SSH 连接族未开工）、`shortcuts.overrides` 一枚（键位重绑未开工）。
+    AURORA_TEST_CHECK_EQ(rows_with_consumer(ConsumerStatus::Absent).size(), 10U);
 }
 
 }  // namespace borealis::test_cases::utest_settings_catalog

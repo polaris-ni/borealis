@@ -173,8 +173,11 @@ namespace {
     catalog.push_back(with_unit(integer_step("appearance.cursor_blink_period_ms", SettingsPage::Appearance, 50.0,
                                              5000.0, ConsumerStatus::Wired, EffectLevel::Immediate),
                                 "ms"));
+    // 常驻列的开合档（屏 1 判据 ③）：消费方是每窗那一条 `ui::ConnectionSidebar` 的槽位，改档即时作用到
+    // 每一扇窗（装配层 `hooks.broadcast` 里那一句 `set_collapsed()`，裁决 **7.180**）。本行此前挂
+    // 「有键无消费方」的延后档，那时侧栏还是命令唤起的浮层卡片、这个键真没人读。
     catalog.push_back(toggle(
-        "appearance.sidebar_collapsed", SettingsPage::Appearance, ConsumerStatus::Absent, EffectLevel::Immediate));
+        "appearance.sidebar_collapsed", SettingsPage::Appearance, ConsumerStatus::Wired, EffectLevel::Immediate));
     // 标签名优先级的消费方在标签条那一棒（在途）：判定件 `ui::resolve_tab_name` 已取该值，
     // 装配层接线随其落地，故本行按「已接线」呈现，而不是挂「延后」角标。
     catalog.push_back(dropdown("appearance.tab_name_priority",

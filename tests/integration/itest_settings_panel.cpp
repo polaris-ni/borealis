@@ -763,9 +763,13 @@ AURORA_TEST_CASE(deferred_and_next_session_rows_carry_their_badges) {
 
     panel.select_page(SettingsPage::Appearance);
     const auto rows = panel.visible_rows();
-    AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.sidebar_collapsed")->badge, std::string{kBadgeDeferred});
-    // 「有键而无消费方」在界面上的全部表达就是这两处文字，控件本身可用（裁决 7.68③ / 判据文 S15① 就地更正）。
+    // 侧栏折叠那一枚随裁决 7.180 接上每窗那条常驻列（设置页改档即刻作用到每一扇窗），它此前是本页
+    // 「有键无消费方」的唯一代表值；代表值因此挪到状态栏组里条上没画格的那三枚（下面 `utest_settings_catalog`
+    // 的计数与 `itest_settings_panel` 的延后角标各守一处）。控件本来就一直可用（裁决 7.68③）。
+    AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.sidebar_collapsed")->badge, std::string{});
     AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.sidebar_collapsed")->editable);
+    AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.status_bar.show_input_latency")->badge,
+                         std::string{kBadgeDeferred});
     // 「已接线 ∧ 下次会话」只挂后一枚角标：三条构造期注入的接缝已开（裁决 7.76②），面板据此不再说它延后，
     // 但仍要说它「改了本条会话不生效」——两列是正交的两条事实。
     AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.cursor_shape")->editable);
@@ -881,13 +885,16 @@ AURORA_TEST_CASE(a_persist_only_change_writes_but_does_not_broadcast) {
     AURORA_TEST_CHECK_EQ(probe.persisted[0].terminal.scrollback_limit, std::size_t{5000});
     AURORA_TEST_CHECK_TRUE(panel.form().apply_scope("terminal.scrollback_limit") == ApplyScope::PersistOnly);
 
-    // 全仓无消费方 ∧ 即时：同样只落盘——没有消费方就没有可广播的对象。
+    // 全仓无消费方 ∧ 即时：同样只落盘——没有消费方就没有可广播的对象。这一支的代表值原本是
+    // `appearance.sidebar_collapsed`，它随裁决 7.180 接上常驻列后成了「已接线 ∧ 即时」，故取状态栏组里
+    // 条上没画格的末行那一枚（三枚延后中最下者，与 `the_deferred_status_bar_toggles_are_real_controls_and_only_persist`
+    // 同一枚，两条用例一上一下夹住同一档）。
     probe.reset_counters();
-    AURORA_TEST_REQUIRE_EQ(panel.commit("appearance.sidebar_collapsed", FormValue::boolean(false)),
+    AURORA_TEST_REQUIRE_EQ(panel.commit("appearance.status_bar.show_input_latency", FormValue::boolean(false)),
                            CommitIssue::None);
     AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
     AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
-    AURORA_TEST_CHECK_FALSE(probe.persisted.back().appearance.sidebar_collapsed);
+    AURORA_TEST_CHECK_FALSE(probe.persisted.back().appearance.status_bar.show_input_latency);
 }
 
 AURORA_TEST_CASE(a_failed_persist_keeps_the_dirty_state_and_broadcasts_nothing) {
@@ -3778,7 +3785,8 @@ AURORA_TEST_CASE(the_deferred_status_bar_toggles_are_real_controls_and_only_pers
 
     // ⑵ 点的正是该组末行那一枚（`show_input_latency`）：逐字段差分，组内另九枚一位都不许跟着翻——
     // 「挑的是哪一枚」此刻决定 ⑶ 成不成立（同组已接线的那七枚是要广播的），故不能只判「进了这一组」。
-    // 同页另有 `sidebar_collapsed` 那行同样 `Absent`，它在上面若干行，一并差分把它排除。
+    // 同页另有 `sidebar_collapsed` 那一枚已接线的开关（裁决 7.180），它是要广播的，故一并差分钉住「点的
+    // 不是它」——它在上面若干行，`find_last` 按末行取的时候本不该碰着。
     AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 1U);
     borealis::config::StatusBarSettings expected = before.appearance.status_bar;
     expected.show_input_latency = !expected.show_input_latency;

@@ -420,8 +420,11 @@ AURORA_TEST_CASE(only_wired_immediate_rows_broadcast) {
                          ApplyScope::PersistOnly);
     AURORA_TEST_CHECK_FALSE(form.apply_scope("appearance.not_a_schema_key").has_value());
 
-    // 提交结果里的档位与表一致：延后的行改了也只落盘。
-    const auto deferred = form.commit_value("appearance.sidebar_collapsed", FormValue::boolean(false));
+    // 提交结果里的档位与表一致：延后的行改了也只落盘。代表值取状态栏组里**条上没画格**的另一枚
+    // （`show_cursor_position`）——`sidebar_collapsed` 随裁决 7.180 接上常驻列后升为已接线，它这一支
+    // 「Absent ∧ 即时 ⇒ 只落盘」的现场因此挪到这里，与上面 `apply_scope` 那一枚（`show_reconnect`）不重复。
+    const auto deferred =
+        form.commit_value("appearance.status_bar.show_cursor_position", FormValue::boolean(false));
     AURORA_TEST_CHECK(deferred.accepted());
     AURORA_TEST_CHECK_EQ(deferred.scope, ApplyScope::PersistOnly);
     const auto immediate = form.commit_value("appearance.palette.selection", FormValue::color(RgbaColor{1U, 2U, 3U}));
