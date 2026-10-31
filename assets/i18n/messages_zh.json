@@ -955,6 +955,8 @@
         }
       }
     },
+    "tab.action.new_tab": "新建",
+    "tab.action.recent_closed": "最近关闭",
     "tab.action.undo_close": "重开最近关闭的标签",
     "tab.close_confirm.body": "该标签里还有正在运行的进程，关闭会终止它们。确定关闭吗？",
     "tab.close_confirm.title": "关闭标签",

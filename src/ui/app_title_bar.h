@@ -50,16 +50,19 @@ enum class AppTitleBarAction : std::uint8_t {
     Close,          ///< 关闭（稿面那枚「✕」）
 };
 
-/// @brief 屏 1 那条带的上下文串形态：「<目录> · <会话名>」。
+/// @brief 屏 1 那条带的上下文串形态：「<目录> · <会话名> (<类型名>)」。
 ///
 /// 单独成一支纯函数的理由：分隔符是**上屏文案**的一部分（要标 `CJK-LITERAL`），而装配层按硬规则 14
-/// 只许 ASCII 字面量——把折叠留在本件，装配层就只交两截料。目录为空（非本地腿、会话还没报 OSC 7）
-/// 即只给名字，两者都空即空串（本件那一格随之不画）。
+/// 只许 ASCII 字面量——把折叠留在本件，装配层就只交几截料。目录为空（非本地腿、会话还没报 OSC 7）
+/// 即只给名字，两者都空即空串（本件那一格随之不画）。类型那一截是稿面的括注（`—  src/ui · PowerShell
+/// (本地终端)`），空即连括号带空格整段不画——ssh 会话名里本来就常带 `(ssh)` 这种自取的括注，本件不
+/// 负责去重（裁决 7.183）。
 /// @param directory UTF-8 目录（可空）。
 /// @param session UTF-8 会话名（可空）。
+/// @param type_label UTF-8 连接类型显示串（可空；由 `settings_label(connection_type_message_key(…))` 取）。
 /// @return 折叠后的串（全空时为空串）。
-[[nodiscard]] auto format_title_context(std::string_view directory, std::string_view session)
-    -> std::string;
+[[nodiscard]] auto format_title_context(std::string_view directory, std::string_view session,
+                                        std::string_view type_label) -> std::string;
 
 /// @brief 屏 1 的自绘标题栏（继承 `aurora::TitleBar` 的交互腿，自绘稿面那六件）。
 ///

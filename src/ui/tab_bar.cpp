@@ -29,6 +29,51 @@ constexpr float kTypeSlotWidth = 12.0F;
 constexpr float kTypeSlotGap = 6.0F;
 constexpr float kTypeSlotTotal = kTypeSlotWidth + kTypeSlotGap;
 
+// 状态角标簇（`SPEC.FEAT.WS.04` 三枚角标的落位，屏 1 稿面逐值；口径见裁决 7.183）：三枚都是
+// r=3 实心圆点，最右一枚的圆心在栏位右端内缩 27 dp 处（稿 `cx = 右端 − 27`）、纵向落在带中线。
+// 多枚并存时按「断线 → BEL → 活动」的优先级向左排，圆心距 10 dp（点径 6 + 间隙 4）——优先级决定
+// 谁占稿那个锚位，而不是谁先点亮。
+constexpr float kBadgeRadiusDp = 3.0F;
+constexpr float kBadgeAnchorInsetDp = 27.0F;
+constexpr float kBadgePitchDp = 10.0F;
+/// @brief 最左一枚的左沿到名称右端的留白（用于把角标簇从名称的可截断宽里扣出去）。
+constexpr float kBadgeTextGapDp = 5.0F;
+
+constexpr float kPi = 3.14159265358979323846F;
+constexpr float kFullCircle = 2.0F * kPi;
+
+// 右端入口簇（屏 1 稿面：`＋ 新建` 与 `⌄ 最近关闭`，窗口 1500 dp 下的原始横坐标 1352..1484，
+// 右缘内缩 16）。稿那两枚是文本 run 与折线，基线不可反推行盒顶 ⇒ 纵向通栏（与自绘标题栏那三枚
+// 钮同一条口径，裁决 7.181①）。
+constexpr float kClusterRightPadDp = 16.0F;   ///< 稿：文字右缘距栏右端 1500 − 1484。
+constexpr float kClusterGapDp = 31.0F;        ///< 稿：`新建` 右缘 1394 → 箭头左沿 1425。
+constexpr float kPlusSizeDp = 10.0F;          ///< 稿：两线交成的 `＋` 包络 1352..1362 × 50..60。
+constexpr float kPlusToLabelGapDp = 8.0F;      ///< 稿：`＋` 右缘 1362 → 文字左沿 1370。
+constexpr float kChevronWidthDp = 8.0F;       ///< 稿：`⌄` 折线 1425..1433。
+constexpr float kChevronHeightDp = 4.0F;      ///< 稿：`⌄` 折线纵向 4 dp。
+constexpr float kChevronToLabelGapDp = 5.0F;   ///< 稿：箭头右缘 1433 → 文字左沿 1438。
+constexpr float kGlyphStrokeDp = 1.6F;         ///< 稿：`＋` 与 ✕ 同为 1.6 dp。
+constexpr double kNewLabelFontPt = 12.0;       ///< 稿 `新建` font-size=12。
+constexpr double kRecentLabelFontPt = 11.0;    ///< 稿 `最近关闭` font-size=11。
+
+/// @brief 本格点亮了哪几枚状态角标（决定簇宽，见上面那组常量）。
+///
+/// 活动那枚沿用裁决 7.82① 的「只在未选中格显形」，故它是否占位与它是否落墨是同一句话——两处若分叉，
+/// 名称的截断宽就会按一枚根本没画的角标让位。
+[[nodiscard]] auto lit_badge_count(const TabVisual &tab) -> int {
+    int count = 0;
+    if (tab.exited) {
+        ++count;
+    }
+    if (tab.bell_triggered) {
+        ++count;
+    }
+    if (tab.has_activity && !tab.is_selected) {
+        ++count;
+    }
+    return count;
+}
+
 /// @brief u32string → UTF-8 string.
 [[nodiscard]] auto to_utf8(const std::u32string &s) -> std::string {
     std::string out;
@@ -72,6 +117,68 @@ constexpr float kTypeSlotTotal = kTypeSlotWidth + kTypeSlotGap;
 }  // namespace
 
 TabBarWidget::TabBarWidget(TabBarHooks hooks) : hooks_{std::move(hooks)} {}
+
+auto TabBarWidget::set_action_labels(std::string new_tab_label, std::string recent_label)
+    -> TabBarWidget & {
+    new_tab_label_ = std::move(new_tab_label);
+    recent_label_ = std::move(recent_label);
+    mark_needs_paint();
+    return *this;
+}
+
+auto TabBarWidget::right_cluster(const float width) const -> RightCluster {
+    RightCluster out;
+    if (width <= 0.0F) {
+        return out;  // 空盒：绘制不落墨，命中测试也不吃点击（与「栏还没布局」同一档）
+    }
+    const float center_y = bar_height_ * 0.5F;
+    const auto font_at = [](const double size_pt) -> au::Font {
+        au::Font font;
+        font.size_pt = static_cast<float>(size_pt);
+        return font;
+    };
+    // 落笔盒：左沿给定、高度按实测、纵向居中在带中线上（稿那两枚是文本 run，基线不可反推行盒顶——
+    // 与自绘标题栏那三枚钮同一条口径，裁决 7.181①）。
+    const auto label_box = [center_y](const float left, const au::Font &font,
+                                      const std::string &text) -> au::Rect {
+        const float h = au::render::FontEngine::measure_height(font);
+        const float w = text.empty() ? 0.0F : au::render::FontEngine::measure_width(text, font);
+        return au::Rect{.origin = au::Point{.x = left, .y = center_y - h * 0.5F},
+                        .size = au::Size{.width = w, .height = h}};
+    };
+    const au::Font recent_font = font_at(kRecentLabelFontPt);
+    const au::Font new_font = font_at(kNewLabelFontPt);
+    const auto width_of = [](const std::string &text, const au::Font &font) -> float {
+        return text.empty() ? 0.0F : au::render::FontEngine::measure_width(text, font);
+    };
+
+    // 「⌄ 最近关闭」先右锚（稿：文字右缘 1484 ⇒ 距栏右端 16），箭头在文字之左、两者夹 5 dp。
+    const float undo_right = width - kClusterRightPadDp;
+    const float recent_w = width_of(recent_label_, recent_font);
+    float undo_left = undo_right;
+    if (hooks_.undo_close) {
+        out.recent_label_box = label_box(undo_right - recent_w, recent_font, recent_label_);
+        const float chevron_right = undo_right - recent_w - kChevronToLabelGapDp;
+        out.chevron_center = au::Point{.x = chevron_right - kChevronWidthDp * 0.5F, .y = center_y};
+        undo_left = chevron_right - kChevronWidthDp;
+        out.undo_close_box = au::Rect{.origin = au::Point{.x = undo_left, .y = 0.0F},
+                                      .size = au::Size{.width = undo_right - undo_left,
+                                                       .height = bar_height_}};
+    }
+    // 「＋ 新建」再向左：字形 10 dp、与文字夹 8 dp，两簇之间留稿那个 31 dp。文字空时整枚只占字形宽
+    //（末位标签那种窄栏的退化档就是这一支）。
+    const float new_text_w = width_of(new_tab_label_, new_font);
+    const float total = kPlusSizeDp + (new_text_w > 0.0F ? kPlusToLabelGapDp + new_text_w : 0.0F);
+    const float new_left = undo_left - kClusterGapDp - total;
+    out.plus_center = au::Point{.x = new_left + kPlusSizeDp * 0.5F, .y = center_y};
+    if (new_text_w > 0.0F) {
+        out.new_label_box = label_box(new_left + kPlusSizeDp + kPlusToLabelGapDp, new_font,
+                                      new_tab_label_);
+    }
+    out.new_tab_box = au::Rect{.origin = au::Point{.x = new_left, .y = 0.0F},
+                               .size = au::Size{.width = total, .height = bar_height_}};
+    return out;
+}
 
 auto TabBarWidget::tab_width(const TabVisual &tab) const -> float {
     au::Font font;
@@ -197,8 +304,17 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
 
         // 文本（截断到可用宽度）
         const float slot_width = tab.kind.has_value() ? kTypeSlotTotal : 0.0F;
-        const float text_max_width =
-            w - 24.0F - slot_width - (tab.has_close_button ? close_zone_ : 0.0F);
+        // 右留白（名称右端到栏位右端的距离）：关闭钮那一档是既有口径（12 + 命中区 20）；角标簇点亮时
+        // 按簇宽让位，两者取大者——故「无角标」的每一格与本棒之前逐位相同（裁决 7.183 记的就是这条
+        // 最小改动约束），而三枚同亮时最左一枚的左沿仍在名称右端之外 5 dp。
+        const int badges = lit_badge_count(tab);
+        const float badge_inset =
+            badges > 0 ? kBadgeAnchorInsetDp + kBadgeRadiusDp + kBadgeTextGapDp +
+                             kBadgePitchDp * static_cast<float>(badges - 1)
+                       : 0.0F;
+        const float text_inset =
+            std::max(12.0F + (tab.has_close_button ? close_zone_ : 0.0F), badge_inset);
+        const float text_max_width = std::max(0.0F, w - text_inset - 12.0F - slot_width);
         const auto display = truncate_name(tab.display_name, text_max_width, font);
         const au::Color text_color = tab.is_selected ? chrome.text : chrome.text_dim;
         const au::Rect text_box{
@@ -227,39 +343,32 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
             p.draw_text(close_box, "×", font, close_color);
         }
 
-        // BEL 角标（铃铛图标，`SPEC.FEAT.WS.04`）
-        if (tab.bell_triggered) {
-            const auto bell_pos = au::Point{
-                .x = tab_box.origin.x + w - 6.0F,
-                .y = tab_box.origin.y + 6.0F};
-            const au::Rect bell_dot{
-                .origin = bell_pos,
-                .size = au::Size{.width = 6.0F, .height = 6.0F}};
-            p.fill_rect(bell_dot, chrome.danger);
-        }
-
-        // 活动高亮指示器（小圆点在标签左上角，`SPEC.FEAT.WS.04`）
-        if (tab.has_activity && !tab.is_selected) {
-            const auto activity_pos = au::Point{
-                .x = tab_box.origin.x + 4.0F,
-                .y = tab_box.origin.y + 4.0F};
-            const au::Rect activity_dot{
-                .origin = activity_pos,
-                .size = au::Size{.width = 4.0F, .height = 4.0F}};
-            p.fill_rect(activity_dot, chrome.success);
-        }
-
-        // 断线/退出角标（`SPEC.FEAT.WS.04`）：右下角一枚**空心**方框。
-        // 与上面两枚的分工是形态上的而不是颜色上的：BEL 与活动是「刚发生过什么」的事件位（且活动只在
-        // 未选中格显形，裁决 7.82①），退出是「现在是什么状态」，故选中格**也要**画——用户在一个已退出
-        // 的格子里打字时正该看见它已退出。空心描边 + 落在右下，与右上角的实心铃铛在位置和形状两档都
-        // 不撞，两枚同格出现时各自可判。
+        // 状态角标簇（`SPEC.FEAT.WS.04`）：三枚 r=3 实心圆点，右锚、带中线、按优先级向左排。
+        // 分工仍是形态之外的两档（裁决 7.91③）：BEL 与活动是「刚发生过什么」的事件位（活动只在未选中
+        // 格显形，7.82①），退出是「现在是什么状态」，故选中格**也要**画——用户在一个已退出的格子里
+        // 打字时正该看见它已退出。
+        //
+        // 三枚同形、只靠颜色与次序分档，是屏 1 稿面那一幅的兑现（稿画的就是三枚 r=3 圆点，Bell 那枚
+        // 的铃形在稿内出现在另一格上、本棒按人裁的「圆点档」统一；登记在裁决 7.183）。颜色各占 13 枚
+        // token 里的一格：断线＝`danger`、BEL＝`warning`、活动＝`success`。簇内次序即优先级，故两枚
+        // 同格点亮时最占眼位的那一枚落在稿那个锚位上，而每一枚的**圆心横坐标**由它在簇里的位次唯一决定
+        // ——这也是本套件几何证人取的读数（比的是位置与色道，不是外接面积：`fill_sector` 四条边各 1 px
+        // 羽化，实心点数随羽化档浮动，把「约 7×7」写成等号就是在钉框架的抗锯齿实现）。
+        const auto draw_badge = [&](int rank, const au::Color &ink) -> void {
+            p.fill_sector(au::Point{.x = tab_box.origin.x + w - kBadgeAnchorInsetDp -
+                                          kBadgePitchDp * static_cast<float>(rank),
+                                    .y = tab_box.origin.y + bar_height_ * 0.5F},
+                          kBadgeRadiusDp, 0.0F, 0.0F, kFullCircle, ink);
+        };
+        int badge_rank = 0;
         if (tab.exited) {
-            const au::Rect exit_ring{
-                .origin = au::Point{.x = tab_box.origin.x + w - 8.0F,
-                                    .y = tab_box.origin.y + bar_height_ - 12.0F},
-                .size = au::Size{.width = 6.0F, .height = 6.0F}};
-            p.draw_rect(exit_ring, chrome.warning);
+            draw_badge(badge_rank++, chrome.danger);
+        }
+        if (tab.bell_triggered) {
+            draw_badge(badge_rank++, chrome.warning);
+        }
+        if (tab.has_activity && !tab.is_selected) {
+            draw_badge(badge_rank++, chrome.success);
         }
 
         // 拖拽落点导引线
@@ -271,12 +380,42 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         x += w;
     }
 
-    // "＋"按钮（固定右端）
-    const au::Rect add_button{
-        .origin = au::Point{.x = bounds.origin.x + bounds.size.width - 32.0F,
-                            .y = bounds.origin.y + 13.0F},
-        .size = au::Size{.width = 16.0F, .height = 16.0F}};
-    p.draw_text(add_button, "+", font, chrome.text_dim);
+    // 右端两枚入口（屏 1 稿：`＋ 新建` 与 `⌄ 最近关闭`，固定右端、不参与溢出滚动）。
+    // 字形按稿的折线画而不是按文本 run：稿那两枚是 `＋` 与 `⌄` 的线条包络，用字符画会随字体度量
+    // 漂出稿位（自绘标题栏的三枚钮同一条口径，裁决 7.181①）。
+    const RightCluster cluster = right_cluster(bounds.size.width);
+    const auto draw_label = [&](const au::Rect &box, const double size_pt, const std::string &text,
+                                const au::Color &ink) -> void {
+        if (box.size.width <= 0.0F || text.empty()) {
+            return;
+        }
+        au::Font font;
+        font.size_pt = static_cast<float>(size_pt);
+        p.draw_text(au::Rect{.origin = au::Point{.x = bounds.origin.x + box.origin.x,
+                                                 .y = bounds.origin.y + box.origin.y},
+                             .size = box.size},
+                    text, font, ink);
+    };
+    const float plus_x = bounds.origin.x + cluster.plus_center.x;
+    const float plus_y = bounds.origin.y + cluster.plus_center.y;
+    p.draw_line(au::Point{.x = plus_x - kPlusSizeDp * 0.5F, .y = plus_y},
+                au::Point{.x = plus_x + kPlusSizeDp * 0.5F, .y = plus_y}, kGlyphStrokeDp,
+                chrome.text_dim);
+    p.draw_line(au::Point{.x = plus_x, .y = plus_y - kPlusSizeDp * 0.5F},
+                au::Point{.x = plus_x, .y = plus_y + kPlusSizeDp * 0.5F}, kGlyphStrokeDp,
+                chrome.text_dim);
+    draw_label(cluster.new_label_box, kNewLabelFontPt, new_tab_label_, chrome.text_dim);
+    if (hooks_.undo_close) {
+        const float chevron_x = bounds.origin.x + cluster.chevron_center.x;
+        const float chevron_y = bounds.origin.y + cluster.chevron_center.y;
+        p.stroke_polyline({au::Point{.x = chevron_x - kChevronWidthDp * 0.5F,
+                                     .y = chevron_y - kChevronHeightDp * 0.5F},
+                           au::Point{.x = chevron_x, .y = chevron_y + kChevronHeightDp * 0.5F},
+                           au::Point{.x = chevron_x + kChevronWidthDp * 0.5F,
+                                     .y = chevron_y - kChevronHeightDp * 0.5F}},
+                          1.4F, chrome.text_dim);
+        draw_label(cluster.recent_label_box, kRecentLabelFontPt, recent_label_, chrome.text_faint);
+    }
 }
 
 auto TabBarWidget::on_pointer_event(au::MouseEvent &e) -> void {
@@ -308,9 +447,21 @@ auto TabBarWidget::on_pointer_event(au::MouseEvent &e) -> void {
             e.is_handled = true;
             return;
         }
-        // 点击"＋"按钮
+        // 右端两枚入口：命中盒由 `right_cluster` 与绘制同一枚算式给出，故「画在哪儿」与「点哪儿算」
+        // 不可能分叉。空盒（栏没宽、或 `hooks_.undo_close` 不在位）一律不吃点击。
         const auto widget_size = size();
-        if (e.local_position.x > widget_size.width - 32.0F) {
+        const auto cluster = right_cluster(widget_size.width);
+        const auto hits = [&](const au::Rect &box) -> bool {
+            return box.size.width > 0.0F && box.contains(e.local_position);
+        };
+        if (hits(cluster.undo_close_box)) {
+            if (hooks_.undo_close) {
+                hooks_.undo_close();
+            }
+            e.is_handled = true;
+            return;
+        }
+        if (hits(cluster.new_tab_box)) {
             if (hooks_.add_new) {
                 hooks_.add_new();
             }

@@ -14,7 +14,7 @@
 // - 关闭钮只在 hover 与活动格显形，命中区＝栏位右端 20 dp；
 // - 拖拽重排有 4 dp 阈值，原格留半透明占位、两格间画落点导引线；
 // - 就地重命名用 TextInput 子类补 Esc 与失焦提交，空串即撤销；
-// - 「＋」固定右端、不参与溢出滚动。
+// - 「＋ 新建」与「⌄ 最近关闭」两枚固定右端、不参与溢出滚动（屏 1 稿右端簇，裁决 7.183）。
 // ============================================================
 
 #include <cstddef>
@@ -68,8 +68,15 @@ struct TabBarHooks {
     std::function<void(std::uint64_t id, std::u32string name)> rename;
     /// @brief 移动某标签到目标位置（to_index 以"其余标签"为基准）。
     std::function<void(std::uint64_t id, std::size_t to_index)> move;
-    /// @brief 新建标签（"＋"按钮触发）。
+    /// @brief 新建标签（"＋ 新建"入口触发）。
     std::function<void()> add_new;
+    /// @brief 重开最近关闭的标签（"⌄ 最近关闭"入口触发，`SPEC.FEAT.WS.10`）。
+    ///
+    /// 屏 1 那条稿画的是「⌄ ＋ 最近关闭」——那枚向下箭头在一幅静默稿里读作「一摞候选」，本条今天
+    /// 兑现的是 `tab.undo_close` 那一条腿（弹闭包栈的**栈顶**一张），没有下拉列表。差额登记在裁决
+    /// 7.183，而不是把箭头抹掉：箭头留着，是因为这一枚入口的真值源确是一摞（`ClosedTabStack`），
+    /// 只是取用只到第一张。留空即不画（与 `SPEC.FEAT.WS.04` 的类型槽同一档「缺席的入口整枚不画」）。
+    std::function<void()> undo_close;
     /// @brief 本栏收到一次指针 `Press`（先于命中测试，故命中空白栏也报）。
     ///
     /// `SPEC.FEAT.WS.03` 稿 D7 的「标签条」上报点：装配层用它把本窗号交给 `ActiveWindowTracker`，
@@ -89,6 +96,16 @@ class TabBarWidget final : public au::Widget {
 
     [[nodiscard]] auto type_name() const -> const char * override { return "TabBarWidget"; }
 
+    /// @brief 交入两枚右端入口的显示串（装配层从 i18n 词表取，本件不在绘制路径查表）。
+    ///
+    /// 语言档在进程内只装填一次（`src/main.cpp` 的 `install_settings_strings` 那一处，改档重启后生效），
+    /// 故这两枚串是「建树时定一次」的输入而不是每帧现读的投影——与状态栏那十枚键每帧差分同档的写法，
+    /// 在这里反而会把词表查询拖进绘制路径（AGENTS §4.5 第 25 条）。
+    /// @param new_tab_label 「新建」那一枚的文字；空串即只画 `＋` 字形（末位标签那种窄栏的退化档）。
+    /// @param recent_label 「最近关闭」那一枚的文字；本件不用它决定画不画——那由 `hooks_.undo_close`
+    ///        是否在位决定（缺席的入口整枚不画，`SPEC.FEAT.WS.04` 类型槽同口径）。
+    auto set_action_labels(std::string new_tab_label, std::string recent_label) -> TabBarWidget &;
+
   private:
     /// @brief 单个标签的宽度（含内边距与关闭钮）。
     [[nodiscard]] auto tab_width(const TabVisual &tab) const -> float;
@@ -103,6 +120,18 @@ class TabBarWidget final : public au::Widget {
     /// @brief 计算溢出偏移量（确保选中标签可见）。
     [[nodiscard]] auto compute_scroll_offset(float available_width) const -> float;
 
+    /// @brief 右端两枚入口的外接盒与落笔位（widget 本地坐标 dp，纵向通栏）。
+    struct RightCluster {
+        au::Rect new_tab_box;       ///< 「＋ 新建」的命中盒（字形 + 间距 + 文字）。
+        au::Rect undo_close_box;    ///< 「⌄ 最近关闭」的命中盒；`hooks_.undo_close` 不在位时为空盒。
+        au::Rect new_label_box;     ///< 「新建」的落笔盒。
+        au::Rect recent_label_box;  ///< 「最近关闭」的落笔盒。
+        au::Point plus_center{};    ///< `＋` 两线的交点。
+        au::Point chevron_center{}; ///< `⌄` 折线的中点（底点在中心下方一半高）。
+    };
+    /// @brief 由栏宽与两枚串宽折出右端簇（绘制与命中测试共用一枚算式，不各持一份）。
+    [[nodiscard]] auto right_cluster(float width) const -> RightCluster;
+
     // Widget 虚钩子
     auto on_layout(const au::Constraints &c, const au::BuildContext &ctx) -> au::Size override;
     auto on_paint(au::Painter &p, const au::Rect &bounds, const au::BuildContext &ctx) -> void override;
@@ -110,6 +139,10 @@ class TabBarWidget final : public au::Widget {
     [[nodiscard]] auto wants_click() const -> bool override { return true; }
 
     TabBarHooks hooks_;
+
+    /// @brief 右端两枚入口的显示串（由 `set_action_labels` 交入，本件不查词表）。
+    std::string new_tab_label_;
+    std::string recent_label_;
 
     // 布局期缓存
     std::vector<TabVisual> cached_tabs_;

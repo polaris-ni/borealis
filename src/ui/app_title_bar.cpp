@@ -134,7 +134,8 @@ auto draw_centered(au::Painter &p, const au::Rect &bounds, double center_x, cons
 
 }  // namespace
 
-auto format_title_context(const std::string_view directory, const std::string_view session) -> std::string {
+auto format_title_context(const std::string_view directory, const std::string_view session,
+                          const std::string_view type_label) -> std::string {
     std::string out{directory};
     if (!session.empty()) {
         if (!out.empty()) {
@@ -143,6 +144,15 @@ auto format_title_context(const std::string_view directory, const std::string_vi
             out += " · ";
         }
         out.append(session);
+    }
+    // 类型括注（稿 `… · PowerShell (本地终端)`）：前面那截全空时不留前导空格，空类型整段不画。
+    if (!type_label.empty()) {
+        if (!out.empty()) {
+            out += " ";
+        }
+        out += "(";
+        out.append(type_label);
+        out += ")";
     }
     return out;
 }

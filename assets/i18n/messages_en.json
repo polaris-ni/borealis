@@ -475,6 +475,8 @@
     "status_bar.palette_hint": "Command palette {combo}",
     "status_bar.scrollback": "scrollback {rows}",
     "status_bar.theme": "Theme {name}",
+    "tab.action.new_tab": "New",
+    "tab.action.recent_closed": "Recently closed",
     "tab.action.undo_close": "Reopen the last closed tab",
     "tab.close_confirm.body": "This tab still has processes running, and closing it terminates them. Close it anyway?",
     "tab.close_confirm.title": "Close the tab",

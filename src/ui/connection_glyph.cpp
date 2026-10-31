@@ -24,4 +24,18 @@ auto connection_type_glyph(conn::ConnectionType type) -> std::string_view {
     return "T";
 }
 
+auto connection_type_message_key(conn::ConnectionType type) -> std::string_view {
+    switch (type) {
+    case conn::ConnectionType::Local:
+        return "connections.type.local";
+    case conn::ConnectionType::Ssh:
+        return "connections.type.ssh";
+    case conn::ConnectionType::Serial:
+        return "connections.type.serial";
+    case conn::ConnectionType::Telnet:
+        break;
+    }
+    return "connections.type.telnet";
+}
+
 }  // namespace borealis::ui

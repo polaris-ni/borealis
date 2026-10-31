@@ -31,4 +31,12 @@ namespace borealis::ui {
 /// 各自有图标，正是 7.110 D12① 与 7.112 那条「本期识别靠档案名」在册欠账的出账形态。
 [[nodiscard]] auto connection_type_glyph(conn::ConnectionType type) -> std::string_view;
 
+/// @brief 连接类型的**词条 key**（`connections.type.<档>`）：类型名上屏的唯一取处。
+///
+/// 与上面那枚字形同域而不同用：这里是「类型的名字」，四档各有词条（本地＝「本地终端」），显示串
+/// 由 `settings_label()` 按语言档现取，本函数只给那条 ASCII 落盘路径。存在这一处的理由是装配层曾经
+/// 有一份四路 switch（标签缺省名），而屏 1 那条自绘标题带的括注（稿 `… · PowerShell (本地终端)`）
+/// 是第二个读者——两份表就会在加一档时分叉（裁决 7.183）。
+[[nodiscard]] auto connection_type_message_key(conn::ConnectionType type) -> std::string_view;
+
 }  // namespace borealis::ui

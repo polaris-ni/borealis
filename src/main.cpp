@@ -86,6 +86,7 @@
 #include "ui/active_window_tracker.h"
 #include "ui/app_title_bar.h"
 #include "ui/broadcast_banner.h"
+#include "ui/connection_glyph.h"  // 类型 → 词条 key（标题带括注与标签缺省名共用那一份表）
 #include "ui/connection_sidebar.h"
 #include "ui/connection_wizard.h"
 #include "ui/credential_prompt.h"
@@ -1477,6 +1478,11 @@ auto main(int argc, char **argv) -> int {
     // 与 `open_new_window_request` 同形态；缺钩即那条命令只占一格面板行、什么都不做。
     std::function<void(WorkspaceWindow &)> request_close_window;
 
+    // 「最近关闭」那枚入口的请求（屏 1 稿右端 `⌄ 最近关闭`，`SPEC.FEAT.WS.10`）：与上面几支同一条
+    // 「声明在前」理由——标签栏的 `Hooks` 建得比 `Application` 早，而这一跳要读注册表（闭包栈的归属窗
+    // 解析只在 `tab.undo_close` 那一处，稿 D7 批 3-C）。缺钩即那一格只画不响应。
+    std::function<void()> undo_close_request;
+
     // ---- 每格一会话的三条公共件（`SPEC.FEAT.WS.02`，稿 §3／§5）------------------------------
     //
     // 地基实测 F3／F4 的成因是「三处构造点各写一遍接缝」：重启腿与撤销重开那两处的 `teardown_pane`
@@ -2159,6 +2165,16 @@ auto main(int argc, char **argv) -> int {
                 // 新标签创建后重建根节点子节点以包含新工作区
                 rebuild_root_children(window, tab_workspaces);
             },
+            // 屏 1 稿右端那枚「⌄ 最近关闭」的落点：走注册表那条 `tab.undo_close`，与 `Ctrl+Shift+T`
+            // **同一条腿**——闭包栈的归属窗解析（稿 D7 批 3-C）因此只有一份，这里重演一遍 pop-and-restore
+            // 就是第二份真值源。今天只兑现「栈顶那一张」，稿上那枚向下箭头隐含的候选列表在册欠着
+            //（裁决 7.183）。请求本身按引用捕获（同 `open_new_window_request` 那一形态）：注册表要等
+            // `Application` 建成才有，缺钩时这一格只画不响应。
+            .undo_close = [&undo_close_request]() -> void {
+                if (undo_close_request) {
+                    undo_close_request();
+                }
+            },
             // 稿 D7 的第二处上报点：栏带上的任何一次 Press 都算碰过这一扇窗（含点在空白处与「＋」）。
             .note_press = [&window, &report_dispatch]() -> void {
                 if (report_dispatch) {
@@ -2166,6 +2182,11 @@ auto main(int argc, char **argv) -> int {
                 }
             },
         });
+        // 右端两枚入口的文字（屏 1 稿那两枚 `＋ 新建`／`⌄ 最近关闭`）：词表在这里一次折成显示串交进
+        // 控件，绘制路径不再查表（AGENTS §4.5 第 25 条）。语言档在进程内只装填一次（本文件开头那处
+        // `install_settings_strings`，改档重启后生效），故这两枚串不是每帧现读的投影。
+        window.tab_bar->set_action_labels(borealis::ui::settings_label("tab.action.new_tab"),
+                                          borealis::ui::settings_label("tab.action.recent_closed"));
         // 标签真值源有任何一次**实际转移**就把标签栏标脏（裁决 **7.91**④）。不装这一钩子，三枚角标与
         // 显示名都落不了屏：`TabBarWidget` 的输入全在 `on_layout` 里经 hooks 现取，而框架的布局缓存在
         // 「约束没变且本控件未被标脏」时直接复用上次尺寸并**跳过 `on_layout`**——窗口大小没变正是常态，
@@ -3351,10 +3372,11 @@ auto main(int argc, char **argv) -> int {
         *ports_latest = std::move(ports);
         return true;  // 任务值即「跑完了」：快照才是产物，布尔只把 `Task` 的值类型坐实。
     };
-    // 启动取一次（裁决 7.110 D8①）：**不带** UI 通知——那一刻 `Application::loop_begin()` 还没跑，
-    // 主线程投递器未装，`.then()` 的回调会落在 worker 线程上；而快照写入已在任务体内锁好，
-    // 热身的产物只等向导来读。
-    static_cast<void>(au::async(fetch_ports));
+    // 启动取一次（裁决 7.110 D8①）：这一刻 `Application` 还没进帧循环，而 Aurora 把跨线程回投收敛成
+    // **进程级唯一队列 + 值班租约**之后，无值班发起 `au::async` 是契约硬失败（FATAL 在元凶栈上，见
+    // Aurora 主仓 CHANGELOG 的 Unreleased「主线程回投与帧循环的逐项映射」表）。本支只要热身的产物——
+    // 快照已在任务体内锁好，等向导来读，从来不需要回投主线程——故直接排线程池，绕开投递通道。
+    au::ThreadPool::default_pool().execute([fetch_ports]() -> void { static_cast<void>(fetch_ports()); });
     // 向导那两路（开设备行 / 点刷新）都在 run 循环里发起，回投有保证，故可以通知重建下拉。
     auto request_ports = [&](const std::weak_ptr<borealis::ui::ConnectionWizard> &notify) -> void {
         auto task = au::async(fetch_ports);
@@ -4662,6 +4684,11 @@ auto main(int argc, char **argv) -> int {
     undo_close_tab.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(undo_close_tab));
 
+    // 「⌄ 最近关闭」那一格的腿落在注册表上（上面那条 `add` 之后才有得读）：面板行、`Ctrl+Shift+T` 与
+    // 栏上这一枚共用 `invoke(id)` 这一个出口，于是启用条件与归属窗解析不会各持一份真值。
+    undo_close_request = [&app]() -> void {
+        static_cast<void>(app.commands().invoke("tab.undo_close"));
+    };
     // dead-session 一键重启（`SPEC.FEAT.WS.05`）：**同 TabId 就地换会话**而不是新加一格。
     // 与撤销重开共享建会话/建视口/建工作区那三步（`Session` 不可拷贝不可移动，`TerminalView`
     // 的会话指针在构造那一刻定死），差别只在两处——闭包栈不入不取，`tab_strip` 不动顺序也不动名。
@@ -5611,8 +5638,15 @@ auto main(int argc, char **argv) -> int {
             // 逐帧现算，`set_context` 在串没变时即空操作（与状态栏、OS 标题同一条差分纪律）。
             if (window.title_bar) {
                 std::string directory;
+                std::string type_label;
                 const auto owned = tab_workspaces.find(window.current_tab_id.value());
                 const auto kind = tab_kind.find(window.current_tab_id.value());
+                // 类型括注（稿 `… · PowerShell (本地终端)`，裁决 7.183）：表里没有这一格就不给括注，
+                // 与目录那一半同一支「缺席即整段不画」的折叠。
+                if (kind != tab_kind.end()) {
+                    type_label = borealis::ui::settings_label(
+                        borealis::ui::connection_type_message_key(kind->second));
+                }
                 if (owned != tab_workspaces.end() && owned->second.owner == &window &&
                     kind != tab_kind.end() &&
                     kind->second == borealis::conn::ConnectionType::Local) {
@@ -5628,7 +5662,7 @@ auto main(int argc, char **argv) -> int {
                     }
                 }
                 window.title_bar->set_context(
-                    borealis::ui::format_title_context(directory, title_utf8));
+                    borealis::ui::format_title_context(directory, title_utf8, type_label));
             }
         }
 
@@ -5941,17 +5975,10 @@ auto main(int argc, char **argv) -> int {
     // 标签缺省名只用**一处真值源**：档案命中取档案名（改过名就显示新名），否则落回连接类型词条
     // （稿 D10①）。手动名存在 `item.title` 里；OSC 标题不存也不恢复——远端重发后自会回来。
     auto restored_type_label = [&decode_utf8](borealis::conn::ConnectionType kind) -> std::u32string {
-        switch (kind) {
-            case borealis::conn::ConnectionType::Local:
-                return decode_utf8(borealis::ui::settings_label("connections.type.local"));
-            case borealis::conn::ConnectionType::Ssh:
-                return decode_utf8(borealis::ui::settings_label("connections.type.ssh"));
-            case borealis::conn::ConnectionType::Serial:
-                return decode_utf8(borealis::ui::settings_label("connections.type.serial"));
-            case borealis::conn::ConnectionType::Telnet:
-                return decode_utf8(borealis::ui::settings_label("connections.type.telnet"));
-        }
-        return {};
+        // 四档词条的取处在 `ui::connection_type_message_key`（与屏 1 标题带那枚类型括注同一份表）：
+        // 这里曾有一份四路 switch，加一档连接类型就要记得改两处。
+        return decode_utf8(
+            borealis::ui::settings_label(borealis::ui::connection_type_message_key(kind)));
     };
 
     /// @brief 把一条快照标签造回 @p window：会话、视口、工作区、账目、标签条一次成。

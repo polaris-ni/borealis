@@ -224,9 +224,13 @@ struct SettingsChrome {
     aurora::Color text_faint{};
     aurora::Color accent{};      ///< 选中档（chip 的开档底、聚焦描边、主按钮、下划线）。
     aurora::Color scrim{};       ///< 全屏遮罩（吃掉窗外点击，不挡内容）。
-    aurora::Color danger{};      ///< 语义警示：铃铛角标。
-    aurora::Color success{};     ///< 语义提示：活动角标。
-    aurora::Color warning{};     ///< 语义警示：退出 / 断线角标。
+    /// @brief 三枚语义档各自占的色道（屏 1 稿的标签状态角标，裁决 **7.183**）。
+    ///
+    /// 三枚角标同形（r=3 实心圆点），只靠色道与簇内次序分档，故这三格**只在**这一处有语义：换色即
+    /// 换档，`itest_tab_bar` 按色道定位每一枚，不看抗锯齿后的墨迹面积。
+    aurora::Color danger{};    ///< 语义警示：会话已退出／断线角标（簇内最优先，占稿那个锚位）。
+    aurora::Color success{};   ///< 语义提示：后台活动角标（只在未选中格显形，裁决 7.82①）。
+    aurora::Color warning{};   ///< 语义警示：BEL 触发角标。
 };
 
 /// @brief 两套 chrome 色板的唯一色值表（稿 §1 那两列；`utest_chrome_palette` 按同一张表断言）。
