@@ -483,13 +483,21 @@ AURORA_TEST_CASE(fullscreen_gives_the_band_up_and_returning_puts_it_back) {
 // 判据②的接缝面：上下文串的折叠形态与序列化往返
 // ------------------------------------------------------------
 AURORA_TEST_CASE(the_context_folds_directory_and_name_and_round_trips_through_props) {
-    // ⑴ 折叠形态（装配层只交两截料，分隔符留在本件：硬规则 14 那一条的落点）：
-    //     有目录＝「目录 · 名字」；无目录＝只给名字；两者皆空＝空串（那一格不画）。
-    AURORA_TEST_CHECK_TRUE(ui::format_title_context("/srv/build", "prod (ssh)") ==
+    // ⑴ 折叠形态（装配层只交几截料，分隔符留在本件：硬规则 14 那一条的落点）：
+    //     有目录＝「目录 · 名字」；无目录＝只给名字；两者皆空＝空串（那一格不画）。第三截是屏 1 稿
+    //     那枚类型括注（`… · PowerShell (本地终端)`），空即连括号带前导空格整段不画——下面的 ASCII
+    //     读数验的是折叠而不是文案，真词表那一档（`connections.type.*`）由 `utest_connection_glyph` 钉。
+    AURORA_TEST_CHECK_TRUE(ui::format_title_context("/srv/build", "prod (ssh)", "") ==
                            std::string{"/srv/build · prod (ssh)"});
-    AURORA_TEST_CHECK_TRUE(ui::format_title_context("", "PowerShell") == std::string{"PowerShell"});
-    AURORA_TEST_CHECK_TRUE(ui::format_title_context("/tmp", "") == std::string{"/tmp"});
-    AURORA_TEST_CHECK_TRUE(ui::format_title_context("", "").empty());
+    AURORA_TEST_CHECK_TRUE(ui::format_title_context("", "PowerShell", "Local") ==
+                           std::string{"PowerShell (Local)"});
+    AURORA_TEST_CHECK_TRUE(ui::format_title_context("/tmp", "", "") == std::string{"/tmp"});
+    AURORA_TEST_CHECK_TRUE(ui::format_title_context("", "", "").empty());
+    // 括注不与前缀争位置：只有类型那一截有料时它就是整串（不留前导空格）。
+    AURORA_TEST_CHECK_TRUE(ui::format_title_context("", "", "Telnet") == std::string{"(Telnet)"});
+    // 名字自己带的括注不去重（`prod (ssh)` 那种手工名）：本件只负责加自己那一截。
+    AURORA_TEST_CHECK_TRUE(ui::format_title_context("/srv", "prod (ssh)", "SSH") ==
+                           std::string{"/srv · prod (ssh) (SSH)"});
 
     // ⑵ `set_context` 是幂等的观察面：同串再喂一次不改值、不改形态（逐帧现算的那条腿靠这一条不标脏）。
     Probe probe;
