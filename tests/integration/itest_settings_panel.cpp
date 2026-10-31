@@ -764,12 +764,15 @@ AURORA_TEST_CASE(deferred_and_next_session_rows_carry_their_badges) {
     panel.select_page(SettingsPage::Appearance);
     const auto rows = panel.visible_rows();
     // 侧栏折叠那一枚随裁决 7.180 接上每窗那条常驻列（设置页改档即刻作用到每一扇窗），它此前是本页
-    // 「有键无消费方」的唯一代表值；代表值因此挪到状态栏组里条上没画格的那三枚（下面 `utest_settings_catalog`
+    // 「有键无消费方」的唯一代表值；代表值因此挪到状态栏组里条上没画格的那两枚（下面 `utest_settings_catalog`
     // 的计数与 `itest_settings_panel` 的延后角标各守一处）。控件本来就一直可用（裁决 7.68③）。
+    // 第八枚 `show_input_latency` 随裁决 7.186 从「无 P95 量测源」改判已接线，故它这一行的角标应当**空**——
+    // 这一句与上面那句「延后」是同一枚开关的两侧：翻档时漏改 catalog 或漏改装配层，两条里必有一条转红。
     AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.sidebar_collapsed")->badge, std::string{});
     AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.sidebar_collapsed")->editable);
-    AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.status_bar.show_input_latency")->badge,
+    AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.status_bar.show_reconnect")->badge,
                          std::string{kBadgeDeferred});
+    AURORA_TEST_CHECK_EQ(find_row(rows, "appearance.status_bar.show_input_latency")->badge, std::string{});
     // 「已接线 ∧ 下次会话」只挂后一枚角标：三条构造期注入的接缝已开（裁决 7.76②），面板据此不再说它延后，
     // 但仍要说它「改了本条会话不生效」——两列是正交的两条事实。
     AURORA_TEST_CHECK_TRUE(find_row(rows, "appearance.cursor_shape")->editable);
@@ -887,14 +890,15 @@ AURORA_TEST_CASE(a_persist_only_change_writes_but_does_not_broadcast) {
 
     // 全仓无消费方 ∧ 即时：同样只落盘——没有消费方就没有可广播的对象。这一支的代表值原本是
     // `appearance.sidebar_collapsed`，它随裁决 7.180 接上常驻列后成了「已接线 ∧ 即时」，故取状态栏组里
-    // 条上没画格的末行那一枚（三枚延后中最下者，与 `the_deferred_status_bar_toggles_are_real_controls_and_only_persist`
-    // 同一枚，两条用例一上一下夹住同一档）。
+    // 条上没画格的那两枚中最下者 `show_cursor_position`（与
+    // `the_deferred_status_bar_toggles_are_real_controls_and_only_persist` 同一枚，两条用例一上一下夹住
+    // 同一档）。第三枚 `show_input_latency` 自裁决 7.186 起已接状态栏件，不再是本档的代表值。
     probe.reset_counters();
-    AURORA_TEST_REQUIRE_EQ(panel.commit("appearance.status_bar.show_input_latency", FormValue::boolean(false)),
+    AURORA_TEST_REQUIRE_EQ(panel.commit("appearance.status_bar.show_cursor_position", FormValue::boolean(false)),
                            CommitIssue::None);
     AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
     AURORA_TEST_CHECK_EQ(probe.broadcast_calls, 0U);
-    AURORA_TEST_CHECK_FALSE(probe.persisted.back().appearance.status_bar.show_input_latency);
+    AURORA_TEST_CHECK_FALSE(probe.persisted.back().appearance.status_bar.show_cursor_position);
 }
 
 AURORA_TEST_CASE(a_failed_persist_keeps_the_dirty_state_and_broadcasts_nothing) {
@@ -3720,21 +3724,23 @@ AURORA_TEST_CASE(a_runtime_appended_overlay_subtree_is_mounted_at_the_next_layou
     AURORA_TEST_CHECK_EQ(leaf->unmounts, 0);
 }
 
-/// @brief 延后档位是**真控件而只落盘**：状态栏尚未接线的那三枚开关按真实派发点得动，界面上的延后表达是两处文字。
+/// @brief 延后档位是**真控件而只落盘**：状态栏尚未接线的那两枚开关按真实派发点得动，界面上的延后表达是两处文字。
 ///
 /// 裁决 7.68③ 拍的是「有键而无消费方的行一律可改、照常过校验、照常落盘，只是不广播」，于是判据文里
 /// 那句「灰置」就地作废（S15① / B3-a / C2-a）。灰置形态下本例会立刻红——禁用态的 `Switch` 虽仍在命中链里
 /// （7.62④ 同族：框架只按 `wants_click()` 分档），但点了不翻值也不落盘，故「计数不变」就是那条误读的证人。
 /// 既有的 `a_persist_only_change_writes_but_does_not_broadcast` 走的是编程入口，测的是表单与生效档位；
 /// 本例补的是它测不到的那一半：**这一行在真实浮层树上抓得住、按得下**。
-/// 裁决 7.179 之后本组只剩三枚延后（条上画了格的七枚已接状态栏件），本例挑的是其中位置确定的末行那一枚。
+/// 裁决 7.179 之后本组只剩三枚延后、7.186 之后只剩两枚（第八枚 `show_input_latency` 的量测腿已落），
+/// 而「末行那一枚」不再等于「延后的那一枚」，故本例先把已接线的那八枚关掉，再按带内取样。
 ///
-/// 取控件不按 key 而按「滚到底之后**最下**那一枚开着态开关」：外观页末尾连续十行都是状态栏，而它们缺省全
-/// 为真（`StatusBarSettings` 十枚 `= true`），末行因此唯一落在 `show_input_latency`。这一挑法在十枚全延后
-/// 时与「带内第一个开着态」等价，但裁决 7.179 把其中七枚接上状态栏件之后就不等价了——接线是分档的，
-/// 「带内第一个」此刻落在哪一枚取决于视口高度与行高，而本例的「不广播」只在**延后那一档**成立。
-/// 同页另有三枚开关（`bold_is_bright` / `min_contrast_enabled` / `sidebar_collapsed`）都在其上行，
-/// offset 钳位后已出带；「点的正是末行那一枚」不靠推断，由下面的逐字段落盘差分钉住。
+/// 取控件不按 key 而按「带内**最下**那一枚开着态开关」，与 `a_row_control_..._been_scrolled` 同一条理由：
+/// 视口里此刻有哪几行是排版与偏移的函数而不是本件的契约，把档数写死就等于把判据挂在内容高度上。
+/// 外观页末尾连续十行都是状态栏（`StatusBarSettings` 十枚缺省全为真），先经编程入口把已接线的八枚关掉、
+/// 再重建一次浮层（显示态取自表单，见下面的第二段），于是这十行里还开着态的只剩延后的两枚；带从末行往上
+/// 逐档退，第一次落点必然落在它们之中——它下面八枚已
+/// 关，再往上那三枚（`bold_is_bright` / `min_contrast_enabled` / `sidebar_collapsed`）排在整组之前，要
+/// 带顶越过整组才会碰到。究竟落在这两枚的哪一枚，不靠这段算术，由下面的逐字段落盘差分钉住。
 ///
 /// 一条判据边界如实登记：`visible_notes()` 比的是**说明文字与该页的对应**，而「这段文字真的进了树」本例
 /// 结构上抓不到（`Text` 无可点语义，`reachable_box` 一类的真实派发量法对它无效，裁决 7.61 那条「为判据开
@@ -3753,18 +3759,53 @@ AURORA_TEST_CASE(the_deferred_status_bar_toggles_are_real_controls_and_only_pers
     AURORA_TEST_REQUIRE_EQ(appearance_notes.size(), 1U);
     AURORA_TEST_CHECK_EQ(appearance_notes.front(), borealis::ui::settings_label("settings.note.status_bar"));
 
+    // 取样前先按档位把已接线的那八枚关掉（编程入口，与本例要判的那一点无关），于是本组里还开着态的
+    // 开关只剩延后的两枚。八笔各落盘一次、已接线的那几笔各广播一次——计数与落盘快照在下面一起清掉，
+    // 本例三条判据判的都是「那一点」。
+    //
+    // 关掉之后还要重建一次：行的显示态是**建控件那一刻**从表单取的（`build_control` 里那次
+    // `value->as_boolean()`），编程入口只动表单、不回写已建好的开关，于是「已关」在树上仍画着开——
+    // 按开关的显示态取样就会挑到那八枚之一，点它等于提交一个未变的值、一笔都不落。`refresh_chrome()`
+    // 是这条腿的既有出口（`refreshing_chrome_rebuilds_an_open_panel_and_keeps_its_page` 判的就是
+    // 「开着时重建、页不跳回缺省」），重建一次之后显示态与表单同源，`value()` 才当得起「已关」这个筛子。
+    static constexpr std::string_view kWiredStatusBarLeaves[]{
+        "show_connection",   "show_encoding",     "show_grid_size",    "show_font_size",
+        "show_theme",        "show_scrollback",   "show_clipboard_policy", "show_input_latency",
+    };
+    for (std::string_view leaf : kWiredStatusBarLeaves) {
+        const std::string key = std::string{"appearance.status_bar."}.append(leaf);
+        AURORA_TEST_REQUIRE_EQ(panel->commit(key, FormValue::boolean(false)), CommitIssue::None);
+    }
+    panel->refresh_chrome();
+    probe.reset_counters();
+    probe.persisted.clear();
+    probe.broadcast.clear();
+    h.render();
+
     // 滚到内容下沿（框架 `Scroll` 把偏移钳在 `content − viewport`，故档位发够就多出一档也无妨）。
     for (int notch = 0; notch < 300; ++notch) {
         h.scroll(450.0F, 300.0F, -1.0F);  // 负方向是往下滚（`ScrollViewport` 的符号约定）
     }
     h.render();
 
-    const HitSpot spot = h.find_last("Switch", 0.0F, [](au::Widget *widget) -> bool {
-        auto *sw = dynamic_cast<au::Switch *>(widget);
-        return sw != nullptr && sw->value();
-    });
-    AURORA_TEST_REQUIRE_MSG(spot.widget != nullptr,
-                            "no enabled toggle is dispatch-reachable at the bottom of the appearance page");
+    // 带内逐档往上退着找（每档 32 dp，远小于视口高，故不会有一行整档跳过带顶）；第一次落点必然在两枚
+    // 延后开关之中，理由见用例抬头。落不到就是本组没有一枚延后开关进带——那 ⑵ 的差分也无从判，故 REQUIRE。
+    HitSpot spot;
+    for (int step = 0; step < 24 && spot.widget == nullptr; ++step) {
+        spot = h.find_last("Switch", 0.0F, [](au::Widget *widget) -> bool {
+            auto *sw = dynamic_cast<au::Switch *>(widget);
+            return sw != nullptr && sw->value();
+        });
+        if (spot.widget == nullptr) {
+            for (int notch = 0; notch < 2; ++notch) {
+                h.scroll(450.0F, 300.0F, 1.0F);  // 正方向是往上退带
+            }
+            h.render();
+        }
+    }
+    AURORA_TEST_REQUIRE_MSG(
+        spot.widget != nullptr,
+        "no still-on (deferred) status bar toggle is dispatch-reachable on the appearance page");
     auto *toggle = dynamic_cast<au::Switch *>(spot.widget);
     AURORA_TEST_REQUIRE(toggle != nullptr);
 
@@ -3783,13 +3824,13 @@ AURORA_TEST_CASE(the_deferred_status_bar_toggles_are_real_controls_and_only_pers
     AURORA_TEST_CHECK_EQ(probe.persist_calls, 1U);
     AURORA_TEST_CHECK_FALSE(panel->form().has_unsaved_changes());
 
-    // ⑵ 点的正是该组末行那一枚（`show_input_latency`）：逐字段差分，组内另九枚一位都不许跟着翻——
-    // 「挑的是哪一枚」此刻决定 ⑶ 成不成立（同组已接线的那七枚是要广播的），故不能只判「进了这一组」。
+    // ⑵ 点的正是这两枚延后开关中最下那一枚（`show_cursor_position`）：逐字段差分，组内另九枚一位都不许
+    // 跟着翻——「挑的是哪一枚」决定 ⑶ 成不成立（同组已接线的那八枚是要广播的），故不能只判「进了这一组」。
     // 同页另有 `sidebar_collapsed` 那一枚已接线的开关（裁决 7.180），它是要广播的，故一并差分钉住「点的
-    // 不是它」——它在上面若干行，`find_last` 按末行取的时候本不该碰着。
+    // 不是它」——它排在整组之前，带顶越过整组才会碰到。
     AURORA_TEST_REQUIRE_EQ(probe.persisted.size(), 1U);
     borealis::config::StatusBarSettings expected = before.appearance.status_bar;
-    expected.show_input_latency = !expected.show_input_latency;
+    expected.show_cursor_position = !expected.show_cursor_position;
     AURORA_TEST_CHECK_TRUE(probe.persisted.back().appearance.status_bar == expected);
     AURORA_TEST_CHECK_TRUE(probe.persisted.back().appearance.sidebar_collapsed ==
                            before.appearance.sidebar_collapsed);

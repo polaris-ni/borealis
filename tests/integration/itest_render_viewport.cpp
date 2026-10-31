@@ -544,6 +544,23 @@ class Harness {
     /// @brief 控件当前是否持焦：指针 Press 的焦点归属由派发器决定，本用例要能证到它。
     [[nodiscard]] auto view_focused() const -> bool { return view_->is_focused(); }
 
+    /// @brief 派发一次文本输入（可打印字符的真实通道），**不**顺手排帧。
+    ///
+    /// 输入延迟那条判据要能把「键入进了会话」与「上屏排了帧」分成两件事来判，故这里只派发；
+    /// 排帧由调用方用 `feed()` / `render()` 决定。
+    auto type(std::string_view utf8) -> bool {
+        au::TextInputEvent event;
+        event.text = std::string{utf8};
+        return au::EventDispatcher::dispatch(root_.widget(), event, focus_);
+    }
+
+    /// @brief 焦点格那枚输入延迟读数（`SPEC.NF.PERF.01` 的量测腿，裁决 7.186③ 的两端都在本件里）。
+    ///
+    /// 读数按件自己的口径取：装配层逐帧现读的就是这一支，本用例因此不必持有真实时钟。
+    [[nodiscard]] auto input_latency_p95() const -> std::optional<std::chrono::milliseconds> {
+        return view_->input_latency_p95();
+    }
+
     /// @brief 权威网格某视口行的整行副本（绘制取的是主线程副本，本用例里两者内容恒等）。
     [[nodiscard]] auto visible_line(std::size_t row) -> Row {
         Row copy{1U};
@@ -2852,6 +2869,46 @@ AURORA_TEST_CASE(content_under_the_notice_card_is_still_selectable) {
     h.pointer_at(au::MouseAction::Release, box.x + 30.0, box.y + 34.0);
     h.render();
     AURORA_TEST_CHECK_EQ(h.selected_text(), "OTTOM ");
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+/// @brief 输入延迟读数的两端都在真实路径上：起点＝文本输入事件进会话，终点＝回显那一帧的 damage。
+///
+/// 裁决 7.186③ 拍的是这两端，而装配层那条腿（`src/main.cpp` 逐帧现读）不编进 runner（裁决 7.83），
+/// 于是「屏上那一格没出现」在真机上分不清是**接线断了**还是**被省略规则挤掉**（N3 从右向左省略，
+/// 本枚是注册表最后一格）。本例把两端钉在无头侧：只喂输出而没有键入 ⇒ 不该有读数；键入而未上屏 ⇒
+/// 还不该有读数；回显进网格 ⇒ 该有；此后连排几帧 ⇒ 读数不随帧间隔漂（一笔只配首个上屏）。
+AURORA_TEST_CASE(the_latency_readout_settles_between_a_keystroke_and_its_first_frame) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.set_focused(true);
+    h.feed("\x1b[?25l");  // 关掉终端光标：下面几帧只喂回显，不混别的变化
+
+    // 反面证人先立：只有输出而没有键入 ⇒ 那一帧的上屏不是任何一笔键入的回应（远端自己刷屏）。
+    h.feed("remote noise\r\n");
+    AURORA_TEST_CHECK_FALSE(h.input_latency_p95().has_value());
+
+    // 起点走真实通道：文本输入事件把字符写进会话，而不是绕过派发器直接喂 `note_input_issued`。
+    AURORA_TEST_REQUIRE_TRUE(h.type("y"));
+    AURORA_TEST_CHECK_NE(h.written().find('y'), std::string::npos);
+    // 欠着一个上屏：读数不该提前出现（件里那条「起点已记、终点未到」的档）。
+    AURORA_TEST_CHECK_FALSE(h.input_latency_p95().has_value());
+
+    // 终点也在真实路径上：回显进网格 ⇒ 本帧有会话提交进来的 damage ⇒ 一笔样本结算。
+    h.feed("y\r\n");
+    AURORA_TEST_REQUIRE_TRUE(h.input_latency_p95().has_value());
+    const auto first = h.input_latency_p95().value();
+    AURORA_TEST_CHECK_GE(first.count(), 0);
+
+    // 一笔键入只配**首个**上屏：此后连排三帧不再产出样本，否则读数测的是帧间隔而不是键入回应。
+    // 缺省窗口 100 笔、N=1 时秩 = ceil(0.95 × 1) = 1 ⇒ 三帧之后读数仍是那一笔本身，逐值可比。
+    h.render();
+    h.render();
+    h.render();
+    AURORA_TEST_CHECK_EQ(h.input_latency_p95().value_or(std::chrono::milliseconds{-1}), first);
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif
