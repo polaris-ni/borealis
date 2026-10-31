@@ -28,6 +28,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -130,6 +131,17 @@ class WorkspaceView final : public aurora::Container {
     /// 只在 `pane_count() > 1` 时为真（N4：单 pane 只靠横幅）；同一视图被多个 pane 指认时按「任一
     /// 成员」置真，避免后写者把前者的角标抹掉。构造 / 切分 / 关闭 / 第十键之后各调一次。
     auto refresh_broadcast_badges() -> void;
+
+    /// @brief 焦点格右上角那枚「焦点 · 行列数」药丸的文案（`SPEC.FEAT.WS.02` 界面腿，裁决 7.184）。
+    ///
+    /// 它是「当前 pane 视觉标识」的第二个载体（第一个是 2 dp accent 内描边），稿面取自
+    /// `codespec/UI_WORKSPACE.draft.svg` 屏 1。本层不认识行列，文案连前缀一起由装配层每帧现算下发——
+    /// 与状态栏那格同一份 `TerminalView::grid_geometry()` 读数，于是不出现「条上 82×24、屏上 80×24」。
+    ///
+    /// 空串＝这一帧没有读数（首帧、窗最小化、焦点格外没有视图）；**值相等即空操作**，因为装配层跟着
+    /// 帧走，无条件标脏会把这层画成永不停笔（`StatusBar::set_state` 同一条纪律）。
+    /// @param text 药丸文案，含稿面那句「焦点 · 」前缀。
+    auto set_focus_pill_text(std::u32string text) -> void;
 
     /// @brief 把键盘焦点还给最后一次真实持焦的 pane（横幅点击清组后调用，F10）。
     ///
@@ -326,6 +338,7 @@ class WorkspaceView final : public aurora::Container {
     aurora::TimerHandle debounce_timer_;
     PaneId next_pane_ = 2U;  ///< 首个 pane 取 1，故自增从 2 起；标识只增不复用。
     PaneId last_focused_ = 1U;  ///< 最后一次真实读到的持焦格（把手 Press 那一瞬框架读数为空）。
+    std::u32string focus_pill_text_;  ///< 焦点药丸文案（空串＝不画）；装配层每帧下发，见 `set_focus_pill_text`。
 };
 
 }  // namespace borealis::ui

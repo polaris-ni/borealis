@@ -1125,6 +1125,17 @@
         }
       }
     },
-    "workspace.broadcast.unnamed": "未命名会话"
+    "workspace.broadcast.unnamed": "未命名会话",
+    "workspace.focus_pill": "焦点 · {cols}×{rows}",
+    "@workspace.focus_pill": {
+      "placeholders": {
+        "cols": {
+          "type": "int64"
+        },
+        "rows": {
+          "type": "int64"
+        }
+      }
+    }
   }
 }

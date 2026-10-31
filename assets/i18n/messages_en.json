@@ -573,6 +573,7 @@
     "workspace.broadcast.hint": "Sent to every pane in the group as you type; click here to exit",
     "workspace.broadcast.pane": "Pane {ordinal}",
     "workspace.broadcast.title": "Input broadcast is on: {names}, {count, plural, one {{count} session} other {{count} sessions}}",
-    "workspace.broadcast.unnamed": "Unnamed session"
+    "workspace.broadcast.unnamed": "Unnamed session",
+    "workspace.focus_pill": "Focus · {cols}×{rows}"
   }
 }

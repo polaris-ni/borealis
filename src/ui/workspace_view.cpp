@@ -4,11 +4,15 @@
 #include <chrono>
 #include <cstddef>
 #include <map>
+#include <string>
 #include <utility>
 
+#include "aurora/core/font.h"
 #include "aurora/core/log.h"
 #include "aurora/event/focus.h"
+#include "aurora/render/font_engine.h"
 #include "borealis/term/keymap.h"
+#include "borealis/term/utf8.h"
 
 #include "settings_panel.h"  // settings_chrome
 
@@ -35,6 +39,20 @@ constexpr double kZoomBadgeRadiusDp = 3.0;
 constexpr double kZoomGlyphDp = 10.0;
 constexpr float kZoomGlyphStrokeDp = 1.5F;
 constexpr double kZoomArrowWingDp = 3.5;
+
+/// @brief 焦点格那枚「焦点 · 行列数」药丸的几何（`codespec/UI_WORKSPACE.draft.svg` 屏 1：底板
+///        82.4×20、rx=9、`accent` 底，文本 11 号、色＝暗档 `window_bg`，顶内缩 6）。
+///
+/// 稿面的横向位置是装饰性的（底板右沿距 pane 右边 177.6 dp，既不贴边也不居中），故这里改成**贴右端
+/// 让位给缩放角标**：右沿＝pane 右 − (4 + 20 + 6)。这一档让位与角标是否显形无关——⤢ 只在悬停时显形，
+/// 若按「此刻有没有角标」定位，鼠标一进 pane 药丸就跳一格（裁决 7.184②）。
+constexpr double kFocusPillHeightDp = 20.0;
+constexpr double kFocusPillRadiusDp = 9.0;
+constexpr double kFocusPillTopInsetDp = 6.0;
+constexpr double kFocusPillHPadDp = 8.0;
+constexpr double kFocusPillToBadgeDp = 6.0;
+constexpr double kFocusPillTextLineDp = 16.0;
+constexpr float kFocusPillTextPt = 11.0F;
 
 /// @brief 本层的矩形都在「相对容器原点」的 dp 空间（`ui::Rect`），框架收的是 origin + size（float）。
 ///        两种形态没有互转 operator，字段名与精度都不同，故换算点集中在这一个函数里。
@@ -132,6 +150,45 @@ auto paint_zoom_badge(aurora::Painter &p, const aurora::Rect &bounds, const Rect
     line(g, g, g * 0.5 + kGap, g * 0.5 + kGap);
     line(g * 0.5 + kGap, g * 0.5 + kGap, g * 0.5 + kGap + kZoomArrowWingDp, g * 0.5 + kGap);
     line(g * 0.5 + kGap, g * 0.5 + kGap, g * 0.5 + kGap, g * 0.5 + kGap + kZoomArrowWingDp);
+}
+
+/// @brief 文案的 UTF-8 形态：`Painter::draw_text` 收 UTF-8，装配层交来的词条是码点串。
+[[nodiscard]] auto to_utf8(const std::u32string &text) -> std::string {
+    std::string out;
+    static_cast<void>(term::encode_utf8(text, out));
+    return out;
+}
+
+/// @brief 焦点格右上角那枚「焦点 · 行列数」药丸：`accent` 底板 + 反色文本，宽＝测宽 + 左右各 8 dp。
+///
+/// 底板走 `global_frame`、文本盒与它同源（`Painter` 收窗口全局 dp；缩放角标那处漏加原点的缺陷
+/// 就是在这里绕开的）。窄到放不下时整枚不画——越过 pane 左沿画进邻格比少一枚读数更糟。
+auto paint_focus_pill(aurora::Painter &p, const aurora::Rect &bounds, const Rect &pane,
+                      const std::string &text, const aurora::BuildContext &ctx) -> void {
+    const SettingsChrome chrome = settings_chrome();
+    const float scale = ctx.scale_factor > 0.0F ? ctx.scale_factor : 1.0F;
+    const aurora::Font font{.size_pt = kFocusPillTextPt};
+    const aurora::render::TextLayoutOpts opts{};
+    const double text_width =
+        static_cast<double>(aurora::render::FontEngine::display_width(text, font, opts, scale));
+    const double width = text_width + 2.0 * kFocusPillHPadDp;
+    const double right = pane.x + pane.width - kZoomBadgeInsetDp - kZoomBadgeDp - kFocusPillToBadgeDp;
+    if (width <= 0.0 || right - width < pane.x || pane.height < kFocusPillTopInsetDp + kFocusPillHeightDp) {
+        return;
+    }
+    const Rect plate{.x = right - width,
+                     .y = pane.y + kFocusPillTopInsetDp,
+                     .width = width,
+                     .height = kFocusPillHeightDp};
+    p.fill_rounded_rect(global_frame(bounds, plate), static_cast<float>(kFocusPillRadiusDp), chrome.accent);
+
+    const Rect box{.x = plate.x + kFocusPillHPadDp,
+                   .y = plate.y + (kFocusPillHeightDp - kFocusPillTextLineDp) / 2.0,
+                   .width = text_width,
+                   .height = kFocusPillTextLineDp};
+    // 文本色取 `window_bg`：稿面那枚 #1E1F29 就是暗档的它（`codespec/UI_CHROME.draft.md` §1），
+    // 亮档自动换成近白的 #F4F4F7，与设置页那两处「accent 底 + 反色字」同一取法。
+    p.draw_text(global_frame(bounds, box), text, font, chrome.window_bg);
 }
 
 /// @brief 该命令是否改动拓扑或比例：缩放态下这些命令一律先还原再执行（D3），否则它们会读到
@@ -304,6 +361,16 @@ auto WorkspaceView::refresh_broadcast_badges() -> void {
     }
 }
 
+auto WorkspaceView::set_focus_pill_text(std::u32string text) -> void {
+    // 装配层跟着帧走，每帧都下发一次：值相等即空操作，否则这一句会把本层标脏成永不停笔
+    //（与 `StatusBar::set_state` 同一条纪律，理由写在它的注释里）。
+    if (text == focus_pill_text_) {
+        return;
+    }
+    focus_pill_text_ = std::move(text);
+    mark_needs_paint();
+}
+
 auto WorkspaceView::restore_keyboard_focus() -> void {
     if (view_of(last_focused_) == nullptr) {
         return;  // 最后一次持焦的那一格已经关了：焦点去向由下一次点击或按键决定
@@ -461,6 +528,19 @@ auto WorkspaceView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, con
         for (const PaneBox &box : layout_.boxes) {
             if (box.pane == active) {
                 paint_focus_ring(p, bounds, box.box);
+                break;
+            }
+        }
+    }
+    // 焦点格的「焦点 · 行列数」药丸（`SPEC.FEAT.WS.02`，裁决 7.184）：空串＝这一帧没有读数。
+    // 除「焦点那一格」外还要它**在显示表里可见**——缩放态下其余格的旧矩形仍留在原处（F3），
+    // 只按矩形落笔就会把药丸画到一栋不存在的格子上。
+    if (!focus_pill_text_.empty()) {
+        const std::string pill = to_utf8(focus_pill_text_);
+        const PaneId active = focused_pane();
+        for (const PaneBox &box : layout_.boxes) {
+            if (box.pane == active && pane_visible(box.pane)) {
+                paint_focus_pill(p, bounds, box.box, pill, ctx);
                 break;
             }
         }

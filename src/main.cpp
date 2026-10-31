@@ -2361,6 +2361,9 @@ auto main(int argc, char **argv) -> int {
             // 常态）都只折全局那几格——会话级读数宁缺勿错，读别窗的行列比读不到更容易误导人。
             borealis::session::Session *session = nullptr;
             const borealis::ui::TerminalView *view = nullptr;
+            // 焦点药丸要写给「这一窗当前标签的那个工作区」，而 `view` 只是它的一格视图：药丸挂在
+            // 容器上（它才知道焦点是哪一格），故这里连着容器指针一起取。
+            borealis::ui::WorkspaceView *workspace = nullptr;
             std::optional<borealis::ui::TabId> tab;
             if (window.current_tab_id.has_value()) {
                 const auto found = tab_workspaces.find(window.current_tab_id.value());
@@ -2372,6 +2375,7 @@ auto main(int argc, char **argv) -> int {
                         session = held->second.get();
                     }
                     view = found->second.workspace->view_of(pane);
+                    workspace = found->second.workspace.get();
                 }
             }
 
@@ -2451,15 +2455,24 @@ auto main(int argc, char **argv) -> int {
                  borealis::ui::StatusBarTone::Faint);
 
             // ④ 行列数（稿面「82×24」）：视口本帧算好的那份几何，0 行 0 列（窗最小化）不上屏。
-            if (bar.show_grid_size && view != nullptr) {
-                const std::size_t columns = view->grid_geometry().columns;
-                const std::size_t rows = view->grid_geometry().rows;
-                if (columns > 0U && rows > 0U) {
-                    push(4U, true,
-                         phrase("status_bar.grid_size", {{"cols", static_cast<std::int64_t>(columns)},
-                                                         {"rows", static_cast<std::int64_t>(rows)}}),
-                         borealis::ui::StatusBarTone::Faint);
-                }
+            //    同一份读数还喂焦点药丸（屏 1 稿面那枚「焦点 · 82×24」，`SPEC.FEAT.WS.02` 那句
+            //    「当前 pane 视觉标识」的第二个载体，裁决 7.184）：两处现读同源，条上与屏上不会出现
+            //    两个值。药丸**不归 `show_grid_size` 管**——那枚开关关的是状态栏这一格，不是 pane
+            //    顶上的标注。
+            const std::size_t columns = view != nullptr ? view->grid_geometry().columns : 0U;
+            const std::size_t rows = view != nullptr ? view->grid_geometry().rows : 0U;
+            if (bar.show_grid_size && columns > 0U && rows > 0U) {
+                push(4U, true,
+                     phrase("status_bar.grid_size", {{"cols", static_cast<std::int64_t>(columns)},
+                                                     {"rows", static_cast<std::int64_t>(rows)}}),
+                     borealis::ui::StatusBarTone::Faint);
+            }
+            if (workspace != nullptr) {
+                workspace->set_focus_pill_text(columns > 0U && rows > 0U
+                                                   ? phrase("workspace.focus_pill",
+                                                            {{"cols", static_cast<std::int64_t>(columns)},
+                                                             {"rows", static_cast<std::int64_t>(rows)}})
+                                                   : std::u32string{});
             }
 
             // ⑤⑥⑦ 三格取自配置：字号／终端主题名／scrollback 容量（稿面「14 pt」「主题 Dracula」
