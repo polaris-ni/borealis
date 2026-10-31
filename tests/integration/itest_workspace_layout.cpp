@@ -441,6 +441,25 @@ class Harness {
                          .y = static_cast<float>(box.y + 4.0 + 2.0)};
     }
 
+    /// @brief 焦点药丸底板上的一个满覆盖落点：底板右沿＝pane 右 − (4 + 20 + 6)（让位给缩放角标），
+    ///        取它内 1 dp、底板铅垂居中那一点——圆角只吃四角，不吃这一档。
+    [[nodiscard]] auto pill_plate_point(PaneId pane) const -> au::Point {
+        const Rect box = pane_box(pane);
+        return au::Point{.x = static_cast<float>(box.x + box.width - 31.0),
+                         .y = static_cast<float>(box.y + 16.0)};
+    }
+
+    /// @brief 药丸底板上「文案一定经过这里」的那一条带：右沿取底板右沿内 1 dp（避开那一条 AA），
+    ///        向左 60 dp 覆盖住整枚按测宽铺开的底板，上下取中段避开圆角。带内既可能有 pane 自己的
+    ///        底（底板没铺到的左段），也可能有底板与字墨——三条计数各管一件事。
+    [[nodiscard]] auto pill_glyph_band(PaneId pane) const -> Rect {
+        const Rect box = pane_box(pane);
+        return Rect{.x = box.x + box.width - 90.0,
+                    .y = box.y + 11.0,
+                    .width = 60.0,
+                    .height = 10.0};
+    }
+
     /// @brief 某 pane 第 @p row 行第 @p column 列的落点（窗口坐标；行列是该视图自己的屏幕坐标）。
     [[nodiscard]] auto cell_point(PaneId pane, std::size_t row, std::size_t column, double fx = 0.5,
                                   double fy = 0.5) const -> au::Point {
@@ -750,6 +769,31 @@ class Harness {
     shape.lengths.assign(kids.size(), 1.0);
     shape.children = std::move(kids);
     return shape;
+}
+
+/// @brief 数焦点药丸那条带里的两种墨：底板（accent）与字形（既非底板也非 pane 底）。
+///
+/// 两个阈值都有实测出处（2026-10-31 变异自证）：文案真按测宽铺开时这条 60×10 的带里底板占 449 格、
+/// 字形墨占 151 格；把测宽打成 0（只剩内边距的残枚）或撤掉那一笔 `draw_text`（只剩底板边缘那条
+/// 抗锯齿），两个计数各塌到自己那一边，故分档取 300 与 60——「枚子没铺开」与「枚子有、字没有」
+/// 是两件事，一条判据抓一件。
+[[nodiscard]] auto count_pill_ink(const Harness &h, const Pixels &px, const Rect &band,
+                                  const au::Point &origin) -> std::pair<std::size_t, std::size_t> {
+    std::size_t plate = 0U;
+    std::size_t glyph = 0U;
+    for (int row = 0; row < static_cast<int>(band.height); ++row) {
+        for (int column = 0; column < static_cast<int>(band.width); ++column) {
+            const au::Point at{static_cast<float>(band.x + column + 0.5 + origin.x),
+                               static_cast<float>(band.y + row + 0.5 + origin.y)};
+            const RgbaColor ink = h.sample(px, at);
+            if (ink == kAccentInk) {
+                ++plate;
+            } else if (!(ink == h.palette().default_background)) {
+                ++glyph;
+            }
+        }
+    }
+    return {plate, glyph};
 }
 
 }  // namespace
@@ -1610,6 +1654,73 @@ AURORA_TEST_CASE(chrome_pixels_land_in_their_own_band) {
     h.render();
     px = h.pixels();
     AURORA_TEST_CHECK(h.sample(px, h.handle_center(0U)) == kHandleInk);
+}
+
+AURORA_TEST_CASE(the_focus_pill_marks_only_the_focused_pane) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.press(au::KeyCode::D, Harness::ctrl_shift());
+    h.render();
+    h.settle();
+
+    // 没有文案就没有药丸：装配层在首帧与「0 行 0 列」那一档交空串，屏上因此仍是 pane 自己的底。
+    // 取点离右沿 1 dp：撤掉空串闸门的那份实现会在此画出一枚「只剩内边距的残枚」，同样压着这一点。
+    auto px = h.pixels();
+    AURORA_TEST_CHECK(h.sample(px, h.pill_plate_point(2U)) == h.palette().default_background);
+
+    h.workspace().set_focus_pill_text(U"focus 82x24");
+    h.render();
+    px = h.pixels();
+    // 底板＝accent，右沿按「pane 右 − (4 + 20 + 6)」落位（稿面那枚底板横向位置是装饰性的，让位
+    // 次序由裁决定：与缩放角标共存、且不随角标显形而跳格）。
+    AURORA_TEST_CHECK(h.sample(px, h.pill_plate_point(2U)) == kAccentInk);
+    // 反面证人：非焦点格同一档没有底板——它是「当前 pane 视觉标识」的第二个载体，只给焦点那一格。
+    AURORA_TEST_CHECK(h.sample(px, h.pill_plate_point(1U)) == h.palette().default_background);
+
+    // 带内两条计数各管一件事：底板必须**按文案的测宽铺开**（测宽退化成 0 的实现只留下一枚残枚），
+    // 文案必须**真的有墨**（撤掉 `draw_text` 的实现只剩底板）。
+    const auto [plate_ink, glyph_ink] = count_pill_ink(h, px, h.pill_glyph_band(2U), au::Point{});
+    AURORA_TEST_CHECK_MSG(plate_ink >= 300U, "the focus pill plate does not stretch with its text");
+    AURORA_TEST_CHECK_MSG(glyph_ink >= 60U, "the focus pill paints its plate but never its glyph");
+
+    // 与缩放角标互不打架：悬停让角标显形后，两枚各自在自己的格位上（一旦重叠，其中一枚必失配）。
+    h.pointer(au::MouseAction::Move, h.badge_center(2U));
+    h.render();
+    px = h.pixels();
+    AURORA_TEST_CHECK(h.sample(px, h.badge_plate_point(2U)) == kChromeInk);
+    AURORA_TEST_CHECK(h.sample(px, h.pill_plate_point(2U)) == kAccentInk);
+
+    // 撤文案即撤药丸：装配层每帧现算，读数没了交的是空串而不是留一份旧值在屏上。
+    h.workspace().set_focus_pill_text({});
+    h.render();
+    px = h.pixels();
+    AURORA_TEST_CHECK(h.sample(px, h.pill_plate_point(2U)) == h.palette().default_background);
+}
+
+AURORA_TEST_CASE(the_focus_pill_shares_its_plate_origin_when_the_root_is_inset) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.inset_root(34.0, 78.0);  // 折叠轨 34 dp + 标题条与标签条 78 dp：真机那组读数的原点
+    h.press(au::KeyCode::D, Harness::ctrl_shift());
+    h.render();
+    h.settle();
+    h.workspace().set_focus_pill_text(U"focus 82x24");
+    h.render();
+    const auto px = h.pixels();
+
+    const au::Point origin = h.workspace_origin();
+    AURORA_TEST_REQUIRE(origin.x > 0.0F && origin.y > 0.0F);
+    const auto at = [origin](au::Point local) -> au::Point {
+        return au::Point{.x = local.x + origin.x, .y = local.y + origin.y};
+    };
+    AURORA_TEST_CHECK(h.sample(px, at(h.pill_plate_point(2U))) == kAccentInk);
+    // 底板与字形同一条原点：整枚（枚子加字）一起平移，内缩后的带里两种墨都该在原来的份量上。
+    const auto counts = count_pill_ink(h, px, h.pill_glyph_band(2U), origin);
+    AURORA_TEST_CHECK_MSG(counts.first >= 300U, "the inset focus pill plate is not where it belongs");
+    AURORA_TEST_CHECK_MSG(counts.second >= 60U, "the inset focus pill lost its glyph to the origin");
+    // 反面证人：按**未平移**的局部坐标取同一点不该见 accent。原点漏加的那份实现会把整枚底板画到内容
+    // 盒之外，而根挂在 (0,0) 时两个坐标逐位同值——那条缺陷在原来那档里结构性不存在（与缩放角标同一课）。
+    AURORA_TEST_CHECK(h.sample(px, h.pill_plate_point(2U)) != kAccentInk);
 }
 
 AURORA_TEST_CASE(a_new_pane_mounts_and_blinks) {
