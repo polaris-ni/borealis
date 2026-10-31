@@ -27,7 +27,11 @@
 ///           提示卡（`SPEC.FEAT.TERM.09` 的提示腿，裁决 7.104）五例：卡落进底部居中的期望盒而卡之上的
 ///           网格逐位不变（非模态＝不铺半透明带）、未触发时连排两帧逐位相同、5 s 到期自收且同会话第二
 ///           批次不再弹第二张、视口矮到装不下「卡高 + 上下内缩」时让位不画（同一条触发的正常高度正例
-///           作非空转证人）、本卡一枚命中盒都不交而被它盖住的那一行照常可选。
+///           作非空转证人）、本卡一枚命中盒都不交而被它盖住的那一行照常可选；另有回看滚动条
+///           （`SPEC.FEAT.TERM.10`，裁决 7.185）五例：有历史那一刻轨道与滑块同帧落地、且无历史的竖带
+///           一处墨都没有（负证取比会话标称 24 行还高的视口，否则「首帧即有历史」成了前提）、滑块随
+///           回看从带底走到带顶且回到底逐位复现、矮视口里滑块由「最短 40 dp」那一档兜住、滚动条不借
+///           格宽（有历史与无历史两台的行列读数一致）、滚轮落在竖带上仍整窗回看（本件不写命中盒）。
 ///           像素一律比 RGBA 四通道含 alpha：Headless 帧底色是全透明黑 (0,0,0,0)，只比 RGB 会让
 ///           「画了个纯黑」与「什么都没画」混为一谈。
 ///
@@ -296,6 +300,15 @@ class Harness {
         return RgbaColor{px[index], px[index + 1U], px[index + 2U], px[index + 3U]};
     }
 
+    /// @brief 帧缓冲里某一**像素**坐标的 RGBA 读数。
+    ///
+    /// 滚动条那条竖带由稿面的 dp 内缩定位（右缘 6 dp、宽 4 dp），不是格网的函数，故取样也按像素走。
+    /// `preflight()` 已保证 Headless 缩放为 1，dp 即像素。
+    [[nodiscard]] auto probe(const Pixels &px, std::size_t x, std::size_t y) const -> RgbaColor {
+        const std::size_t index = ((y * buffer_width()) + x) * 4U;
+        return RgbaColor{px[index], px[index + 1U], px[index + 2U], px[index + 3U]};
+    }
+
     /// @brief 焦点开关：终端以光标形态表达焦点态，故持焦与否须经真实焦点管理器驱动。
     auto set_focused(bool focused) -> void {
         if (focused) {
@@ -338,6 +351,17 @@ class Harness {
     auto scroll(int rows) -> void {
         au::ScrollEvent event;
         event.position = grid_center();
+        event.delta_y = static_cast<float>(rows);
+        (void)au::EventDispatcher::dispatch(root_.widget(), event);
+    }
+
+    /// @brief 在指定的「窗口 dp」落点上滚一轮（正 = 向上看更早的行）。
+    ///
+    /// 与 `scroll` 的唯一区别是落点：滚动条那条竖带的「不吃滚轮」判据必须能把滚轮投到那一带上才算。
+    auto scroll_at(int rows, double x_dp, double y_dp) -> void {
+        au::ScrollEvent event;
+        event.position = au::Point{.x = static_cast<float>(origin_x_ + x_dp),
+                                   .y = static_cast<float>(origin_y_ + y_dp)};
         event.delta_y = static_cast<float>(rows);
         (void)au::EventDispatcher::dispatch(root_.widget(), event);
     }
@@ -786,6 +810,46 @@ class Harness {
     return RgbaColor{color.r, color.g, color.b, color.a};
 }
 
+/// @brief 回看滚动条那条竖带的取样点（`SPEC.FEAT.TERM.10`，裁决 **7.185**）。
+///
+/// 四个数取自屏 1 稿而非实现里的常量：稿面 pane `x=34 width=920`、轨道 `x=944 width=4 height=421`
+/// ⇒ 右缘内缩 6 dp、带宽 4 dp，上下沿即 `104+10` 与 `545-10`——那 10 dp 正是本驱动台的内边距档位，
+/// 故带上下沿由格网界出（实现若把内缩改成别的数，这里会先叫）。测试各持一份是刻意的：读实现自己的
+/// 常量只会跟着一起错。
+struct ScrollbarBand {
+    std::size_t x = 0U;        ///< 带中心的像素列。
+    std::size_t beside = 0U;   ///< 带左沿外一格（该处须仍是原底色，钉住「宽 4 ＋右内缩 6」）。
+    std::size_t top = 0U;      ///< 带上沿下 2 px 处（贴底时这一带只有轨道、没有滑块）。
+    std::size_t bottom = 0U;   ///< 带下沿上 6 px 处（贴底时滑块落在这里）。
+    std::size_t last = 0U;     ///< 带内最后一行像素（滑块长度从这条沿往上量）。
+};
+
+[[nodiscard]] auto scrollbar_band(const Harness &h) -> ScrollbarBand {
+    constexpr double kWidthDp = 4.0;
+    constexpr double kRightInsetDp = 6.0;
+    const double box_right = h.paint_box().origin.x + h.paint_box().size.width;
+    const double track_top = h.paint_box().origin.y + h.geometry().padding;
+    const double track_bottom = track_top + static_cast<double>(h.geometry().rows) * h.geometry().cell_height;
+    return ScrollbarBand{
+        .x = static_cast<std::size_t>(box_right - kRightInsetDp - kWidthDp * 0.5),
+        .beside = static_cast<std::size_t>(box_right - kRightInsetDp - kWidthDp - 2.0),
+        .top = static_cast<std::size_t>(track_top + 2.0),
+        .bottom = static_cast<std::size_t>(track_bottom) - 6U,
+        .last = static_cast<std::size_t>(track_bottom) - 1U,
+    };
+}
+
+/// @brief 攒出一屏以上历史的脚本：每行一句短文本，右缘那几列留空，竖带底下只有默认底色。
+[[nodiscard]] auto history_script(std::size_t lines) -> std::string {
+    std::string script;
+    for (std::size_t index = 0; index < lines; ++index) {
+        script += "row ";
+        script += static_cast<char>('0' + static_cast<int>(index % 10U));
+        script += "\r\n";
+    }
+    return script;
+}
+
 #endif  // 无头后端缺席时上面的驱动台与替身都不参与编译
 
 }  // namespace
@@ -1195,6 +1259,150 @@ AURORA_TEST_CASE(alternate_screen_cannot_be_scrolled_back) {
     h.scroll(5);
     h.render();
     AURORA_TEST_CHECK_EQ(Harness::count_diff(h.pixels(), alt), 0U);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_scrollbar_lands_on_the_right_band_once_history_exists) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 视口取 640 dp 高（比会话标称的 24 行还高），于是开局**没有**可回看的行：默认那一档 260 dp 的
+    // 驱动台在首次下发尺寸时就把 24 行视口缩成 11 行，被顶出去的 13 行是货真价实的历史（裁决 7.17
+    // 「行数变化按窗口边界移动」），拿它作负证等于把「有历史」当前提。
+    Harness h(test_palette(), {}, {}, {}, false, 640);
+    AURORA_TEST_REQUIRE(h.preflight());
+    const auto &background = h.palette().default_background;
+    const ScrollbarBand band = scrollbar_band(h);
+
+    h.feed("\x1b[?25lhello");
+    const auto bare = h.pixels();
+    // 负证：没有可回看的行时那一竖带一处墨都不许有——轨道与滑块同一道闸门，缺一即整条不画。
+    AURORA_TEST_CHECK(h.probe(bare, band.x, band.top) == background);
+    AURORA_TEST_CHECK(h.probe(bare, band.x, band.bottom) == background);
+
+    // 攒出超出视口的历史，画面仍贴底：自此滚动条常驻（裁决 7.185 撤销旧 U1 的「贴底不画」半句）。
+    h.feed(history_script(h.geometry().rows + 12U));
+    const auto bottom = h.pixels();
+    // 轨道：稿写的是 `#000000` @ `fill-opacity=0.2`，压在内容上。框架在**线性空间**混合，故复合值
+    // 不是 sRGB 通道的一次普通乘法，这里不比精确数——比的是「压暗了、但不是不透明黑」这一对关系。
+    const auto track = h.probe(bottom, band.x, band.top);
+    AURORA_TEST_CHECK_TRUE(track != background);
+    AURORA_TEST_CHECK_MSG(track.red < background.red && track.green < background.green &&
+                              track.blue < background.blue,
+                          "the track must dim what is under it");
+    const RgbaColor opaque_black{0U, 0U, 0U, 255U};
+    AURORA_TEST_CHECK_MSG(track != opaque_black, "the track alpha landed opaque");
+    // 带外一格仍是原底色：右缘内缩 6 dp 与带宽 4 dp 的落点因此是被钉住的，不是「画满右边」。
+    AURORA_TEST_CHECK(h.probe(bottom, band.beside, band.top) == background);
+    // 滑块：贴底时落带的最下一段；它是不透明档（`chrome.card_line`），故逐位比。
+    AURORA_TEST_CHECK_TRUE(h.probe(bottom, band.x, band.bottom) ==
+                           chrome_rgba(borealis::ui::settings_chrome().card_line));
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_scrollbar_thumb_travels_with_the_review_window) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    const ScrollbarBand band = scrollbar_band(h);
+    const auto card_line = chrome_rgba(borealis::ui::settings_chrome().card_line);
+    h.feed("\x1b[?25l" + history_script(h.geometry().rows + 30U));
+    h.render();
+    const auto bottom = h.pixels();
+    AURORA_TEST_REQUIRE(h.probe(bottom, band.x, band.bottom) == card_line);
+    AURORA_TEST_REQUIRE(h.probe(bottom, band.x, band.top) != card_line);
+
+    // 滚到历史顶（增量超出即钳位）：滑块须整枚移到带上沿，带底回落成只有轨道。
+    h.scroll(200);
+    h.render();
+    const auto oldest = h.pixels();
+    AURORA_TEST_CHECK_MSG(h.review_rows_from_bottom() > 0U, "the wheel must reach the review window");
+    AURORA_TEST_CHECK_TRUE(h.probe(oldest, band.x, band.top) == card_line);
+    AURORA_TEST_CHECK_TRUE(h.probe(oldest, band.x, band.bottom) != card_line);
+    // 轨道本身不因回看而消失：同一列上下两处都仍有墨（一处滑块、一处轨道），且两处不同色。
+    AURORA_TEST_CHECK_TRUE(h.probe(oldest, band.x, band.bottom) != h.palette().default_background);
+
+    // 回到底须逐位复现贴底帧（指示位置不许引入累积漂移，与选区那条同一口径）。
+    h.scroll(-200);
+    h.render();
+    AURORA_TEST_CHECK_EQ(Harness::count_diff(h.pixels(), bottom), 0U);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_scrollbar_thumb_keeps_its_minimum_length) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 矮视口（4 行）配 40 行回看容量：占比算式只给约 9 dp，滑块须由「最短 40 dp」那一档兜住——那正是
+    // 稿面那条 `height=40` 的落点（旧档 U1 的 12 dp 在这一档只留下 12 个像素，读不出位置）。
+    Harness h(test_palette(), {}, {}, {}, false, 96);
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.feed("\x1b[?25l" + history_script(h.geometry().rows + 36U));
+    h.render();
+    const auto px = h.pixels();
+    const ScrollbarBand band = scrollbar_band(h);
+    const auto card_line = chrome_rgba(borealis::ui::settings_chrome().card_line);
+    const std::size_t track_height =
+        static_cast<std::size_t>(static_cast<double>(h.geometry().rows) * h.geometry().cell_height);
+    AURORA_TEST_REQUIRE(band.last > 2U + band.top);
+    // 从带的下沿往上数连续的滑块墨迹。起手先让开 2 行：`rx=2` 那两 dp 是抗锯齿圆角，最底一行本就
+    // 不是纯色，把它算进墨迹长度等于把圆角当成缺陷。
+    std::size_t run = 0U;
+    while (band.last - 2U >= run + band.top && h.probe(px, band.x, band.last - 2U - run) == card_line) {
+        ++run;
+    }
+    // 实测 37：最短档 40 dp 在本套件的无头面上是 1:1（带的落点按 dp 取、探针按物理像素读，两侧同数
+    // 才有 `run + 20 < track_height` 这条上限可比），墨迹再减去起手让开的 2 行与顶部圆角那一行。
+    // 下界取 34 而不是 40：圆角抗锯齿的取舍不该把这条变成脆断言——但它必须远大于旧档 U1 的 12。
+    AURORA_TEST_CHECK_MSG(run >= 34U, "thumb ink run " + std::to_string(run) + " px");
+    // 上限同样要钉：滑块吃满整条轨道就读不出「还有多少历史在下面」。
+    AURORA_TEST_CHECK_MSG(run + 20U < track_height, "the thumb filled the whole track");
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_scrollbar_does_not_borrow_grid_columns) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness plain;
+    Harness deep;
+    AURORA_TEST_REQUIRE(plain.preflight());
+    AURORA_TEST_REQUIRE(deep.preflight());
+    deep.feed("\x1b[?25l" + history_script(deep.geometry().rows + 30U));
+    const ScrollbarBand band = scrollbar_band(deep);
+    // 前置：deep 确实画出了滚动条（否则「没借格宽」是空转）。
+    AURORA_TEST_REQUIRE_TRUE(deep.probe(deep.pixels(), band.x, band.top) != deep.palette().default_background);
+    // 行列只由可视尺寸派生（`SPEC.FEAT.XFER.01`）：滚动条是覆盖层，出现历史那一刻不得重新下发尺寸。
+    // 两台的窗口同为 420×260，故「同一份行列」是可比的两读数。
+    AURORA_TEST_CHECK_EQ(deep.resize_count(), plain.resize_count());
+    AURORA_TEST_REQUIRE(plain.last_resize().has_value());
+    AURORA_TEST_REQUIRE(deep.last_resize().has_value());
+    const auto plain_size = plain.last_resize().value();
+    const auto deep_size = deep.last_resize().value();
+    AURORA_TEST_CHECK(plain_size.columns == deep_size.columns && plain_size.rows == deep_size.rows);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_wheel_over_the_scrollbar_band_still_reviews) {
+#ifdef AURORA_BACKEND_HEADLESS
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.feed("\x1b[?25l" + history_script(h.geometry().rows + 30U));
+    h.render();
+    const ScrollbarBand band = scrollbar_band(h);
+    const auto bottom = h.pixels();
+    AURORA_TEST_REQUIRE(h.probe(bottom, band.x, band.bottom) ==
+                        chrome_rgba(borealis::ui::settings_chrome().card_line));
+    // 滚动条纯展示：本件不写命中盒、不吃滚轮。落在它那一竖带上的滚轮仍整窗回看（判据见
+    // `SPEC.FEAT.TERM.10`，裁决 7.185⑤）——若这一带把事件收去做了拖条，画面不会动。
+    h.scroll_at(4, static_cast<double>(band.x), static_cast<double>(band.top));
+    h.render();
+    AURORA_TEST_CHECK_MSG(h.review_rows_from_bottom() > 0U, "the wheel over the band was swallowed");
+    AURORA_TEST_CHECK_MSG(Harness::count_diff(bottom, h.pixels()) > 0U, "no content moved");
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif

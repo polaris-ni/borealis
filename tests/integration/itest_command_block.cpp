@@ -383,14 +383,24 @@ class Harness {
         return count_color_in(band, color);
     }
 
-    /// @brief 整帧里 @p color 的像素数（「哪里都没画」那一档用）。
-    [[nodiscard]] auto count_everywhere(const RgbaColor &color) const -> std::size_t {
+    /// @brief 整帧里 @p color 的像素数（「哪里都没画」那一档用），可让开右缘 @p skip_right_dp 逻辑 dp。
+    ///
+    /// 让开右缘是给 `SPEC.FEAT.TERM.10` 那条回看带留位置：滑块按屏 1 稿取 chrome `card_line`，与命令块
+    /// 分隔线**同色**（那是两条各自成立的取色决定，裁决 7.185②）。于是「整帧不得有这色」这种反面证人
+    /// 会被那条带撞红——判据要否的是分隔线，不是带，故排除宽度由调用点按带的实际占位给。
+    [[nodiscard]] auto count_everywhere(const RgbaColor &color, const double skip_right_dp = 0.0) const
+        -> std::size_t {
         const auto px = pixels();
+        const std::size_t skip = static_cast<std::size_t>(skip_right_dp * geometry_.scale + 0.5);
+        const std::size_t limit = skip < buffer_width() ? buffer_width() - skip : buffer_width();
         std::size_t seen = 0U;
-        for (std::size_t index = 0; index + 3U < px.size(); index += 4U) {
-            if (px[index] == color.red && px[index + 1U] == color.green && px[index + 2U] == color.blue &&
-                px[index + 3U] == color.alpha) {
-                ++seen;
+        for (std::size_t y = 0U; y < buffer_height(); ++y) {
+            for (std::size_t x = 0U; x < limit; ++x) {
+                const std::size_t index = (y * buffer_width() + x) * 4U;
+                if (px[index] == color.red && px[index + 1U] == color.green && px[index + 2U] == color.blue &&
+                    px[index + 3U] == color.alpha) {
+                    ++seen;
+                }
             }
         }
         return seen;
@@ -703,8 +713,9 @@ AURORA_TEST_CASE(a_scrolled_block_still_copies_but_stops_drawing_the_separator) 
     h.feed(completed_block_bytes(output, "0"));
     h.feed("\r\n\r\n\r\n\r\n\r\n");  // 提示符行滚出可见窗，输出尾部仍在画面里
     h.hover(5U, 3U);
-    // 块还在、命中还在，但首行已在窗顶之上：分隔线不画（无处可画）。
-    AURORA_TEST_CHECK_EQ(h.count_everywhere(h.separator_ink()), 0U);
+    // 块还在、命中还在，但首行已在窗顶之上：分隔线不画（无处可画）。右缘那 10 dp 让给回看带（其滑块与
+    // 分隔线同为 chrome `card_line`，见 `count_everywhere` 的注释）。
+    AURORA_TEST_CHECK_EQ(h.count_everywhere(h.separator_ink(), 10.0), 0U);
     h.right_click(5U, 3U);
     h.render();
     AURORA_TEST_REQUIRE(h.menu_open());
