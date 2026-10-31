@@ -836,7 +836,11 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 已提交文本的上屏腿（编码 → 会话 → 广播镜像），与直接按键共用同一条。
     auto send_committed_text(std::string_view text) -> void;
 
-    /// @brief 画回看位置的指示条（视觉稿 U1）：贴底时不画。
+    /// @brief 画回看滚动条（`SPEC.FEAT.TERM.10`，裁决 **7.185**）：有可回看的行就画，贴底也画。
+    ///
+    /// 两条同宽的竖条——一条轨道（稿的 `#000000` @ 0.2，压在内容上）加一枚滑块（`chrome.card_line`、
+    /// 最短 40 dp、圆角 2 dp），滑块顶沿按 `back_rows` 在轨道内连续定位。纯展示：不写命中盒、不吃点击，
+    /// 也不占格宽（列数算式里没有它，否则每次有历史都要把会话 resize 一遍）。
     auto paint_scroll_indicator(aurora::Painter &p, const aurora::Rect &bounds, std::size_t rows) -> void;
 
     /// @brief 画 dead-session 浮层（`SPEC.FEAT.WS.05`）：会话进程已退出且有出口可画时才落笔。

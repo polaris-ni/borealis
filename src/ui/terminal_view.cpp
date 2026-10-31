@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <iterator>
 #include <optional>
 #include <span>
@@ -51,9 +52,25 @@ constexpr float kRowStep = 1.0F;
 constexpr float kMinFontSizePt = 6.0F;
 constexpr float kMaxFontSizePt = 72.0F;
 
-/// @brief 回看位置指示条的宽与最短长度（逻辑 dp，视觉稿 U1）。
-constexpr double kIndicatorWidthDp = 2.0;
-constexpr double kIndicatorMinLengthDp = 12.0;
+/// @brief 回看滚动条的几何与墨色（逻辑 dp，屏 1 稿 `codespec/UI_WORKSPACE.draft.svg` 右侧那两条竖
+///        条；需求 `SPEC.FEAT.TERM.10`，裁决 **7.185**）。
+///
+/// 稿面轨道 `x=944 width=4 height=421`、pane `x=34 width=920 height=441`（`y=104`）⇒ 右缘内缩 6 dp、
+/// 上下各 10 dp。**上下这两沿本件跟着可见网格走**（顶 = `geometry_.padding`、高 = `rows × cell_height`）
+/// 而**不**照抄那 10 dp：`padding` 是 `appearance.viewport_padding_dp`（缺省 4 dp、可配 0–64，裁决
+/// 7.25②），写死 10 会让轨道在改档后跨出格带；而 `cell_count` 截掉的那半行余量本来就落在轨道之下，
+/// 故稿那 10 dp 是「padding + 截行余量」在稿那一格上的**读数**，不是独立常数（差档登记见裁决 7.185③）。
+/// 滑块最短 40 dp 取稿那条 `height=40`（旧档 U1 的 12 dp 只保证「看得见」，撑不起一条读得出位置的
+/// 滑块），圆角取稿的 `rx=2`。
+constexpr double kScrollbarWidthDp = 4.0;
+constexpr double kScrollbarRightInsetDp = 6.0;
+constexpr double kScrollbarMinThumbLengthDp = 40.0;
+constexpr double kScrollbarThumbRadiusDp = 2.0;
+/// @brief 轨道的 alpha 字节：稿写的是 `#000000` @ `fill-opacity=0.2`，即「把底下压暗两成」的 8 位形态
+///        （0.2 × 255 ≈ 51）。它不进 chrome 色板——`scrim` 是**模态遮罩**（暗 0x99／亮 0x66），强度与
+///        语义都不是这一条；而本条压在**终端内容**上，两条色源不相干（`codespec/UI_CHROME.draft.md` D8
+///        「终端配色完全不动」），取任何 chrome 不透明格都会让深底／浅底终端里读数一样。
+constexpr std::uint8_t kScrollbarTrackAlpha = 51U;
 
 /// @brief 菜单条目的最小宽度（逻辑 dp）。需求与视觉稿都没规定数值，本仓取一档能让两字标签
 ///        与右侧留白看起来像一列而非两个孤立按钮的宽度。
@@ -754,6 +771,9 @@ auto TerminalView::on_paint(aurora::Painter &p, const aurora::Rect &bounds, cons
     paint_composition(p, bounds, rows);
     paint_cursor(p, bounds, rows);
     paint_scroll_indicator(p, bounds, rows);
+    // 滚动条自此常驻（有历史即画），占 pane 右沿那 6 dp 内缩 + 4 dp 带宽那一竖带；下面的分隔线、悬停条与
+    // 两张状态卡仍排在它之后（层序一字未动，裁决 7.185）。更上一层的父面 `WorkspaceView` 画 ⤢ 角标与
+    // 焦点药丸，会把轨道顶端那一小段盖住——稿面同此叠序（那块板本就压在 `y=114` 那条轨道上沿之上）。
     // 命令块分隔线排在正文、光标与回看指示条之后，链接悬停层与两张状态卡之前（裁决 7.123 D8①）：
     // 它要盖在行底上才读得出，而状态卡是更重的信息，不能被一条装饰线压住。
     paint_command_block_separator(p, bounds);
@@ -1609,20 +1629,28 @@ auto TerminalView::paint_composition(aurora::Painter &p, const aurora::Rect &bou
 
 auto TerminalView::paint_scroll_indicator(aurora::Painter &p, const aurora::Rect &bounds, std::size_t rows)
     -> void {
-    const std::size_t back = mirror_.back_rows();
-    if (back == 0U || total_lines_ <= rows) {
-        return;  // 贴底即正常跟随态，不必指位置
+    // 闸门只有一条：有没有可回看的行。旧档 U1（裁决 7.25①）那半句「贴底不画」按裁决 **7.185** 撤销
+    // ——稿面上这条滚动条常驻，且「有没有历史」正是贴底态唯一读得出的信息（没有轨道就没有落点）。
+    if (total_lines_ <= rows) {
+        return;
     }
     const double track_height = static_cast<double>(rows) * geometry_.cell_height;
+    if (!(track_height > 0.0)) {
+        return;  // 格高为 0（字体还没解析到）时算不出落点
+    }
+    const double track_left = static_cast<double>(bounds.size.width) - kScrollbarRightInsetDp - kScrollbarWidthDp;
+    const Rect track{track_left, geometry_.padding, kScrollbarWidthDp, track_height};
+    p.fill_rect(to_rect(track, bounds.origin), aurora::Color{0, 0, 0, kScrollbarTrackAlpha});
+    const std::size_t back = mirror_.back_rows();
     const double thumb_height = std::min(
-        track_height, std::max(kIndicatorMinLengthDp,
+        track_height, std::max(kScrollbarMinThumbLengthDp,
                                track_height * static_cast<double>(rows) / static_cast<double>(total_lines_)));
     const double slack = static_cast<double>(total_lines_ - rows);
     const double progress = (slack - static_cast<double>(back)) / slack;  // 0 = 看到最旧，1 = 贴底
-    const double thumb_top = geometry_.padding + (track_height - thumb_height) * progress;
-    const Rect thumb{static_cast<double>(bounds.size.width) - kIndicatorWidthDp, thumb_top, kIndicatorWidthDp,
+    const Rect thumb{track_left, geometry_.padding + (track_height - thumb_height) * progress, kScrollbarWidthDp,
                      thumb_height};
-    p.fill_rect(to_rect(thumb, bounds.origin), to_color(spec_.default_foreground));
+    p.fill_rounded_rect(to_rect(thumb, bounds.origin), static_cast<float>(kScrollbarThumbRadiusDp),
+                        settings_chrome().card_line);
 }
 
 auto TerminalView::failed_background_at(std::size_t screen_row) const -> bool {
