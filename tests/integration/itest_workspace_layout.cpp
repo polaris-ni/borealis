@@ -363,6 +363,46 @@ class Harness {
                                .y = static_cast<float>(box.y + box.height / 2.0)};
     }
 
+    /// @brief 把手长轴上距命中区中心 @p offset dp 的落点：32 dp 中段内/外的判据用它一次取两点。
+    [[nodiscard]] auto handle_along_point(std::size_t index, double offset) const -> au::Point {
+        const PaneDivider &handle = divider(index);
+        const Rect box = handle.box;
+        const double cx = box.x + box.width / 2.0;
+        const double cy = box.y + box.height / 2.0;
+        // 与 `paint_handle` 同一读法：`axis == Horizontal` 是子 pane 沿 x 排开，缝是竖窄条，长轴在 y。
+        return handle.axis == PaneAxis::Horizontal
+                   ? au::Point{.x = static_cast<float>(cx), .y = static_cast<float>(cy + offset)}
+                   : au::Point{.x = static_cast<float>(cx + offset), .y = static_cast<float>(cy)};
+    }
+
+    /// @brief 把整棵根内缩到窗口原点之外（复刻装配层：工作区挂在折叠轨与标题条之后）。
+    ///
+    /// 真机抓到的那条缺陷只在原点非零时显形——`paint_zoom_badge` 的字形端点漏加 `bounds.origin`，
+    /// 用例若把根挂在 (0,0) 上，局部与全局同值，像素判据一律通过。
+    /// @param left 左边内缩（dp）。
+    /// @param top 上边内缩（dp）。
+    auto inset_root(double left, double top) -> void {
+        workspace_->set_modifier(au::Modifier{}.padding(
+            au::EdgeInsets{.left = static_cast<float>(left), .top = static_cast<float>(top)}));
+        workspace_->mark_needs_layout();
+        render();
+        settle();
+    }
+
+    /// @brief 工作区**内容盒**在窗口里的全局原点（内缩后即非零，像素落点要按它平移）。
+    ///
+    /// 不能直接取 `workspace_->paint_bounds()`：那是父级递下来的外层盒，`Modifier::padding` 只平移
+    /// 传给 `on_paint` 的内容盒（`Widget::paint` 先记外层盒再算 content_box）。这里借 1 号格的视图
+    /// 反推——它是本层布局的第一个子节点，其全局绘制盒减去布局给出的局部盒即那一次平移。
+    [[nodiscard]] auto workspace_origin() const -> au::Point {
+        const TerminalView *view = workspace_->view_of(1U);
+        AURORA_TEST_REQUIRE(view != nullptr);
+        const au::Point global = view->paint_bounds().origin;
+        const Rect local = pane_box(1U);
+        return au::Point{.x = static_cast<float>(static_cast<double>(global.x) - local.x),
+                         .y = static_cast<float>(static_cast<double>(global.y) - local.y)};
+    }
+
     [[nodiscard]] auto pane_center(PaneId pane) const -> au::Point {
         const Rect box = pane_box(pane);
         return au::Point{.x = static_cast<float>(box.x + box.width / 2.0),
@@ -1478,6 +1518,35 @@ AURORA_TEST_CASE(zoom_badge_hovers_clicks_and_paints_on_the_top_right_corner) {
     AURORA_TEST_CHECK(h.sample(px, h.badge_plate_point(1U)) == h.palette().default_background);
 }
 
+/// @brief 判据 ⑤（真机走查补漏）：工作区不在窗口原点时，角标的底板与字形必须一起跟着走。
+///
+/// 上面那条角标用例把根挂在 (0,0)，局部盒与全局盒逐位同值，于是「字形端点漏加 `bounds.origin`」
+/// 这类平移缺陷在它眼里根本不存在（真机读数 2026-10-31：⤡ 落在标题条的 F11 上，偏移恰为
+/// 装配层那 (34, 78) dp）。这条用例把同一份几何推到非零原点上，底板与字形各取一个像素作证。
+AURORA_TEST_CASE(the_badge_glyph_shares_its_plate_origin_when_the_root_is_inset) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.inset_root(34.0, 78.0);  // 折叠轨 34 dp + 标题条与标签条 78 dp：真机那组读数的原点
+    h.press(au::KeyCode::D, Harness::ctrl_shift());
+    h.render();
+    h.settle();
+
+    const au::Point origin = h.workspace_origin();
+    AURORA_TEST_REQUIRE(origin.x > 0.0F && origin.y > 0.0F);  // 内缩没落地就没有证人
+    const auto at = [origin](au::Point local) -> au::Point {
+        return au::Point{.x = local.x + origin.x, .y = local.y + origin.y};
+    };
+
+    h.pointer(au::MouseAction::Move, at(h.badge_center(1U)));
+    h.render();
+    const auto px = h.pixels();
+    AURORA_TEST_CHECK(h.sample(px, at(h.badge_plate_point(1U))) == kChromeInk);
+    AURORA_TEST_CHECK(h.sample(px, at(h.badge_expand_ink_point(1U))) == kAccentInk);
+    // 反面证人：按**未平移**的局部坐标取同一格，那里不该再有 accent——否则这条判据退化成正面判据的
+    // 复读，漏加原点的那份实现照样过（字形会同时出现在两个位置吗？不会，它只有一处落点）。
+    AURORA_TEST_CHECK(h.sample(px, h.badge_expand_ink_point(1U)) != kAccentInk);
+}
+
 AURORA_TEST_CASE(single_pane_zoom_is_claimed_but_does_nothing) {
     Harness h;
     AURORA_TEST_REQUIRE(h.preflight());
@@ -1511,6 +1580,12 @@ AURORA_TEST_CASE(chrome_pixels_land_in_their_own_band) {
     AURORA_TEST_CHECK(h.sample(px, h.gap_edge(0U)) == kChromeInk);
     // 静止态的把手是 line2。
     AURORA_TEST_CHECK(h.sample(px, h.handle_center(0U)) == kHandleInk);
+    // 把手沿轴确有 32 dp：中心 ±12 dp 仍是 line2，±17 dp 已回到 chrome 底（真机读数 2026-10-31：
+    // 长轴取反时中段塌成 8 dp，±12 两点即失配）。
+    AURORA_TEST_CHECK(h.sample(px, h.handle_along_point(0U, -12.0)) == kHandleInk);
+    AURORA_TEST_CHECK(h.sample(px, h.handle_along_point(0U, 12.0)) == kHandleInk);
+    AURORA_TEST_CHECK(h.sample(px, h.handle_along_point(0U, -17.0)) == kChromeInk);
+    AURORA_TEST_CHECK(h.sample(px, h.handle_along_point(0U, 17.0)) == kChromeInk);
 
     // 焦点 pane（右格）有 2 dp 的**内**描边：左沿第 1 dp 是 accent，第 4 dp 已是pane 自己的底。
     const Rect focused = h.pane_box(2U);

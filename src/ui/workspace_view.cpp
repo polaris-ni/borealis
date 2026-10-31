@@ -54,21 +54,25 @@ constexpr double kZoomArrowWingDp = 3.5;
 /// @brief 画一条把手的中段：沿轴居中、垂直轴居中，窄于命中区（缝隙因此不吃 pane 内容）。
 auto paint_handle(aurora::Painter &p, const aurora::Rect &bounds, const PaneDivider &divider,
                   const aurora::Color &ink) -> void {
-    const bool along_x = divider.axis == PaneAxis::Horizontal;
-    const double along = along_x ? divider.box.width : divider.box.height;
-    const double cross = along_x ? divider.box.height : divider.box.width;
-    const double length = std::min(kHandleLengthDp, std::max(0.0, along));
-    if (length <= 0.0 || cross <= kHandleThicknessDp) {
+    // `axis == Horizontal` 说的是**子 pane** 沿 x 排开，于是这条缝是一条竖窄条：长边在 y、短边在 x
+    //（与 `cursor_shape` 的 `ResizeEW` 同一读法）。故「沿把手长轴」取 box.height，取反即把 32 dp
+    // 的中段压成 8 dp——真机读数 2026-10-31：把手实测 2 dp 粗 × 8 dp 长。
+    const bool vertical_strip = divider.axis == PaneAxis::Horizontal;
+    const double long_extent = vertical_strip ? divider.box.height : divider.box.width;
+    const double cross_extent = vertical_strip ? divider.box.width : divider.box.height;
+    const double length = std::min(kHandleLengthDp, std::max(0.0, long_extent));
+    if (length <= 0.0 || cross_extent <= kHandleThicknessDp) {
         return;  // 该层被压到放不下把手：宁可不显形，也不画出越界的矩形
     }
-    const Rect handle = along_x ? Rect{.x = divider.box.x + (divider.box.width - kHandleThicknessDp) / 2.0,
-                                       .y = divider.box.y + (cross - length) / 2.0,
-                                       .width = kHandleThicknessDp,
-                                       .height = length}
-                                : Rect{.x = divider.box.x + (cross - length) / 2.0,
-                                       .y = divider.box.y + (divider.box.height - kHandleThicknessDp) / 2.0,
-                                       .width = length,
-                                       .height = kHandleThicknessDp};
+    const Rect handle = vertical_strip
+                            ? Rect{.x = divider.box.x + (cross_extent - kHandleThicknessDp) / 2.0,
+                                   .y = divider.box.y + (long_extent - length) / 2.0,
+                                   .width = kHandleThicknessDp,
+                                   .height = length}
+                            : Rect{.x = divider.box.x + (long_extent - length) / 2.0,
+                                   .y = divider.box.y + (cross_extent - kHandleThicknessDp) / 2.0,
+                                   .width = length,
+                                   .height = kHandleThicknessDp};
     p.fill_rect(global_frame(bounds, handle), ink);
 }
 
@@ -100,8 +104,11 @@ auto paint_zoom_badge(aurora::Painter &p, const aurora::Rect &bounds, const Rect
 
     const double gx = x + (kZoomBadgeDp - kZoomGlyphDp) / 2.0;
     const double gy = y + (kZoomBadgeDp - kZoomGlyphDp) / 2.0;
-    const auto pt = [gx, gy](double lx, double ly) -> aurora::Point {
-        return aurora::Point{.x = static_cast<float>(gx + lx), .y = static_cast<float>(gy + ly)};
+    // 线段端点与 `global_frame` 同源：`Painter` 收的是窗口全局 dp，漏加 `bounds.origin` 会把字形
+    // 平移到容器原点之外（真机读数 2026-10-31：⤡ 落在标题栏的 F11 上，偏移恰为 (34, 78) dp）。
+    const auto pt = [gx, gy, &bounds](double lx, double ly) -> aurora::Point {
+        return aurora::Point{.x = static_cast<float>(bounds.origin.x + gx + lx),
+                             .y = static_cast<float>(bounds.origin.y + gy + ly)};
     };
     const auto line = [&p, &pt, &chrome](double ax, double ay, double bx, double by) -> void {
         p.draw_line(pt(ax, ay), pt(bx, by), kZoomGlyphStrokeDp, chrome.accent);
