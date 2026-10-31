@@ -187,9 +187,10 @@ namespace {
                                EffectLevel::Immediate));
     // 状态栏十枚分两档，分档的唯一依据是稿面在条上**画了几格**：`codespec/UI_WORKSPACE.draft.svg`
     // 屏 1 判据 ⑨ 那一横条上实有八格读数（连接态／编码／行列／字号／主题／scrollback／剪贴板三态／
-    // 输入延迟），装配层的 `refresh_status_bar_ui()`（`SPEC.FEAT.PREF.02` 的即时反馈面）逐格都有取处，
-    // 除最后一格——本仓没有 P95 时延的量测源，无值可画即无消费方。另两枚根本不在条上：断线重连按
-    // 判据 ⑧ 画在 pane 里，行列数在焦点角标那条腿上（判据 ④），故它们仍是「有键无消费方」的延后档，
+    // 输入延迟），装配层的 `refresh_status_bar_ui()`（`SPEC.FEAT.PREF.02` 的即时反馈面）逐格都有取处。
+    // 最后那格的数据源是 `ui::InputLatency`（`SPEC.NF.PERF.01` 的量测腿，裁决 7.186）：无样本、或最后一
+    // 笔样本已过期时交空文本，空文本即不上屏——「开关已接」不等于「这一帧一定有字」。另两枚根本不在条上：
+    // 断线重连按判据 ⑧ 画在 pane 里，行列数在焦点角标那条腿上（判据 ④），故它们仍是「有键无消费方」的延后档，
     // 界面上挂「延后」角标而行为照旧（裁决 7.68③：可改、过校验、落盘、不广播）。
     const std::vector<std::string_view> wired_status_bar_leaves{
         "show_connection",
@@ -199,11 +200,13 @@ namespace {
         "show_theme",
         "show_scrollback",
         "show_clipboard_policy",
+        "show_input_latency",
     };
     const std::vector<std::string_view> status_bar_leaves{
-        "show_connection",      "show_reconnect",   "show_cursor_position", "show_encoding",
-        "show_grid_size",       "show_font_size",   "show_theme",           "show_scrollback",
-        "show_clipboard_policy", "show_input_latency",
+        "show_connection",      "show_reconnect",       "show_cursor_position",
+        "show_encoding",        "show_grid_size",       "show_font_size",
+        "show_theme",           "show_scrollback",      "show_clipboard_policy",
+        "show_input_latency",
     };
     for (std::string_view leaf : status_bar_leaves) {
         auto key = std::string{"appearance.status_bar."};

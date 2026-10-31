@@ -24,12 +24,12 @@ namespace {
 auto status_bar_registration_order() -> const std::vector<std::string_view> & {
     // 与 `include/borealis/config/settings.h` 的 `StatusBarSettings` 字段次序逐条同源（十枚开关），
     // 并由 `utest_status_bar_format` 拿设置页注册表的行序双向核对（次序漂了就转红，不靠注释守着）。
-    // 稿屏 1 的状态栏只画了其中八格（`UI_WORKSPACE.draft.svg` 编号块 ⑨／⑩），另三格的今日去向是：
-    // `reconnect`——判据 ⑧ 把断线与重连（第 N/M 次）画在 pane 上而不是这条；`cursor_position`——
-    // 判据 ⑨ 那八项里没有「光标行列」这一象，稿上「焦点 · 行列数」角标（判据 ④）说的是格数而不是
-    // 光标位置，故这一枚在稿面上**没有形态**；`input_latency`——判据 ⑨ 与 SVG 都画了（`输入延迟
-    // P95 12 ms`），但全仓没有测量腿（该判据属 `SPEC.NF.PERF.01`）。三枚都不进本帧的测量表，
-    // 但**留在次序里**：补上数据源那一棒不必再排一次序，而省略次序按的就是这一条。
+    // 稿屏 1 的状态栏画的就是这十枚里的八格（`UI_WORKSPACE.draft.svg` 编号块 ⑨／⑩），八格今日都有取处
+    // （第八格 = `ui::InputLatency`，`SPEC.NF.PERF.01` 的量测腿，裁决 7.186）。另两格的今日去向是：
+    // `reconnect`——判据 ⑧ 把断线与重连（第 N/M 次）画在 pane 上而不是这条；`cursor_position`——判据 ⑨
+    // 那八项里没有「光标行列」这一象，稿上「焦点 · 行列数」角标（判据 ④）说的是格数而不是光标位置，故
+    // 这一枚在稿面上**没有形态**。两枚都不进本帧的测量表，但**留在次序里**：补上消费方那一棒不必再排
+    // 一次序，而省略次序按的就是这一条。
     static const std::vector<std::string_view> kOrder{
         "connection",     "reconnect",       "cursor_position", "encoding",       "grid_size",
         "font_size",      "theme",           "scrollback",      "clipboard_policy", "input_latency",

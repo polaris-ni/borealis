@@ -39,6 +39,7 @@
 #include "borealis/ui/cell_layout.h"
 #include "borealis/ui/command_block.h"
 #include "borealis/ui/grid_size_debounce.h"
+#include "borealis/ui/input_latency.h"
 #include "borealis/ui/palette.h"
 #include "borealis/ui/quick_select.h"
 #include "borealis/ui/right_click.h"
@@ -400,6 +401,15 @@ class TerminalView final : public aurora::LeafWidget {
     /// 判据是 `max(20 列 × 格宽, 3 行 × 格高)`（裁决 7.47③），而格宽与内边距只有本控件知道；
     /// 让工作区层自己再算一遍度量就成了第二个真值源。
     [[nodiscard]] auto grid_geometry() const noexcept -> const GridGeometry & { return geometry_; }
+
+    /// @brief 本格的「键入 → 首次上屏」P95 读数（屏 1 状态栏那格 `输入延迟 P95 12 ms` 的数据源）。
+    ///
+    /// `SPEC.NF.PERF.01` 的量测腿（裁决 7.186）：知道「键入哪一刻写进会话」与「内容哪一帧换了源」的
+    /// 只有本控件这两条腿，读数因此只能从这儿交出去，装配层不另立一份账。取空文本的两种情形（无样本 /
+    /// 最后一笔已过期）由件内判，`refresh_status_bar_ui()` 只负责「空即不上屏」那条既有纪律。
+    /// 逐帧现读且 O(1)（AGENTS.md §4.5 第 25 条）：样本只在结算那一笔时排序，读数只算一次索引。
+    /// @return 窗口里这批样本的 P95；无样本或已过期即空。
+    [[nodiscard]] auto input_latency_p95() const -> std::optional<std::chrono::milliseconds>;
 
     /// @brief 回看位置距底的行数（0 = 贴底）：焦点路由「滚动位置不动」判据的观测点。
     ///
@@ -781,6 +791,14 @@ class TerminalView final : public aurora::LeafWidget {
     /// @brief 把要发的字节交进会话：空值即本层不发（编码层已判过层级与事件形态）。
     auto send_report(const std::optional<std::string> &bytes) -> void;
 
+    /// @brief 把「一次由用户发起的写入」记为延迟样本的起点（`SPEC.NF.PERF.01` 的量测腿，裁决 7.186③）。
+    ///
+    /// 六处写入点各调一次而不是只挑按键那一条：需求说的是「按键 → 字符上屏」，而直接按键、输入法
+    /// commit、粘贴、广播代发在用户眼里是同一种动作——按下之后多久看到东西。粘贴按**一次计划**记一笔
+    /// 而非按块记（用户动作是一次）。**不含**鼠标上报（`send_report`）：那一条由移动事件驱动，一次
+    /// 滑动就是几十笔，会把起点刷成鼠标轨迹而把窗口灌满与按键无关的样本。
+    auto note_input_issued() -> void;
+
     /// @brief quick select 开模后的按键处置：Escape 退、Backspace 退一位、字母前缀收敛、其余退模。
     ///
     /// 只认未修饰的字母（大小写同解）：标签是 ASCII 小写，带修饰的字母属于终端应用，不该被本模式
@@ -1114,6 +1132,12 @@ class TerminalView final : public aurora::LeafWidget {
     aurora::render::TextLayoutOpts layout_opts_{};
     float metrics_scale_ = -1.0F;  ///< `typed_` 所属的缩放；与入参不等即重取度量。
     bool metrics_stale_ = true;    ///< 字体或排版入参变过（Ctrl+滚轮缩放是唯一改点）；取用即清。
+
+    /// @brief 本格「键入 → 首次上屏」的有界样本窗口（`SPEC.NF.PERF.01` 的量测腿，裁决 7.186）。
+    ///
+    /// 换绑会话即新建控件，窗口随之从零开始——一份跨会话的延迟样本没有意义（两台主机的往返本就
+    /// 不同值）。件本身不持时钟，起点与终点两处各自取 `steady_clock::now()`。
+    InputLatency input_latency_{};
 
     CursorState cursor_{};
     CursorState painted_cursor_{};  ///< 上次标脏时的光标，用于判断「本帧到底有没有可画的东西」。

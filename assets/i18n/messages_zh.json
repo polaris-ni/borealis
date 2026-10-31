@@ -630,7 +630,7 @@
     "settings.note.shortcuts": "入口先于消费方落地：键位重绑尚未开工，覆盖表里的组合键不会生效",
     "settings.note.ssh": "入口先于消费方落地：SSH 连接族尚未开工，本组改动只落盘",
     "settings.note.ssh_algorithms": "逗号分隔；非空即整表替换库缺省。列旧算法（如 ssh-rsa、diffie-hellman-group14-sha1）会降低安全性，仅连旧设备时启用",
-    "settings.note.status_bar": "十枚里七枚已接状态栏件；重连、光标行列与输入时延三枚的消费方尚未开工，关掉它们只落盘",
+    "settings.note.status_bar": "十枚里八枚已接状态栏件；重连与光标行列两枚在这条上没有格，关掉它们只落盘",
     "settings.page.appearance": "外观",
     "settings.page.connection": "连接",
     "settings.page.quick_terminal": "下拉式终端",
@@ -927,6 +927,14 @@
           "type": "int64"
         },
         "rows": {
+          "type": "int64"
+        }
+      }
+    },
+    "status_bar.input_latency": "输入延迟 P95 {ms} ms",
+    "@status_bar.input_latency": {
+      "placeholders": {
+        "ms": {
           "type": "int64"
         }
       }

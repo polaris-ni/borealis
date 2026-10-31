@@ -78,6 +78,7 @@ add_library(borealis_core STATIC
         ui/debug_panel.cpp
         ui/font_choice.cpp
         ui/grid_size_debounce.cpp
+        ui/input_latency.cpp
         ui/keys_format.cpp
         ui/keys_panel.cpp
         ui/monitor_binding.cpp

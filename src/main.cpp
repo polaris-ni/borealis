@@ -2338,9 +2338,10 @@ auto main(int argc, char **argv) -> int {
     // ① 全部读点**无锁**。编码取 `Session::encoding_name()`（构造期写定、指向静态存储期），格数取
     //    视口的 `grid_geometry()`（布局侧本帧算好的那一份），其余取 `settings`——一处都不碰
     //    `Session::read()` 那条临界区。状态栏是每帧都折的面，挂在会话锁上就是拿 §4.5 第 25 条换读数。
-    // ② 十枚开关里今日只有七枚有取处；`reconnect`／`cursor_position`／`input_latency` 三枚交空文本
-    //    即不上屏，理由逐条写在 `status_bar_registration_order()` 的注释里（判据 ⑧ 把断线与重连画在
-    //    pane 上，不是画在这条上）。三枚的**位置仍留在注册次序里**，窄窗时的省略序因此不随数据源漂。
+    // ② 十枚开关里今日有八枚有取处（稿面条上画了格的那八格）；`reconnect`／`cursor_position` 两枚交空
+    //    文本即不上屏，理由逐条写在 `status_bar_registration_order()` 的注释里（判据 ⑧ 把断线与重连画在
+    //    pane 上，不是画在这条上）。两枚的**位置仍留在注册次序里**，窄窗时的省略序因此不随数据源漂。
+    //    第八枚（`input_latency`）自裁决 7.186 起有源：焦点格那份 `ui::InputLatency` 窗口。
     // ③ 锚点的键位取注册表那一份而不是在此重述 `Ctrl+Shift+P`：用户改过键位后这条要跟着说真话，而
     //    框架命令面板显示的也是同一枚 `default_binding`——两个投影不各持一份真值。
     auto refresh_status_bar_ui = [&]() -> void {
@@ -2503,6 +2504,20 @@ auto main(int argc, char **argv) -> int {
                      ? borealis::ui::StatusBarTone::Warning
                      : borealis::ui::StatusBarTone::Faint,
                  /*leading_dot=*/false, /*leading_separator=*/true);
+
+            // ⑨ 输入延迟 P95（稿面那格 `输入延迟 P95 12 ms`）：`SPEC.NF.PERF.01` 的量测腿，读数取自
+            //    **焦点格**那份样本窗口（`ui::InputLatency`，裁决 7.186）——两格分屏时各自的往返本就不同
+            //    值，跟着焦点走才是真话。无样本或最后一笔已过期即交空文本，于是那条既有纪律（空文本即
+            //    不交进测量表）自然接管：这一格「开关已接」不等于「本帧一定有字」。窄窗时它按注册序
+            //    第十位被省略，位置不随数据源漂。
+            const std::optional<std::chrono::milliseconds> latency =
+                view != nullptr ? view->input_latency_p95() : std::nullopt;
+            push(9U, bar.show_input_latency,
+                 latency.has_value()
+                     ? phrase("status_bar.input_latency",
+                              {{"ms", static_cast<std::int64_t>(latency->count())}})
+                     : std::u32string{},
+                 borealis::ui::StatusBarTone::Faint);
 
             // ⑩ 命令面板锚点（右端固定，稿面 `accent` 色）：没有键位读数即整格不占位——`plan` 那边
             //      reserved 的宽度也就跟着归零，不会为一句画不出来的提示扣掉一格。

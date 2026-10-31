@@ -454,6 +454,7 @@ auto TerminalView::send_broadcast_key(const term::KeyPress &press) -> void {
     if (!bytes) {
         return;
     }
+    note_input_issued();
     session_->send_bytes(std::as_bytes(std::span<const char>{bytes->data(), bytes->size()}));
 }
 
@@ -461,6 +462,7 @@ auto TerminalView::send_broadcast_text(std::u32string_view text) -> void {
     if (text.empty()) {
         return;
     }
+    note_input_issued();
     session_->send_text(text);  // 与键入同一条编码/行尾路径（D6）
 }
 
@@ -468,6 +470,7 @@ auto TerminalView::send_text_utf8(std::string_view utf8) -> void {
     if (utf8.empty()) {
         return;
     }
+    note_input_issued();
     session_->send_text(to_code_points(utf8));
 }
 
@@ -692,6 +695,12 @@ auto TerminalView::on_frame() -> void {
     // 回看换源与光标移动都不在提交里：前者由距底行数变化指认（`on_scroll` 在帧序里先于本函数，
     // 故同帧就能换源），后者直接比较光标快照。块表变化同样可能不带提交（`D` 不动网格），
     // 失败底色与菜单可用性都靠它，故一并进这一条标脏判据（裁决 7.123 D7①）。
+    // 延迟样本的终点排在同一处判据之前，取「本帧有会话提交进来的 damage」那一刻（裁决 7.186③）：
+    // 那是内容换源的时刻，而 `mark_needs_paint()` 之后的绘制排在同一帧的自家账上，量的是渲染排期
+    // 而不是往返。一笔键入只配**首个**上屏，此后的每一帧不再产出样本（件内那条不变量）。
+    if (!frame.empty()) {
+        input_latency_.note_output(std::chrono::steady_clock::now());
+    }
     if (!frame.empty() || blocks_changed || previous_back != mirror_.back_rows() ||
         !(cursor_ == painted_cursor_)) {
         painted_cursor_ = cursor_;
@@ -890,6 +899,9 @@ auto TerminalView::on_key_event(aurora::KeyEvent &e) -> void {
     if (!bytes) {
         return;  // 本层不编码：可打印形态归文本通道，无遗留编码的组合归快捷键层
     }
+    // 延迟样本的起点取「写进会话那一刻」而不是「框架把事件交给我那一刻」：前者才是往返的开始，
+    // 后者把本层编码与模式判定的耗时也算进「输入延迟」（裁决 7.186③）。
+    note_input_issued();
     session_->send_bytes(std::as_bytes(std::span<const char>{bytes->data(), bytes->size()}));
     if (key_mirror_) {
         key_mirror_(press);  // 广播：源格已按自己的模式落地，同伴由各自视口再编码（D5/D6）
@@ -981,6 +993,7 @@ auto TerminalView::send_committed_text(std::string_view text) -> void {
         return;
     }
     const std::u32string code_points = to_code_points(text);
+    note_input_issued();
     session_->send_text(code_points);
     if (text_mirror_) {
         text_mirror_(code_points);  // 广播：已提交文本按同伴自己的编码与行尾再发一次（D5/D6）
@@ -1277,6 +1290,14 @@ auto TerminalView::send_report(const std::optional<std::string> &bytes) -> void 
         return;  // 编码层判过「本层不发」：层级不够，或该事件在当前层级下不报
     }
     session_->send_bytes(std::as_bytes(std::span<const char>{bytes->data(), bytes->size()}));
+}
+
+auto TerminalView::note_input_issued() -> void {
+    input_latency_.note_input_issued(std::chrono::steady_clock::now());
+}
+
+auto TerminalView::input_latency_p95() const -> std::optional<std::chrono::milliseconds> {
+    return input_latency_.p95(std::chrono::steady_clock::now());
 }
 
 auto TerminalView::report_cell(aurora::Point window_point) const -> std::optional<GridCellPos> {
@@ -2299,6 +2320,9 @@ auto TerminalView::ask_multiline_warning(const term::PastePlan &plan, std::funct
 }
 
 auto TerminalView::send_paste_plan(const term::PastePlan &plan) -> void {
+    if (!plan.chunks.empty()) {
+        note_input_issued();  // 一次粘贴是一笔用户动作，起点取计划提交那一刻，不按节流块重复记
+    }
     std::erase_if(paste_timers_, [](const aurora::TimerHandle &handle) -> bool { return !handle.active(); });
     aurora::Scheduler *scheduler = aurora::Scheduler::current();
     if (scheduler == nullptr) {
