@@ -23,6 +23,21 @@ namespace borealis::ui {
 
 namespace {
 
+// 卡片几何（屏 1 稿 `codespec/UI_WORKSPACE.draft.svg` 标签条那一行，与 `UI_WORKSPACE_INTERACT.draft.md`
+// §1 的「栏高 / 格高 / 圆角 = 42 / 38 / 6 dp」同值；稿的 `<rect x=8 y=40 w=176 h=38 rx=6>` 折成 dp 就是
+// 下面四枚）：格高 38 落在 42 的栏里 ⇒ **顶内缩 4、底贴齐**；整条栏的首格左内缩 8、相邻零间距；活动格的
+// 2 dp `accent` 画在**格顶**且左右各内缩 8（稿 `line x1=16 y1=41 x2=176`，即卡左右各让开一个圆角）。
+//
+// 两处稿内自相矛盾按不变量取，登记在裁决 7.187：① 交互稿判据 ⑭ 写的是「2 dp accent **下划线**」，而卡
+// 底贴齐栏底且四角都圆 ⇒ 通宽下划线会在两个圆角外溢出墨，稿那个「内缩 8」正是避开圆角的那一档，故取
+// 卡顶；② 稿的栏底 `#191A21` 是 §2.1 表里的 `input`（用途只列输入框／键位胶囊／终端格底），同一张表把
+// 「标签条底」点名给了 `chrome` ⇒ 颜色仍走 `card_bg`，本棒不动。
+constexpr float kCardHeightDp = 38.0F;
+constexpr float kCardRadiusDp = 6.0F;
+constexpr float kStripLeftInsetDp = 8.0F;
+constexpr float kAccentInsetDp = 8.0F;
+constexpr float kAccentThicknessDp = 2.0F;
+
 // 类型图标槽（`SPEC.FEAT.WS.04` 的 D4）：字形盒 12 dp + 与名称的间距 6 dp。占用它的三处（栏位宽、
 // 名称原点、可截断宽）都从这两个常量取，故「左槽挪一格就要同改四处」这件事在本 TU 里不存在。
 constexpr float kTypeSlotWidth = 12.0F;
@@ -197,7 +212,8 @@ auto TabBarWidget::tab_width(const TabVisual &tab) const -> float {
 
 auto TabBarWidget::hit_test_at(float x_dp) const -> HitResult {
     HitResult result;
-    float x = -scroll_offset_;
+    // 起点与绘制同源（首格左内缩那 8 dp 不是任何一格的落区）。
+    float x = kStripLeftInsetDp - scroll_offset_;
     for (const auto &tab : cached_tabs_) {
         const float w = tab_width(tab);
         if (x_dp >= x && x_dp < x + w) {
@@ -217,12 +233,14 @@ auto TabBarWidget::compute_scroll_offset(float available_width) const -> float {
     if (cached_tabs_.empty()) {
         return 0.0F;
     }
+    // 可用宽要先扣掉首格那 8 dp 左内缩——它是栏的一部分，但不是任何一格的地盘。
+    const float usable = std::max(0.0F, available_width - kStripLeftInsetDp);
     // 计算总宽
     float total_width = 0.0F;
     for (const auto &tab : cached_tabs_) {
         total_width += tab_width(tab);
     }
-    if (total_width <= available_width) {
+    if (total_width <= usable) {
         return 0.0F;
     }
     // 确保选中标签可见
@@ -235,8 +253,8 @@ auto TabBarWidget::compute_scroll_offset(float available_width) const -> float {
                 return x;
             }
             // 如果选中标签在可视区右边之外
-            if (x + w - scroll_offset_ > available_width) {
-                return x + w - available_width;
+            if (x + w - scroll_offset_ > usable) {
+                return x + w - usable;
             }
             // 已在可视区内，保持当前偏移
             return scroll_offset_;
@@ -273,33 +291,43 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
     au::Font font;
     font.size_pt = 13.0F;
 
-    float x = bounds.origin.x - scroll_offset_;
+    // 卡片纵向**底贴齐、顶内缩**（内缩由栏高减格高折出，两处不可能分叉成「卡浮在栏中间」）。
+    // 内容仍按**栏**中线落笔、不随卡片下移：稿的 ✕（y 53..61）与三枚角标（cy=57）都在栏中线 21 dp 上，
+    // 而卡片中线是 23 dp——本棒只动卡的那层底与描边，一格文字都不挪（挪动的 2 dp 会牵动本套件全部
+    // 像素证人，而稿自己这两档本就差 2 dp，裁决 7.187 登记这一条为「内容纵向不变」）。
+    const float card_top = bounds.origin.y + bar_height_ - kCardHeightDp;
+    const float content_top = bounds.origin.y + 14.0F;
+    const float content_mid = bounds.origin.y + bar_height_ * 0.5F;
+    float x = bounds.origin.x + kStripLeftInsetDp - scroll_offset_;
     for (std::size_t i = 0; i < cached_tabs_.size(); ++i) {
         const auto &tab = cached_tabs_[i];
         const float w = tab_width(tab);
-        const au::Rect tab_box{
-            .origin = au::Point{.x = x, .y = bounds.origin.y},
-            .size = au::Size{.width = w, .height = bar_height_}};
+        const au::Rect card_box{
+            .origin = au::Point{.x = x, .y = card_top},
+            .size = au::Size{.width = w, .height = kCardHeightDp}};
 
-        // 选中态背景 + 下划线
+        // 选中态：圆角卡片底 + 卡顶 2 dp accent（左右各内缩 8，让开两个圆角）。
         if (tab.is_selected) {
-            p.fill_rect(tab_box, chrome.control_bg);
-            // 2 dp 下划线
-            const au::Rect underline{
-                .origin = au::Point{.x = tab_box.origin.x, .y = tab_box.origin.y + bar_height_ - 2.0F},
-                .size = au::Size{.width = w, .height = 2.0F}};
-            p.fill_rect(underline, chrome.accent);
+            p.fill_rounded_rect(card_box, kCardRadiusDp, chrome.control_bg);
+            const au::Rect accent{
+                .origin = au::Point{.x = card_box.origin.x + kAccentInsetDp, .y = card_top},
+                .size = au::Size{.width = std::max(0.0F, w - 2.0F * kAccentInsetDp),
+                                 .height = kAccentThicknessDp}};
+            p.fill_rect(accent, chrome.accent);
         }
 
         // hover 态背景：选中底再压暗一档（`Color::shaded` 是框架对 hover/pressed 的统一派生法），两套色板
         // 同一条式子——亮档因此是比选中底略深的灰，暗档是栏底与选中底之间的一档。
+        // 稿的 hover 档写的是 `sel`（§2.1 表里那枚「代码侧尚无消费者」的格），本件按既有派生法而不为
+        // 一枚 hover 新增第 14 枚 token；差额登记在裁决 7.187 的欠项里。
         if (hovered_tab_id_ == tab.id && !tab.is_selected) {
-            p.fill_rect(tab_box, chrome.control_bg.shaded(0.9F));
+            p.fill_rounded_rect(card_box, kCardRadiusDp, chrome.control_bg.shaded(0.9F));
         }
 
         // 拖拽占位：正文色的低透明度盖层。跟着 `text` 走而不是写死白色——亮档正文近黑，白色盖层会看不见。
         if (drag_.has_value() && drag_->dragged_id == tab.id && drag_->is_dragging) {
-            p.fill_rect(tab_box, au::Color{chrome.text.r, chrome.text.g, chrome.text.b, 64});
+            p.fill_rounded_rect(card_box, kCardRadiusDp,
+                                au::Color{chrome.text.r, chrome.text.g, chrome.text.b, 64});
         }
 
         // 文本（截断到可用宽度）
@@ -318,7 +346,7 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         const auto display = truncate_name(tab.display_name, text_max_width, font);
         const au::Color text_color = tab.is_selected ? chrome.text : chrome.text_dim;
         const au::Rect text_box{
-            .origin = au::Point{.x = tab_box.origin.x + 12.0F + slot_width, .y = tab_box.origin.y + 14.0F},
+            .origin = au::Point{.x = card_box.origin.x + 12.0F + slot_width, .y = content_top},
             .size = au::Size{.width = text_max_width, .height = bar_height_ - 28.0F}};
         const auto display_utf8 = to_utf8(display);
 
@@ -327,7 +355,7 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         // 名称回到今日那个 `x+12`（判据 ② 的「逐位相同」就是这一句的屏幕形态）。
         if (tab.kind.has_value()) {
             const au::Rect glyph_box{
-                .origin = au::Point{.x = tab_box.origin.x + 12.0F, .y = tab_box.origin.y + 14.0F},
+                .origin = au::Point{.x = card_box.origin.x + 12.0F, .y = content_top},
                 .size = au::Size{.width = kTypeSlotWidth, .height = bar_height_ - 28.0F}};
             p.draw_text(glyph_box, std::string{connection_type_glyph(*tab.kind)}, font, text_color);
         }
@@ -336,8 +364,8 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         // 关闭钮（只在 hover 或选中时显形）
         if (tab.has_close_button && (tab.is_selected || hovered_tab_id_ == tab.id)) {
             const au::Rect close_box{
-                .origin = au::Point{.x = tab_box.origin.x + w - close_zone_ + 4.0F,
-                                    .y = tab_box.origin.y + 13.0F},
+                .origin = au::Point{.x = card_box.origin.x + w - close_zone_ + 4.0F,
+                                    .y = bounds.origin.y + 13.0F},
                 .size = au::Size{.width = 12.0F, .height = 16.0F}};
             const au::Color close_color = hovered_tab_id_ == tab.id ? chrome.accent : chrome.text_dim;
             p.draw_text(close_box, "×", font, close_color);
@@ -355,9 +383,9 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         // ——这也是本套件几何证人取的读数（比的是位置与色道，不是外接面积：`fill_sector` 四条边各 1 px
         // 羽化，实心点数随羽化档浮动，把「约 7×7」写成等号就是在钉框架的抗锯齿实现）。
         const auto draw_badge = [&](int rank, const au::Color &ink) -> void {
-            p.fill_sector(au::Point{.x = tab_box.origin.x + w - kBadgeAnchorInsetDp -
+            p.fill_sector(au::Point{.x = card_box.origin.x + w - kBadgeAnchorInsetDp -
                                           kBadgePitchDp * static_cast<float>(rank),
-                                    .y = tab_box.origin.y + bar_height_ * 0.5F},
+                                    .y = content_mid},
                           kBadgeRadiusDp, 0.0F, 0.0F, kFullCircle, ink);
         };
         int badge_rank = 0;
@@ -379,6 +407,15 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
 
         x += w;
     }
+
+    // 栏底那条 1 dp 细线（稿 `line x1=0 y1=78 x2=1500 y2=78 stroke=#3A3C4C`）：压在卡片之上画，因为稿的
+    // 次序就是先五格再这一线——它是标签条与下方内容区的分界，不属于任何一格。`#3A3C4C` 是 §2.1 表的
+    // `line`，13 枚 token 里没有这一格，按既有细线口径取 `card_line`（`app_title_bar` / `sidebar_rail`
+    // 同一条，裁决 7.179④c）。栏顶那条同类细线由自绘标题栏的底缘承担，不在本件。
+    const au::Rect hairline{
+        .origin = au::Point{.x = bounds.origin.x, .y = bounds.origin.y + bar_height_ - 1.0F},
+        .size = au::Size{.width = bounds.size.width, .height = 1.0F}};
+    p.fill_rect(hairline, chrome.card_line);
 
     // 右端两枚入口（屏 1 稿：`＋ 新建` 与 `⌄ 最近关闭`，固定右端、不参与溢出滚动）。
     // 字形按稿的折线画而不是按文本 run：稿那两枚是 `＋` 与 `⌄` 的线条包络，用字符画会随字体度量
