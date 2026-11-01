@@ -16,7 +16,8 @@
 // - 关闭钮只在 hover 与活动格显形，命中区＝栏位右端 20 dp；
 // - 拖拽重排有 4 dp 阈值，原格留半透明占位、两格间画落点导引线；
 // - 就地重命名用 TextInput 子类补 Esc 与失焦提交，空串即撤销；
-// - 「＋ 新建」与「⌄ 最近关闭」两枚固定右端、不参与溢出滚动（屏 1 稿右端簇，裁决 7.183）。
+// - 「＋ 新建」与「⌄ 最近关闭」两枚固定右端、不参与溢出滚动（屏 1 稿右端簇，裁决 7.183）：这一句在
+//   代码里兑现成「标签条的右界＝入口簇左沿」，偏移、命中、裁剪三处共用同一枚算式（裁决 7.188）。
 // ============================================================
 
 #include <cstddef>
@@ -117,9 +118,12 @@ class TabBarWidget final : public au::Widget {
         std::optional<std::uint64_t> tab_id;
         bool on_close_button = false;
     };
-    [[nodiscard]] auto hit_test_at(float x_dp) const -> HitResult;
+    /// @param x_dp 指针的 widget 本地横坐标。
+    /// @param right_edge 标签条的右界（`strip_right_edge`）——界外不属于任何一格，故溢出时末格
+    ///        不再把右端入口的点击抢走（绘制腿裁在同一条界上）。
+    [[nodiscard]] auto hit_test_at(float x_dp, float right_edge) const -> HitResult;
 
-    /// @brief 计算溢出偏移量（确保选中标签可见）。
+    /// @brief 计算溢出偏移量（确保选中标签可见，且整条标签层停在入口簇左沿之前）。
     [[nodiscard]] auto compute_scroll_offset(float available_width) const -> float;
 
     /// @brief 右端两枚入口的外接盒与落笔位（widget 本地坐标 dp，纵向通栏）。
@@ -133,6 +137,13 @@ class TabBarWidget final : public au::Widget {
     };
     /// @brief 由栏宽与两枚串宽折出右端簇（绘制与命中测试共用一枚算式，不各持一份）。
     [[nodiscard]] auto right_cluster(float width) const -> RightCluster;
+
+    /// @brief 标签条的右界＝入口簇的左沿（折到 `[0, width]` 内）。
+    ///
+    /// 三处共用同一枚：`compute_scroll_offset` 的可用宽、`hit_test_at` 的界外不判标签、`on_paint`
+    /// 的标签层裁剪——溢出滚动时末格既不能压在 `＋ 新建` 的墨迹上，也不能抢走那一截的点击（裁决 7.188）。
+    /// 界取簇左沿而**不自造间隙**：稿只给了「末格 → 入口簇」之外的那些数。
+    [[nodiscard]] static auto strip_right_edge(const RightCluster &cluster, float width) -> float;
 
     // Widget 虚钩子
     auto on_layout(const au::Constraints &c, const au::BuildContext &ctx) -> au::Size override;

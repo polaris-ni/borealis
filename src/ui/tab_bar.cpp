@@ -195,6 +195,13 @@ auto TabBarWidget::right_cluster(const float width) const -> RightCluster {
     return out;
 }
 
+auto TabBarWidget::strip_right_edge(const RightCluster &cluster, const float width) -> float {
+    // 界外那一截不属于任何一格。取簇左沿而不折新区间：稿没给「末格 → 入口簇」那一档间隙，自造一枚
+    // 就等于给本件加一条稿上没有的口径（裁决 7.188）。
+    // 不用 `std::clamp`：`width ≤ 0`（栏还没布局）时它的上下界会反序，那是未定义行为。
+    return std::min(std::max(0.0F, cluster.new_tab_box.origin.x), width);
+}
+
 auto TabBarWidget::tab_width(const TabVisual &tab) const -> float {
     au::Font font;
     font.size_pt = 13.0F;
@@ -210,8 +217,13 @@ auto TabBarWidget::tab_width(const TabVisual &tab) const -> float {
     return std::clamp(w, tab_min_width_, tab_max_width_);
 }
 
-auto TabBarWidget::hit_test_at(float x_dp) const -> HitResult {
+auto TabBarWidget::hit_test_at(const float x_dp, const float right_edge) const -> HitResult {
     HitResult result;
+    // 右端入口簇那一截先让掉：溢出时末格一路铺到入口之下，若这里不判界，`＋ 新建` 的点击就被一格
+    // 抢走（绘制腿在同一条界上裁剪，故「看不见」与「点不着」不可能分叉，裁决 7.188）。
+    if (x_dp >= right_edge) {
+        return result;
+    }
     // 起点与绘制同源（首格左内缩那 8 dp 不是任何一格的落区）。
     float x = kStripLeftInsetDp - scroll_offset_;
     for (const auto &tab : cached_tabs_) {
@@ -233,8 +245,10 @@ auto TabBarWidget::compute_scroll_offset(float available_width) const -> float {
     if (cached_tabs_.empty()) {
         return 0.0F;
     }
-    // 可用宽要先扣掉首格那 8 dp 左内缩——它是栏的一部分，但不是任何一格的地盘。
-    const float usable = std::max(0.0F, available_width - kStripLeftInsetDp);
+    // 可用宽两头都要扣：首格那 8 dp 左内缩是栏的一部分但不是任何一格的地盘，右端入口簇那一截则根本
+    // 不属于标签条（判据 21 那句「固定右端、不参与溢出滚动」在这里兑现成偏移，裁决 7.188）。
+    const float strip_edge = strip_right_edge(right_cluster(available_width), available_width);
+    const float usable = std::max(0.0F, strip_edge - kStripLeftInsetDp);
     // 计算总宽
     float total_width = 0.0F;
     for (const auto &tab : cached_tabs_) {
@@ -290,6 +304,19 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
 
     au::Font font;
     font.size_pt = 13.0F;
+
+    // 右端两枚入口的落笔盒先折出来：它的左沿就是标签层的右界（与 `hit_test_at`、`compute_scroll_offset`
+    // 同一枚算式）。溢出时末格会一路铺到入口之下，故这里把标签层裁在界内——判据 21 那句「固定右端、
+    // 不参与溢出滚动」的屏幕形态就是这一句（裁决 7.188）。
+    const RightCluster cluster = right_cluster(bounds.size.width);
+    const float strip_edge = strip_right_edge(cluster, bounds.size.width);
+    // 只在界确实落在栏内时才压裁剪：界归零是栏窄到装不下入口簇的退化档，那一档入口簇本就越过标签条右界，
+    // 而它落笔在标签之后（画在上头），空裁剪盒只会把标签整层抹掉。
+    const bool clip_strip = strip_edge > 0.0F && strip_edge < bounds.size.width;
+    if (clip_strip) {
+        p.push_clip(au::Rect{.origin = au::Point{.x = bounds.origin.x, .y = bounds.origin.y},
+                             .size = au::Size{.width = strip_edge, .height = bar_height_}});
+    }
 
     // 卡片纵向**底贴齐、顶内缩**（内缩由栏高减格高折出，两处不可能分叉成「卡浮在栏中间」）。
     // 内容仍按**栏**中线落笔、不随卡片下移：稿的 ✕（y 53..61）与三枚角标（cy=57）都在栏中线 21 dp 上，
@@ -407,6 +434,9 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
 
         x += w;
     }
+    if (clip_strip) {
+        p.pop_clip();
+    }
 
     // 栏底那条 1 dp 细线（稿 `line x1=0 y1=78 x2=1500 y2=78 stroke=#3A3C4C`）：压在卡片之上画，因为稿的
     // 次序就是先五格再这一线——它是标签条与下方内容区的分界，不属于任何一格。`#3A3C4C` 是 §2.1 表的
@@ -417,10 +447,9 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         .size = au::Size{.width = bounds.size.width, .height = 1.0F}};
     p.fill_rect(hairline, chrome.card_line);
 
-    // 右端两枚入口（屏 1 稿：`＋ 新建` 与 `⌄ 最近关闭`，固定右端、不参与溢出滚动）。
-    // 字形按稿的折线画而不是按文本 run：稿那两枚是 `＋` 与 `⌄` 的线条包络，用字符画会随字体度量
-    // 漂出稿位（自绘标题栏的三枚钮同一条口径，裁决 7.181①）。
-    const RightCluster cluster = right_cluster(bounds.size.width);
+    // 右端两枚入口的字形按稿的折线画而不是按文本 run：稿那两枚是 `＋` 与 `⌄` 的线条包络，用字符画会随
+    // 字体度量漂出稿位（自绘标题栏的三枚钮同一条口径，裁决 7.181①）。落笔盒 `cluster` 在上面就折好了，
+    // 标签层的裁剪与它同源。
     const auto draw_label = [&](const au::Rect &box, const double size_pt, const std::string &text,
                                 const au::Color &ink) -> void {
         if (box.size.width <= 0.0F || text.empty()) {
@@ -461,7 +490,12 @@ auto TabBarWidget::on_pointer_event(au::MouseEvent &e) -> void {
         if (hooks_.note_press) {
             hooks_.note_press();
         }
-        const auto hit = hit_test_at(e.local_position.x);
+        // 右端两枚入口与标签层的右界同出一枚算式（`right_cluster` + `strip_right_edge`），故「画在哪儿」
+        // 与「点哪儿算」不可能分叉：命中测试先在入口簇左沿止步，剩下的那一截才交给两枚入口。
+        // 空盒（栏没宽、或 `hooks_.undo_close` 不在位）一律不吃点击。
+        const auto widget_size = size();
+        const auto cluster = right_cluster(widget_size.width);
+        const auto hit = hit_test_at(e.local_position.x, strip_right_edge(cluster, widget_size.width));
         if (hit.tab_id.has_value()) {
             if (hit.on_close_button) {
                 // 关闭标签
@@ -484,10 +518,8 @@ auto TabBarWidget::on_pointer_event(au::MouseEvent &e) -> void {
             e.is_handled = true;
             return;
         }
-        // 右端两枚入口：命中盒由 `right_cluster` 与绘制同一枚算式给出，故「画在哪儿」与「点哪儿算」
-        // 不可能分叉。空盒（栏没宽、或 `hooks_.undo_close` 不在位）一律不吃点击。
-        const auto widget_size = size();
-        const auto cluster = right_cluster(widget_size.width);
+        // 右端两枚入口：命中盒与上面那条界同源（同一次 `right_cluster` 调用），故「画在哪儿」与「点哪儿算」
+        // 不可能分叉。
         const auto hits = [&](const au::Rect &box) -> bool {
             return box.size.width > 0.0F && box.contains(e.local_position);
         };
@@ -530,7 +562,10 @@ auto TabBarWidget::on_pointer_event(au::MouseEvent &e) -> void {
 
     // hover 态
     if (e.action == au::MouseAction::Move) {
-        const auto hit = hit_test_at(e.local_position.x);
+        const auto widget_size = size();
+        const float strip_edge =
+            strip_right_edge(right_cluster(widget_size.width), widget_size.width);
+        const auto hit = hit_test_at(e.local_position.x, strip_edge);
         if (hit.tab_id != hovered_tab_id_) {
             hovered_tab_id_ = hit.tab_id;
             mark_needs_paint();
