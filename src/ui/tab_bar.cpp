@@ -106,7 +106,8 @@ constexpr double kRecentLabelFontPt = 11.0;    ///< 稿 `最近关闭` font-size
 /// @brief u32string → UTF-8 string.
 [[nodiscard]] auto to_utf8(const std::u32string &s) -> std::string {
     std::string out;
-    term::encode_utf8(s, out);
+    // 返回值是「被替换的码点数」，显示名这一路不上报它（与 `src/main.cpp` 那三处同一条口径，裁决 7.192）。
+    static_cast<void>(term::encode_utf8(s, out));
     return out;
 }
 
