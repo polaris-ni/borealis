@@ -40,6 +40,21 @@
 ///           以及**内缩那一带不吃点击**——后一例与第一例是一对：绘制与命中各加一半内缩都会绿，只有两条
 ///           同时在场才判得出「看得见也点得着」。既有证人里所有绝对横坐标因此改写成「栏位相对 + 首格
 ///           内缩」（角标锚、类型槽），栏位内的相对档位一字未动。
+///           本棒（溢出可用宽扣掉右端入口簇，裁决 **7.188**）追加三例同一条界的证人——界＝入口簇左沿
+///           （栏宽 640、两枚串空、撤销腿在位 ⇒ 570），偏移、命中、裁剪三处取同一枚算式：
+///           - **偏移**：六格 576 dp 在旧可用宽 632 下装得下、偏移恒 0，末格整枚铺到 584 压在入口之下；
+///             可用宽改成「界 − 左内缩」后溢出成立，选中格右沿停在界上（卡片宽仍须是整枚 96，否则
+///             「只裁不滚」也会绿）；
+///           - **裁剪**：偏移只保证「选中格可见」，它右边的格照样铺得到界外——选中首格时偏移折回 0，
+///             末格占 488..584。未选中格只有 hover 才落卡片底，故本例配一枚新的 `hover` 驱动腿（只发一次
+///             `Move`），取 `control_bg.shaded(0.9)` 那一层墨迹读到「硬切在界上（±1 是框架 `shrink_to_clips`
+///             的裁剪取整档，写成等号就是钉框架实现）」，再把指针挪进 `＋` 那一截、以「整帧逐位复现 hover
+///             之前那一帧」判界外连一格都不点亮；
+///           - **命中**：`hit_test_at` 先在界外止步 ⇒ `＋` 的圆心（575）与撤销腿的盒（611..624）不再被
+///             一格抢走。这里须走**两态**：选中末格时偏移已把它钉在 474..570，575 本就落在格外，只判得出
+///             偏移、判不出命中自己那一步（实测存活变异＝把 Press 交的界换成栏宽，三例全绿）；选中首格时
+///             偏移折回 0、末格占 488..584，才是入口真被压在格下的那一态。另配一句反钳（界内那截仍归
+///             那一格：550..569 的关闭区、488..570 的选中区），界取早了两态都还绿、只有它红。
 ///           像素一律比 RGBA 四通道含 alpha（与 `itest_render_viewport` 同一条口径：Headless 帧底色是
 ///           全透明黑，只比 RGB 会把「画了个纯黑」与「什么都没画」混为一谈）。
 
@@ -139,6 +154,14 @@ constexpr std::size_t kPlusCenterInsetWithUndoPx =
     kClusterRightPadPx + kChevronWidthPx + kChevronToLabelGapPx + kClusterGapPx + kPlusSizePx / 2U;
 constexpr std::size_t kPlusCenterInsetNoUndoPx =
     kClusterRightPadPx + kClusterGapPx + kPlusSizePx / 2U;
+/// @brief 标签条的**右界**＝入口簇的左沿（裁决 **7.188**）：两枚串都空、撤销腿在位时由稿那四档夹缝折出
+///        `640 − 16 − 8 − 5 − 31 − 10 = 570`，即 `＋` 字形包络的左沿。绘制裁剪、命中测试的界外、溢出偏移
+///        的可用宽三处都取这一枚数，故三处不可能各持一份算式。
+constexpr std::size_t kStripRightEdgePx = static_cast<std::size_t>(kWindowWidth) - (kClusterRightPadPx +
+                                                                                  kChevronWidthPx +
+                                                                                  kChevronToLabelGapPx +
+                                                                                  kClusterGapPx +
+                                                                                  kPlusSizePx);
 /// @brief `＋` 右缘 → 其文字左沿的稿面夹缝（1362→1370）。与 `kChevronToLabelGapPx` 同一条来路：
 ///        判据按**稿的数**独立折出预期落位，而代码里那枚常量若改，落笔盒与墨迹一起动、墨迹当场与
 ///        这个预期分叉——盒与点同源的那几枚常量（右沿内缩、簇间距）单靠自身折不出证人，正因如此
@@ -316,6 +339,19 @@ class Harness {
             event.action = action;
             static_cast<void>(pointer_.dispatch_mouse(root_.widget(), event, &focus_));
         }
+        render();
+    }
+
+    /// @brief 只发一次 `Move`（不发 Press）——hover 态的唯一入口。
+    ///
+    /// 溢出裁剪那条判据要用它：未选中格**只有 hover 才落卡片底**，而「越界的那一格」恰恰不可能是选中格
+    /// （选中格被偏移钉在界内），故界外有没有墨这件事只能由 hover 那一层墨迹看出来。
+    auto hover(std::size_t x_dp) -> void {
+        au::MouseEvent event;
+        event.position = au::Point{.x = static_cast<float>(x_dp), .y = static_cast<float>(kBarHeightPx / 2U)};
+        event.button = au::MouseButton::Left;
+        event.action = au::MouseAction::Move;
+        static_cast<void>(pointer_.dispatch_mouse(root_.widget(), event, &focus_));
         render();
     }
 
@@ -1365,6 +1401,120 @@ AURORA_TEST_CASE(the_leading_gutter_belongs_to_no_cell) {
     h.click(kStripLeftInsetPx + 40U);  // 第 48 列：第一格之内（关闭钮那 20 dp 之外）
     AURORA_TEST_CHECK_EQ(h.strip().selected().value(), TabId{0U});
     AURORA_TEST_CHECK_EQ(h.note_press_calls(), std::size_t{2U});
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_overflowed_strip_parks_the_selected_card_before_the_entry_cluster) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 判据 21「`＋` 固定右端、不参与溢出滚动」的**偏移**那一半（裁决 **7.188**）：六格 96 dp 共 576 dp，
+    // 旧可用宽是整条栏宽减左内缩＝632 ⇒ 装得下，偏移恒为 0，末格整枚铺到 584、压在入口簇那 14 dp 之下。
+    // 可用宽改成「右界 570 − 左内缩 8」＝562 之后溢出成立，选中格（新建即选中末位）的右沿恰停在界上。
+    //
+    // 三句各拦一枚反向变异：卡片**宽仍是整枚 96**（只加裁剪不改偏移的话这里只剩 82 ⇒ 红）、右沿**逐值**
+    // 等于界（不裁而偏移也没改的话读到 583 ⇒ 红）、`accent` 那一笔完整 80 dp（卡片被切时它先短一截，
+    // 是与卡片底独立的一枚读数）。界外那一句是缺陷本身的说法，留着让红的时候一眼读得出是哪一头。
+    Harness h{std::vector<std::u32string>{U"a", U"a", U"a", U"a", U"a", U"a"}};
+    const auto frame = h.pixels();
+    const SettingsChrome chrome = Chrome();
+    const Points card = Harness::color_points(frame, chrome.control_bg);
+    AURORA_TEST_REQUIRE(!card.empty());
+    const Box card_box = Harness::box_of(card);
+    AURORA_TEST_CHECK_EQ(card_box.x1, kStripRightEdgePx - 1U);
+    AURORA_TEST_CHECK_EQ(card_box.width(), kSingleTabWidthPx);
+    AURORA_TEST_CHECK_TRUE(
+        clip_x(card, kStripRightEdgePx, static_cast<std::size_t>(kWindowWidth) - 1U).empty());
+
+    const Points accent = Harness::color_points(frame, chrome.accent);
+    AURORA_TEST_REQUIRE(!accent.empty());
+    const Box accent_box = Harness::box_of(accent);
+    AURORA_TEST_CHECK_EQ(accent_box.width(), kSingleTabWidthPx - 2U * kAccentInsetPx);
+    AURORA_TEST_CHECK_EQ(accent_box.x1, kStripRightEdgePx - kAccentInsetPx - 1U);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_hovered_card_is_cut_at_the_strip_edge_not_under_the_cluster) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 同一条界的**裁剪**那一半（裁决 7.188）。偏移只保证「选中格可见」，它右边的格照样可以铺到界外——
+    // 选中第一格时偏移归 0（首格左沿本就可见，无需回滚），末格因此整枚占住 488..584，越界 14 dp。
+    // 未选中格**只有 hover 才落卡片底**，而越界的那一格不可能同时是选中格（选中格被偏移钉在界内），
+    // 故「界外有没有墨」这件事只能由 hover 那一层墨迹看出来——这就是本例要新加一枚 `hover` 驱动腿的原因。
+    //
+    // 取色按 `control_bg.shaded(0.9)`（hover 底就是选中底再压暗一档，与 `card_bg`／`control_bg` 都不同值）。
+    // 横区间从第五格左沿起：选中格的圆角抗锯齿在 `card_bg`↔`control_bg` 之间取值，个别档位会逐位撞上
+    // 这一档暗值，把区间收窄到本例那一格才不受它牵连。
+    Harness h{std::vector<std::u32string>{U"a", U"a", U"a", U"a", U"a", U"a"}};
+    static_cast<void>(h.strip().select(TabId{0U}));
+    h.render();  // 变更钩子标脏 ⇒ `on_layout` 重跑，偏移由上一帧的 14 折回 0
+    const Frame idle = h.pixels();
+    h.hover(kStripLeftInsetPx + 5U * kSingleTabWidthPx + 12U);  // 末格之内（488+12，界内）
+    const auto frame = h.pixels();
+    const Points hover = clip_x(Harness::color_points(frame, Chrome().control_bg.shaded(0.9F)),
+                                kStripLeftInsetPx + 4U * kSingleTabWidthPx,
+                                static_cast<std::size_t>(kWindowWidth) - 1U);
+    AURORA_TEST_REQUIRE(!hover.empty());  // 反空转：这一格确实落了墨
+    const Box box = Harness::box_of(hover);
+    AURORA_TEST_CHECK_EQ(box.x0, kStripLeftInsetPx + 5U * kSingleTabWidthPx);
+    // 硬切在界上：不裁就读到 583。上下界各让一档是框架的裁剪取整口径（`shrink_to_clips` 把
+    // `floor(rect.right()) + 1` 当作排他上界 ⇒ 右沿落在界列本身），把这一档写成等号就是钉框架实现
+    // （裁决 7.183 记的那条口径）。
+    AURORA_TEST_CHECK_GE(box.x1, kStripRightEdgePx - 1U);
+    AURORA_TEST_CHECK_LE(box.x1, kStripRightEdgePx);
+    AURORA_TEST_CHECK_TRUE(clip_x(hover, kStripRightEdgePx + 2U, static_cast<std::size_t>(kWindowWidth) - 1U).empty());
+    AURORA_TEST_CHECK_LT(box.width(), kSingleTabWidthPx);  // 这一格是被裁的那一枚，不是整枚
+    // 界外也不**点亮**：把指针挪进 `＋` 那一截（575，旧口径下仍落在末格 488..584 之内），这一格的
+    // 卡片底与关闭钮都得整套撤掉 ⇒ 判据取整帧逐位复现 hover 之前那一帧（残影、错位、连带改动都红）。
+    h.hover(kStripRightEdgePx + 5U);
+    AURORA_TEST_CHECK_TRUE(Harness::changed(idle, h.pixels()).empty());
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_entry_cluster_keeps_its_click_when_a_card_used_to_cover_it) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 同一条界的**命中**那一半（裁决 7.188）：旧可用宽把整条栏宽都算给标签 ⇒ 六格时偏移为 0、末格铺到
+    // 584，而 `hit_test_at` 排在两枚入口之前，于是 `＋` 的圆心（575）与撤销腿的盒（611..624）落在一格
+    // 之内，点它们选中的是标签、入口一次也不响。界折进偏移并写进命中测试后，同一枚坐标走 `add_new`。
+    //
+    // 最后一句是反钳：界取早了（比如按撤销腿的左沿 611 或再内缩一档）上面三句都还是绿的，只有「末格
+    // 自己的关闭区仍归这一格」会把那一档抓出来——关闭区是栏位右端 20 dp，即 550..569。
+    Harness h{std::vector<std::u32string>{U"a", U"a", U"a", U"a", U"a", U"a"}};
+    static_cast<void>(h.pixels());
+    AURORA_TEST_REQUIRE_TRUE(h.strip().selected().has_value());
+    const TabId selected = *h.strip().selected();
+
+    h.click(kStripRightEdgePx + kPlusSizePx / 2U);  // `＋` 的圆心
+    AURORA_TEST_CHECK_EQ(h.add_new_calls(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(h.strip().selected().value(), selected);  // 一格都没换
+
+    h.click(static_cast<std::size_t>(kWindowWidth) - 20U);  // 撤销腿的盒内
+    AURORA_TEST_CHECK_EQ(h.undo_close_calls(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(h.add_new_calls(), std::size_t{1});
+
+    h.click(kStripRightEdgePx - 10U);  // 界内 10 dp＝末格自己的关闭区
+    AURORA_TEST_CHECK_EQ(h.strip().count(), std::size_t{5});
+
+    // 半态之后还须再来一态。上面这一态里偏移已把末格钉在 474..570，575 本就落在任何一格之外 ⇒
+    // **命中测试自己那一步判不出来**（实测存活变异：把 Press 交出去的界换成栏宽，三例全绿）。
+    // 越界那一态才真的把入口压在格下：选中首格 ⇒ 偏移折回 0 ⇒ 末格占 488..584，`＋` 的圆心与撤销腿
+    // 的盒全在这一格之内。
+    Harness spill{std::vector<std::u32string>{U"a", U"a", U"a", U"a", U"a", U"a"}};
+    static_cast<void>(spill.strip().select(TabId{0U}));
+    spill.render();
+    static_cast<void>(spill.pixels());
+    spill.click(kStripRightEdgePx + kPlusSizePx / 2U);  // 575：越界末格之内，也是 `＋` 的圆心
+    AURORA_TEST_CHECK_EQ(spill.add_new_calls(), std::size_t{1});
+    AURORA_TEST_CHECK_EQ(spill.strip().selected().value(), TabId{0U});  // 没被那一格抢走
+    spill.click(static_cast<std::size_t>(kWindowWidth) - 20U);          // 620：撤销腿的盒内
+    AURORA_TEST_CHECK_EQ(spill.undo_close_calls(), std::size_t{1});
+    // 界内不许多让：越界那一格在界内的部分仍归它（500 < 570 ⇒ 选中第五格）。
+    spill.click(kStripLeftInsetPx + 5U * kSingleTabWidthPx + 12U);
+    AURORA_TEST_CHECK_EQ(spill.strip().selected().value(), TabId{5U});
+    AURORA_TEST_CHECK_EQ(spill.add_new_calls(), std::size_t{1});
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif
