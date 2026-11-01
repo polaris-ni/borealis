@@ -34,6 +34,12 @@
 ///           改动不牵连邻格、四型四帧两两不同。
 ///           `SPEC.FEAT.PREF.01` 那条**色板证人**照旧：同一棵标签栏在暗、亮两档各出一帧，栏底逐档等于
 ///           `chrome_palette()` 的 `card_bg`，且切回暗档逐位复现首帧（换肤可逆）。
+///           本棒（屏 1 卡片几何按稿，裁决 **7.187**）追加四例几何证人：卡片的**首格左内缩 8 / 顶内缩 4 /
+///           底贴齐 / 6 dp 圆角**（按「这一格有没有被填」判，不量抗锯齿后的外接面积）、选中态那枚 2 dp
+///           `accent` 的**包络**（卡顶、左右各内缩 8）、栏底那条 1 dp 细线（含「压在卡片之上」那一档），
+///           以及**内缩那一带不吃点击**——后一例与第一例是一对：绘制与命中各加一半内缩都会绿，只有两条
+///           同时在场才判得出「看得见也点得着」。既有证人里所有绝对横坐标因此改写成「栏位相对 + 首格
+///           内缩」（角标锚、类型槽），栏位内的相对档位一字未动。
 ///           像素一律比 RGBA 四通道含 alpha（与 `itest_render_viewport` 同一条口径：Headless 帧底色是
 ///           全透明黑，只比 RGB 会把「画了个纯黑」与「什么都没画」混为一谈）。
 
@@ -81,6 +87,17 @@ constexpr int kWindowHeight = 64;
 /// @brief 栏高与状态角标簇的档位（屏 1 稿 `codespec/UI_WORKSPACE.draft.svg` 那三枚 `circle r=3`：
 ///        栏带 y 36..78、圆心 cy=57 即带中线、圆心距栏位右端 27；Headless 下 dp＝px）。
 constexpr std::size_t kBarHeightPx = 42U;
+/// @brief 卡片几何（屏 1 稿 `<rect x="8" y="40" width="176" height="38" rx="6">` 折成 dp，裁决 **7.187**）：
+///        首格左内缩 8、相邻零间距；格高 38 落在 42 的栏里 ⇒ 顶内缩 4、底贴齐；四角 6 dp 圆角；选中态的
+///        2 dp `accent` 在**卡顶**、左右各内缩 8（稿 `line x1=16 y1=41 x2=176 y2=41`）。
+///        判据 ⑭ 原文那句「2 dp accent 下划线」按不变量改判为卡顶——卡底贴齐栏底而四角皆圆，通宽下划线
+///        会在两个圆角外溢墨，稿那个「内缩 8」正是让开圆角的那一档（回写见 7.187）。
+constexpr std::size_t kStripLeftInsetPx = 8U;
+constexpr std::size_t kCardHeightPx = 38U;
+constexpr std::size_t kCardTopRowPx = kBarHeightPx - kCardHeightPx;
+constexpr std::size_t kCardRadiusPx = 6U;
+constexpr std::size_t kAccentInsetPx = 8U;
+constexpr std::size_t kAccentThicknessPx = 2U;
 constexpr std::size_t kBadgeRadiusPx = 3U;
 constexpr std::size_t kBadgeAnchorInsetPx = 27U;
 constexpr std::size_t kBadgePitchPx = 10U;
@@ -94,12 +111,15 @@ constexpr std::size_t kBadgeCoreMaxPx = 5U;
 constexpr std::size_t kBadgeCoreLeftOfCentrePx = 2U;
 /// @brief 单格 96 dp 栏位（短名贴住 `tab_min_width_` 钳位）上 rank-0 角标的圆心横坐标。
 constexpr std::size_t kSingleTabWidthPx = 96U;
+/// @brief 同一枚锚在**缓冲**上的绝对列（首格左内缩 8 + 栏位宽 96 − 锚 27 = 77）。
+constexpr std::size_t kFirstCellAnchorPx = kStripLeftInsetPx + kSingleTabWidthPx - kBadgeAnchorInsetPx;
 /// @brief 栏位钳位区间（`src/ui/tab_bar.cpp` 的 `tab_min_width_`／`tab_max_width_`）：判据 ③ 只在
 ///        两界之间才谈得上「恰为 18 dp」，故那里各有一枚边界断言。
 constexpr std::size_t kTabMinWidthPx = 96U;
 constexpr std::size_t kTabMaxWidthPx = 240U;
-/// @brief 类型图标槽的档位（`SPEC.FEAT.WS.04` 的 D4／F9）：字形盒占 x 12..23，实绘行带 21..32
-///        （13 pt 探针实测，dp＝px 于 Headless），名称原点由 12 挪到 30 ⇒ 占用总宽 18 dp。
+/// @brief 类型图标槽的档位（`SPEC.FEAT.WS.04` 的 D4／F9）：字形盒占**栏位内** x 12..23，实绘行带 21..32
+///        （13 pt 探针实测，dp＝px 于 Headless），名称原点由 12 挪到 30 ⇒ 占用总宽 18 dp。横坐标是
+///        栏位相对的，落到缓冲上要再加首格那 8 dp 左内缩。
 constexpr std::size_t kGlyphSlotX0 = 12U;
 constexpr std::size_t kGlyphSlotX1 = 23U;
 constexpr std::size_t kGlyphTopRow = 21U;
@@ -332,7 +352,7 @@ class Harness {
     /// @brief 一帧里**逐位等于**给定色道（RGBA 四通道）的像素坐标。
     ///
     /// 实心圆点的芯由此定位：`fill_sector` 只在覆盖率 1 的像素上落原色，边上各羽化 1 px ⇒ 这批点就是
-    /// 那一枚自己的一笔，不受同色道之外任何墨迹（选中底、下划线、名称）牵连。
+    /// 那一枚自己的一笔，不受同色道之外任何墨迹（选中底、卡顶 accent、名称）牵连。
     [[nodiscard]] static auto color_points(const Frame &frame, const au::Color &ink) -> Points {
         Points out;
         const std::size_t total = buffer_width() * buffer_height();
@@ -524,7 +544,8 @@ AURORA_TEST_CASE(the_bar_background_follows_the_active_chrome_scheme) {
     Harness light;
     const Frame light_frame = light.pixels();
 
-    // 单格标签最宽 240 dp，x=600 落在栏位之外的空白栏底；y=8 避开选中格的 2 dp 下划线（y 40..41）。
+    // 单格标签最宽 240 dp，x=600 落在栏位之外的空白栏底；y=8 既不在卡片那一层里（本档根本没有格铺到
+    // 600 列），也不在栏底那条 1 dp 细线（第 41 行）上。
     // 本棒右端那枚 `＋` 的墨迹占 x 565..581（竖笔到 y 27），取 y=8 这一行因此仍是纯栏底。
     const auto bar_pixel = [](const Frame &frame) -> std::array<std::uint8_t, 4U> {
         const std::size_t index = (8U * static_cast<std::size_t>(kWindowWidth) + 600U) * 4U;
@@ -602,7 +623,7 @@ AURORA_TEST_CASE(the_exit_badge_is_a_dot_on_the_draft_anchor) {
     AURORA_TEST_CHECK_LE(dot.box.width(), kBadgeCoreMaxPx);
     AURORA_TEST_CHECK_GE(dot.box.height(), kBadgeCoreMinPx - 1U);
     AURORA_TEST_CHECK_LE(dot.box.height(), kBadgeCoreMaxPx);
-    AURORA_TEST_CHECK_MSG(dot.has_core_at(kSingleTabWidthPx - kBadgeAnchorInsetPx, kBarHeightPx / 2U, 1U),
+    AURORA_TEST_CHECK_MSG(dot.has_core_at(kFirstCellAnchorPx, kBarHeightPx / 2U, 1U),
                           "the exit dot is not on the draft anchor (27 dp from the tab's right edge, mid-row)");
     // 实心档：芯里有圆心那一格（旧档的空心环正是靠这一句判出来）。
     AURORA_TEST_CHECK_GE(dot.pixels, (kBadgeRadiusPx - 1U) * (kBadgeRadiusPx - 1U));
@@ -638,7 +659,7 @@ AURORA_TEST_CASE(the_exit_dot_is_drawn_on_the_selected_tab_too) {
     AURORA_TEST_CHECK_EQ(a.width(), b.width());
     AURORA_TEST_CHECK_EQ(a.height(), b.height());
     AURORA_TEST_CHECK_EQ(a.y0, b.y0);  // 纵向落位与选中态无关
-    // 两档各走 `danger` 色道（选中底 `control_bg` 与下划线 `accent` 都吃不掉它，这一句同时是
+    // 两档各走 `danger` 色道（选中底 `control_bg` 与卡顶 `accent` 都吃不掉它，这一句同时是
     // 「选中格仍画」的色道证人）。
     const au::Color danger = Chrome().danger;
     AURORA_TEST_CHECK_GT(selected.count_color(selected_after, danger), std::size_t{0U});
@@ -672,7 +693,7 @@ AURORA_TEST_CASE(the_exit_and_bell_dots_pack_leftward_in_priority_order) {
 
     const Dot exit_dot = core_of(exit_pts);
     const Dot bell_dot = core_of(bell_pts);
-    AURORA_TEST_CHECK_EQ(exit_dot.box.x0, kSingleTabWidthPx - kBadgeAnchorInsetPx - kBadgeCoreLeftOfCentrePx);
+    AURORA_TEST_CHECK_EQ(exit_dot.box.x0, kFirstCellAnchorPx - kBadgeCoreLeftOfCentrePx);
     AURORA_TEST_CHECK_EQ(bell_dot.box.x0, exit_dot.box.x0 - kBadgePitchPx);  // 向左一枚 pitch
     AURORA_TEST_CHECK_EQ(Harness::overlap(exit_pts, bell_pts), std::size_t{0U});
     // 同带：两枚圆心的纵坐标相同（羽化档也一样，故比的是外接框而非像素集合）。
@@ -874,15 +895,15 @@ AURORA_TEST_CASE(an_unregistered_kind_draws_nothing_and_the_registered_one_lands
     // D5）。空名格用来给「这一带根本没有墨」一个颜色无关的证人——名称本身也从 x+12 起画，有名格判不出
     // 「没有占位符」。反空转在后半：同一台驱动台把类型登记上，同一矩形立刻不再单一。
     //
-    // 本棒之后 x 12..23 这一带仍是**纯底**（右端那枚 `＋` 在 570 之外，角标簇在栏位右端），故两态判据
-    // 一字未改。
+    // 本棒之后这一带（缓冲列 20..31）仍是**纯卡片底**（右端那枚 `＋` 在 570 之外，角标簇在栏位右端），
+    // 故两态判据只差那 8 dp 左内缩。
     Harness h{std::vector<std::u32string>{U""}};
-    AURORA_TEST_CHECK_TRUE(Harness::is_uniform(h.pixels(), kGlyphSlotX0, kGlyphTopRow, kGlyphSlotX1,
-                                               kGlyphBottomRow));
+    AURORA_TEST_CHECK_TRUE(Harness::is_uniform(h.pixels(), kStripLeftInsetPx + kGlyphSlotX0, kGlyphTopRow,
+                                               kStripLeftInsetPx + kGlyphSlotX1, kGlyphBottomRow));
 
     h.set_kind(0U, ConnectionType::Local);
-    AURORA_TEST_CHECK_FALSE(Harness::is_uniform(h.pixels(), kGlyphSlotX0, kGlyphTopRow, kGlyphSlotX1,
-                                                kGlyphBottomRow));
+    AURORA_TEST_CHECK_FALSE(Harness::is_uniform(h.pixels(), kStripLeftInsetPx + kGlyphSlotX0, kGlyphTopRow,
+                                                kStripLeftInsetPx + kGlyphSlotX1, kGlyphBottomRow));
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif
@@ -1175,9 +1196,9 @@ AURORA_TEST_CASE(the_icon_and_the_three_badges_land_in_four_disjoint_bands) {
     AURORA_TEST_CHECK_EQ(Harness::overlap(danger, warning), std::size_t{0U});
     AURORA_TEST_CHECK_EQ(Harness::overlap(warning, success), std::size_t{0U});
     AURORA_TEST_CHECK_EQ(Harness::overlap(danger, success), std::size_t{0U});
-    // 字形留在它自己的槽里：左带 x 12..23、行带 y 21..32（F9 实测 + D4 拍的槽）。
-    AURORA_TEST_CHECK_GE(Harness::box_of(icon).x0, kGlyphSlotX0);
-    AURORA_TEST_CHECK_LE(Harness::box_of(icon).x1, kGlyphSlotX1);
+    // 字形留在它自己的槽里：栏位内 x 12..23（缓冲列 20..31）、行带 y 21..32（F9 实测 + D4 拍的槽）。
+    AURORA_TEST_CHECK_GE(Harness::box_of(icon).x0, kStripLeftInsetPx + kGlyphSlotX0);
+    AURORA_TEST_CHECK_LE(Harness::box_of(icon).x1, kStripLeftInsetPx + kGlyphSlotX1);
     AURORA_TEST_CHECK_GE(Harness::box_of(icon).y0, kGlyphTopRow);
     AURORA_TEST_CHECK_LE(Harness::box_of(icon).y1, kGlyphBottomRow);
     // 图标与最左一枚角标横向分离（本棒之后两者同带，故只谈得上横向这一档）。
@@ -1239,6 +1260,111 @@ AURORA_TEST_CASE(the_four_kinds_land_four_pairwise_different_frames) {
                                   "two connection types rendered the very same frame");
         }
     }
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_active_card_is_inset_and_rounded_within_the_band) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 屏 1 稿那枚 `<rect x="8" y="40" width="176" height="38" rx="6">` 的三档落位（裁决 7.187），逐档都可
+    // 被一枚界内变异翻掉，且都不靠抗锯齿后的外接面积：
+    //  - **首格左内缩 8**：x 0..7 整列仍是纯栏底（内缩写成 0 即红），而第 8 列从卡片中段往下就是卡片原色
+    //    （内缩写成 20 也红——两句夹住同一个数，与只断一句的写法不同）；
+    //  - **顶内缩 4、底贴齐**：卡片自己的列程内第 0..3 行是纯栏底（格高写成整条栏即红），而第 40 行仍有
+    //    卡片原色（卡片改成上下各内缩即红）；栏底那条细线盖在第 41 行，故贴齐的读数取第 40 行；
+    //  - **6 dp 圆角**：左上角那一格（第 8 列第 4 行）落在圆弧之外 ⇒ 逐位还是栏底，而同一列的直边段是
+    //    卡片原色。直角卡片（rx=0）在这一句上把角上那格一起填了。
+    Harness h;
+    const auto frame = h.pixels();
+    const SettingsChrome chrome = Chrome();
+    const Points card = Harness::color_points(frame, chrome.control_bg);
+    AURORA_TEST_REQUIRE(!card.empty());
+
+    AURORA_TEST_CHECK_TRUE(
+        Harness::is_uniform(frame, 0U, 0U, kStripLeftInsetPx - 1U, kBarHeightPx - 2U));  // 内缩那一列程
+    AURORA_TEST_CHECK_EQ(card.count({kStripLeftInsetPx, kBarHeightPx / 2U}), std::size_t{1U});
+    AURORA_TEST_CHECK_TRUE(Harness::is_uniform(frame, kStripLeftInsetPx + 12U, 0U, kStripLeftInsetPx + 40U,
+                                               kCardTopRowPx - 1U));                    // 顶内缩那四行
+    AURORA_TEST_CHECK_EQ(card.count({kStripLeftInsetPx + 20U, kBarHeightPx - 2U}), std::size_t{1U});  // 底贴齐
+    AURORA_TEST_CHECK_EQ(Harness::color_points(frame, chrome.card_bg).count({kStripLeftInsetPx, kCardTopRowPx}),
+                         std::size_t{1U});  // 角在圆弧之外
+    AURORA_TEST_CHECK_EQ(card.count({kStripLeftInsetPx, kCardTopRowPx}), std::size_t{0U});
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_active_marker_is_a_two_dp_band_on_the_card_top) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 选中态那枚 2 dp `accent` 的包络按稿折成坐标（`line x1=16 y1=41 x2=176 y2=41` ⇒ 卡左右各内缩 8、
+    // 落在卡顶那一截）。本档 `accent` 在全帧只此一处（未 hover ⇒ 关闭钮不落 `accent`），故按色道取到的
+    // 外接框就是这一笔本身。
+    //
+    // 两条反面各钉一头：写成卡底通宽（判据 ⑭ 那句「下划线」的旧读法）则 y 与 x0 同时红；写成整条栏的通
+    // 宽则 x1 红。纵向那两行是 `fill_rect` 的整数落笔，不涉羽化，故可以逐值写死。
+    Harness h;
+    const auto frame = h.pixels();
+    const Points accent = Harness::color_points(frame, Chrome().accent);
+    AURORA_TEST_REQUIRE(!accent.empty());
+    const Box band = Harness::box_of(accent);
+    AURORA_TEST_CHECK_EQ(band.x0, kStripLeftInsetPx + kAccentInsetPx);
+    AURORA_TEST_CHECK_EQ(band.x1, kStripLeftInsetPx + kSingleTabWidthPx - kAccentInsetPx - 1U);
+    AURORA_TEST_CHECK_EQ(band.y0, kCardTopRowPx);
+    AURORA_TEST_CHECK_EQ(band.y1, kCardTopRowPx + kAccentThicknessPx - 1U);
+    // 这一笔之内不许有空档：包络宽 = 格宽 − 两个内缩，行数 = 厚度。
+    AURORA_TEST_CHECK_EQ(band.width(), kSingleTabWidthPx - 2U * kAccentInsetPx);
+    AURORA_TEST_CHECK_EQ(band.height(), kAccentThicknessPx);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_band_bottom_row_is_one_dp_of_the_drafts_hairline) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 稿 `line x1="0" y1="78" x2="1500" y2="78" stroke="#3A3C4C"` 的兑现：栏底那一整行是一条 1 dp 细线，
+    // 而且**压在卡片之上**（稿的落笔次序就是先五格再这一线）。`#3A3C4C` 是 §2.1 表的 `line`，13 枚 token
+    // 里没有这一格 ⇒ 按既有细线口径取 `card_line`（`app_title_bar` / `sidebar_rail` 同一条，裁决 7.179④c）。
+    // 三档各有承重句：整行没画 ⇒ 芯空；画成两行 ⇒ 纵向包络变 2；画在卡片之下 ⇒ 点数不满一整行宽。
+    // 同帧里 `card_line` 只此一处（圆角的抗锯齿混合只在 `card_bg`↔`control_bg` 之间取值，够不着这一档），
+    // 故按色道取到的就是这一条线本身。
+    Harness h;
+    const auto frame = h.pixels();
+    const Points line = Harness::color_points(frame, Chrome().card_line);
+    AURORA_TEST_REQUIRE(!line.empty());
+    const Box box = Harness::box_of(line);
+    AURORA_TEST_CHECK_EQ(box.y0, kBarHeightPx - 1U);
+    AURORA_TEST_CHECK_EQ(box.y1, kBarHeightPx - 1U);
+    AURORA_TEST_CHECK_EQ(box.x0, std::size_t{0U});
+    AURORA_TEST_CHECK_EQ(box.x1, static_cast<std::size_t>(kWindowWidth) - 1U);
+    AURORA_TEST_CHECK_EQ(line.size(), static_cast<std::size_t>(kWindowWidth));  // 一格宽的缺口都没有
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_leading_gutter_belongs_to_no_cell) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 绘制与命中同源的另一半（裁决 7.187）：首格那 8 dp 内缩在屏幕上看得见，但不是任何一格的落区。
+    // 这一例专防「绘制加了内缩而命中没加」——那时第 4 列会选中第一格，本例第一句即红；反向的「命中加了
+    // 内缩而绘制没加」由上一例那句「内缩那一列程是纯栏底」接住。两例合起来才是「看得见也点得着」。
+    //
+    // 两格（alpha／beta）：新建即选中末位 ⇒ 基线选中的是 beta，于是「内缩里点一下」有没有悄悄换格是可见的。
+    Harness h{std::vector<std::u32string>{U"alpha", U"beta"}};
+    static_cast<void>(h.pixels());
+    AURORA_TEST_REQUIRE_TRUE(h.strip().selected().has_value());
+    AURORA_TEST_CHECK_EQ(h.strip().selected().value(), TabId{1U});
+
+    h.click(kStripLeftInsetPx / 2U);  // 第 4 列：内缩那一带
+    AURORA_TEST_CHECK_EQ(h.note_press_calls(), std::size_t{1U});
+    AURORA_TEST_CHECK_EQ(h.strip().selected().value(), TabId{1U});  // 一格都没碰着
+    AURORA_TEST_CHECK_EQ(h.strip().count(), std::size_t{2U});       // 也没走关闭
+    AURORA_TEST_CHECK_EQ(h.add_new_calls(), std::size_t{0});
+    AURORA_TEST_CHECK_EQ(h.undo_close_calls(), std::size_t{0});
+
+    h.click(kStripLeftInsetPx + 40U);  // 第 48 列：第一格之内（关闭钮那 20 dp 之外）
+    AURORA_TEST_CHECK_EQ(h.strip().selected().value(), TabId{0U});
+    AURORA_TEST_CHECK_EQ(h.note_press_calls(), std::size_t{2U});
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif
