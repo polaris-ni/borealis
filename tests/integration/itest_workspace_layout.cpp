@@ -95,6 +95,18 @@ constexpr int kBlinkPeriodMs = 100;
 constexpr RgbaColor kChromeInk{0x21, 0x22, 0x2C, 255};   ///< 分屏底：缝隙与把手两侧的空带
 constexpr RgbaColor kHandleInk{0x4D, 0x4F, 0x63, 255};   ///< 把手静止态
 constexpr RgbaColor kAccentInk{0xBD, 0x93, 0xF9, 255};   ///< 把手 hover / 拖拽态与焦点 pane 描边
+constexpr RgbaColor kThumbInk{0x4D, 0x4F, 0x63, 255};    ///< 回看滑块＝chrome `card_line`（与把手同格，两条各取各的）
+
+/// @brief 缩放角标／焦点药丸的横向落位（屏 1 稿 `codespec/UI_WORKSPACE.draft.svg` ＋
+///        `codespec/UI_WORKSPACE_ZOOM.draft.md` §2.2，裁决 **7.194**）。
+///
+/// 测试各持一份是刻意的（同 `itest_render_viewport.cpp` 里那件外的 `ScrollbarBand` 算式）：读实现自己的
+/// 常量只会跟着一起错。右内缩如今取**回看滚动条那一带的总宽**——稿面轨道 `x=944 width=4` 与 pane 右缘
+/// 954 折出「内缩 6 ＋带宽 4」，底板那 20 dp 是不透明的（D6/D11），压在带上就把滑块顶段吃掉一截。
+constexpr double kBadgeBoxDp = 20.0;
+constexpr double kBadgeTopInsetDp = 4.0;
+constexpr double kBadgeRightInsetDp = 6.0 + 4.0;
+constexpr double kPillToBadgeDp = 6.0;
 
 /// @brief 帧缓冲取点越界时的返回值：一个画面里不可能出现的色，断言因此红得可读而不是踩内存。
 constexpr RgbaColor kOutsideFrame{0x11, 0x22, 0x33, 0x44};
@@ -409,11 +421,11 @@ class Harness {
                          .y = static_cast<float>(box.y + box.height / 2.0)};
     }
 
-    /// @brief 缩放角标的几何中心：20 dp 底板距 pane 右边与上边各 4 dp（视觉稿 §2.2）。
+    /// @brief 缩放角标的几何中心：20 dp 底板距 pane **上边 4 dp、右边一带的总宽 10 dp**（裁决 7.194）。
     [[nodiscard]] auto badge_center(PaneId pane) const -> au::Point {
         const Rect box = pane_box(pane);
-        return au::Point{.x = static_cast<float>(box.x + box.width - 14.0),
-                         .y = static_cast<float>(box.y + 14.0)};
+        return au::Point{.x = static_cast<float>(box.x + box.width - kBadgeRightInsetDp - kBadgeBoxDp / 2.0),
+                         .y = static_cast<float>(box.y + kBadgeTopInsetDp + kBadgeBoxDp / 2.0)};
     }
 
     /// @brief 展开字形（外向双箭头）上一个满覆盖的 accent 落点。
@@ -437,15 +449,46 @@ class Harness {
     /// @brief 底板内不压字形的取样点（离底板左上角 2 dp；字形盒从 5 dp 处才开始）。
     [[nodiscard]] auto badge_plate_point(PaneId pane) const -> au::Point {
         const Rect box = pane_box(pane);
-        return au::Point{.x = static_cast<float>(box.x + box.width - 4.0 - 20.0 + 2.0),
-                         .y = static_cast<float>(box.y + 4.0 + 2.0)};
+        return au::Point{.x = static_cast<float>(box.x + box.width - kBadgeRightInsetDp - kBadgeBoxDp + 2.0),
+                         .y = static_cast<float>(box.y + kBadgeTopInsetDp + 2.0)};
     }
 
-    /// @brief 焦点药丸底板上的一个满覆盖落点：底板右沿＝pane 右 − (4 + 20 + 6)（让位给缩放角标），
-    ///        取它内 1 dp、底板铅垂居中那一点——圆角只吃四角，不吃这一档。
+    /// @brief 底板**右沿内 1 dp**那一格：与滚动条带左沿同一档（带总宽 10 ⇒ 该点在带之左、在底板之内）。
+    [[nodiscard]] auto badge_plate_right_edge_point(PaneId pane) const -> au::Point {
+        const Rect box = pane_box(pane);
+        return au::Point{.x = static_cast<float>(box.x + box.width - kBadgeRightInsetDp - 1.0),
+                         .y = static_cast<float>(box.y + kBadgeTopInsetDp + kBadgeBoxDp / 2.0)};
+    }
+
+    /// @brief 回看滚动条那一竖带里的一个落点：横向按「距视口右缘 @p from_right dp」给（带宽 4、右内缩
+    ///        6 ⇒ 带占 `右 − 10 .. 右 − 6`，取 8/9 即带内），纵向取格带顶下 @p below_track_top dp——
+    ///        滚到最旧时滑块就贴在那一沿，而格带顶正是角标底板那一档纵向区间的起点。
+    [[nodiscard]] auto band_point(PaneId pane, double from_right, double below_track_top) const -> au::Point {
+        const TerminalView *view = workspace_->view_of(pane);
+        AURORA_TEST_REQUIRE(view != nullptr);
+        const au::Rect frame = view->paint_bounds();
+        const auto geometry = view->grid_geometry();
+        return au::Point{
+            .x = static_cast<float>(frame.origin.x + frame.size.width - from_right),
+            .y = static_cast<float>(frame.origin.y + geometry.padding + below_track_top)};
+    }
+
+    /// @brief 药丸右沿与角标底板左沿之间那 6 dp 空档的正中（`pane 右 − 10 − 20 − 3`）：这一格既不在
+    ///        角标底板里、也不该被药丸铺到——药丸让位若不再与角标同源（写死旧内缩 4 dp），它会一路压过
+    ///        这一点，读到的是 accent 而不是 pane 自己的底（裁决 7.194）。
+    [[nodiscard]] auto pill_to_badge_gap(PaneId pane) const -> au::Point {
+        const Rect box = pane_box(pane);
+        return au::Point{.x = static_cast<float>(box.x + box.width - kBadgeRightInsetDp - kBadgeBoxDp - 3.0),
+                         .y = static_cast<float>(box.y + 16.0)};
+    }
+
+    /// @brief 焦点药丸底板上的一个满覆盖落点：底板右沿＝pane 右 − (角标右内缩 + 20 + 6)（让位给缩放
+    ///        角标，那枚内缩随裁决 7.194 一并同源），取它内 1 dp、底板铅垂居中那一点——圆角只吃四角，
+    ///        不吃这一档。
     [[nodiscard]] auto pill_plate_point(PaneId pane) const -> au::Point {
         const Rect box = pane_box(pane);
-        return au::Point{.x = static_cast<float>(box.x + box.width - 31.0),
+        return au::Point{.x = static_cast<float>(box.x + box.width - kBadgeRightInsetDp - kBadgeBoxDp -
+                                                  kPillToBadgeDp - 1.0),
                          .y = static_cast<float>(box.y + 16.0)};
     }
 
@@ -454,10 +497,8 @@ class Harness {
     ///        底（底板没铺到的左段），也可能有底板与字墨——三条计数各管一件事。
     [[nodiscard]] auto pill_glyph_band(PaneId pane) const -> Rect {
         const Rect box = pane_box(pane);
-        return Rect{.x = box.x + box.width - 90.0,
-                    .y = box.y + 11.0,
-                    .width = 60.0,
-                    .height = 10.0};
+        const double right = box.x + box.width - kBadgeRightInsetDp - kBadgeBoxDp - kPillToBadgeDp - 1.0;
+        return Rect{.x = right - 60.0, .y = box.y + 11.0, .width = 60.0, .height = 10.0};
     }
 
     /// @brief 某 pane 第 @p row 行第 @p column 列的落点（窗口坐标；行列是该视图自己的屏幕坐标）。
@@ -1591,6 +1632,36 @@ AURORA_TEST_CASE(the_badge_glyph_shares_its_plate_origin_when_the_root_is_inset)
     AURORA_TEST_CHECK(h.sample(px, h.badge_expand_ink_point(1U)) != kAccentInk);
 }
 
+/// @brief 判据 (f)（裁决 **7.194**）：缩放角标那枚 20 dp **不透明**底板不得吃掉回看滚动条的顶段。
+///
+/// 旧那 4 dp 右内缩让底板铺到 `pane 右 − 4`，而轨道在 `右 − 10 .. 右 − 6`（稿面 pane 右缘 954、轨道
+/// `x=944 width=4`），于是「滚到最旧」那一帧里滑块最上面那 20 dp 被 chrome 底整截盖住；缩放态底板常显
+/// 时更是永久少一段行程（`SPEC.FEAT.WS.02` 余项 (f)，7.185⑨c 登记）。钳到带总宽 10 dp 之后底板右沿正
+/// 落在轨道左沿上，而 10 dp 字形在底板内居中 ⇒ 字形右沿读回 `右 − 15`，与稿那枚 `x=931..939` 的包络
+/// 逐值到位（稿的字形与轨道之间也是 5 dp 空档）。
+AURORA_TEST_CASE(the_zoom_badge_plate_leaves_the_scrollback_band_visible) {
+    Harness h;
+    AURORA_TEST_REQUIRE(h.preflight());
+    h.press(au::KeyCode::D, Harness::ctrl_shift());
+    h.render();
+    h.settle();
+    h.feed(1U, make_lines(60U));  // 造 scrollback ⇒ 这一格右侧那条带才开始画（7.185①：闸门是「有无可回看」）
+    h.scroll(1U, 60);              // 滚到最旧 ⇒ 滑块贴格带顶，正落在底板那一档纵向区间
+    h.render();
+
+    // 底板确实显形了（反空转：不是「角标没画所以当然没盖」）。
+    h.pointer(au::MouseAction::Move, h.badge_center(1U));
+    h.render();
+    const auto px = h.pixels();
+    AURORA_TEST_REQUIRE(h.sample(px, h.badge_plate_point(1U)) == kChromeInk);
+
+    // 判据：带内那一列读到的是滑块（chrome `card_line`），不是底板。旧码在这一格取到的是 `kChromeInk`。
+    AURORA_TEST_CHECK(h.sample(px, h.band_point(1U, 8.0, 6.0)) == kThumbInk);
+    AURORA_TEST_CHECK(h.sample(px, h.band_point(1U, 9.0, 6.0)) == kThumbInk);
+    // 让位落在哪一档也钉住：底板右沿内 1 dp 仍是底板 ⇒ 盒与带的交界在 `右 − 10` 那一列（再往左让就红）。
+    AURORA_TEST_CHECK(h.sample(px, h.badge_plate_right_edge_point(1U)) == kChromeInk);
+}
+
 AURORA_TEST_CASE(single_pane_zoom_is_claimed_but_does_nothing) {
     Harness h;
     AURORA_TEST_REQUIRE(h.preflight());
@@ -1671,8 +1742,9 @@ AURORA_TEST_CASE(the_focus_pill_marks_only_the_focused_pane) {
     h.workspace().set_focus_pill_text(U"focus 82x24");
     h.render();
     px = h.pixels();
-    // 底板＝accent，右沿按「pane 右 − (4 + 20 + 6)」落位（稿面那枚底板横向位置是装饰性的，让位
-    // 次序由裁决定：与缩放角标共存、且不随角标显形而跳格）。
+    // 底板＝accent，右沿按「pane 右 − (角标右内缩 + 20 + 6)」落位，那枚内缩与角标同源（现为滚动条带
+    // 总宽 10 dp，裁决 7.194）。稿面那枚底板横向位置是装饰性的，让位次序由裁决定：与缩放角标共存、
+    // 且不随角标显形而跳格。
     AURORA_TEST_CHECK(h.sample(px, h.pill_plate_point(2U)) == kAccentInk);
     // 反面证人：非焦点格同一档没有底板——它是「当前 pane 视觉标识」的第二个载体，只给焦点那一格。
     AURORA_TEST_CHECK(h.sample(px, h.pill_plate_point(1U)) == h.palette().default_background);
@@ -1689,6 +1761,11 @@ AURORA_TEST_CASE(the_focus_pill_marks_only_the_focused_pane) {
     px = h.pixels();
     AURORA_TEST_CHECK(h.sample(px, h.badge_plate_point(2U)) == kChromeInk);
     AURORA_TEST_CHECK(h.sample(px, h.pill_plate_point(2U)) == kAccentInk);
+    // 两枚之间的空档是判据：药丸右沿与角标同源（都从 `kScrollbarBandInsetDp` 起算），把让位写回旧的
+    // 4 dp 右内缩，药丸就多铺 12 dp、把这一点压成 accent——而 `pill_plate_point` 在底板内 1 dp，两种
+    // 落位都读得到底板，所以它抓不住这一格（变异自证 M3 的存活正是这个原因，裁决 7.194）。
+    AURORA_TEST_CHECK_MSG(h.sample(px, h.pill_to_badge_gap(2U)) == h.palette().default_background,
+                          "the focus pill reaches into the zoom badge corner");
 
     // 撤文案即撤药丸：装配层每帧现算，读数没了交的是空串而不是留一份旧值在屏上。
     h.workspace().set_focus_pill_text({});
