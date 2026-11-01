@@ -77,6 +77,20 @@
 ///           由两枚 1.6 dp 折线交成稿那个 8×8 包络，中心距**栏位**右缘 13 dp、纵向在 42 dp 的**带**中线
 ///           （旧码画 `×` 字形，实测中心距右缘 10 dp）。色道走 hover 那一档的 `accent`，并以「第 6 行
 ///           以下」把选中格卡顶那条 2 dp accent 排除在外；包络与中心都按实测档取区间，不钉抗锯齿落笔。
+///           本棒（屏 1 余项 (h)：溢出态里首格压进左内缩那 8 dp，裁决 **7.193**）追加三例。此前右界是
+///           三处同源（裁剪／命中／偏移，7.188），左内缩却只有偏移算式扣了它——绘制层的裁剪盒从 0 起笔、
+///           命中测试不判左界，而偏移非 0 时首格的走位左沿是「8 − 偏移」（六格即 -6）⇒ 那一格既把墨铺进
+///           栏的留白，又在那一截吃点击，正是「看得见却点不着／点得着却看不见」的镜像缺口。三例各拦一头：
+///           - **绘制**：六格溢出态下 hover 落在首格，卡片底的外接框左沿停在左内缩那一档（不裁则一路读到
+///             第 0 列）、右沿仍是整格折出的 89（这一句反空转，防「整枚被裁掉」也读成绿），飞地 0..7 逐列
+///             零墨；左沿写成 ±1 的区间而非等号，同 7.188 那条框架裁剪取整档；
+///           - **命中**：同态下点第 4 列（飞地之内、首格盒 -6..90 之内）不换格、不关闭、不走两枚入口，
+///             只留 `note_press` 一记证明事件真到了控件；正向对照点第 20 列仍在首格之内——界取早了这句红；
+///           - **导引线**：同态下把次格拖到第 0 列（中心 24 ⇒ 下标 0，缝＝首格左沿 -6）⇒ 那一笔钳回左
+///             内缩内侧、粗仍是判据 ⑯ 那 2 dp（列 8..9），松手交出的下标为 0。中心那一路**不**钳到内缩：
+///             指针落在飞地读作「落在表头」，抬到 8 会让已滚出左侧的那一格计入「中心在左」，导引线与落点
+///             当场分叉。这一例同时拦「只加裁剪不加钳位」的半截实现——缝不钳则那一笔整枚落在裁剪之外，
+///             第一句 REQUIRE 即红。
 
 #include <algorithm>
 #include <array>
@@ -193,6 +207,10 @@ constexpr std::size_t kStripRightEdgePx = static_cast<std::size_t>(kWindowWidth)
                                                                                   kChevronToLabelGapPx +
                                                                                   kClusterGapPx +
                                                                                   kPlusSizePx);
+/// @brief 六格 96 dp 时的**溢出偏移**（裁决 **7.193** 那三例的共同前提）：可用宽＝右界 − 左内缩＝562
+///        （7.188），六格共 576 ⇒ 偏移 14，首格的走位左沿因此落在 -6——正好压进栏那 8 dp 的留白里。
+///        测试侧按那四个稿数自己折出这一枚，而不是写死 14：偏移口径一改，本棒三例的落位预期跟着改。
+constexpr std::size_t kOverflowOffsetPx = 6U * kSingleTabWidthPx - (kStripRightEdgePx - kStripLeftInsetPx);
 /// @brief `＋` 右缘 → 其文字左沿的稿面夹缝（1362→1370）。与 `kChevronToLabelGapPx` 同一条来路：
 ///        判据按**稿的数**独立折出预期落位，而代码里那枚常量若改，落笔盒与墨迹一起动、墨迹当场与
 ///        这个预期分叉——盒与点同源的那几枚常量（右沿内缩、簇间距）单靠自身折不出证人，正因如此
@@ -1869,6 +1887,101 @@ AURORA_TEST_CASE(a_card_dragged_past_the_strip_edge_clamps_its_guide_to_the_edge
     AURORA_TEST_REQUIRE_EQ(order.size(), std::size_t{6U});
     AURORA_TEST_CHECK_EQ(order[0U], TabId{1U});
     AURORA_TEST_CHECK_EQ(order[5U], TabId{0U});
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_overflowed_first_card_is_cut_at_the_left_inset) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 余项 (h) 的**绘制**腿（裁决 **7.193**）：六格 576 dp 溢出 14 ⇒ 首格的走位左沿是 8−14 = -6，
+    // 于是 0..7 那一截栏的留白里铺进了它半张卡片底。此前右界是三处同源（裁剪／命中／偏移，7.188），
+    // 左内缩却只被偏移算式扣过——裁剪盒仍从 0 起笔，故这是那条判据的镜像缺口。
+    //
+    // 读数取 hover 那一档的 `control_bg.shaded(0.9)`：未选中格**只有 hover 才落卡片底**，而溢出态里
+    // 「既不是选中格、又确实被切」的只有左端这一枚（选中格被偏移钉在界内，故 7.188 那例取的是末格）。
+    Harness h{std::vector<std::u32string>{U"a", U"a", U"a", U"a", U"a", U"a"}};
+    AURORA_TEST_REQUIRE_TRUE(h.strip().selected().has_value());
+    AURORA_TEST_REQUIRE_EQ(h.strip().selected().value(), TabId{5U});  // 新建即选中末位 ⇒ 偏移才成立
+    h.hover(kStripLeftInsetPx + 12U);  // 第 20 列：首格之内（-6..89），也在它关闭区（70 之右）之左
+    const auto frame = h.pixels();
+    const Points hover = clip_x(Harness::color_points(frame, Chrome().control_bg.shaded(0.9F)), 0U,
+                                kStripLeftInsetPx + 2U * kSingleTabWidthPx);
+    AURORA_TEST_REQUIRE(!hover.empty());  // 反空转：这一格确实落了墨
+    const Box box = Harness::box_of(hover);
+    // 左沿停在左内缩那一档；让开一档是框架的裁剪取整口径（同 7.188 那句 `shrink_to_clips`），
+    // 写成等号就是钉框架实现。不裁时这一句读到第 0 列。
+    AURORA_TEST_CHECK_GE(box.x0, kStripLeftInsetPx);
+    AURORA_TEST_CHECK_LE(box.x0, kStripLeftInsetPx + 1U);
+    // 右沿仍由整格折出：这一句让「整枚被裁没了」读不成绿——本例切掉的只是越界那 6 dp。
+    AURORA_TEST_CHECK_EQ(box.x1, kStripLeftInsetPx - kOverflowOffsetPx + kSingleTabWidthPx - 1U);
+    AURORA_TEST_CHECK_LT(box.width(), kSingleTabWidthPx);
+    AURORA_TEST_CHECK_TRUE(clip_x(hover, 0U, kStripLeftInsetPx - 1U).empty());  // 留白里一格墨也没有
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_left_inset_keeps_its_click_when_a_card_spills_into_it) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 余项 (h) 的**命中**腿（裁决 **7.193**）：绘制侧裁在左内缩上之后，那一截飞地就不属于任何一格了，
+    // 而命中测试的走位起点同样是「左内缩 − 偏移」——不显式判左界，第 4 列就落在首格那枚 -6..89 的盒里，
+    // 于是「看不见」与「点得着」分叉（旧码正是这一态：点栏的留白会把已被滚出左侧的那一格选中）。
+    // 这条与 7.188 那条右界判据同族：界外那一截让给入口簇，界内那一截才归格。
+    Harness h{std::vector<std::u32string>{U"a", U"a", U"a", U"a", U"a", U"a"}};
+    AURORA_TEST_REQUIRE_EQ(h.strip().selected().value(), TabId{5U});
+
+    h.click(kStripLeftInsetPx / 2U);  // 第 4 列：飞地之内，也是首格那一枚盒之内
+    AURORA_TEST_CHECK_EQ(h.note_press_calls(), std::size_t{1U});   // 事件确实到了控件（反空转）
+    AURORA_TEST_CHECK_EQ(h.strip().selected().value(), TabId{5U}); // 没被首格抢走
+    AURORA_TEST_CHECK_EQ(h.strip().count(), std::size_t{6U});      // 也没当成关闭钮
+    AURORA_TEST_CHECK_EQ(h.add_new_calls(), std::size_t{0U});      // 更没走两枚入口
+    AURORA_TEST_CHECK_EQ(h.undo_close_calls(), std::size_t{0U});
+
+    // 反钳：界内那一截仍归首格（第 20 列在它 -6..89 之内），界取早了——比如连 8..89 一并让掉——这句红。
+    h.click(kStripLeftInsetPx + 12U);
+    AURORA_TEST_CHECK_EQ(h.strip().selected().value(), TabId{0U});
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_card_dragged_into_the_left_enclave_clamps_its_guide_to_the_inset) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 余项 (h) 的**导引线**腿（裁决 **7.193**，与 7.190 那枚右界钳位同一条口径的镜像）：六格溢出态下
+    // 次格的盒是 84..180，按下点 108 ⇒ `grab_dx = 24`；指针推到第 0 列 ⇒ 跟手左沿 -24、格中心 24。
+    // 「其余标签」里最靠左那枚（首格 -6..89）中心在 42 ⇒ 下标 0、缝＝首格左沿 -6——那条缝本身在留白里，
+    // 而那一笔导引线的盒以缝为中心、粗 2 dp，故钳回内侧时**多让半粗**：层裁剪的左沿含端，只钳到内缩
+    // 本身会把靠左那一列裁掉，判据 ⑯ 那条「2 dp」在溢出态里就只剩 1 dp。
+    //
+    // 四句各拦一头：`REQUIRE` 拦「只加裁剪、不钳缝」的半截实现（缝不钳 ⇒ 那一笔整枚落在裁剪之外）；
+    // 外接框左沿落在 8 拦「钳到 0」；粗等于 2 dp 拦「钳到 8」；留白零墨则是缺陷本身的说法。
+    Harness h{std::vector<std::u32string>{U"a", U"a", U"a", U"a", U"a", U"a"}};
+    AURORA_TEST_REQUIRE_EQ(h.strip().selected().value(), TabId{5U});  // 偏移 14 由此成立
+    h.press(kStripLeftInsetPx + kSingleTabWidthPx + 4U);              // 次格之内，grab_dx = 24
+    h.drag_move(0U);                                                  // 指针推到栏的留白里
+    const auto frame = h.pixels();
+
+    const Points guide = clip_y(Harness::color_points(frame, Chrome().accent),
+                                kCardTopRowPx + kAccentThicknessPx, kBarHeightPx - 1U);
+    AURORA_TEST_REQUIRE(!guide.empty());
+    const Box box = Harness::box_of(guide);
+    AURORA_TEST_CHECK_EQ(box.x0, kStripLeftInsetPx);
+    AURORA_TEST_CHECK_EQ(box.width(), kGuideThicknessPx);
+    AURORA_TEST_CHECK_EQ(box.x1, kStripLeftInsetPx + kGuideThicknessPx - 1U);
+    AURORA_TEST_CHECK_TRUE(clip_x(guide, 0U, kStripLeftInsetPx - 1U).empty());
+    // 纵向同卡片带：顶内缩起、底贴齐，末行由栏底那条细线接管（7.190 同档读数）。
+    AURORA_TEST_CHECK_EQ(box.y0, kCardTopRowPx + kAccentThicknessPx);
+    AURORA_TEST_CHECK_EQ(box.y1, kBarHeightPx - 2U);
+    AURORA_TEST_CHECK_EQ(guide.size(), kGuideThicknessPx * (box.y1 - box.y0 + 1U));
+
+    // 松手交出的是同一条缝折出的下标：中心 24 之左没有「其余标签」的 ⇒ 表头（0）。这里**不**把中心钳到
+    // 左内缩：那一档的读法本就是「指针落在留白＝落在表头」，抬到 8 会让已滚出左侧的那一格计入「中心在
+    // 左」，于是导引线指哪儿、松手却落哪儿（判据 ⑯ 那句同源）。
+    h.release(0U);
+    AURORA_TEST_REQUIRE_TRUE(h.last_move().has_value());
+    AURORA_TEST_CHECK_EQ(h.last_move().value().first, TabId{1U});
+    AURORA_TEST_CHECK_EQ(h.last_move().value().second, std::size_t{0U});
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif
