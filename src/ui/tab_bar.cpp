@@ -44,6 +44,14 @@ constexpr float kAccentThicknessDp = 2.0F;
 // 栏加一条稿没有的分界（裁决 7.190）。
 constexpr float kGuideThicknessDp = 2.0F;
 
+// 关闭钮那枚 ✕（屏 1 余项 (b)，裁决 7.191）：稿是两枚 1.6 dp 折线交成的 8×8 包络（首格
+// `line x1=167 y1=53 x2=175 y2=61` 与其镜像），中心距栏位右缘 184 − 171 = 13 dp、纵向 cy=57 正落在
+// 36..78 那条 42 dp 带中线上（卡片只在顶部内缩，故带中线比卡中线高 2 dp）。此前这里画的是 `×`
+// **字形**，实测中心距右缘 10 dp——字形墨随字体度量漂，落不到稿那一档；右端 `＋` 与 `⌄` 早已改成折线
+// （裁决 7.181①），本笔把同一口径补到这枚钮上。
+constexpr float kCloseGlyphSizeDp = 8.0F;     ///< 稿：两线交成的 ✕ 包络 167..175 × 53..61。
+constexpr float kCloseCenterInsetDp = 13.0F;  ///< 稿：栏位右缘 184 → 字形中心 171。
+
 // 类型图标槽（`SPEC.FEAT.WS.04` 的 D4）：字形盒 12 dp + 与名称的间距 6 dp。占用它的三处（栏位宽、
 // 名称原点、可截断宽）都从这两个常量取，故「左槽挪一格就要同改四处」这件事在本 TU 里不存在。
 constexpr float kTypeSlotWidth = 12.0F;
@@ -472,14 +480,20 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         }
         p.draw_text(text_box, display_utf8, font, text_color);
 
-        // 关闭钮（只在 hover 或选中时显形）
+        // 关闭钮（只在 hover 或选中时显形）：按稿那两枚折线落笔，中心距栏位右缘 13 dp、纵向取带中线
+        // （裁决 7.191）。命中区仍是 `close_zone_` 那 20 dp，与本笔的 8 dp 包络不必相等——包络整个落在
+        // 命中区之内，改的只是墨落哪儿。
         if (tab.has_close_button && (tab.is_selected || hovered_tab_id_ == tab.id)) {
-            const au::Rect close_box{
-                .origin = au::Point{.x = card_box.origin.x + w - close_zone_ + 4.0F,
-                                    .y = bounds.origin.y + 13.0F},
-                .size = au::Size{.width = 12.0F, .height = 16.0F}};
             const au::Color close_color = hovered_tab_id_ == tab.id ? chrome.accent : chrome.text_dim;
-            p.draw_text(close_box, "×", font, close_color);
+            const float center_x = card_box.origin.x + w - kCloseCenterInsetDp;
+            const float center_y = bounds.origin.y + bar_height_ * 0.5F;
+            const float half = kCloseGlyphSizeDp * 0.5F;
+            p.draw_line(au::Point{.x = center_x - half, .y = center_y - half},
+                        au::Point{.x = center_x + half, .y = center_y + half}, kGlyphStrokeDp,
+                        close_color);
+            p.draw_line(au::Point{.x = center_x + half, .y = center_y - half},
+                        au::Point{.x = center_x - half, .y = center_y + half}, kGlyphStrokeDp,
+                        close_color);
         }
 
         // 状态角标簇（`SPEC.FEAT.WS.04`）：三枚 r=3 实心圆点，右锚、带中线、按优先级向左排。
