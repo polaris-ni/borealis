@@ -55,6 +55,22 @@
 ///             偏移、判不出命中自己那一步（实测存活变异＝把 Press 交的界换成栏宽，三例全绿）；选中首格时
 ///             偏移折回 0、末格占 488..584，才是入口真被压在格下的那一态。另配一句反钳（界内那截仍归
 ///             那一格：550..569 的关闭区、488..570 的选中区），界取早了两态都还绿、只有它红。
+///           本棒（拖拽重排的屏幕形态按判据 ⑯ 兑现，裁决 **7.190**）追加五例，并为此给驱动台补三条
+///           **单事件**腿（`press` / `drag_move` / `release`，各排一帧）：`click` 把 Press+Release 压在
+///           同一帧里，只读得出「选中」，读不出越阈那刻出现的占位、每次 Move 现折的落点、松手才呼的
+///           `move`。判据分五档：
+///           - **跟手与占位**：按下点距格左沿 42 dp，指针推 146 ⇒ 卡片底落在 154 那一格而原位只剩占位；
+///             占位那一档墨是从帧里取的派生值（`text` 按 alpha 64 压在栏底上，两档色板各折一个数、都不
+///             是 token），判「夹在正文色与栏底之间」而不写死 RGB；
+///           - **导引线**：格中心 210 ⇒「其余标签」里只一枚中心在左 ⇒ 下标 1、缝＝末格左沿 200 ⇒ 那一笔
+///             恰为列 199..200、纵向同卡片带（末行由栏底细线接管，读到 40 为止），且两列逐行填满；它与
+///             卡顶 accent 同色道，故新增 `clip_y` 按行裁开两笔；
+///           - **松手**：同一档落点交出的下标进 `TabStrip::move` 并**真的换了序**（[0,1,2]→[1,0,2]）；下标
+///             若按含被拖那格的整表折，同一中心读到 2 ⇒ 屏幕上成 [1,2,0]，后四句即红（7.43④ 的屏幕形态）；
+///           - **原地落点**：中心 70 ⇒ 下标 0＝自己在其余标签里的位置 ⇒ 表序一动不动，且松手那一帧与
+///             按下之前**逐位相同**（占位、导引线、跟手位任一桩留残影即红）；
+///           - **拖过右界**：六格溢出态下把首格推到 600（中心 606 已出界）⇒ 落点读作表尾（下标 5），导引线
+///             钳在界上（570±1 的裁剪取整档）而界外列程零墨——不钳的那一笔会被标签层裁剪整枚吃掉或压进 `＋`。
 ///           像素一律比 RGBA 四通道含 alpha（与 `itest_render_viewport` 同一条口径：Headless 帧底色是
 ///           全透明黑，只比 RGB 会把「画了个纯黑」与「什么都没画」混为一谈）。
 
@@ -113,6 +129,8 @@ constexpr std::size_t kCardTopRowPx = kBarHeightPx - kCardHeightPx;
 constexpr std::size_t kCardRadiusPx = 6U;
 constexpr std::size_t kAccentInsetPx = 8U;
 constexpr std::size_t kAccentThicknessPx = 2U;
+/// @brief 拖拽落点导引线的粗细（交互稿判据 ⑯ 与卡顶 accent 同源，裁决 **7.190**）。
+constexpr std::size_t kGuideThicknessPx = 2U;
 constexpr std::size_t kBadgeRadiusPx = 3U;
 constexpr std::size_t kBadgeAnchorInsetPx = 27U;
 constexpr std::size_t kBadgePitchPx = 10U;
@@ -221,6 +239,21 @@ struct Box {
     Points out;
     for (const auto &point : pts) {
         if (point.first >= x0 && point.first <= x1) {
+            out.insert(point);
+        }
+    }
+    return out;
+}
+
+/// @brief 把一帧里某色道的墨迹裁到**纵**区间 `[y0, y1]`（含端点）。
+///
+/// `accent` 在同一帧里同时是选中格的卡顶带（2 行）与拖拽落点导引线（一整个卡片带），两笔还常常同列
+/// ⇒ 单靠色道分不开，故按行裁。导引线的证人取「卡顶带之下」那一档；卡顶带自身的证人仍按横区间读
+/// （`the_active_marker_is_a_two_dp_band_on_the_card_top` 那一例），两条判据互不牵连。
+[[nodiscard]] auto clip_y(const Points &pts, const std::size_t y0, const std::size_t y1) -> Points {
+    Points out;
+    for (const auto &point : pts) {
+        if (point.second >= y0 && point.second <= y1) {
             out.insert(point);
         }
     }
@@ -355,6 +388,25 @@ class Harness {
         render();
     }
 
+    /// @brief 拖拽的三步腿：各发一枚实体事件、各排一帧，`drag_` 状态在本驱动台里跨帧留着。
+    ///
+    /// 与 `click` 的分工：那一枚把 Press+Release 压在**同一帧**里（判的是「选中」），这三枚要的恰是
+    /// 「帧与帧之间」的那几档——越过 4 dp 阈值才出现的占位、每一次 `Move` 现折的落点、松手才呼的
+    /// `move`。压成一枚就只剩选中，拖拽这条判据当场没有证人。
+    auto press(std::size_t x_dp) -> void { send(x_dp, au::MouseAction::Press); }
+    auto drag_move(std::size_t x_dp) -> void { send(x_dp, au::MouseAction::Move); }
+    auto release(std::size_t x_dp) -> void { send(x_dp, au::MouseAction::Release); }
+
+    /// @brief 三枚单事件腿的共用接线：带中线处发一记左键，随后排一帧。
+    auto send(std::size_t x_dp, au::MouseAction action) -> void {
+        au::MouseEvent event;
+        event.position = au::Point{.x = static_cast<float>(x_dp), .y = static_cast<float>(kBarHeightPx / 2U)};
+        event.button = au::MouseButton::Left;
+        event.action = action;
+        static_cast<void>(pointer_.dispatch_mouse(root_.widget(), event, &focus_));
+        render();
+    }
+
     /// @brief 当前帧缓冲的 RGBA8 副本。
     [[nodiscard]] auto pixels() const -> Frame {
         Frame out(buffer_width() * buffer_height() * 4U, 0U);
@@ -370,6 +422,22 @@ class Harness {
     [[nodiscard]] auto add_new_calls() const noexcept -> std::size_t { return add_new_calls_; }
     [[nodiscard]] auto undo_close_calls() const noexcept -> std::size_t { return undo_close_calls_; }
     [[nodiscard]] auto note_press_calls() const noexcept -> std::size_t { return note_press_calls_; }
+
+    /// @brief 松手呼过几次 `move`，以及最近一次交来的 `(id, to_index)`（没呼过即空）。
+    [[nodiscard]] auto move_calls() const noexcept -> std::size_t { return move_calls_; }
+    [[nodiscard]] auto last_move() const noexcept
+        -> const std::optional<std::pair<std::uint64_t, std::size_t>> & {
+        return last_move_;
+    }
+
+    /// @brief 真值源里的当前表序（id 序列）：判据「屏幕上真的换了序」的直接读数。
+    [[nodiscard]] auto order() const -> std::vector<TabId> {
+        std::vector<TabId> out;
+        for (const auto &tab : strip_.tabs()) {
+            out.push_back(tab.id);
+        }
+        return out;
+    }
 
     /// @brief 两帧之间**任何通道**不同的像素坐标（差分是本套件传统的定位手段：颜色曾经是实现细节，
     ///        而现在角标按 token 走色道、比色反而成了更强的证人，差分留给「整帧有没有连带改动」）。
@@ -406,6 +474,15 @@ class Harness {
 
     [[nodiscard]] static auto count_color(const Frame &frame, const au::Color &ink) -> std::size_t {
         return color_points(frame, ink).size();
+    }
+
+    /// @brief 一帧里 `(x, y)` 那一格的 RGBA 四通道值。
+    ///
+    /// 「派生色」的取色入口：拖拽占位是 `text` 按 alpha 64 压在栏底上折出的一档，两套色板各取一个值、
+    /// 且都不是 13 枚 token 里的一格 ⇒ 判据从帧里把它读出来，而不是把某个 RGB 写死进测试。
+    [[nodiscard]] static auto pixel_at(const Frame &frame, std::size_t x, std::size_t y) -> au::Color {
+        const std::size_t index = (y * buffer_width() + x) * 4U;
+        return au::Color{frame[index], frame[index + 1U], frame[index + 2U], frame[index + 3U]};
     }
 
     [[nodiscard]] static auto box_of(const Points &pts) -> Box {
@@ -515,6 +592,12 @@ class Harness {
         .close = [this](std::uint64_t id) -> void {
             static_cast<void>(strip_.close(static_cast<TabId>(id)));
         },
+        // 拖拽落点：绘制侧折出的下标直接进真值源，基准是「其余标签」（`src/main.cpp` 同一行形态）。
+        .move = [this](std::uint64_t id, std::size_t to_index) -> void {
+            ++move_calls_;
+            last_move_ = std::make_pair(id, to_index);
+            static_cast<void>(strip_.move(static_cast<TabId>(id), to_index));
+        },
         .add_new = [this]() -> void { ++add_new_calls_; },
         .undo_close = undo_entry_ ? std::function<void()>{[this]() -> void { ++undo_close_calls_; }}
                                   : std::function<void()>{},
@@ -528,6 +611,9 @@ class Harness {
     std::size_t add_new_calls_ = 0U;
     std::size_t undo_close_calls_ = 0U;
     std::size_t note_press_calls_ = 0U;
+    std::size_t move_calls_ = 0U;
+    /// @brief 最近一次交来的 `(被拖格 id, 落点下标)`：下标以「其余标签」为基准。
+    std::optional<std::pair<std::uint64_t, std::size_t>> last_move_;
 };
 
 /// @brief 单枚角标的芯：外接档、圆心横纵、以及**芯的像素个数**（羽化后的原色像素）。
@@ -1515,6 +1601,209 @@ AURORA_TEST_CASE(the_entry_cluster_keeps_its_click_when_a_card_used_to_cover_it)
     spill.click(kStripLeftInsetPx + 5U * kSingleTabWidthPx + 12U);
     AURORA_TEST_CHECK_EQ(spill.strip().selected().value(), TabId{5U});
     AURORA_TEST_CHECK_EQ(spill.add_new_calls(), std::size_t{1});
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_dragged_card_follows_the_pointer_and_leaves_a_ghost_in_its_slot) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 判据 ⑯ 的前两半（裁决 **7.190**）：「被拖格跟手」与「原格留半透明占位」。三格 96 dp 共 288 dp，
+    // 640 的栏装得下 ⇒ 偏移恒 0，落位可整枚算：首格 8..104、次格 104..200、末格 200..296。先把选中钉在
+    // 首格，Press 里那次 `select` 因此不推布局，屏幕上读到的就只剩「指针减按下点」这一枚平移。
+    //
+    // 按下点取首格内 42 dp 处（关闭区在右端 20 dp，即 84 之外），故 `grab_dx = 42`；指针推到 196 ⇒
+    // 跟手左沿 154，整格离位 146 dp——离位到原格与跟手格**不再重叠**，两枚读数才各自干净。
+    Harness h{std::vector<std::u32string>{U"alpha", U"beta", U"gamma"}};
+    static_cast<void>(h.strip().select(TabId{0U}));
+    h.render();
+    const std::size_t press_x = kStripLeftInsetPx + 42U;
+    h.press(press_x);
+    h.drag_move(press_x + 146U);
+    const auto frame = h.pixels();
+    const SettingsChrome chrome = Chrome();
+    const std::size_t follow_left = kStripLeftInsetPx + 146U;
+
+    // 跟手：卡片底（选中格那一档 `control_bg`）落在新位而**不**在原位。按点探而不按外接框——圆角那圈
+    // 是抗锯齿值，框的极值列本来就取不到芯，写成等号会钉在羽化档上（裁决 7.183 那条口径）。
+    const Points card = Harness::color_points(frame, chrome.control_bg);
+    AURORA_TEST_CHECK_EQ(card.count({follow_left + 20U, kBarHeightPx / 2U}), std::size_t{1U});
+    AURORA_TEST_CHECK_EQ(card.count({kStripLeftInsetPx + 20U, kBarHeightPx / 2U}), std::size_t{0U});
+
+    // 占位：色是从帧里读出来的。那一档是 `text` 按 alpha 64 压在栏底上折出的派生值，两档色板各折一个
+    // 数、且都不是 13 枚 token 里的一格 ⇒ 写死任何一个 RGB 就是在钉色板，而换档即假红。
+    const au::Color ghost_ink = Harness::pixel_at(frame, kStripLeftInsetPx + 12U, kBarHeightPx / 2U);
+    // 「半透明」这件事的读数：这一档墨夹在正文色与栏底之间——写成实心正文色就是把那一格涂成文字，写成
+    // 实心栏底就是压根没画。（两档色板里 `text` 与 `card_bg` 的红通道都隔着两位数，故夹得住。）
+    AURORA_TEST_CHECK_GT(ghost_ink.r, std::min<std::uint8_t>(chrome.text.r, chrome.card_bg.r));
+    AURORA_TEST_CHECK_LT(ghost_ink.r, std::max<std::uint8_t>(chrome.text.r, chrome.card_bg.r));
+    // 整枚原格都盖着：格心、左右直边段各一枚，再加**圆角内接盒**的上下一枚。为什么上下不贴着卡片的第 4
+    // 行探——2026-11-01 实测这档派生色的芯只到 y 10..36，上下各让开半径那一档，而左右直边段却贴着 8 与
+    // 103 都有芯。这是框架圆角裁剪（`push_clip_rounded` 走逐像素覆盖率）的抗锯齿档，不是本件的口径，
+    // 把它的行数写成等号就是钉框架实现（裁决 7.183 那条「比位置与色道、不比羽化面积」的口径）。
+    const auto ghost_at = [&](std::size_t x, std::size_t y) -> bool {
+        const au::Color ink = Harness::pixel_at(frame, x, y);
+        return ink.r == ghost_ink.r && ink.g == ghost_ink.g && ink.b == ghost_ink.b && ink.a == ghost_ink.a;
+    };
+    AURORA_TEST_CHECK_TRUE(ghost_at(kStripLeftInsetPx + 48U, kBarHeightPx / 2U));  // 格心
+    AURORA_TEST_CHECK_TRUE(ghost_at(kStripLeftInsetPx + 1U, kBarHeightPx / 2U));   // 左直边段
+    AURORA_TEST_CHECK_TRUE(ghost_at(kStripLeftInsetPx + kSingleTabWidthPx - 2U,
+                                    kBarHeightPx / 2U));                           // 右直边段
+    AURORA_TEST_CHECK_TRUE(ghost_at(kStripLeftInsetPx + 48U, kCardTopRowPx + kCardRadiusPx));      // 内接盒上沿
+    AURORA_TEST_CHECK_TRUE(ghost_at(kStripLeftInsetPx + 48U, kBarHeightPx - 2U - kCardRadiusPx));   // 内接盒下沿
+    const Points ghost = clip_x(Harness::color_points(frame, ghost_ink), 0U,
+                                kStripLeftInsetPx + kSingleTabWidthPx - 1U);
+    // 实心数只当一档下限：「只留一圈边」的写法连 300 都不到，而整枚盖着的实测档是 2592（27 行 × 96 列）。
+    AURORA_TEST_CHECK_GE(ghost.size(), 2000U);
+    AURORA_TEST_CHECK_EQ(Harness::box_of(ghost).x0, kStripLeftInsetPx);
+    AURORA_TEST_CHECK_EQ(Harness::box_of(ghost).x1, kStripLeftInsetPx + kSingleTabWidthPx - 1U);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_drop_guide_is_the_two_dp_accent_on_the_seam_under_the_card_center) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 判据 ⑯ 的第三半（裁决 **7.190**）：「两格之间画 2 dp `accent` 落点导引线」，而那条缝**就是**松手
+    // 要落进去的那一条——下标与缝同出 `resolve_drop` 一枚算式，故这里不需要第二条口径。
+    //
+    // 一档可整算的落位：三格、选中首格、按下点距左沿 42 ⇒ 指针 204 时跟手左沿 162、格中心 162+48＝210。
+    // 「其余标签」＝次格 104..200（心 152）与末格 200..296（心 248），210 之左只有一枚 ⇒ 下标 1、缝＝
+    // 末格左沿 200 ⇒ 导引线以 200 为中心、粗 2 ⇒ 列 199..200。
+    Harness h{std::vector<std::u32string>{U"alpha", U"beta", U"gamma"}};
+    static_cast<void>(h.strip().select(TabId{0U}));
+    h.render();
+    h.press(kStripLeftInsetPx + 42U);
+    h.drag_move(kStripLeftInsetPx + 42U + 154U);
+    const auto frame = h.pixels();
+
+    // 这一笔与卡顶那枚 2 dp accent 同色道，且这一档卡片压在它身上（跟手格 162..258 含列 199/200）⇒
+    // 判据按行裁到卡顶带以下：导引线盖在卡片之上（画在整层卡片**之后**），被盖住那一档的变异在此即红。
+    const std::size_t seam = kStripLeftInsetPx + 2U * kSingleTabWidthPx;  // 200
+    const Points guide = clip_y(Harness::color_points(frame, Chrome().accent),
+                                kCardTopRowPx + kAccentThicknessPx, kBarHeightPx - 1U);
+    AURORA_TEST_REQUIRE(!guide.empty());  // 反空转：那一列程真有墨
+    const Box box = Harness::box_of(guide);
+    AURORA_TEST_CHECK_EQ(box.x0, seam - kGuideThicknessPx / 2U);
+    AURORA_TEST_CHECK_EQ(box.x1, seam + kGuideThicknessPx / 2U - 1U);
+    AURORA_TEST_CHECK_EQ(box.width(), kGuideThicknessPx);
+    // 纵向取卡片同带：顶内缩 4 起、底贴齐——第 41 行由栏底那条细线接管（它画在标签层之后，既有口径
+    // 7.179④c），故读到 40 而不是 41。不通栏是刻意的：导引线标的是「落进哪一格的位置」，画到栏外就
+    // 等于给本件加一条稿上没有的分界（裁决 7.190）。
+    AURORA_TEST_CHECK_EQ(box.y0, kCardTopRowPx + kAccentThicknessPx);
+    AURORA_TEST_CHECK_EQ(box.y1, kBarHeightPx - 2U);
+    // 两列逐行填满才是「一条线」而不是一截断墨：行数 × 粗细，中间不许有空档。
+    AURORA_TEST_CHECK_EQ(guide.size(), kGuideThicknessPx * (box.y1 - box.y0 + 1U));
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_release_hands_that_seam_to_the_strip) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 判据 ⑯ 的收尾（裁决 **7.190**）：「松手按落点中心折成 `TabStrip::move` 的目标下标，其基准是
+    // 其余标签」。上一例算出的那一档（中心 210 ⇒ 下标 1）在这里原样交出去，并且**真的换了序**：
+    // [0,1,2] → [1,0,2]。下标若按整张表折（含被拖那格），同一枚中心读到的是 2 ⇒ 屏幕上是 [1,2,0]，
+    // 后四句即红——这一条就是 7.43④ 那句「算出的插入位天然不含被拖那格」在拖拽腿上的证人。
+    Harness h{std::vector<std::u32string>{U"alpha", U"beta", U"gamma"}};
+    static_cast<void>(h.strip().select(TabId{0U}));
+    h.render();
+    h.press(kStripLeftInsetPx + 42U);
+    h.drag_move(kStripLeftInsetPx + 42U + 154U);
+    h.release(kStripLeftInsetPx + 42U + 154U);
+
+    AURORA_TEST_CHECK_EQ(h.move_calls(), std::size_t{1U});
+    AURORA_TEST_REQUIRE_TRUE(h.last_move().has_value());
+    AURORA_TEST_CHECK_EQ(h.last_move().value().first, TabId{0U});
+    AURORA_TEST_CHECK_EQ(h.last_move().value().second, std::size_t{1U});
+    const std::vector<TabId> order = h.order();
+    AURORA_TEST_REQUIRE_EQ(order.size(), std::size_t{3U});
+    AURORA_TEST_CHECK_EQ(order[0U], TabId{1U});
+    AURORA_TEST_CHECK_EQ(order[1U], TabId{0U});
+    AURORA_TEST_CHECK_EQ(order[2U], TabId{2U});
+
+    // 松手后拖拽态整套撤干净：导引线不留（卡顶带以下再无 `accent`），选中底回到换序之后那一格的位置
+    // （次格 104..200），被拖那格的原位 8..104 只剩名称一笔与栏底。
+    const auto frame = h.pixels();
+    AURORA_TEST_CHECK_TRUE(clip_y(Harness::color_points(frame, Chrome().accent),
+                                  kCardTopRowPx + kAccentThicknessPx, kBarHeightPx - 1U)
+                               .empty());
+    const Points card = Harness::color_points(frame, Chrome().control_bg);
+    AURORA_TEST_CHECK_EQ(card.count({kStripLeftInsetPx + kSingleTabWidthPx + 20U, kBarHeightPx / 2U}),
+                         std::size_t{1U});
+    AURORA_TEST_CHECK_EQ(card.count({kStripLeftInsetPx + 20U, kBarHeightPx / 2U}), std::size_t{0U});
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_drop_back_in_its_own_slot_reorders_nothing) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 判据 ⑯ 末句「落点仍在原格＝只选中，不重排」（裁决 **7.190**）。中心 70 落在「其余标签」两枚中心
+    // （152、248）之左 ⇒ 下标 0，而 0 恰是被拖那格在其余标签里自己的位置 ⇒ `TabStrip::move` 走
+    // `from == to_index` 原地返回那一档（7.43④），表序一动不动。
+    //
+    // 这里**不**判「有没有呼 `move`」为零：绘制侧折出下标就交出去，「交去的下标是原地」才是判据，
+    // 装配层与真值源那一档幂等由 `utest_tab_strip` 的相应变异接管。
+    Harness h{std::vector<std::u32string>{U"alpha", U"beta", U"gamma"}};
+    static_cast<void>(h.strip().select(TabId{0U}));
+    h.render();
+    const Frame before = h.pixels();
+    const std::size_t press_x = kStripLeftInsetPx + 42U;
+    h.press(press_x);
+    h.drag_move(press_x + 14U);  // 指针 64 ⇒ 跟手左沿 22、中心 70；已过 4 dp 阈值，占位与导引线都在
+    h.release(press_x + 14U);
+
+    AURORA_TEST_REQUIRE_TRUE(h.last_move().has_value());
+    AURORA_TEST_CHECK_EQ(h.last_move().value().second, std::size_t{0U});
+    const std::vector<TabId> order = h.order();
+    AURORA_TEST_REQUIRE_EQ(order.size(), std::size_t{3U});
+    AURORA_TEST_CHECK_EQ(order[0U], TabId{0U});
+    AURORA_TEST_CHECK_EQ(order[1U], TabId{1U});
+    AURORA_TEST_CHECK_EQ(order[2U], TabId{2U});
+    AURORA_TEST_CHECK_EQ(h.strip().selected().value(), TabId{0U});  // 选中态没动
+    // 屏幕上纹丝不动：松手那一帧须与按下**之前**那一帧逐位复现——占位、导引线、跟手位任何一桩留了残影
+    // 都会在这里红，而不是等到肉眼去看。
+    AURORA_TEST_CHECK_TRUE(Harness::changed(before, h.pixels()).empty());
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_card_dragged_past_the_strip_edge_clamps_its_guide_to_the_edge) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 拖拽与右界的那一条（裁决 **7.190**，与 7.188 那条同源口径的第四处消费者）：六格 96 dp 共 576 dp
+    // 已溢出，选中首格把偏移折回 0 ⇒ 末格整枚占 488..584、越界 14 dp，而右界在 570（`＋` 的字形包络左沿）。
+    // 把首格一路推到 600 ⇒ 跟手左沿 558、格中心 606 已出界：中心与缝都得先钳进界内，落点读作表尾。
+    //
+    // 三句各拦一头：下标 5（不钳中心则读到同一枚 5，这一句防的是「缝算错」）；导引线**在界上还有墨**
+    // （缝取末格右沿 584 而不钳 ⇒ 那一笔整枚被标签层裁剪吃掉，第一句 REQUIRE 即红）；界外列程零墨
+    // （钳晚了或压根不钳 ⇒ 那一笔压在 `＋` 的字形上，判据 21 的「固定右端」在屏幕上就不成立了）。
+    Harness h{std::vector<std::u32string>{U"a", U"a", U"a", U"a", U"a", U"a"}};
+    static_cast<void>(h.strip().select(TabId{0U}));
+    h.render();
+    h.press(kStripLeftInsetPx + 42U);
+    h.drag_move(kStripLeftInsetPx + 42U + 550U);  // 指针 600
+    const auto frame = h.pixels();
+
+    const Points guide = clip_y(Harness::color_points(frame, Chrome().accent),
+                                kCardTopRowPx + kAccentThicknessPx, kBarHeightPx - 1U);
+    AURORA_TEST_REQUIRE(!guide.empty());
+    const Box box = Harness::box_of(guide);
+    // 右沿落在界列本身或它的左一档：±1 是框架的裁剪取整口径（`shrink_to_clips` 把 `floor(right)+1`
+    // 当排他上界，同 7.188 那句），写成等号就是钉框架实现。
+    AURORA_TEST_CHECK_GE(box.x1, kStripRightEdgePx - 1U);
+    AURORA_TEST_CHECK_LE(box.x1, kStripRightEdgePx);
+    AURORA_TEST_CHECK_TRUE(
+        clip_x(guide, kStripRightEdgePx + 1U, static_cast<std::size_t>(kWindowWidth) - 1U).empty());
+
+    h.release(kStripLeftInsetPx + 42U + 550U);
+    AURORA_TEST_REQUIRE_TRUE(h.last_move().has_value());
+    AURORA_TEST_CHECK_EQ(h.last_move().value().second, std::size_t{5U});  // 表尾：插在其余五格之后
+    const std::vector<TabId> order = h.order();
+    AURORA_TEST_REQUIRE_EQ(order.size(), std::size_t{6U});
+    AURORA_TEST_CHECK_EQ(order[0U], TabId{1U});
+    AURORA_TEST_CHECK_EQ(order[5U], TabId{0U});
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif
