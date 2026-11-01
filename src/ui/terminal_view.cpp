@@ -52,18 +52,18 @@ constexpr float kRowStep = 1.0F;
 constexpr float kMinFontSizePt = 6.0F;
 constexpr float kMaxFontSizePt = 72.0F;
 
-/// @brief 回看滚动条的几何与墨色（逻辑 dp，屏 1 稿 `codespec/UI_WORKSPACE.draft.svg` 右侧那两条竖
-///        条；需求 `SPEC.FEAT.TERM.10`，裁决 **7.185**）。
+/// @brief 回看滚动条的纵向与滑块（逻辑 dp；需求 `SPEC.FEAT.TERM.10`，裁决 **7.185**）。
 ///
-/// 稿面轨道 `x=944 width=4 height=421`、pane `x=34 width=920 height=441`（`y=104`）⇒ 右缘内缩 6 dp、
-/// 上下各 10 dp。**上下这两沿本件跟着可见网格走**（顶 = `geometry_.padding`、高 = `rows × cell_height`）
-/// 而**不**照抄那 10 dp：`padding` 是 `appearance.viewport_padding_dp`（缺省 4 dp、可配 0–64，裁决
-/// 7.25②），写死 10 会让轨道在改档后跨出格带；而 `cell_count` 截掉的那半行余量本来就落在轨道之下，
+/// 横向那两枚（右缘内缩 6、带宽 4）连同由它们折出的「带总宽」已上提到 `terminal_view.h`——缩放角标
+/// 是本件的第二个消费者（裁决 7.194）。这里只留纵向与滑块那三枚。
+///
+/// 稿面轨道 `x=944 width=4 height=421`、pane `x=34 width=920 height=441`（`y=104`）⇒ 上下各 10 dp，
+/// 但**这两沿本件跟着可见网格走**（顶 = `geometry_.padding`、高 = `rows × cell_height`）而**不**照抄
+/// 那 10 dp：`padding` 是 `appearance.viewport_padding_dp`（缺省 4 dp、可配 0–64，裁决 7.25②），
+/// 写死 10 会让轨道在改档后跨出格带；而 `cell_count` 截掉的那半行余量本来就落在轨道之下，
 /// 故稿那 10 dp 是「padding + 截行余量」在稿那一格上的**读数**，不是独立常数（差档登记见裁决 7.185③）。
 /// 滑块最短 40 dp 取稿那条 `height=40`（旧档 U1 的 12 dp 只保证「看得见」，撑不起一条读得出位置的
 /// 滑块），圆角取稿的 `rx=2`。
-constexpr double kScrollbarWidthDp = 4.0;
-constexpr double kScrollbarRightInsetDp = 6.0;
 constexpr double kScrollbarMinThumbLengthDp = 40.0;
 constexpr double kScrollbarThumbRadiusDp = 2.0;
 /// @brief 轨道的 alpha 字节：稿写的是 `#000000` @ `fill-opacity=0.2`，即「把底下压暗两成」的 8 位形态
@@ -1659,7 +1659,7 @@ auto TerminalView::paint_scroll_indicator(aurora::Painter &p, const aurora::Rect
     if (!(track_height > 0.0)) {
         return;  // 格高为 0（字体还没解析到）时算不出落点
     }
-    const double track_left = static_cast<double>(bounds.size.width) - kScrollbarRightInsetDp - kScrollbarWidthDp;
+    const double track_left = static_cast<double>(bounds.size.width) - kScrollbarBandInsetDp;
     const Rect track{track_left, geometry_.padding, kScrollbarWidthDp, track_height};
     p.fill_rect(to_rect(track, bounds.origin), aurora::Color{0, 0, 0, kScrollbarTrackAlpha});
     const std::size_t back = mirror_.back_rows();

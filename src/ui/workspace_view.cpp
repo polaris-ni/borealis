@@ -31,10 +31,18 @@ constexpr double kFocusRingDp = 2.0;       ///< 焦点 pane 的**内**描边（�
 constexpr double kMinPaneColumns = 20.0;   ///< 最小 pane 的列数（裁决 7.47③）
 constexpr double kMinPaneRows = 3.0;       ///< 最小 pane 的行数
 
-/// @brief 缩放角标的几何（`codespec/UI_WORKSPACE_ZOOM.draft.md` §2.2）：热区＝底板，距 pane 右边与
-///        上边各 4 dp；字形盒 10×10 居中，1.5 dp 线段。
+/// @brief 缩放角标的几何（`codespec/UI_WORKSPACE_ZOOM.draft.md` §2.2）：热区＝底板 20×20、圆角 3，
+///        字形盒 10×10 居中、1.5 dp 线段；**上内缩**仍取稿那 4 dp。
+///
+/// **右内缩不再取 4 dp，而是取回看滚动条那一带的总宽**（内缩 6 + 带宽 4 = 10 dp，裁决 7.194）：底板
+/// 按 D6/D11 是**不透明**的，旧那 4 dp 让 20 dp 的盒一路铺进 `[右 − 10, 右 − 6]` 那一列，把轨道顶段
+/// 整截盖掉（`SPEC.FEAT.WS.02` 余项 (f)；缩放态常显时更是永久盖住）。钳到 10 之后底板右沿正落在轨道
+/// 左沿上，而 10 dp 字形在底板内居中 ⇒ **字形**右沿落在 `右 − 15`、与稿那枚 `x=931..939` 的包络逐值
+/// 到位（pane 右缘 954、轨道 944 ⇒ 稿的字形与轨道之间也是 5 dp 空档）。
+/// 取「带总宽」而不是自造一枚间隙：那两枚数是滚动条件的既有真值（`terminal_view.h`），本件只消费。
 constexpr double kZoomBadgeDp = 20.0;
-constexpr double kZoomBadgeInsetDp = 4.0;
+constexpr double kZoomBadgeTopInsetDp = 4.0;
+constexpr double kZoomBadgeRightInsetDp = kScrollbarBandInsetDp;
 constexpr double kZoomBadgeRadiusDp = 3.0;
 constexpr double kZoomGlyphDp = 10.0;
 constexpr float kZoomGlyphStrokeDp = 1.5F;
@@ -44,8 +52,9 @@ constexpr double kZoomArrowWingDp = 3.5;
 ///        82.4×20、rx=9、`accent` 底，文本 11 号、色＝暗档 `window_bg`，顶内缩 6）。
 ///
 /// 稿面的横向位置是装饰性的（底板右沿距 pane 右边 177.6 dp，既不贴边也不居中），故这里改成**贴右端
-/// 让位给缩放角标**：右沿＝pane 右 − (4 + 20 + 6)。这一档让位与角标是否显形无关——⤢ 只在悬停时显形，
-/// 若按「此刻有没有角标」定位，鼠标一进 pane 药丸就跳一格（裁决 7.184②）。
+/// 让位给缩放角标**：右沿＝pane 右 − (角标右内缩 + 20 + 6)，其中那枚内缩随角标同源（现为滚动条带
+/// 总宽 10 dp，裁决 7.194）——本件只跟着它走，不另折一个数。这一档让位与角标是否显形无关——⤢ 只在
+/// 悬停时显形，若按「此刻有没有角标」定位，鼠标一进 pane 药丸就跳一格（裁决 7.184②）。
 constexpr double kFocusPillHeightDp = 20.0;
 constexpr double kFocusPillRadiusDp = 9.0;
 constexpr double kFocusPillTopInsetDp = 6.0;
@@ -115,8 +124,8 @@ auto paint_focus_ring(aurora::Painter &p, const aurora::Rect &bounds, const Rect
 auto paint_zoom_badge(aurora::Painter &p, const aurora::Rect &bounds, const Rect &pane, bool collapse)
     -> void {
     const SettingsChrome chrome = settings_chrome();
-    const double x = pane.x + pane.width - kZoomBadgeInsetDp - kZoomBadgeDp;
-    const double y = pane.y + kZoomBadgeInsetDp;
+    const double x = pane.x + pane.width - kZoomBadgeRightInsetDp - kZoomBadgeDp;
+    const double y = pane.y + kZoomBadgeTopInsetDp;
     const Rect plate{.x = x, .y = y, .width = kZoomBadgeDp, .height = kZoomBadgeDp};
     p.fill_rounded_rect(global_frame(bounds, plate), static_cast<float>(kZoomBadgeRadiusDp), chrome.card_bg);
 
@@ -172,7 +181,7 @@ auto paint_focus_pill(aurora::Painter &p, const aurora::Rect &bounds, const Rect
     const double text_width =
         static_cast<double>(aurora::render::FontEngine::display_width(text, font, opts, scale));
     const double width = text_width + 2.0 * kFocusPillHPadDp;
-    const double right = pane.x + pane.width - kZoomBadgeInsetDp - kZoomBadgeDp - kFocusPillToBadgeDp;
+    const double right = pane.x + pane.width - kZoomBadgeRightInsetDp - kZoomBadgeDp - kFocusPillToBadgeDp;
     if (width <= 0.0 || right - width < pane.x || pane.height < kFocusPillTopInsetDp + kFocusPillHeightDp) {
         return;
     }
@@ -972,11 +981,14 @@ auto WorkspaceView::pane_of(const aurora::Widget &widget) const -> std::optional
 }
 
 auto WorkspaceView::zoom_badge_box(const Rect &pane) const -> std::optional<Rect> {
-    constexpr double kNeeded = kZoomBadgeDp + kZoomBadgeInsetDp;
-    if (pane.width < kNeeded || pane.height < kNeeded) {
+    // 两轴各自判：右内缩如今是滚动条带总宽（10 dp）、上内缩仍是稿那 4 dp（裁决 7.194），合成一枚
+    // `kNeeded` 会把「横向放不下」的闸门口径悄悄套到纵向上去。
+    const double needed_width = kZoomBadgeDp + kZoomBadgeRightInsetDp;
+    const double needed_height = kZoomBadgeDp + kZoomBadgeTopInsetDp;
+    if (pane.width < needed_width || pane.height < needed_height) {
         return std::nullopt;  // 放不下就整枚不画也不给热区，不让它越出 pane
     }
-    return Rect{.x = pane.x + pane.width - kNeeded, .y = pane.y + kZoomBadgeInsetDp,
+    return Rect{.x = pane.x + pane.width - needed_width, .y = pane.y + kZoomBadgeTopInsetDp,
                 .width = kZoomBadgeDp, .height = kZoomBadgeDp};
 }
 

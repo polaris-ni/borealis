@@ -59,6 +59,23 @@ namespace borealis::ui {
 
 class SearchOverlay;  ///< 搜索浮层的本体（`search_overlay.h`），本控件懒建并常驻（判据 F1-c）。
 
+/// @brief 回看滚动条的横向落位（逻辑 dp；屏 1 稿 `codespec/UI_WORKSPACE.draft.svg` 右侧那两条竖条，
+///        需求 `SPEC.FEAT.TERM.10`，裁决 7.185）。稿面轨道 `x=944 width=4`、pane `x=34 width=920`
+///        （右缘 954）⇒ 右缘内缩 **6** dp、带宽 **4** dp。
+///
+/// 这两枚从 `terminal_view.cpp` 上提到本头，是因为出现了**第二处消费者**（见下面那枚带总宽）；
+/// 上下两沿仍留在实现件里跟着可见网格走（顶 = `geometry_.padding`、高 = `rows × cell_height`，
+/// 理由与差档登记见裁决 7.185③）。
+inline constexpr double kScrollbarWidthDp = 4.0;
+inline constexpr double kScrollbarRightInsetDp = 6.0;
+
+/// @brief 滚动条那一带从视口右缘往里占掉的总宽（＝右内缩 + 带宽）。
+///
+/// 第二处消费者 = `WorkspaceView` 那枚缩放角标：它的 20 dp **不透明**底板（裁决 7.120 D6/D11）此前
+/// 距 pane 右缘 4 dp，盒一路压进这一带，把轨道顶段整截盖掉（`SPEC.FEAT.WS.02` 余项 (f)，裁决
+/// 7.194）。两件各写各的数就会分叉——视口把轨道往内挪一档，角标便又盖回去，故共用这一枚和。
+inline constexpr double kScrollbarBandInsetDp = kScrollbarRightInsetDp + kScrollbarWidthDp;
+
 /// @brief 终端网格的自绘视口（`SPEC.FEAT.RENDER.01` / `03` / `04` 的绘制腿）。
 ///
 /// 回看不借用框架的内容平移：基类 `scroll_viewport_` 只当「距顶行数」的容器（`step` 为 1
