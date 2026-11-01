@@ -73,6 +73,10 @@
 ///             钳在界上（570±1 的裁剪取整档）而界外列程零墨——不钳的那一笔会被标签层裁剪整枚吃掉或压进 `＋`。
 ///           像素一律比 RGBA 四通道含 alpha（与 `itest_render_viewport` 同一条口径：Headless 帧底色是
 ///           全透明黑，只比 RGB 会把「画了个纯黑」与「什么都没画」混为一谈）。
+///           本棒（屏 1 余项 (b)：关闭钮 ✕ 按稿落位，裁决 **7.191**）追加一枚几何证人——hover 那格的 ✕
+///           由两枚 1.6 dp 折线交成稿那个 8×8 包络，中心距**栏位**右缘 13 dp、纵向在 42 dp 的**带**中线
+///           （旧码画 `×` 字形，实测中心距右缘 10 dp）。色道走 hover 那一档的 `accent`，并以「第 6 行
+///           以下」把选中格卡顶那条 2 dp accent 排除在外；包络与中心都按实测档取区间，不钉抗锯齿落笔。
 
 #include <algorithm>
 #include <array>
@@ -131,6 +135,15 @@ constexpr std::size_t kAccentInsetPx = 8U;
 constexpr std::size_t kAccentThicknessPx = 2U;
 /// @brief 拖拽落点导引线的粗细（交互稿判据 ⑯ 与卡顶 accent 同源，裁决 **7.190**）。
 constexpr std::size_t kGuideThicknessPx = 2U;
+/// @brief 关闭钮 ✕ 的档位（屏 1 稿首格那两枚 1.6 dp 折线 `line x1=167 y1=53 x2=175 y2=61` 与其镜像，
+///        裁决 **7.191**）：包络 8 dp、中心距**栏位**右缘 13 dp（稿 184 − 171）、纵向落在 42 dp 的**带**
+///        中线（稿 cy=57；卡片只顶部内缩 ⇒ 带中线比卡中线高 2 dp，别拿卡中心当基准）。
+///        1.6 dp 的 45° 折线抗锯齿后外接包络比 8 宽 2..4 档，故包络按区间判、中心按 ±1 判——写成等号
+///        就是钉框架的落笔实现（与角标芯 4×4 那两枚档同一条口径）。
+constexpr std::size_t kCloseGlyphSizePx = 8U;
+constexpr std::size_t kCloseCenterInsetPx = 13U;
+constexpr std::size_t kCloseEnvelopeMaxPx = 12U;
+constexpr std::size_t kCloseAnchorTolPx = 1U;
 constexpr std::size_t kBadgeRadiusPx = 3U;
 constexpr std::size_t kBadgeAnchorInsetPx = 27U;
 constexpr std::size_t kBadgePitchPx = 10U;
@@ -1437,6 +1450,58 @@ AURORA_TEST_CASE(the_active_marker_is_a_two_dp_band_on_the_card_top) {
     // 这一笔之内不许有空档：包络宽 = 格宽 − 两个内缩，行数 = 厚度。
     AURORA_TEST_CHECK_EQ(band.width(), kSingleTabWidthPx - 2U * kAccentInsetPx);
     AURORA_TEST_CHECK_EQ(band.height(), kAccentThicknessPx);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_close_cross_lands_thirteen_dp_from_the_cell_edge_on_the_band_midline) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 屏 1 余项 (b) 清账（裁决 **7.191**）：稿那枚 ✕ 是两枚 1.6 dp 折线交成的 8×8 包络（首格 `line
+    // x1=167 y1=53 x2=175 y2=61` 与其镜像），中心距栏位右缘 13 dp、纵向落在 42 dp 的带中线；旧码画的
+    // 是 `×` **字形**，实测中心距右缘 10 dp（字形墨随字体度量漂，与右端 `＋` 改折线前同一桩，裁决 7.181①）。
+    //
+    // 取色走 **hover** 那一档（`accent`）而不是选中那一档（`text_dim`）：两格里未选中那格的名称墨正是
+    // `text_dim`，按色道取到的外接框会把名称一起吃进来。而 `accent` 在本帧只有两处——选中格的卡顶那条
+    // 2 dp（第 4..5 行）与这一枚 ✕（第 16..26 行），故「第 6 行以下」一裁就只剩 ✕ 自己。
+    Harness h{std::vector<std::u32string>{U"alpha", U"beta"}};
+    h.hover(kStripLeftInsetPx + 40U);  // 第一格之内、关闭钮那 20 dp 之外 ⇒ 只点亮 hover 态
+    const auto frame = h.pixels();
+    Points ink;
+    for (const auto &point : Harness::color_points(frame, Chrome().accent)) {
+        if (point.second >= kCardTopRowPx + kAccentThicknessPx) {
+            ink.insert(point);
+        }
+    }
+    AURORA_TEST_REQUIRE(!ink.empty());
+    const Box box = Harness::box_of(ink);
+
+    // 中心两档：横坐标按「栏位右缘 − 13」，纵坐标按带中线（不是卡中线——卡片只顶部内缩）。
+    const std::size_t centre_x = kStripLeftInsetPx + kSingleTabWidthPx - kCloseCenterInsetPx;
+    const std::size_t centre_y = kBarHeightPx / 2U;
+    const std::size_t mid_x = (box.x0 + box.x1) / 2U;
+    const std::size_t mid_y = (box.y0 + box.y1) / 2U;
+    AURORA_TEST_CHECK_TRUE(mid_x + kCloseAnchorTolPx >= centre_x && mid_x <= centre_x + kCloseAnchorTolPx);
+    AURORA_TEST_CHECK_TRUE(mid_y + kCloseAnchorTolPx >= centre_y && mid_y <= centre_y + kCloseAnchorTolPx);
+
+    // 包络：不小于稿那 8 dp，也不大于 8 + 抗锯齿档（写成等号就是钉落笔实现）。
+    AURORA_TEST_CHECK_TRUE(box.width() >= kCloseGlyphSizePx && box.width() <= kCloseEnvelopeMaxPx);
+    AURORA_TEST_CHECK_TRUE(box.height() >= kCloseGlyphSizePx && box.height() <= kCloseEnvelopeMaxPx);
+
+    // 形状：交点落墨而包络左沿那一行的中段不落墨 ⇒ 这是两枚对角线，不是一枚实心块、也不是一条竖杠。
+    AURORA_TEST_CHECK_EQ(ink.count({centre_x, centre_y}), std::size_t{1U});
+    AURORA_TEST_CHECK_EQ(ink.count({box.x0, centre_y}), std::size_t{0U});
+    // 只画一枚对角线也过不了这一句：顶行同时有两条臂的墨（左上与右上），横向摊开≈整枚包络宽；单臂的
+    // 顶行只在一头有墨，跨度读不出 6 dp 以上。
+    std::size_t arm_x0 = box.x1;
+    std::size_t arm_x1 = box.x0;
+    for (const auto &[x, y] : ink) {
+        if (y == box.y0) {
+            arm_x0 = std::min(arm_x0, x);
+            arm_x1 = std::max(arm_x1, x);
+        }
+    }
+    AURORA_TEST_CHECK_TRUE(arm_x1 - arm_x0 + 1U >= kCloseGlyphSizePx - 2U);
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif
