@@ -38,6 +38,12 @@ constexpr float kStripLeftInsetDp = 8.0F;
 constexpr float kAccentInsetDp = 8.0F;
 constexpr float kAccentThicknessDp = 2.0F;
 
+// 拖拽落点导引线（交互稿判据 ⑯「两格之间画 2 dp `accent` 落点导引线」）：粗细与色道都与选中格那枚
+// 卡顶 accent 同源，故本件里「accent 色」这一条证人只能是这一笔或卡顶那一笔，不会有第三种。纵向取
+// 卡片同带（38 dp 顶内缩、底贴齐）而**不通栏**：导引线说的是「落进哪一格的位置」，画到栏外就等于给
+// 栏加一条稿没有的分界（裁决 7.190）。
+constexpr float kGuideThicknessDp = 2.0F;
+
 // 类型图标槽（`SPEC.FEAT.WS.04` 的 D4）：字形盒 12 dp + 与名称的间距 6 dp。占用它的三处（栏位宽、
 // 名称原点、可截断宽）都从这两个常量取，故「左槽挪一格就要同改四处」这件事在本 TU 里不存在。
 constexpr float kTypeSlotWidth = 12.0F;
@@ -241,6 +247,49 @@ auto TabBarWidget::hit_test_at(const float x_dp, const float right_edge) const -
     return result;
 }
 
+auto TabBarWidget::strip_slots(const std::optional<std::uint64_t> &skip_id) const -> std::vector<Slot> {
+    std::vector<Slot> out;
+    out.reserve(cached_tabs_.size());
+    // 起点与 `hit_test_at`、`on_paint` 同取「左内缩 − 溢出偏移」：三处各持一份走位算式，就会有某一处
+    // 忘了扣偏移，于是溢出态下的导引线、命中、落笔当场分叉（裁决 7.190）。
+    float x = kStripLeftInsetDp - scroll_offset_;
+    for (const auto &tab : cached_tabs_) {
+        const float w = tab_width(tab);
+        // 剔格只剔那**一格**的落位，不走位照旧扣它的宽：被拖那格在原处仍占着（半透明占位），其余格
+        // 不因它被拖走而挪位——这正是「基准是其余标签」在屏幕上的形态。
+        if (!skip_id.has_value() || skip_id.value() != tab.id) {
+            out.push_back(Slot{.id = tab.id, .x0 = x, .x1 = x + w});
+        }
+        x += w;
+    }
+    return out;
+}
+
+auto TabBarWidget::resolve_drop(const float center_x, const float right_edge,
+                                const std::uint64_t dragged_id) const -> std::optional<DropTarget> {
+    const std::vector<Slot> rest = strip_slots(dragged_id);
+    // 只剩被拖那一格（单标签窗）⇒ 没有「其余标签」，也就没有落点可言：导引线不画，`move` 不呼。
+    if (rest.empty()) {
+        return std::nullopt;
+    }
+    // 中心先钳进右界：界外那一截不属于标签条（判据 21「固定右端、不参与溢出滚动」），拖过界时的落点
+    // 就是表尾，而那一笔导引线不能画到入口簇的墨迹上。与 `strip_right_edge` 同用 min/max 而不用
+    // `std::clamp`（那里登记的理由：上下界反序是未定义行为）。
+    const float clamped = std::min(std::max(0.0F, center_x), right_edge);
+    // 目标下标＝中心在左侧的那些「其余标签」的个数，读作「插在第 index 格之前」，取值 `[0, count-1]`
+    // 恰与 `TabStrip::move` 的合法域同档（7.43④ 那句「指针落在两格之间时算出的插入位天然不含被拖那格」）。
+    std::size_t index = 0U;
+    for (const auto &slot : rest) {
+        if ((slot.x0 + slot.x1) * 0.5F < clamped) {
+            ++index;
+        }
+    }
+    // 那条缝：插在第 index 格之前就是它的左沿，落到表尾则是最后一格的右沿。下标与缝同出一枚算式，
+    // 故「导引线指向哪条缝」与「松手落到哪条缝」不是两条口径（判据 ⑯）。
+    const float seam = index < rest.size() ? rest[index].x0 : rest.back().x1;
+    return DropTarget{.index = index, .guide_x = std::min(std::max(0.0F, seam), right_edge)};
+}
+
 auto TabBarWidget::compute_scroll_offset(float available_width) const -> float {
     if (cached_tabs_.empty()) {
         return 0.0F;
@@ -325,12 +374,53 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
     const float card_top = bounds.origin.y + bar_height_ - kCardHeightDp;
     const float content_top = bounds.origin.y + 14.0F;
     const float content_mid = bounds.origin.y + bar_height_ * 0.5F;
-    float x = bounds.origin.x + kStripLeftInsetDp - scroll_offset_;
+    // 每格的落位从 `strip_slots` 取——与 `hit_test_at`、`resolve_drop` 同一条走位算式，故「画在哪儿」「点
+    // 哪儿算」「导引线落在哪条缝」三件事在溢出态里也不可能各自为政（裁决 7.190）。
+    const std::vector<Slot> slots = strip_slots(std::nullopt);
+    // 被拖那格的下标；取「表尾之外」这一档哨兵表示没有拖拽（下标域是 `[0, size-1]`，故不会撞车）。
+    std::size_t dragged_at = cached_tabs_.size();
+    if (drag_.has_value() && drag_->is_dragging) {
+        for (std::size_t i = 0; i < cached_tabs_.size(); ++i) {
+            if (cached_tabs_[i].id == drag_->dragged_id) {
+                dragged_at = i;
+                break;
+            }
+        }
+    }
+    const bool is_dragging = dragged_at < cached_tabs_.size();
+    // 落笔序＝表序、被拖那格殿后：`Painter` 没有 z 序概念，先落的那格会被后落那格的文字盖住一笔，而跟手
+    // 那格恰恰会压在它的右邻身上（判据 ⑯「被拖格跟手」读作「它在这一刻浮在最上」）。
+    std::vector<std::size_t> order;
+    order.reserve(cached_tabs_.size());
     for (std::size_t i = 0; i < cached_tabs_.size(); ++i) {
+        if (i != dragged_at) {
+            order.push_back(i);
+        }
+    }
+    if (is_dragging) {
+        order.push_back(dragged_at);
+    }
+    // 拖拽占位（判据 ⑯「原格留半透明占位」）：正文色的低透明度盖层，跟着 `text` 走而不是写死白色——亮档
+    // 正文近黑，白色盖层会看不见。落位是**原格**，画在所有卡片**之前**：刚过阈值那档跟手格与原格还重叠
+    // 着，占位若后落就会把那半张跟手卡片染上一档正文色。
+    if (is_dragging) {
+        const float w = tab_width(cached_tabs_[dragged_at]);
+        p.fill_rounded_rect(au::Rect{.origin = au::Point{.x = bounds.origin.x + slots[dragged_at].x0,
+                                                         .y = card_top},
+                                     .size = au::Size{.width = w, .height = kCardHeightDp}},
+                            kCardRadiusDp,
+                            au::Color{chrome.text.r, chrome.text.g, chrome.text.b, 64});
+    }
+    for (const std::size_t i : order) {
         const auto &tab = cached_tabs_[i];
         const float w = tab_width(tab);
+        const bool dragged = (i == dragged_at);
+        // 跟手位＝当前指针减「按下点相对左沿的那截偏移」：不按格中心对齐，否则一过 4 dp 阈值那格就当场
+        // 跳 `grab_dx − 半格宽`，而稿与判据说的都是「跟手」。
+        const float card_x =
+            bounds.origin.x + (dragged ? drag_->current_x - drag_->grab_dx : slots[i].x0);
         const au::Rect card_box{
-            .origin = au::Point{.x = x, .y = card_top},
+            .origin = au::Point{.x = card_x, .y = card_top},
             .size = au::Size{.width = w, .height = kCardHeightDp}};
 
         // 选中态：圆角卡片底 + 卡顶 2 dp accent（左右各内缩 8，让开两个圆角）。
@@ -349,12 +439,6 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         // 一枚 hover 新增第 14 枚 token；差额登记在裁决 7.187 的欠项里。
         if (hovered_tab_id_ == tab.id && !tab.is_selected) {
             p.fill_rounded_rect(card_box, kCardRadiusDp, chrome.control_bg.shaded(0.9F));
-        }
-
-        // 拖拽占位：正文色的低透明度盖层。跟着 `text` 走而不是写死白色——亮档正文近黑，白色盖层会看不见。
-        if (drag_.has_value() && drag_->dragged_id == tab.id && drag_->is_dragging) {
-            p.fill_rounded_rect(card_box, kCardRadiusDp,
-                                au::Color{chrome.text.r, chrome.text.g, chrome.text.b, 64});
         }
 
         // 文本（截断到可用宽度）
@@ -425,14 +509,18 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         if (tab.has_activity && !tab.is_selected) {
             draw_badge(badge_rank++, chrome.success);
         }
+    }
 
-        // 拖拽落点导引线
-        if (drag_.has_value() && drag_->is_dragging && drag_->drop_index.has_value()) {
-            // 简化：在被拖标签与目标位置之间画一条 2 dp 竖线
-            // 实际实现需要更精确的落点计算，这里先占位
-        }
-
-        x += w;
+    // 落点导引线（判据 ⑯）：画在**整层卡片之后**——被拖那格跟手时它的中心就在缝附近，而缝到中心的距离
+    // 不会超过半格，导引线若先落就被那张卡片盖得看不见，「两格之间画一条线」这条判据在屏幕上不复存在。
+    // 纵向取卡片同带（顶内缩、底贴齐），横坐标以那条缝为中心；`resolve_drop` 已把它钳回右界内，故这一笔
+    // 永不压在入口簇的墨上（裁决 7.190）。
+    if (drag_.has_value() && drag_->is_dragging && drag_->drop.has_value()) {
+        const au::Rect guide{
+            .origin = au::Point{.x = bounds.origin.x + drag_->drop->guide_x - kGuideThicknessDp * 0.5F,
+                                .y = card_top},
+            .size = au::Size{.width = kGuideThicknessDp, .height = kCardHeightDp}};
+        p.fill_rect(guide, chrome.accent);
     }
     if (clip_strip) {
         p.pop_clip();
@@ -503,12 +591,25 @@ auto TabBarWidget::on_pointer_event(au::MouseEvent &e) -> void {
                     hooks_.close(*hit.tab_id);
                 }
             } else {
-                // 开始拖拽或选中
+                // 开始拖拽或选中。跟手那两枚量（按下点相对左沿的偏移、被拖格宽）必须在 `hooks_.select`
+                // **之前**从当前布局折出来：选中会推一次重排偏移，之后再量左沿读到的是已经挪过的那一档，
+                // 被拖格会在越过阈值那一刻当场跳一截（裁决 7.190）。
+                float grab_dx = 0.0F;
+                float dragged_width = 0.0F;
+                for (const auto &slot : strip_slots(std::nullopt)) {
+                    if (slot.id == *hit.tab_id) {
+                        grab_dx = e.local_position.x - slot.x0;
+                        dragged_width = slot.x1 - slot.x0;
+                        break;
+                    }
+                }
                 drag_ = DragState{
                     .dragged_id = *hit.tab_id,
                     .press_x = e.local_position.x,
                     .current_x = e.local_position.x,
                     .is_dragging = false,
+                    .grab_dx = grab_dx,
+                    .dragged_width = dragged_width,
                 };
                 // 选中该标签
                 if (hooks_.select) {
@@ -545,14 +646,22 @@ auto TabBarWidget::on_pointer_event(au::MouseEvent &e) -> void {
             mark_needs_paint();
         }
         if (drag_->is_dragging) {
-            // TODO: 计算落点下标
+            // 落点每帧现折：下标与导引线同出 `resolve_drop` 那一枚算式，故导引线指到哪儿、松手就落到
+            // 哪儿（判据 ⑯）。落点中心＝跟手左沿 + 半格宽，右界取与绘制、命中同源的 `strip_right_edge`。
+            const auto widget_size = size();
+            const float strip_edge =
+                strip_right_edge(right_cluster(widget_size.width), widget_size.width);
+            drag_->drop = resolve_drop(drag_->current_x - drag_->grab_dx + drag_->dragged_width * 0.5F,
+                                       strip_edge, drag_->dragged_id);
             mark_needs_paint();
             e.is_handled = true;
             return;
         }
     } else if (e.action == au::MouseAction::Release && drag_.has_value()) {
-        if (drag_->is_dragging && drag_->drop_index.has_value() && hooks_.move) {
-            hooks_.move(drag_->dragged_id, *drag_->drop_index);
+        // 落点仍在原格 ⇒ `TabStrip::move` 走到 `from == to_index` 那一档、原地返回（7.43④），故这里
+        // 不必另判「有没有真的换序」；没有其余标签（单标签窗）时 `drop` 为空，连呼都不呼。
+        if (drag_->is_dragging && drag_->drop.has_value() && hooks_.move) {
+            hooks_.move(drag_->dragged_id, drag_->drop->index);
         }
         drag_.reset();
         mark_needs_paint();

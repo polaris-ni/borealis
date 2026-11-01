@@ -14,7 +14,8 @@
 // - 卡片是 38 dp 高、6 dp 圆角的一格，顶内缩 4 底贴齐、首格左内缩 8、相邻零间距，选中态另在**卡顶**画
 //   2 dp accent（稿值与判据文 §1 表同值；accent 取卡顶而非判据 ⑭ 的「下划线」，裁决 7.187）；
 // - 关闭钮只在 hover 与活动格显形，命中区＝栏位右端 20 dp；
-// - 拖拽重排有 4 dp 阈值，原格留半透明占位、两格间画落点导引线；
+// - 拖拽重排有 4 dp 阈值，被拖格跟手、原格留半透明占位、两格之间画 2 dp `accent` 落点导引线，松手按
+//   那条缝折成「其余标签」基准的目标下标（判据 ⑯ 兑现，裁决 7.190：导引线与落点同出一枚算式）；
 // - 就地重命名用 TextInput 子类补 Esc 与失焦提交，空串即撤销；
 // - 「＋ 新建」与「⌄ 最近关闭」两枚固定右端、不参与溢出滚动（屏 1 稿右端簇，裁决 7.183）：这一句在
 //   代码里兑现成「标签条的右界＝入口簇左沿」，偏移、命中、裁剪三处共用同一枚算式（裁决 7.188）。
@@ -145,6 +146,37 @@ class TabBarWidget final : public au::Widget {
     /// 界取簇左沿而**不自造间隙**：稿只给了「末格 → 入口簇」之外的那些数。
     [[nodiscard]] static auto strip_right_edge(const RightCluster &cluster, float width) -> float;
 
+    /// @brief 一格在当前布局里的落位（widget 本地 dp，已扣掉溢出偏移）。
+    struct Slot {
+        std::uint64_t id = 0;
+        float x0 = 0.0F;  ///< 左沿。
+        float x1 = 0.0F;  ///< 右沿（连续坐标，等于 `x0 + 格宽`）。
+    };
+
+    /// @brief 按当前布局逐格折出落位；`skip_id` 那一格缺席。
+    ///
+    /// 落点下标以「其余标签」为基准（裁决 7.43④），故折算落点时要把被拖那格剔出去；Press 那一档不剔
+    /// 任何格（它要的是被拖格**自己**的左沿）。起点与 `hit_test_at`、`on_paint` 同取 `kStripLeftInsetDp`
+    /// 减溢出偏移，故三者不会各自持一份走位算式。
+    [[nodiscard]] auto strip_slots(const std::optional<std::uint64_t> &skip_id) const -> std::vector<Slot>;
+
+    /// @brief 一次落点折算的两个出口：目标下标与导引线的落笔横坐标。
+    struct DropTarget {
+        std::size_t index = 0;    ///< 目标下标（以「其余标签」为基准，取值 `[0, count-1]`）。
+        float guide_x = 0.0F;     ///< 那条缝的横坐标（导引线以它为中心落笔）。
+    };
+
+    /// @brief 把「落点中心」折成 `TabStrip::move` 的目标下标与两格之间那条缝。
+    ///
+    /// 判据 ⑯ 那句「松手按落点中心折成目标下标」在这里一次折完：下标与导引线同出一枚算式，故导引线
+    /// 指向哪条缝、松手就落到那条缝（裁决 7.190）。
+    /// @param center_x 被拖格当前的中心横坐标（widget 本地 dp）。
+    /// @param right_edge 标签条的右界（`strip_right_edge`）：中心与缝都先钳进界内，导引线不出界。
+    /// @param dragged_id 被拖那格，它不进「其余标签」。
+    /// @return 没有其余标签时（单标签窗）为空——无格可重排，也就不画导引线。
+    [[nodiscard]] auto resolve_drop(float center_x, float right_edge, std::uint64_t dragged_id) const
+        -> std::optional<DropTarget>;
+
     // Widget 虚钩子
     auto on_layout(const au::Constraints &c, const au::BuildContext &ctx) -> au::Size override;
     auto on_paint(au::Painter &p, const au::Rect &bounds, const au::BuildContext &ctx) -> void override;
@@ -171,7 +203,14 @@ class TabBarWidget final : public au::Widget {
         float press_x = 0.0F;          ///< Press 时的 x 坐标。
         float current_x = 0.0F;        ///< 当前拖拽 x 坐标。
         bool is_dragging = false;      ///< 是否已进入拖拽态。
-        std::optional<std::size_t> drop_index;  ///< 落点下标（以"其余标签"为基准）。
+        /// @brief 按下点相对被拖格左沿的偏移（「跟手」就是把它平移回当前指针位）。
+        ///
+        /// 须在 `hooks_.select` **之前**从 `strip_slots` 取：选中会改溢出偏移，之后再量左沿读到的是已经
+        /// 挪过的那一档，被拖格会当场跳一截（裁决 7.190）。
+        float grab_dx = 0.0F;
+        float dragged_width = 0.0F;  ///< 被拖格宽：落点中心 = 跟手左沿 + 半格宽。
+        /// @brief 当前落点（下标 + 导引线横坐标）；单标签窗没有「其余标签」，故为空。
+        std::optional<DropTarget> drop;
     };
     std::optional<DragState> drag_;
 
