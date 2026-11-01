@@ -239,6 +239,12 @@ auto TabBarWidget::hit_test_at(const float x_dp, const float right_edge) const -
     if (x_dp >= right_edge) {
         return result;
     }
+    // 左端同理，但**必须显式判**：下面的走位起点是「左内缩 − 溢出偏移」，偏移非 0 时首格的盒一路挪进
+    // 0..8 dp 那一档飞地——不判界就成了「点得着却看不见」（与 `on_paint` 的裁剪同源，裁决 7.193；
+    // 未溢出时走位起点本就是 8，这一句只是把那条口径推到溢出态）。
+    if (x_dp < kStripLeftInsetDp) {
+        return result;
+    }
     // 起点与绘制同源（首格左内缩那 8 dp 不是任何一格的落区）。
     float x = kStripLeftInsetDp - scroll_offset_;
     for (const auto &tab : cached_tabs_) {
@@ -284,6 +290,11 @@ auto TabBarWidget::resolve_drop(const float center_x, const float right_edge,
     // 中心先钳进右界：界外那一截不属于标签条（判据 21「固定右端、不参与溢出滚动」），拖过界时的落点
     // 就是表尾，而那一笔导引线不能画到入口簇的墨迹上。与 `strip_right_edge` 同用 min/max 而不用
     // `std::clamp`（那里登记的理由：上下界反序是未定义行为）。
+    //
+    // 下界**不**跟着抬到左内缩（裁决 7.193）：这里的读法是「指针落在栏的留白＝落在表头」。抬到 8 之后，
+    // 一枚中心还留在 0..8 之间的「其余标签」会被算进「中心在左」，同一档指针读出下标 1、缝落到它右沿——
+    // 导引线指哪儿、松手却落哪儿，判据 ⑯ 那条同源性当场断。这一档分叉要的是「某格的中心恰落在留白里」，
+    // 本套件的六格等宽（偏移 14）与七格（偏移 110）两档都折不出它，故没有证人（等价变异 M5 登记在裁决里）。
     const float clamped = std::min(std::max(0.0F, center_x), right_edge);
     // 目标下标＝中心在左侧的那些「其余标签」的个数，读作「插在第 index 格之前」，取值 `[0, count-1]`
     // 恰与 `TabStrip::move` 的合法域同档（7.43④ 那句「指针落在两格之间时算出的插入位天然不含被拖那格」）。
@@ -296,7 +307,12 @@ auto TabBarWidget::resolve_drop(const float center_x, const float right_edge,
     // 那条缝：插在第 index 格之前就是它的左沿，落到表尾则是最后一格的右沿。下标与缝同出一枚算式，
     // 故「导引线指向哪条缝」与「松手落到哪条缝」不是两条口径（判据 ⑯）。
     const float seam = index < rest.size() ? rest[index].x0 : rest.back().x1;
-    return DropTarget{.index = index, .guide_x = std::min(std::max(0.0F, seam), right_edge)};
+    // 那一笔导引线的中心取钳回内侧的缝：粗 `kGuideThicknessDp`、以中心对称，故左界比内缩再多让半粗——
+    // 层裁剪的左沿是**含端**的（右沿那一档由框架的取整口径让出整整一列，7.190 已登记），中心若只钳到
+    // 内缩本身，两列里靠左那一列会被裁掉，判据 ⑯ 那条「2 dp」在溢出态里就只剩 1 dp（裁决 7.193）。
+    return DropTarget{
+        .index = index,
+        .guide_x = std::min(std::max(kStripLeftInsetDp + kGuideThicknessDp * 0.5F, seam), right_edge)};
 }
 
 auto TabBarWidget::compute_scroll_offset(float available_width) const -> float {
@@ -370,10 +386,21 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
     const float strip_edge = strip_right_edge(cluster, bounds.size.width);
     // 只在界确实落在栏内时才压裁剪：界归零是栏窄到装不下入口簇的退化档，那一档入口簇本就越过标签条右界，
     // 而它落笔在标签之后（画在上头），空裁剪盒只会把标签整层抹掉。
-    const bool clip_strip = strip_edge > 0.0F && strip_edge < bounds.size.width;
+    //
+    // 左沿一并裁在**左内缩**那一档（裁决 7.193）：溢出偏移非 0 时首格的盒会一路挪进 0..8 dp，画从 0 起
+    // 就成了「一格里铺进飞地」——那 8 dp 是栏的留白、不属于任何一格，`hit_test_at` 与偏移算式都这么认，
+    // 绘制此前只裁右界（7.189 登记的余项 (h) 正是这一处镜像缺口）。
+    //
+    // `strip_edge` 是**栏相对**的（`right_cluster` 与 `strip_right_edge` 都按 `bounds.size.width` 折），
+    // 故它与 `kStripLeftInsetDp` 都得先加上 `bounds.origin.x` 才能同一条尺比——嵌入式布局下（栏左边有
+    // 分屏把手那类占位）直接把相对量当绝对坐标读，裁剪盒会短掉一整截 origin.x。
+    const float clip_left = bounds.origin.x + kStripLeftInsetDp;
+    const float clip_right = bounds.origin.x + std::min(strip_edge, bounds.size.width);
+    const bool clip_strip = clip_right > clip_left;
     if (clip_strip) {
-        p.push_clip(au::Rect{.origin = au::Point{.x = bounds.origin.x, .y = bounds.origin.y},
-                             .size = au::Size{.width = strip_edge, .height = bar_height_}});
+        p.push_clip(au::Rect{.origin = au::Point{.x = clip_left, .y = bounds.origin.y},
+                             .size = au::Size{.width = clip_right - clip_left,
+                                              .height = bar_height_}});
     }
 
     // 卡片纵向**底贴齐、顶内缩**（内缩由栏高减格高折出，两处不可能分叉成「卡浮在栏中间」）。
