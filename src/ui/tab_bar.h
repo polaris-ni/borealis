@@ -17,7 +17,9 @@
 //   中心距栏位右缘 13 dp、纵向落在 42 dp 的**带**中线（不是卡中线，裁决 7.191）；
 // - 拖拽重排有 4 dp 阈值，被拖格跟手、原格留半透明占位、两格之间画 2 dp `accent` 落点导引线，松手按
 //   那条缝折成「其余标签」基准的目标下标（判据 ⑯ 兑现，裁决 7.190：导引线与落点同出一枚算式）；
-// - 就地重命名用 TextInput 子类补 Esc 与失焦提交，空串即撤销；
+// - 就地重命名是**胶囊浮层**，入口＝双击名称那一截（屏 1 余项 (c)，裁决 7.195）：本件只交「胶囊落在
+//   哪一截」与「框里种什么名」（`rename_target()`），浮层本体在 `tab_rename_editor.h`——坐标只有一处
+//   算式，它留在与 `on_paint`、`hit_test_at` 同源的本件里；
 // - 「＋ 新建」与「⌄ 最近关闭」两枚固定右端、不参与溢出滚动（屏 1 稿右端簇，裁决 7.183）：这一句在
 //   代码里兑现成「标签条的右界＝入口簇左沿」，偏移、命中、裁剪三处共用同一枚算式（裁决 7.188）。
 // ============================================================
@@ -26,6 +28,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "aurora/core/color.h"
@@ -39,6 +42,25 @@
 namespace au = aurora;
 
 namespace borealis::ui {
+
+/// @brief 就地重命名胶囊的六个稿面值（屏 1 稿 `<rect x="38" y="48" width="104" height="22" rx="3">`
+///        与其 `stroke-width="1"`、内文本 `x=44 size=12` 折成 dp，裁决 **7.195**）。
+///
+/// 住在头里而不是 `tab_bar.cpp` 的匿名命名空间，是因为消费者在两个翻译单元：**盒**（左沿、宽、顶内缩、
+/// 高）由本件折出并交给浮层，而**外观**（圆角、内边距、字号、描边）由 `tab_rename_editor.cpp` 下发给
+/// 那只 `TextInput`。高这一枚两边都要用（本件据此定盒高，浮层据此定控件高），故两处必须是同一个数——
+/// 各写一份迟早会读成「盒 22、控件 20」，胶囊就在卡里偏两 dp。
+/// 形态取 `inline constexpr`（与 `terminal_view.h` 的 `kScrollbarWidthDp` 同一档跨 TU 常数写法）。
+///
+/// 与卡片几何的换算：格高 38、胶囊高 22、顶内缩 8 ⇒ 底内缩也是 8，即**胶囊在卡里竖向居中**；而名称
+/// 那行字仍按既有口径落在**栏**的中线带（裁决 7.187 那句「内容纵向不变」），两者纵向差 2 dp 是稿自身
+/// 的差，登记而不改。
+inline constexpr float kRenamePillHeightDp = 22.0F;  ///< 稿 `height="22"`。
+inline constexpr float kRenamePillTopInsetDp = 8.0F;  ///< 卡顶 → 胶囊顶（稿 48 − 卡顶 40）。
+inline constexpr float kRenamePillRadiusDp = 3.0F;  ///< 稿 `rx="3"`。
+inline constexpr float kRenamePillTextInsetDp = 6.0F;  ///< 稿：胶囊左沿 38 → 内文本左沿 44。
+inline constexpr float kRenamePillBorderDp = 1.0F;  ///< 稿 `stroke-width="1"`（聚焦态框架强制 1.5，见裁决 7.195）。
+inline constexpr float kRenamePillFontPt = 12.0F;  ///< 稿 `font-size="12"`（栏上名称是 13，胶囊按稿另取一档）。
 
 /// @brief 一个标签在界面上的呈现信息（由装配层从 TabStrip 折来）。
 struct TabVisual {
@@ -61,6 +83,15 @@ struct TabVisual {
     std::optional<conn::ConnectionType> kind{};
 };
 
+/// @brief 就地重命名胶囊的一次取数：落位盒与框里该种的现名（`TabBarWidget::rename_target()` 的输出）。
+///
+/// 盒是**窗口逻辑 dp**而不是本件本地坐标：胶囊是浮在场景根上的浮层，它拿不到本件的 `bounds`，故折算
+/// 在标签条那一侧做完——与它自己的绘制、命中同源（`tab_rename_editor.h` 文件头的分工）。
+struct RenameTarget {
+    au::Rect box{};                  ///< 胶囊盒（窗口 dp）：左沿＝名称左沿，宽＝名称可截断宽，高取 `kRenamePillHeightDp`。
+    std::u32string current_name;     ///< 框里该种的现名（**未截断**的显示名：胶囊是编辑源而不是预览）。
+};
+
 /// @brief 标签栏的装配层接缝。
 struct TabBarHooks {
     /// @brief 取全部标签的视觉信息。
@@ -71,6 +102,12 @@ struct TabBarHooks {
     std::function<void(std::uint64_t id)> close;
     /// @brief 重命名某标签（空串即撤销）。
     std::function<void(std::uint64_t id, std::u32string name)> rename;
+    /// @brief 请装配层为某标签**打开**就地重命名胶囊（屏 1 余项 (c)，裁决 **7.195**）。
+    ///
+    /// 本件不持浮层，也不持文本：双击只决定「哪一格要改名」，胶囊本体、提交与取消都在
+    /// `tab_rename_editor.h` 那一侧。留空即双击名称不弹（与 `undo_close` 同一档「缺席的入口整枚不
+    /// 响应」），但**绘制侧不改**——名称照旧、卡片照旧，只是没有第二个动作。
+    std::function<void(std::uint64_t id)> begin_rename;
     /// @brief 移动某标签到目标位置（to_index 以"其余标签"为基准）。
     std::function<void(std::uint64_t id, std::size_t to_index)> move;
     /// @brief 新建标签（"＋ 新建"入口触发）。
@@ -110,6 +147,14 @@ class TabBarWidget final : public au::Widget {
     /// @param recent_label 「最近关闭」那一枚的文字；本件不用它决定画不画——那由 `hooks_.undo_close`
     ///        是否在位决定（缺席的入口整枚不画，`SPEC.FEAT.WS.04` 类型槽同口径）。
     auto set_action_labels(std::string new_tab_label, std::string recent_label) -> TabBarWidget &;
+
+    /// @brief 取那一格的重命名落位；取不到即**不弹**（裁决 7.195）。
+    ///
+    /// 三种取不到的情形：栏未布局（`window_bounds()` 回空）、那一格已不在表里（被关闭或改组）、名称区
+    /// 被挤到零宽（最后一种是「胶囊盖不住任何字」的退化档，弹一只空胶囊比不弹更坏）。
+    /// 公开的唯一理由：消费者是另一个 TU 里的 `TabRenameEditor`，而它要的就是**这一份**盒，不是自己
+    /// 再复制一套走位算式（7.190 那条同源性）。
+    [[nodiscard]] auto rename_target(std::uint64_t id) const -> std::optional<RenameTarget>;
 
   private:
     /// @brief 单个标签的宽度（含内边距与关闭钮）。
@@ -160,6 +205,27 @@ class TabBarWidget final : public au::Widget {
     /// 任何格（它要的是被拖格**自己**的左沿）。起点与 `hit_test_at`、`on_paint` 同取 `kStripLeftInsetDp`
     /// 减溢出偏移，故三者不会各自持一份走位算式。
     [[nodiscard]] auto strip_slots(const std::optional<std::uint64_t> &skip_id) const -> std::vector<Slot>;
+
+    /// @brief 一格内「名称可落笔的那一截」：左内缩、可截断宽，以及其中的类型槽占位。
+    struct NameRegion {
+        float left_inset = 0.0F;  ///< 栏位左沿 → 名称原点（卡片左内缩 ＋ 类型槽）。
+        float width = 0.0F;       ///< 名称的可截断宽（右让关闭钮命中区或角标簇，取大者）。
+        float slot_width = 0.0F;  ///< 类型槽占位（无类型即 0，判据 ② 的「逐位相同」由这一句兜）。
+    };
+
+    /// @brief 折出那一格的名称区（`on_paint` 的名称与图标落笔、`name_span()` 的重命名入口共用一枚算式）。
+    ///
+    /// 名称此前在 `on_paint` 里就地折出，是**全栏唯一**一份这套算式；胶囊的盒要的是同一截，两处各持
+    /// 一份就会读成「胶囊盖住的不是名称」（裁决 7.195，与 7.190 那条同源性同类）。
+    /// @param tab 本格视觉信息（决定类型槽、角标簇与关闭钮是否占位）。
+    /// @param w 本格宽（`tab_width` 折出的那一枚）。
+    [[nodiscard]] auto name_region(const TabVisual &tab, float w) const -> NameRegion;
+
+    /// @brief 那一格的名称区在**当前布局**里的横坐标区间 `[x0, x1)`（本件本地 dp，已扣溢出偏移）。
+    ///
+    /// 两个消费者：`on_pointer_event` 判「这次双击落没落在名称那一截」，`rename_target()` 把它加上栏的
+    /// 窗口原点折成胶囊盒。格不在表里、或名称区零宽 ⇒ 回空。
+    [[nodiscard]] auto name_span(std::uint64_t id) const -> std::optional<std::pair<float, float>>;
 
     /// @brief 一次落点折算的两个出口：目标下标与导引线的落笔横坐标。
     struct DropTarget {
@@ -215,13 +281,15 @@ class TabBarWidget final : public au::Widget {
     };
     std::optional<DragState> drag_;
 
-    // 就地重命名状态
-    struct RenameState {
-        std::uint64_t target_id = 0;
-        std::u32string original_name;
-        // 编辑器由装配层注入，本件只持引用。
-    };
-    std::optional<RenameState> rename_;
+    /// @brief 最近一次落在某一格上的 `Press` 是哪一格（栏的空白与右端入口不算，故没有则空）。
+    ///
+    /// 双击认领胶囊那一条腿的对账凭据（裁决 **7.195**）：框架的 `click_count` 只说「这一落在连击时间窗
+    /// 与 4 dp 位移之内、两下之间没有别的 `Press`」，不说「前一下也落在**同一格**」——第一下若把这一格
+    /// 关掉，表立刻少一格、走位重排，第二下的同一屏幕坐标就归了邻格，于是「双击 ✕」会在关掉一格之后把
+    /// 胶囊弹到它邻格的名字上。这里只存格 id：坐标不必对（`local_position` 是栏相对的，栏在两下之间不
+    /// 动，框架那 4 dp 半径已经把它管住），时刻也不必存——每一次落在格上的 `Press` 都覆写本枚，而认领
+    /// 只发生在 `click_count == 2` 那一刻，两下之间不可能插进别的 `Press`。
+    std::optional<std::uint64_t> last_tab_press_id_;
 
     // hover 状态
     std::optional<std::uint64_t> hovered_tab_id_;

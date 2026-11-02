@@ -109,6 +109,7 @@ add_library(borealis_core STATIC
         ui/status_bar_format.cpp
         ui/startup_notice.cpp
         ui/tab_bar.cpp
+        ui/tab_rename_editor.cpp
         ui/tab_strip.cpp
         ui/terminal_view.cpp
         ui/tunnel_format.cpp

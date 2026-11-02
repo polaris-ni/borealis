@@ -103,6 +103,7 @@
 #include "ui/status_bar.h"
 #include "ui/status_bar_format.h"
 #include "ui/tab_bar.h"
+#include "ui/tab_rename_editor.h"
 #include "ui/terminal_view.h"
 #include "ui/tunnel_panel.h"
 #include "ui/workspace_view.h"
@@ -483,6 +484,13 @@ struct WorkspaceWindow {
     /// 的 quake 那一扇）不挂这条——它没有可拖的标题带，也没有需要显示的窗口标识（`SPEC.FEAT.WS.12`）。
     std::shared_ptr<borealis::ui::AppTitleBar> title_bar{};
     std::shared_ptr<borealis::ui::TabBarWidget> tab_bar{};
+    /// @brief 本窗的就地重命名胶囊（屏 1 余项 (c)，裁决 **7.195**）。
+    ///
+    /// **按窗一份、常驻**（与搜索浮层 F1-c 同一条形态）：它挂在这一扇的 `overlay_host` 上，而一枚浮层
+    /// 节点只容一个父节点——app 级单实例会把胶囊弹到别的窗脸上。声明排在 `overlay_host` 之后 ⇒ 析构
+    /// 早于宿主，本件析构里摘浮层时宿主还在世。懒建（`attach_rename_editor`）的原因是它要持 `tab_bar`
+    /// 的引用，而栏本体在内容装配那一跳才造出来。
+    std::unique_ptr<borealis::ui::TabRenameEditor> rename_editor{};
     std::shared_ptr<borealis::ui::BroadcastBanner> banner{};
     /// @brief 屏 1 判据 ③ 那条常驻列（折叠 34 dp 轨／展开 320 dp，`SPEC.FEAT.CONN.07`＋裁决 7.180）。
     ///
@@ -2101,6 +2109,17 @@ auto main(int argc, char **argv) -> int {
     // 标签栏的构造按窗一份（稿 §6 批 3）：六条 hooks 读的全是**本窗**那一份真值源——标签表、当前号、
     // 闭包栈（`perform_close` 里）。留在全局的只有「这张标签的工作区与会话」那几张应用级表（稿 §0
     // 的 F10：`TabId` 全局唯一），它们按号查、与窗无关。变更钩子同样装在本窗的 `TabStrip` 上。
+    // 改名的唯一落库腿（裁决 **7.195**）：栏 hooks 的 `.rename`（命令面板与旧的改名腿）与胶囊浮层的提交腿
+    // 同喂这一枚。两处各写一份就是两套口径——快照提交点漏掉一处，手动名会落在屏幕上而工作区快照里仍是
+    // 旧名，而稿 D2① 的「改名」与 D10① 存的就是这一档手动名。空串即撤销重命名（裁决 7.43③）：判空只在
+    // `TabStrip::rename` 一处，胶囊侧不判（`tab_rename_editor.h` 文件头③）。
+    auto rename_tab =
+        [&flush_workspace_snapshot](WorkspaceWindow &window, std::uint64_t id,
+                                    std::u32string name) -> void {
+            window.tab_strip.rename(static_cast<borealis::ui::TabId>(id), std::move(name));
+            flush_workspace_snapshot();
+        };
+
     auto make_tab_bar = [&](WorkspaceWindow &window) -> void {
         window.tab_bar = std::make_shared<borealis::ui::TabBarWidget>(borealis::ui::TabBarHooks{
             .tabs = [&window, &settings, &tab_kind]() -> std::vector<borealis::ui::TabVisual> {
@@ -2148,10 +2167,16 @@ auto main(int argc, char **argv) -> int {
                     close_tab_request(static_cast<borealis::ui::TabId>(id));
                 }
             },
-            .rename = [&window, &flush_workspace_snapshot](std::uint64_t id, std::u32string name) -> void {
-                window.tab_strip.rename(static_cast<borealis::ui::TabId>(id), std::move(name));
-                // 布局变更的提交点（稿 D2①「改名」）：快照存的就是这一档**手动名**（D10①）。
-                flush_workspace_snapshot();
+            .rename = [&window, &rename_tab](std::uint64_t id, std::u32string name) -> void {
+                rename_tab(window, id, std::move(name));
+            },
+            // 就地重命名（屏 1 余项 (c)，裁决 **7.195**）：双击名称只交「哪一格要改名」，胶囊本体在
+            // `tab_rename_editor.h`。编辑器还没建（本窗未装配完、或该窗根本没建过栏）即不响应——绘制侧
+            // 不受影响，名称照旧。按引用捕那枚 `unique_ptr`：它在本钩赋值之后才建（回头补建那一段）。
+            .begin_rename = [&window](std::uint64_t id) -> void {
+                if (window.rename_editor) {
+                    window.rename_editor->begin(id);
+                }
             },
             .move = [&window, &flush_workspace_snapshot](std::uint64_t id, std::size_t to_index) -> void {
                 window.tab_strip.move(static_cast<borealis::ui::TabId>(id), to_index);
@@ -2213,6 +2238,13 @@ auto main(int argc, char **argv) -> int {
     /// 那之前——故这里只能判「赋值了没有」：主窗的那一列由赋值处回头补建，第二扇窗之后走这一支。
     std::function<void(WorkspaceWindow &)> make_sidebar;
 
+    /// @brief 按窗建就地重命名胶囊（屏 1 余项 (c)，裁决 **7.195**），先声明后赋值（`make_sidebar` 同一形态）。
+    ///
+    /// 它要三件同窗的东西：栏本体（取盒与初值）、本窗浮层宿主、本窗焦点管理器。前两件在内容装配那一跳
+    /// 就有了，而 `window_focus` 要等 `Application` 建成（号登记之后）才取得到——故实体排在下面赋值，
+    /// 首扇窗由赋值处回头补建，第二扇窗之后走 `assemble_window_content` 这一支。
+    std::function<void(WorkspaceWindow &)> attach_rename_editor;
+
     auto assemble_window_content = [&](WorkspaceWindow &window) -> void {
         // 屏 1 顶部那条 36 dp 带（`SPEC.FEAT.WS.06`＋裁决 7.181）：只在**普通工作区窗**挂——帘子
         // （quake 那一档 `style.frameless`）没有标题带，也没有要显示的窗口标识。✕ 交回的是装配层
@@ -2239,6 +2271,10 @@ auto main(int argc, char **argv) -> int {
                 });
         }
         make_tab_bar(window);
+        // 胶囊排在栏之后：它持的是栏的引用，而 `rename_target()` 在双击那一刻才取盒——先有栏才有胶囊。
+        if (attach_rename_editor) {
+            attach_rename_editor(window);
+        }
         // 主窗那一枚横幅在首标签创建**之前**就要存在（`refresh_broadcast_ui` 在 `router.attach` 那一刻
         // 就要有可写的横幅），故上面已建；按窗补建只服务第二扇窗之后的入口。
         if (!window.banner) {
@@ -4000,6 +4036,27 @@ auto main(int argc, char **argv) -> int {
         rebuild_root_children(*window, tab_workspaces);
     }
 
+    // 胶囊按窗各建一份（屏 1 余项 (c)，裁决 **7.195**）：它挂在这一扇的浮层宿主上，而一枚浮层节点只容
+    // 一个父节点——app 级单实例会把 A 窗的重命名框弹到 B 窗脸上。焦点管理器也按窗取（`window_focus`）：
+    // 拿 `app.focus()` 给第二扇窗接线就是「键入打不进第二扇窗」那条已知形态。
+    attach_rename_editor = [&window_focus, &rename_tab](WorkspaceWindow &window) -> void {
+        // 一扇窗一只胶囊：回头装配再跑一次就是往同一宿主上追加第二个浮层节点，前一只永远摘不掉。
+        // 栏没建即不建（胶囊的全部输入都来自 `rename_target()`，没有栏就没有盒）。
+        if (window.rename_editor != nullptr || window.tab_bar == nullptr) {
+            return;
+        }
+        window.rename_editor = std::make_unique<borealis::ui::TabRenameEditor>(
+            *window.tab_bar, *window.overlay_host, window_focus(window),
+            [&window, &rename_tab](std::uint64_t id, std::u32string name) -> void {
+                rename_tab(window, id, std::move(name));
+            });
+    };
+    // 主窗的内容装配排在本段之前（那时它还没赋值），故活着的那些窗在这里回头补建。胶囊不入根 Column
+    // 而是进浮层宿主，因此不必像常驻列那样重排一次中段行。
+    for (const std::unique_ptr<WorkspaceWindow> &window : workspace_windows) {
+        attach_rename_editor(*window);
+    }
+
     // 打开入口（Q4/Q5 改判，裁决 7.180）：仍走命令层（快捷键 / 命令面板 / 菜单的共同真源，同
     // `settings.open`），但开合的对象换成**发起命令那一扇窗**自己的列——旧腿是「搬浮层到落点窗再 toggle」，
     // 常驻列不搬，落点窗那一条本来就在。默认不绑死键位（进 PREF.04 体系后用户自行绑定）。
@@ -4711,6 +4768,30 @@ auto main(int argc, char **argv) -> int {
     undo_close_tab.default_binding = au::KeyCombo{au::ModifierKey::Control | au::ModifierKey::Shift, au::KeyCode::T};
     undo_close_tab.scope = au::ShortcutScope::Global;
     app.commands().add(std::move(undo_close_tab));
+
+    // 就地重命名（屏 1 余项 (c)，裁决 **7.195**）：交互稿判据 ⑰ 原文写的入口是 `Ctrl+Shift+R`，而那枚
+    // 键位早被已 shipped 的 `session.restart` 吃掉（三处文档与按键面板都以它为准），换绑是破坏性变更。
+    // 故这一条**只登记命令、不登记 `default_binding`**——与 `workspace.close_window` 同一先例（裁决 7.161）：
+    // `SPEC.FEAT.PREF.04` 的可重绑面仍然成立，而日常入口是**双击标签名**那一条。落点按稿 D7 取发起窗
+    // 自己的选中格；胶囊没建（该窗还没装配完）即不做事。
+    au::Command rename_tab_command;
+    rename_tab_command.id = "tab.rename";
+    rename_tab_command.title = borealis::ui::settings_label("tab.action.rename");
+    rename_tab_command.category = "workspace";
+    rename_tab_command.action = [&command_window]() -> void {
+        WorkspaceWindow *const resolved = command_window ? command_window() : nullptr;
+        if (resolved == nullptr || resolved->rename_editor == nullptr) {
+            return;
+        }
+        const std::optional<borealis::ui::TabId> selected = resolved->tab_strip.selected();
+        if (!selected.has_value()) {
+            AURORA_LOG_INFO("main", "rename tab: this window has no selected tab");
+            return;
+        }
+        resolved->rename_editor->begin(selected.value());
+    };
+    rename_tab_command.scope = au::ShortcutScope::Global;
+    app.commands().add(std::move(rename_tab_command));
 
     // 「⌄ 最近关闭」那一格的腿落在注册表上（上面那条 `add` 之后才有得读）：面板行、`Ctrl+Shift+T` 与
     // 栏上这一枚共用 `invoke(id)` 这一个出口，于是启用条件与归属窗解析不会各持一份真值。
@@ -5639,6 +5720,12 @@ auto main(int argc, char **argv) -> int {
         // 回全局一份会让第二扇窗的标题栏永远停在主窗的名字上。
         for (const auto &window_ptr : workspace_windows) {
             WorkspaceWindow &window = *window_ptr;
+            // 胶囊逐帧同步（屏 1 余项 (c)，裁决 **7.195**）：排在下面那句**之前**——末格被关掉之后表里
+            // 已没有那一格，正是靠这一跳收层；放在之后就是「标签关了而重命名框还挂着」。没在改名时这一跳
+            // 只是一次指针读（`sync()` 关闭态第一句早返回），不额外产生非空闲帧。
+            if (window.rename_editor) {
+                window.rename_editor->sync();
+            }
             if (!window.current_tab_id.has_value()) {
                 continue;
             }

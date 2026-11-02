@@ -37,6 +37,9 @@ constexpr float kCardRadiusDp = 6.0F;
 constexpr float kStripLeftInsetDp = 8.0F;
 constexpr float kAccentInsetDp = 8.0F;
 constexpr float kAccentThicknessDp = 2.0F;
+/// @brief 卡片左内缩（稿：卡左沿 8 → 类型图标左沿 20；无类型时名称仍从这一档起笔）。
+///        名称区算式的两项都取它（左内缩与右留白的对称位），故它不是散在 `on_paint` 里的那个 `12.0F`。
+constexpr float kCardTextLeftInsetDp = 12.0F;
 
 // 拖拽落点导引线（交互稿判据 ⑯「两格之间画 2 dp `accent` 落点导引线」）：粗细与色道都与选中格那枚
 // 卡顶 accent 同源，故本件里「accent 色」这一条证人只能是这一笔或卡顶那一笔，不会有第三种。纵向取
@@ -280,6 +283,67 @@ auto TabBarWidget::strip_slots(const std::optional<std::uint64_t> &skip_id) cons
     return out;
 }
 
+auto TabBarWidget::name_region(const TabVisual &tab, const float w) const -> NameRegion {
+    NameRegion out;
+    out.slot_width = tab.kind.has_value() ? kTypeSlotTotal : 0.0F;
+    out.left_inset = kCardTextLeftInsetDp + out.slot_width;
+    // 右留白（名称右端到栏位右端的距离）：关闭钮那一档是既有口径（12 + 命中区 20）；角标簇点亮时
+    // 按簇宽让位，两者取大者——故「无角标」的每一格与本棒之前逐位相同（裁决 7.183 记的就是这条
+    // 最小改动约束），而三枚同亮时最左一枚的左沿仍在名称右端之外 5 dp。
+    const int badges = lit_badge_count(tab);
+    const float badge_inset =
+        badges > 0 ? kBadgeAnchorInsetDp + kBadgeRadiusDp + kBadgeTextGapDp +
+                         kBadgePitchDp * static_cast<float>(badges - 1)
+                   : 0.0F;
+    const float text_inset =
+        std::max(kCardTextLeftInsetDp + (tab.has_close_button ? close_zone_ : 0.0F), badge_inset);
+    out.width = std::max(0.0F, w - text_inset - kCardTextLeftInsetDp - out.slot_width);
+    return out;
+}
+
+auto TabBarWidget::name_span(const std::uint64_t id) const -> std::optional<std::pair<float, float>> {
+    // 落位取 `strip_slots`（与绘制、命中、导引线同一条走位算式），故溢出态里双击的是**屏幕上**那一名
+    // 字的这一截，而不是表序里第 n 格原本的位置（裁决 7.190 那条同源性在这里继续成立）。
+    const std::vector<Slot> slots = strip_slots(std::nullopt);
+    for (std::size_t i = 0; i < cached_tabs_.size() && i < slots.size(); ++i) {
+        if (cached_tabs_[i].id != id) {
+            continue;
+        }
+        const NameRegion region = name_region(cached_tabs_[i], slots[i].x1 - slots[i].x0);
+        // 零宽即「这一格没有可供编辑的那一截」：不弹胶囊，也不认领这次双击（与 `rename_target()` 同一判）。
+        if (region.width <= 0.0F) {
+            return std::nullopt;
+        }
+        const float x0 = slots[i].x0 + region.left_inset;
+        return std::pair{x0, x0 + region.width};
+    }
+    return std::nullopt;
+}
+
+auto TabBarWidget::rename_target(const std::uint64_t id) const -> std::optional<RenameTarget> {
+    const std::optional<std::pair<float, float>> span = name_span(id);
+    const std::optional<au::Rect> bar_box = window_bounds();
+    if (!span.has_value() || !bar_box.has_value()) {
+        return std::nullopt;  // 栏未布局（首帧之前）或那一格已经不在表里
+    }
+    for (const auto &tab : cached_tabs_) {
+        if (tab.id == id) {
+            return RenameTarget{
+                // 横向＝名称区（`span` 是本件本地 dp，加栏的窗口原点即窗口 dp）；纵向＝卡顶 + 稿那 8 dp
+                // 顶内缩，而卡顶的折法与 `on_paint` 同一条（栏高减格高）。
+                .box = au::Rect{.origin =
+                                     au::Point{.x = bar_box->origin.x + span->first,
+                                               .y = bar_box->origin.y + bar_height_ - kCardHeightDp +
+                                                    kRenamePillTopInsetDp},
+                                 .size = au::Size{.width = span->second - span->first,
+                                                  .height = kRenamePillHeightDp}},
+                .current_name = tab.display_name,
+            };
+        }
+    }
+    return std::nullopt;
+}
+
 auto TabBarWidget::resolve_drop(const float center_x, const float right_edge,
                                 const std::uint64_t dragged_id) const -> std::optional<DropTarget> {
     const std::vector<Slot> rest = strip_slots(dragged_id);
@@ -477,32 +541,24 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
             p.fill_rounded_rect(card_box, kCardRadiusDp, chrome.control_bg.shaded(0.9F));
         }
 
-        // 文本（截断到可用宽度）
-        const float slot_width = tab.kind.has_value() ? kTypeSlotTotal : 0.0F;
-        // 右留白（名称右端到栏位右端的距离）：关闭钮那一档是既有口径（12 + 命中区 20）；角标簇点亮时
-        // 按簇宽让位，两者取大者——故「无角标」的每一格与本棒之前逐位相同（裁决 7.183 记的就是这条
-        // 最小改动约束），而三枚同亮时最左一枚的左沿仍在名称右端之外 5 dp。
-        const int badges = lit_badge_count(tab);
-        const float badge_inset =
-            badges > 0 ? kBadgeAnchorInsetDp + kBadgeRadiusDp + kBadgeTextGapDp +
-                             kBadgePitchDp * static_cast<float>(badges - 1)
-                       : 0.0F;
-        const float text_inset =
-            std::max(12.0F + (tab.has_close_button ? close_zone_ : 0.0F), badge_inset);
-        const float text_max_width = std::max(0.0F, w - text_inset - 12.0F - slot_width);
-        const auto display = truncate_name(tab.display_name, text_max_width, font);
+        // 文本（截断到可用宽度）：左内缩与可用宽同出 `name_region`——「名称落在哪一截」和「双击命中哪一截」
+        // 「胶囊盒交出去的是哪一截」必须是同一个数（裁决 7.195），各写一份迟早会在溢出态里错开半格。
+        // 右留白的两档口径（关闭钮 12 + 命中区 / 角标簇取大者）与「无角标逐位相同」这条最小改动约束
+        // 都在那枚函数里（裁决 7.183 登记的原句随之搬过去）。
+        const NameRegion region = name_region(tab, w);
+        const auto display = truncate_name(tab.display_name, region.width, font);
         const au::Color text_color = tab.is_selected ? chrome.text : chrome.text_dim;
         const au::Rect text_box{
-            .origin = au::Point{.x = card_box.origin.x + 12.0F + slot_width, .y = content_top},
-            .size = au::Size{.width = text_max_width, .height = bar_height_ - 28.0F}};
+            .origin = au::Point{.x = card_box.origin.x + region.left_inset, .y = content_top},
+            .size = au::Size{.width = region.width, .height = bar_height_ - 28.0F}};
         const auto display_utf8 = to_utf8(display);
 
         // 类型图标（`SPEC.FEAT.WS.04`）：名称左侧一枚字形，色随名称（D7 的口径——状态三枚角标已占
-        // 绿／红／琥珀三个色通道，类型只靠字形区分）。槽宽与名称原点同取 `slot_width`，故图标缺席时
-        // 名称回到今日那个 `x+12`（判据 ② 的「逐位相同」就是这一句的屏幕形态）。
+        // 绿／红／琥珀三个色通道，类型只靠字形区分）。槽宽含在 `region.left_inset` 里，故图标缺席时
+        // 名称回到 `x+12`（判据 ② 的「逐位相同」就是这一句的屏幕形态）。
         if (tab.kind.has_value()) {
             const au::Rect glyph_box{
-                .origin = au::Point{.x = card_box.origin.x + 12.0F, .y = content_top},
+                .origin = au::Point{.x = card_box.origin.x + kCardTextLeftInsetDp, .y = content_top},
                 .size = au::Size{.width = kTypeSlotWidth, .height = bar_height_ - 28.0F}};
             p.draw_text(glyph_box, std::string{connection_type_glyph(*tab.kind)}, font, text_color);
         }
@@ -627,12 +683,38 @@ auto TabBarWidget::on_pointer_event(au::MouseEvent &e) -> void {
         const auto cluster = right_cluster(widget_size.width);
         const auto hit = hit_test_at(e.local_position.x, strip_right_edge(cluster, widget_size.width));
         if (hit.tab_id.has_value()) {
+            // 连击对账的账本：先把**前一下**落在哪一格留在手里，再记下这一下。关闭那一条腿也要记——
+            // 它正是这套对账存在的理由（见 `last_tab_press_id_` 那条注释）。
+            const std::optional<std::uint64_t> previous = last_tab_press_id_;
+            last_tab_press_id_ = *hit.tab_id;
             if (hit.on_close_button) {
                 // 关闭标签
                 if (hooks_.close) {
                     hooks_.close(*hit.tab_id);
                 }
             } else {
+                // 就地重命名（屏 1 余项 (c)，裁决 7.195）：**双击**且落点在那一截名称里才弹胶囊。格的其余
+                // 落点（类型图标、左右留白、角标簇）仍走选中与拖拽——否则「拖一格」会在第二下落下那一刻
+                // 变成编辑。命中区间与绘制、胶囊盒同出 `name_span`，故「点中哪一截」和「弹在哪一截」同源。
+                // 这一支不建拖拽态、也不再呼 `select`：第二下的前一下已经把这一格选中了。
+                //
+                // 只认**第二下**、且与前一下落在同一格：框架的连击计数说的是「这两下在时间窗与 4 dp 位移
+                // 之内、中间没有别的 Press」，不说「这两下落在同一格的同一截名称里」。第一下若把这一格关掉，
+                // 走位立刻重排，第二下的同一屏幕坐标就归了邻格——于是「双击 ✕」会在关掉一格之后把胶囊弹到
+                // 它邻格的名字上；按 `>= 2` 还会让第三下再认领一次，把已弹开的胶囊当成第二次入口。位移那一档
+                // 不在这里重复判：`local_position` 是栏相对的，栏自己在两下之间不动，框架那 4 dp 半径已经
+                // 把它管住了。
+                const bool second_click_on_same_tab =
+                    e.click_count == 2U && hooks_.begin_rename && previous.has_value() &&
+                    previous.value() == *hit.tab_id;
+                const std::optional<std::pair<float, float>> span =
+                    second_click_on_same_tab ? name_span(*hit.tab_id) : std::nullopt;
+                if (span.has_value() && e.local_position.x >= span->first &&
+                    e.local_position.x < span->second) {
+                    hooks_.begin_rename(*hit.tab_id);
+                    e.is_handled = true;
+                    return;
+                }
                 // 开始拖拽或选中。跟手那两枚量（按下点相对左沿的偏移、被拖格宽）必须在 `hooks_.select`
                 // **之前**从当前布局折出来：选中会推一次重排偏移，之后再量左沿读到的是已经挪过的那一档，
                 // 被拖格会在越过阈值那一刻当场跳一截（裁决 7.190）。
