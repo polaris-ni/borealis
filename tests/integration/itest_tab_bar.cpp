@@ -161,6 +161,22 @@ constexpr std::size_t kCloseAnchorTolPx = 1U;
 constexpr std::size_t kBadgeRadiusPx = 3U;
 constexpr std::size_t kBadgeAnchorInsetPx = 27U;
 constexpr std::size_t kBadgePitchPx = 10U;
+/// @brief 就地重命名胶囊的三档（屏 1 稿 `<rect x="38" y="48" width="104" height="22" rx="3">` 与其卡片
+///        `<rect x="8" y="40" width="176" height="38">` 折出，裁决 **7.195**）：卡片文字内缩 12（稿名称
+///        `x=38` 减卡片左沿加类型槽那一档的实际折算，与本套件既有的字形槽左沿同一枚数）、顶内缩 8
+///        （48 − 40）、高 22。测试侧按**稿的数**写死而不读 `src/ui/tab_bar.h` 那三枚同名常量——代码里的
+///        数一改而预期不动，证人当场转红，这正是「盒与绘制分叉」唯一的可读形态。
+constexpr std::size_t kNameLeftInsetPx = 12U;
+constexpr std::size_t kPillTopInsetPx = 8U;
+constexpr std::size_t kPillHeightPx = 22U;
+/// @brief 名称墨迹相对盒左沿的实测左边距档（13 pt 的 `alpha` 起笔在 20 ＋ 5 ＝ 25 列，探针 2026-11-02）：
+///        字形自己的 advance/side bearing 不是本件的落笔算式，故这里给一档上界而不是等号。
+constexpr std::size_t kNameLeftBearingMaxPx = 6U;
+/// @brief 名称**下伸部**越过胶囊盒底的实测档（墨迹末行 36 对盒末行 33，同一枚探针）。那 3 行是稿与实渲
+///        的字体度量差：稿把名称基线画在带相对 28，实渲约 33（裁决 7.187 那句「内容纵向不变」钉的是实渲
+///        这一档，改动它会牵动本套件全部像素证人）。登记为差额，但越界必须是这一枚数——再多一行就说明
+///        名称那一行自己挪了位置，而那不是本条判据的地盘。
+constexpr std::size_t kRenameDescenderOverflowPx = 3U;
 /// @brief 角标芯（逐位等于该色道的那批像素）的实测档＝**4×4**，允许 +1：`fill_sector` 半径 3 的实心
 ///        圆只在内核四格上是原色，四条边各 1 px 羽化（探针 2026-10-31 实测芯 x 67..70／y 19..22、
 ///        差分簇 x 66..71／y 18..23＝6×6）。把芯写成 6×6 或把墨迹面积写成等号就是钉抗锯齿实现
@@ -461,6 +477,18 @@ class Harness {
         return last_move_;
     }
 
+    /// @brief 双击名称那条腿被呼了几次（裁决 **7.195**：入口只交「哪一格要改名」，胶囊本体不在本件）。
+    [[nodiscard]] auto begin_rename_calls() const noexcept -> std::size_t { return begin_rename_calls_; }
+    /// @brief 最近一次交来的格 id；没呼过即空。
+    [[nodiscard]] auto last_rename_id() const noexcept -> std::optional<std::uint64_t> {
+        return last_rename_id_;
+    }
+
+    /// @brief 栏自己折出的胶囊盒（窗口 dp，与 `rename_target()` 同源）：本件取它的横档与纵向档位。
+    [[nodiscard]] auto rename_target(TabId id) const -> std::optional<borealis::ui::RenameTarget> {
+        return bar_->rename_target(static_cast<std::uint64_t>(id));
+    }
+
     /// @brief 真值源里的当前表序（id 序列）：判据「屏幕上真的换了序」的直接读数。
     [[nodiscard]] auto order() const -> std::vector<TabId> {
         std::vector<TabId> out;
@@ -623,6 +651,12 @@ class Harness {
         .close = [this](std::uint64_t id) -> void {
             static_cast<void>(strip_.close(static_cast<TabId>(id)));
         },
+        // 就地重命名的入口腿（裁决 **7.195**）：这里只记账——胶囊浮层本体不在本件（它要宿主、焦点管理器
+        // 与输入框三件，那是 `itest_tab_rename_editor` 那一款的现场）。本件判的是「哪一次点击会认领这一格」。
+        .begin_rename = [this](std::uint64_t id) -> void {
+            ++begin_rename_calls_;
+            last_rename_id_ = id;
+        },
         // 拖拽落点：绘制侧折出的下标直接进真值源，基准是「其余标签」（`src/main.cpp` 同一行形态）。
         .move = [this](std::uint64_t id, std::size_t to_index) -> void {
             ++move_calls_;
@@ -643,6 +677,9 @@ class Harness {
     std::size_t undo_close_calls_ = 0U;
     std::size_t note_press_calls_ = 0U;
     std::size_t move_calls_ = 0U;
+    std::size_t begin_rename_calls_ = 0U;
+    /// @brief 最近一次双击认领的格 id；没呼过即空。
+    std::optional<std::uint64_t> last_rename_id_{};
     /// @brief 最近一次交来的 `(被拖格 id, 落点下标)`：下标以「其余标签」为基准。
     std::optional<std::pair<std::uint64_t, std::size_t>> last_move_;
 };
@@ -1982,6 +2019,145 @@ AURORA_TEST_CASE(a_card_dragged_into_the_left_enclave_clamps_its_guide_to_the_in
     AURORA_TEST_REQUIRE_TRUE(h.last_move().has_value());
     AURORA_TEST_CHECK_EQ(h.last_move().value().first, TabId{1U});
     AURORA_TEST_CHECK_EQ(h.last_move().value().second, std::size_t{0U});
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_rename_pill_box_covers_the_name_at_the_draft_height) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 屏 1 余项 (c) 的**盒**腿（裁决 **7.195**）：胶囊落在名称那一截上、纵向按稿那三档。这里两头都判——
+    // 横向按稿写死一枚绝对列（栏左内缩 8 ＋ 卡片文字内缩 12 ⇒ 20，与稿 `<rect x="38">` 在有类型图标那一
+    // 档同一算式的无图标形态），纵向按稿那 `y=48 height=22` 折成带内的 12 与 22；再拿名称墨迹的外接框
+    // 夹住盒（盒若窄于正在编辑的那串字，胶囊就盖不住它）。
+    Harness h{std::vector<std::u32string>{U"alpha"}};
+    const auto target = h.rename_target(TabId{0U});
+    AURORA_TEST_REQUIRE_TRUE(target.has_value());  // 反空转：单格态确实折得出盒
+    const au::Rect &box = target->box;
+    AURORA_TEST_CHECK_EQ(box.origin.x, static_cast<float>(kStripLeftInsetPx + kNameLeftInsetPx));
+    AURORA_TEST_CHECK_EQ(box.origin.y, static_cast<float>(kCardTopRowPx + kPillTopInsetPx));
+    AURORA_TEST_CHECK_EQ(box.size.height, static_cast<float>(kPillHeightPx));
+    // 底内缩与顶内缩同档 ⇒ 胶囊在 38 的卡里竖向居中（稿 40..78 那张卡里的 48..70）。这一句把「顶内缩
+    // 抄对了但高抄成 20」那类读法也一并拦住。
+    AURORA_TEST_CHECK_EQ(kBarHeightPx - (static_cast<std::size_t>(box.origin.y) + kPillHeightPx),
+                         kPillTopInsetPx);
+    AURORA_TEST_CHECK_EQ(target->current_name, std::u32string{U"alpha"});
+
+    const auto frame = h.pixels();
+    const Points name = Harness::color_points(frame, Chrome().text);  // 选中格的名称走 `text` 那一档
+    AURORA_TEST_REQUIRE(!name.empty());
+    const Box ink = Harness::box_of(name);
+    // 名称墨迹被盒夹住：左沿按**起笔列**（盒的左沿）比，留 6 dp 给字体的左边距——13 pt 的 `alpha` 实测
+    // 占 x 25..61，而盒从 20 起笔（探针 2026-11-02）。这两句拦的是横档分叉：盒若窄于正在编辑的那串字
+    // （`name_region` 的两项有一项被改歪），右沿那句当场红。
+    AURORA_TEST_CHECK_GE(ink.x0, static_cast<std::size_t>(box.origin.x) - kNameLeftBearingMaxPx);
+    AURORA_TEST_CHECK_LE(ink.x1, static_cast<std::size_t>(box.origin.x + box.size.width));
+    // 纵向只判「名称起于盒内」：实测行带 21..36 而盒是 12..33 ⇒ 下伸部（`p`／`g`／`y`）越过盒底 3 行。
+    // 那 3 行是稿与实渲的字体度量差（稿的名称基线在带相对 28、实渲约 33，裁决 7.187 那句「内容纵向
+    // 不变」钉住的是实渲这一档），登记而不改——但越界必须是 3 而不是更多，故这里给上界。
+    AURORA_TEST_CHECK_GE(ink.y0, static_cast<std::size_t>(box.origin.y));
+    AURORA_TEST_CHECK_LE(ink.y1, static_cast<std::size_t>(box.origin.y + box.size.height) - 1U +
+                                    kRenameDescenderOverflowPx);
+
+    // 双格态：盒的右沿必须在 ✕ 的包络之左（稿首格名称到 142、✕ 从 167 起笔，两截不相交）。这一句拦的是
+    // 「名称的可截断宽没让开关闭钮命中区」——那一档胶囊会压在关闭钮上，而胶囊里没有 ✕ 让位那一说。
+    Harness two{std::vector<std::u32string>{U"alpha", U"beta"}};
+    const auto closed = two.rename_target(TabId{0U});
+    AURORA_TEST_REQUIRE_TRUE(closed.has_value());
+    const std::size_t close_envelope_left =
+        kStripLeftInsetPx + kTabMinWidthPx - kCloseCenterInsetPx - kCloseGlyphSizePx / 2U;  // 87
+    AURORA_TEST_CHECK_LT(
+        static_cast<std::size_t>(closed->box.origin.x + closed->box.size.width), close_envelope_left);
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_rename_pill_box_lands_on_the_draft_column_with_a_type_icon) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 同一枚盒的**稿面绝对读数**（裁决 **7.195**）：稿 `<rect x="38" y="48" width="104" height="22">` 那
+    // 一格的 38 ＝ 卡片左沿 8 ＋ 文字内缩 12 ＋ 类型槽 18（`SPEC.FEAT.WS.04` 的字形盒 12 ＋ 间距 6）。
+    // 上一例判的是无图标那一档（20），这一例把类型槽那一档钉住——两档合起来才是「盒跟着名称走」而不是
+    // 「盒写死在 20」：只判前者时，把槽宽漏加进 `left_inset` 的实现照样绿。
+    Harness h{std::vector<std::u32string>{U"alpha"}};
+    h.set_kind(0U, ConnectionType::Local);
+    const auto target = h.rename_target(TabId{0U});
+    AURORA_TEST_REQUIRE_TRUE(target.has_value());
+    AURORA_TEST_CHECK_EQ(target->box.origin.x,
+                         static_cast<float>(kStripLeftInsetPx + kNameLeftInsetPx + kTypeSlotTotal));
+    // 纵向与图标无关：同一格换型只挪横档，不挪那两档竖值。
+    AURORA_TEST_CHECK_EQ(target->box.origin.y, static_cast<float>(kCardTopRowPx + kPillTopInsetPx));
+    AURORA_TEST_CHECK_EQ(target->box.size.height, static_cast<float>(kPillHeightPx));
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_double_click_on_the_name_opens_the_pill_and_nothing_else) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 屏 1 余项 (c) 的**入口**腿（裁决 **7.195**）：双击名称 ⇒ 只交「哪一格要改名」这一个出口，本件判的
+    // 是它被呼的时机与次数。四档缺一不可：单击不弹（否则一点就进编辑）、第二下弹且报对格、第三下不再弹
+    // （`>= 2` 的实现会把已弹开的胶囊当成第二次入口）、以及整条链不动表（拖拽没起、格没少、序没变）。
+    Harness h{std::vector<std::u32string>{U"alpha", U"beta"}};
+    const auto target = h.rename_target(TabId{0U});
+    AURORA_TEST_REQUIRE_TRUE(target.has_value());
+    const std::size_t mid =
+        static_cast<std::size_t>(target->box.origin.x + target->box.size.width * 0.5F);
+    // 反空转的前提：取点确实落在盒里（盒折歪了以下三档就都在测一个不存在的落点）。
+    AURORA_TEST_CHECK_GE(mid, static_cast<std::size_t>(target->box.origin.x));
+    AURORA_TEST_CHECK_LT(mid, static_cast<std::size_t>(target->box.origin.x + target->box.size.width));
+    AURORA_TEST_CHECK_EQ(h.strip().selected().value(), TabId{1U});  // 新建即选中末位 ⇒ 第一下才算「换格」
+
+    h.click(mid);
+    AURORA_TEST_CHECK_EQ(h.begin_rename_calls(), std::size_t{0U});
+    AURORA_TEST_CHECK_EQ(h.strip().selected().value(), TabId{0U});
+
+    h.click(mid);  // 同坐标、连击时间窗内 ⇒ 框架折出 `click_count == 2`
+    AURORA_TEST_CHECK_EQ(h.begin_rename_calls(), std::size_t{1U});
+    AURORA_TEST_REQUIRE_TRUE(h.last_rename_id().has_value());
+    AURORA_TEST_CHECK_EQ(h.last_rename_id().value(), std::uint64_t{0U});
+
+    h.click(mid);  // 第三下：落点与前两下同一截，但不是「第二下」
+    AURORA_TEST_CHECK_EQ(h.begin_rename_calls(), std::size_t{1U});
+
+    AURORA_TEST_CHECK_EQ(h.move_calls(), std::size_t{0U});
+    AURORA_TEST_CHECK_FALSE(h.last_move().has_value());
+    AURORA_TEST_CHECK_EQ(h.strip().count(), std::size_t{2U});
+    const std::vector<TabId> order = h.order();
+    AURORA_TEST_REQUIRE_EQ(order.size(), std::size_t{2U});
+    AURORA_TEST_CHECK_EQ(order[0U], TabId{0U});
+    AURORA_TEST_CHECK_EQ(order[1U], TabId{1U});
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(a_double_click_off_the_name_never_opens_the_pill) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 入口腿的另一头（裁决 **7.195**）：双击**不在名称那一截**时不弹。两处落点各拦一类分叉——
+    // ① 卡片左内缩那一截（栏位盒之内、名称之外）：这里若也弹，「拖一格」和「点一下选中」都会在第
+    //    二下那一刻变成编辑；② ✕ 的中心：第一下已经把这一格关掉，第二下的同一屏幕坐标归了邻格，
+    //    于是「双击 ✕」会把胶囊弹到邻格的名字上（框架的连击计数只判时间窗与 4 dp 位移，不判格）。
+    // 两档都得仍然**照常做事**：① 选中照旧，② 关闭照旧——不弹不是把这一落点吞掉。
+    Harness h{std::vector<std::u32string>{U"alpha", U"beta"}};
+    const auto target = h.rename_target(TabId{0U});
+    AURORA_TEST_REQUIRE_TRUE(target.has_value());
+    AURORA_TEST_CHECK_TRUE(static_cast<std::size_t>(target->box.origin.x) > kStripLeftInsetPx);
+
+    const std::size_t enclave = kStripLeftInsetPx + 2U;  // 第 10 列：栏位盒之内，名称之左
+    h.click(enclave);
+    h.click(enclave);
+    AURORA_TEST_CHECK_EQ(h.begin_rename_calls(), std::size_t{0U});
+    AURORA_TEST_CHECK_EQ(h.strip().selected().value(), TabId{0U});  // 选中这条腿没被入口抢走
+    AURORA_TEST_CHECK_EQ(h.strip().count(), std::size_t{2U});
+
+    const std::size_t close_x = kStripLeftInsetPx + kTabMinWidthPx - kCloseCenterInsetPx;  // 91
+    h.click(close_x);
+    h.click(close_x);
+    AURORA_TEST_CHECK_EQ(h.begin_rename_calls(), std::size_t{0U});
+    AURORA_TEST_CHECK_EQ(h.strip().count(), std::size_t{1U});       // 关闭这条腿照旧兑现
+    AURORA_TEST_CHECK_EQ(h.strip().selected().value(), TabId{1U});  // 剩下的那一格
+    AURORA_TEST_CHECK_EQ(h.move_calls(), std::size_t{0U});
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif
