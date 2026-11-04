@@ -53,6 +53,8 @@
 
 **本表与代码的对应（2026-10-30 起，裁决 7.178）**：本表是 UI 侧色值的**基准来源**，代码侧的承载体是 `ui::SettingsChrome`（12 token）＋ `ui::chrome_palette(ChromeScheme)`，其唯一色值表写在 `codespec/UI_CHROME.draft.md` §1（该表已按本表逐格对齐，两表冲突时以本表为准并回改那份）。同 token 的对应关系：`win`→`window_bg`、`chrome`→`card_bg`、`raised`→`control_bg`、`line2`→`card_line`、`text`→`text`、`mut`→`text_dim`、`accent`→`accent`、`red`→`danger`、`green`→`success`、`yellow`→`warning`。代码侧另有 `nav_bg`（设置页左导航列）与 `scrim`（全屏遮罩）两枚本表没有的格；本表另有 `input` / `sel` / `line` / `dim` 四枚代码侧**尚无消费者**的格，未预加进表（等各自的落地棒次再收，届时 `dim` 需按装饰档 ≥3.0 而不是正文的 4.5 设下界）。亮档由本表同构推导，取值见 `UI_CHROME.draft.md` §1。
 
+**2026-11-04 更新（裁决 7.196，上面那段里两处已过期的计数就地更正，原句保留）**：`ui::SettingsChrome` 现为 **14** 枚 token——第 13 枚 `text_faint` 承本表的 `dim`（裁决 7.179⑤），第 14 枚 `sel` 承本表的 `sel` 那一格 `#44475A`（本棒，值直接取本表不自算）。于是「代码侧尚无消费者」的清单收为 `input` / `line` **两枚**。同批还有一处口径分叉须记清：本表 §2.1 把「悬停态」写在 `raised` 那格的用途里，而 `UI_WORKSPACE_INTERACT.draft.md` 判据 ⑭ 与面板 5 图形稿把**标签条**的 hover 底画成 `sel`（该格实测墨 `#44475A`）——按 7.187 立的「文字与图形分叉时以图形稿为准」同一条口径取 ⑭，本表那三个字保留（其余控件的悬停抬升仍走 `raised` 系），标签条 hover 一档归 `sel`。
+
 ### 2.2 尺寸与排版
 
 | 项 | 规格 | 出处 |
