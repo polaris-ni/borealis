@@ -47,7 +47,7 @@
 ///             「只裁不滚」也会绿）；
 ///           - **裁剪**：偏移只保证「选中格可见」，它右边的格照样铺得到界外——选中首格时偏移折回 0，
 ///             末格占 488..584。未选中格只有 hover 才落卡片底，故本例配一枚新的 `hover` 驱动腿（只发一次
-///             `Move`），取 `control_bg.shaded(0.9)` 那一层墨迹读到「硬切在界上（±1 是框架 `shrink_to_clips`
+///             `Move`），取 `sel`（hover 底，第 14 枚 token，裁决 7.196）那一层墨迹读到「硬切在界上（±1 是框架 `shrink_to_clips`
 ///             的裁剪取整档，写成等号就是钉框架实现）」，再把指针挪进 `＋` 那一截、以「整帧逐位复现 hover
 ///             之前那一帧」判界外连一格都不点亮；
 ///           - **命中**：`hit_test_at` 先在界外止步 ⇒ `＋` 的圆心（575）与撤销腿的盒（611..624）不再被
@@ -91,6 +91,19 @@
 ///             指针落在飞地读作「落在表头」，抬到 8 会让已滚出左侧的那一格计入「中心在左」，导引线与落点
 ///             当场分叉。这一例同时拦「只加裁剪不加钳位」的半截实现——缝不钳则那一笔整枚落在裁剪之外，
 ///             第一句 REQUIRE 即红。
+///           本棒（屏 1 余项 (a)：hover 底按稿取 `sel`，裁决 **7.196**）追加三例，并把此前两例读 hover 底
+///             的取色从 `control_bg.shaded(0.9)` 换成 `Chrome().sel`（判的是同一层墨，档位随实现改）。
+///           三例各拦一头，前两例的取点都在卡内第 10 行——那一截只有卡片底（accent 在 4..5、名称在 14..27、
+///           ✕ 与角标在右端 20 dp 之内）：
+///           - **两档取档**：暗／亮各出一帧，未选中格 hover 后读到该档 `sel`，同帧里邻格（选中）仍读
+///             `control_bg`——hover 只随指针、不牵连第二格；两档 `sel` 与 `card_bg`／`control_bg` 逐位不同
+///             是这三句的反空转前提；
+///           - **叠位次序**：交互稿面板 5 第 2 格画的是活动格被悬停（底 `sel` ＋卡顶 accent 仍在），故
+///             hover 不挑是否活动，而 accent 必须后于 hover 落笔——先落就被铺满整格的 `sel` 整截盖掉，
+///             「活动」这一档在指针停到自己身上时反而消失；
+///           - **名称档**：hover 把名称从 `text_dim` 提到 `text`。暗档 `text_dim` 压在 `sel` 上只有
+///             2.98:1，比 WCAG 非正文下界还低 ⇒ 这一提是对比度不变量逼出来的，不是装饰；稿那格的名字
+///             墨正是 `text`。前后两帧各判一整带：区间内 `text` 由 0 变有、`text_dim` 由有变 0。
 
 #include <algorithm>
 #include <array>
@@ -538,7 +551,7 @@ class Harness {
     /// @brief 一帧里 `(x, y)` 那一格的 RGBA 四通道值。
     ///
     /// 「派生色」的取色入口：拖拽占位是 `text` 按 alpha 64 压在栏底上折出的一档，两套色板各取一个值、
-    /// 且都不是 13 枚 token 里的一格 ⇒ 判据从帧里把它读出来，而不是把某个 RGB 写死进测试。
+    /// 且都不是 14 枚 token 里的一格 ⇒ 判据从帧里把它读出来，而不是把某个 RGB 写死进测试。
     [[nodiscard]] static auto pixel_at(const Frame &frame, std::size_t x, std::size_t y) -> au::Color {
         const std::size_t index = (y * buffer_width() + x) * 4U;
         return au::Color{frame[index], frame[index + 1U], frame[index + 2U], frame[index + 3U]};
@@ -1565,7 +1578,7 @@ AURORA_TEST_CASE(the_close_cross_lands_thirteen_dp_from_the_cell_edge_on_the_ban
 AURORA_TEST_CASE(the_band_bottom_row_is_one_dp_of_the_drafts_hairline) {
 #ifdef AURORA_BACKEND_HEADLESS
     // 稿 `line x1="0" y1="78" x2="1500" y2="78" stroke="#3A3C4C"` 的兑现：栏底那一整行是一条 1 dp 细线，
-    // 而且**压在卡片之上**（稿的落笔次序就是先五格再这一线）。`#3A3C4C` 是 §2.1 表的 `line`，13 枚 token
+    // 而且**压在卡片之上**（稿的落笔次序就是先五格再这一线）。`#3A3C4C` 是 §2.1 表的 `line`，14 枚 token
     // 里没有这一格 ⇒ 按既有细线口径取 `card_line`（`app_title_bar` / `sidebar_rail` 同一条，裁决 7.179④c）。
     // 三档各有承重句：整行没画 ⇒ 芯空；画成两行 ⇒ 纵向包络变 2；画在卡片之下 ⇒ 点数不满一整行宽。
     // 同帧里 `card_line` 只此一处（圆角的抗锯齿混合只在 `card_bg`↔`control_bg` 之间取值，够不着这一档），
@@ -1649,16 +1662,16 @@ AURORA_TEST_CASE(the_hovered_card_is_cut_at_the_strip_edge_not_under_the_cluster
     // 未选中格**只有 hover 才落卡片底**，而越界的那一格不可能同时是选中格（选中格被偏移钉在界内），
     // 故「界外有没有墨」这件事只能由 hover 那一层墨迹看出来——这就是本例要新加一枚 `hover` 驱动腿的原因。
     //
-    // 取色按 `control_bg.shaded(0.9)`（hover 底就是选中底再压暗一档，与 `card_bg`／`control_bg` 都不同值）。
-    // 横区间从第五格左沿起：选中格的圆角抗锯齿在 `card_bg`↔`control_bg` 之间取值，个别档位会逐位撞上
-    // 这一档暗值，把区间收窄到本例那一格才不受它牵连。
+    // 取色按 `sel`（hover 底＝稿 §2.1 那枚「当前项底」，第 14 枚 token，裁决 7.196；旧口径是
+    // `control_bg.shaded(0.9)`，与 `card_bg`／`control_bg` 的圆角抗锯齿中间值有逐位撞车的风险）。
+    // 横区间仍从第五格左沿起：本例读的是「末格被裁」这件事，区间收窄让别的格不参与外接框。
     Harness h{std::vector<std::u32string>{U"a", U"a", U"a", U"a", U"a", U"a"}};
     static_cast<void>(h.strip().select(TabId{0U}));
     h.render();  // 变更钩子标脏 ⇒ `on_layout` 重跑，偏移由上一帧的 14 折回 0
     const Frame idle = h.pixels();
     h.hover(kStripLeftInsetPx + 5U * kSingleTabWidthPx + 12U);  // 末格之内（488+12，界内）
     const auto frame = h.pixels();
-    const Points hover = clip_x(Harness::color_points(frame, Chrome().control_bg.shaded(0.9F)),
+    const Points hover = clip_x(Harness::color_points(frame, Chrome().sel),
                                 kStripLeftInsetPx + 4U * kSingleTabWidthPx,
                                 static_cast<std::size_t>(kWindowWidth) - 1U);
     AURORA_TEST_REQUIRE(!hover.empty());  // 反空转：这一格确实落了墨
@@ -1751,7 +1764,7 @@ AURORA_TEST_CASE(the_dragged_card_follows_the_pointer_and_leaves_a_ghost_in_its_
     AURORA_TEST_CHECK_EQ(card.count({kStripLeftInsetPx + 20U, kBarHeightPx / 2U}), std::size_t{0U});
 
     // 占位：色是从帧里读出来的。那一档是 `text` 按 alpha 64 压在栏底上折出的派生值，两档色板各折一个
-    // 数、且都不是 13 枚 token 里的一格 ⇒ 写死任何一个 RGB 就是在钉色板，而换档即假红。
+    // 数、且都不是 14 枚 token 里的一格 ⇒ 写死任何一个 RGB 就是在钉色板，而换档即假红。
     const au::Color ghost_ink = Harness::pixel_at(frame, kStripLeftInsetPx + 12U, kBarHeightPx / 2U);
     // 「半透明」这件事的读数：这一档墨夹在正文色与栏底之间——写成实心正文色就是把那一格涂成文字，写成
     // 实心栏底就是压根没画。（两档色板里 `text` 与 `card_bg` 的红通道都隔着两位数，故夹得住。）
@@ -1935,14 +1948,14 @@ AURORA_TEST_CASE(the_overflowed_first_card_is_cut_at_the_left_inset) {
     // 于是 0..7 那一截栏的留白里铺进了它半张卡片底。此前右界是三处同源（裁剪／命中／偏移，7.188），
     // 左内缩却只被偏移算式扣过——裁剪盒仍从 0 起笔，故这是那条判据的镜像缺口。
     //
-    // 读数取 hover 那一档的 `control_bg.shaded(0.9)`：未选中格**只有 hover 才落卡片底**，而溢出态里
+    // 读数取 hover 那一档的 `sel`：未选中格**只有 hover 才落卡片底**，而溢出态里
     // 「既不是选中格、又确实被切」的只有左端这一枚（选中格被偏移钉在界内，故 7.188 那例取的是末格）。
     Harness h{std::vector<std::u32string>{U"a", U"a", U"a", U"a", U"a", U"a"}};
     AURORA_TEST_REQUIRE_TRUE(h.strip().selected().has_value());
     AURORA_TEST_REQUIRE_EQ(h.strip().selected().value(), TabId{5U});  // 新建即选中末位 ⇒ 偏移才成立
     h.hover(kStripLeftInsetPx + 12U);  // 第 20 列：首格之内（-6..89），也在它关闭区（70 之右）之左
     const auto frame = h.pixels();
-    const Points hover = clip_x(Harness::color_points(frame, Chrome().control_bg.shaded(0.9F)), 0U,
+    const Points hover = clip_x(Harness::color_points(frame, Chrome().sel), 0U,
                                 kStripLeftInsetPx + 2U * kSingleTabWidthPx);
     AURORA_TEST_REQUIRE(!hover.empty());  // 反空转：这一格确实落了墨
     const Box box = Harness::box_of(hover);
@@ -2158,6 +2171,106 @@ AURORA_TEST_CASE(a_double_click_off_the_name_never_opens_the_pill) {
     AURORA_TEST_CHECK_EQ(h.strip().count(), std::size_t{1U});       // 关闭这条腿照旧兑现
     AURORA_TEST_CHECK_EQ(h.strip().selected().value(), TabId{1U});  // 剩下的那一格
     AURORA_TEST_CHECK_EQ(h.move_calls(), std::size_t{0U});
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_hovered_card_takes_the_sel_tier_in_both_palettes) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 屏 1 余项 (a)（裁决 **7.196**）：hover 底按稿取 `sel`（§2.1 那枚「当前项底」，第 14 枚 token），
+    // 不再取 `control_bg.shaded(0.9)`。两档各出一帧——本仓的色板判据一律双档，否则亮档漏改一格时
+    // 「暗档绿、亮档花」要等真机才看得见。
+    // 取点在第 2 格（未选中）的卡内、名称带之上（第 6..13 行）与 ✕ 之左：那一截只有卡片底。
+    struct Restore {
+        ChromeScheme saved = borealis::ui::chrome_scheme();
+        ~Restore() { borealis::ui::set_chrome_scheme(saved); }
+    } restore;
+
+    constexpr std::size_t kSecondCardX = kStripLeftInsetPx + kSingleTabWidthPx;
+    constexpr std::size_t kSampleRow = kCardTopRowPx + kAccentThicknessPx + 4U;  // 第 10 行
+    for (const ChromeScheme scheme : {ChromeScheme::Dark, ChromeScheme::Light}) {
+        borealis::ui::set_chrome_scheme(scheme);
+        const SettingsChrome chrome = borealis::ui::chrome_palette(scheme);
+        // 反空转三句：`sel` 与这一格里可能的另外两档逐位不同，否则「读到 sel」与「读到栏底／选中底」分不开。
+        AURORA_TEST_CHECK_MSG(chrome.sel != chrome.card_bg, "sel equals the bar floor");
+        AURORA_TEST_CHECK_MSG(chrome.sel != chrome.control_bg, "sel equals the active floor");
+        Harness h{std::vector<std::u32string>{U"alpha", U"beta"}};
+        static_cast<void>(h.strip().select(TabId{0U}));
+        h.render();  // 选中首格 ⇒ 第 2 格只能是「未选中」那一档
+        const Frame before = h.pixels();
+        AURORA_TEST_CHECK_MSG(Harness::pixel_at(before, kSecondCardX + 40U, kSampleRow) == chrome.card_bg,
+                              "the plain card floor is not the bar background");
+        h.hover(kSecondCardX + 40U);
+        const Frame after = h.pixels();
+        AURORA_TEST_CHECK_MSG(Harness::pixel_at(after, kSecondCardX + 40U, kSampleRow) == chrome.sel,
+                              "the hovered card does not take the sel tier");
+        // 邻格不受牵连：指针在第 2 格时，第 1 格（选中）那一行仍是 `control_bg`。
+        AURORA_TEST_CHECK_MSG(Harness::pixel_at(after, kStripLeftInsetPx + 40U, kSampleRow) == chrome.control_bg,
+                              "the neighbour moved with the pointer");
+    }
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_pointer_on_the_active_card_keeps_the_accent_over_a_sel_floor) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 交互稿面板 5 的第 2 格画的是**活动格被悬停**：底是 `sel`，卡顶那截 2 dp `accent` 仍在。
+    // 故两档底可叠（hover 不挑是否活动），而落笔次序是承重的那一头——accent 先落就会被随后铺满整格的
+    // `sel` 盖掉，「活动」这一档在指针停到自己身上时反而消失（变异 M3 即此，本例当场红）。
+    Harness h{std::vector<std::u32string>{U"alpha"}};
+    const SettingsChrome chrome = Chrome();
+    constexpr std::size_t kSampleX = kStripLeftInsetPx + 40U;
+    const Frame before = h.pixels();
+    // 反空转前提：唯一一格就是选中格，且 `sel` ≠ `control_bg` ⇒ 下面那句「底换档了」判得出来。
+    AURORA_TEST_CHECK_MSG(chrome.sel != chrome.control_bg, "sel equals the active floor");
+    AURORA_TEST_CHECK_MSG(Harness::pixel_at(before, kSampleX, kCardTopRowPx + kAccentThicknessPx + 4U) ==
+                              chrome.control_bg,
+                          "the active card is not on control_bg before the pointer arrives");
+    h.hover(kSampleX);
+    const Frame after = h.pixels();
+    AURORA_TEST_CHECK_MSG(Harness::pixel_at(after, kSampleX, kCardTopRowPx + kAccentThicknessPx + 4U) ==
+                              chrome.sel,
+                          "hovering the active card does not raise it to sel");
+    // 同一列往上两行＝accent 那一截：hover 之后逐行仍是 `accent`，两行都在。
+    for (const std::size_t row : {kCardTopRowPx, kCardTopRowPx + 1U}) {
+        AURORA_TEST_CHECK_MSG(Harness::pixel_at(after, kSampleX, row) == chrome.accent,
+                              "the hover floor covers the active marker");
+    }
+#else
+    AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
+#endif
+}
+
+AURORA_TEST_CASE(the_hovered_name_jumps_to_the_text_tier) {
+#ifdef AURORA_BACKEND_HEADLESS
+    // 名称档（裁决 7.196③）：活动或 hover 取 `text`，否则 `text_dim`。这一提不是装饰——暗档
+    // `text_dim` 压在 `sel` 底上只有 2.98:1（`utest_chrome_palette` 把那个数钉成「不许当正文用」的证据），
+    // 名字会在指针停住那一刻糊掉；稿面板 5 第 2 格那串名字墨正是 `text`。
+    // 区间取第 2 格的名称带（行 14..27）：那里只有名称的墨，✕ 在第 3 格右端 20 dp 之外、角标缺席。
+    const SettingsChrome chrome = Chrome();
+    const std::size_t x0 = kStripLeftInsetPx + kSingleTabWidthPx + kNameLeftInsetPx;
+    const std::size_t x1 = kStripLeftInsetPx + 2U * kSingleTabWidthPx - 24U;
+    const auto in_band = [&](const Points &pts) -> std::size_t {
+        std::size_t n = 0U;
+        for (const auto &[x, y] : pts) {
+            if (x >= x0 && x <= x1 && y >= 14U && y <= 27U) {
+                ++n;
+            }
+        }
+        return n;
+    };
+    Harness h{std::vector<std::u32string>{U"alpha", U"beta"}};
+    static_cast<void>(h.strip().select(TabId{0U}));
+    h.render();
+    const Frame before = h.pixels();
+    AURORA_TEST_REQUIRE(in_band(Harness::color_points(before, chrome.text_dim)) > 0U);  // 未选中的名字在这里
+    AURORA_TEST_CHECK_EQ(in_band(Harness::color_points(before, chrome.text)), std::size_t{0U});
+    h.hover(kStripLeftInsetPx + kSingleTabWidthPx + 40U);
+    const Frame after = h.pixels();
+    AURORA_TEST_CHECK_EQ(in_band(Harness::color_points(after, chrome.text_dim)), std::size_t{0U});
+    AURORA_TEST_CHECK(in_band(Harness::color_points(after, chrome.text)) > 0U);
 #else
     AURORA_TEST_SKIP("AURORA_BACKEND_HEADLESS not enabled, HeadlessSurface is not compiled");
 #endif

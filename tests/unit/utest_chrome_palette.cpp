@@ -48,6 +48,17 @@ using ui::SettingsChrome;
     return (std::max(first, second) + 0.05) / (std::min(first, second) + 0.05);
 }
 
+/// @brief 一档底色在「`control_bg` → `card_line`」这一段抬升里的位置（0＝与 `control_bg` 同档，1＝与描边同档）。
+///
+/// 两档的抬升方向是反的（暗档越亮越抬起、亮档越暗越抬起），但这一式子是**带符号**的差商，两档各自
+/// 分子分母同号 ⇒ 比值天然同向，不必按档交换基准。`sel` 的亮档值就是按暗档那一档 0.7197 反推出来的
+/// （亮档 `#DBDCE5` 实测 0.7200，裁决 7.196②）。
+[[nodiscard]] auto elevation_slot(const Color &lower, const Color &reference, const Color &upper) -> double {
+    const double base = luminance(reference);
+    const double span = luminance(upper) - base;
+    return span == 0.0 ? 0.0 : (luminance(lower) - base) / span;
+}
+
 }  // namespace
 
 AURORA_TEST_CASE(the_three_choices_resolve_against_the_os_reading) {
@@ -84,6 +95,7 @@ AURORA_TEST_CASE(the_two_palettes_differ_in_every_token) {
     AURORA_TEST_CHECK_FALSE(same(dark.nav_bg, light.nav_bg));
     AURORA_TEST_CHECK_FALSE(same(dark.card_line, light.card_line));
     AURORA_TEST_CHECK_FALSE(same(dark.control_bg, light.control_bg));
+    AURORA_TEST_CHECK_FALSE(same(dark.sel, light.sel));
     AURORA_TEST_CHECK_FALSE(same(dark.text, light.text));
     AURORA_TEST_CHECK_FALSE(same(dark.text_dim, light.text_dim));
     AURORA_TEST_CHECK_FALSE(same(dark.text_faint, light.text_faint));
@@ -105,6 +117,38 @@ AURORA_TEST_CASE(the_table_pins_the_sensitive_values) {
     AURORA_TEST_CHECK_TRUE(same(light.accent, Color{0x7C, 0x3A, 0xED}));
     AURORA_TEST_CHECK_TRUE(same(dark.window_bg, Color{0x1E, 0x1F, 0x29}));
     AURORA_TEST_CHECK_TRUE(same(light.window_bg, Color{0xF4, 0xF4, 0xF7}));
+    // `sel`（第 14 枚，裁决 7.196）：暗档是 §2.1 直接给的那一格，亮档按同构位反推——两枚都得钉住，
+    // 否则「亮档改一档浅色」这种漂移只会在真机上以「hover 几乎看不出来」的形式露出来。
+    AURORA_TEST_CHECK_TRUE(same(dark.sel, Color{0x44, 0x47, 0x5A}));
+    AURORA_TEST_CHECK_TRUE(same(light.sel, Color{0xDB, 0xDC, 0xE5}));
+}
+
+AURORA_TEST_CASE(the_sel_tier_sits_at_the_same_ladder_slot_in_both_palettes) {
+    // `sel` 的落位判据（裁决 7.196②）：它必须**确实**落在 `control_bg` 与 `card_line` 之间——压在
+    // `control_bg` 上则 hover 与活动分不开，越过 `card_line` 则 hover 那一格比描边还抢眼。两档还须落在
+    // 同一段抬升的同一位（暗档实测 0.7197 ⇒ 亮档取 `#DBDCE5` 得 0.7200），否则「同构推导」只是句口号。
+    const SettingsChrome dark = ui::chrome_palette(ChromeScheme::Dark);
+    const SettingsChrome light = ui::chrome_palette(ChromeScheme::Light);
+    for (const SettingsChrome &palette : {dark, light}) {
+        const double slot = elevation_slot(palette.sel, palette.control_bg, palette.card_line);
+        AURORA_TEST_CHECK_MSG(slot > 0.0 && slot < 1.0, "sel leaves the control_bg..card_line segment");
+    }
+    const double dark_slot = elevation_slot(dark.sel, dark.control_bg, dark.card_line);
+    const double light_slot = elevation_slot(light.sel, light.control_bg, light.card_line);
+    AURORA_TEST_CHECK_MSG(std::abs(dark_slot - light_slot) <= 0.05, "the two tiers sit at different ladder slots");
+
+    // 名称落在这档上的两条：`text` ≥4.5（hover/活动那一档必须读得出），而暗档 `text_dim` 只有 2.98——
+    // 这一句钉的是「不许把 `text_dim` 当成 `sel` 底上的正文色」，标签条 hover 提亮名称那条口径的根。
+    for (const ChromeScheme scheme : {ChromeScheme::Dark, ChromeScheme::Light}) {
+        const SettingsChrome palette = ui::chrome_palette(scheme);
+        AURORA_TEST_CHECK_MSG(contrast(palette.text, palette.sel) >= 4.5, "text on sel");
+    }
+    AURORA_TEST_CHECK_MSG(contrast(dark.text_dim, dark.sel) < 3.0, "dark text_dim on sel is not a body tone");
+    // `accent` 作前景（✕ 在 hover 档取 `accent`）走非正文下界 3.0。
+    for (const ChromeScheme scheme : {ChromeScheme::Dark, ChromeScheme::Light}) {
+        const SettingsChrome palette = ui::chrome_palette(scheme);
+        AURORA_TEST_CHECK_MSG(contrast(palette.accent, palette.sel) >= 3.0, "accent on sel");
+    }
 }
 
 AURORA_TEST_CASE(both_palettes_meet_wcag_aa_on_the_card_surface) {
