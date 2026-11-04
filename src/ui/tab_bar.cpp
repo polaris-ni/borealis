@@ -523,9 +523,18 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
             .origin = au::Point{.x = card_x, .y = card_top},
             .size = au::Size{.width = w, .height = kCardHeightDp}};
 
-        // 选中态：圆角卡片底 + 卡顶 2 dp accent（左右各内缩 8，让开两个圆角）。
+        // 卡片底两档：活动取 `control_bg`（稿 §2.1 的 `raised`），hover 取 `sel`（第 14 枚 token，裁决
+        // 7.196）。二者可叠——活动格被悬停时 `sel` 盖在 `raised` 上，这是交互稿面板 5 那两格的画法
+        // （1＝raised＋accent，2＝hover＝sel＋accent 仍在），故 hover 不挑「是否活动」。
+        // accent 那截必须**后于** hover 落笔：它压在卡顶 2 dp，先落就会被 hover 底整截盖掉，「活动」这一
+        // 档在指针停在自己身上时反而消失——正是判据 ⑭ 最不该出的那种反向。
         if (tab.is_selected) {
             p.fill_rounded_rect(card_box, kCardRadiusDp, chrome.control_bg);
+        }
+        if (hovered_tab_id_ == tab.id) {
+            p.fill_rounded_rect(card_box, kCardRadiusDp, chrome.sel);
+        }
+        if (tab.is_selected) {
             const au::Rect accent{
                 .origin = au::Point{.x = card_box.origin.x + kAccentInsetDp, .y = card_top},
                 .size = au::Size{.width = std::max(0.0F, w - 2.0F * kAccentInsetDp),
@@ -533,13 +542,10 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
             p.fill_rect(accent, chrome.accent);
         }
 
-        // hover 态背景：选中底再压暗一档（`Color::shaded` 是框架对 hover/pressed 的统一派生法），两套色板
-        // 同一条式子——亮档因此是比选中底略深的灰，暗档是栏底与选中底之间的一档。
-        // 稿的 hover 档写的是 `sel`（§2.1 表里那枚「代码侧尚无消费者」的格），本件按既有派生法而不为
-        // 一枚 hover 新增第 14 枚 token；差额登记在裁决 7.187 的欠项里。
-        if (hovered_tab_id_ == tab.id && !tab.is_selected) {
-            p.fill_rounded_rect(card_box, kCardRadiusDp, chrome.control_bg.shaded(0.9F));
-        }
+        // 名称档（含类型图标，色随名称＝D7 的口径）：活动或 hover 取 `text`，否则取 `text_dim`。
+        // hover 那一提不是装饰——`text_dim` 落在 `sel` 底上只有 2.98:1（暗档），比 WCAG 的非正文下界还低，
+        // 名字会在指针停住的那一刻糊掉；稿面板 5 第 2 格那串名字墨正是 `text`（裁决 7.196③）。
+        const bool prominent = tab.is_selected || hovered_tab_id_ == tab.id;
 
         // 文本（截断到可用宽度）：左内缩与可用宽同出 `name_region`——「名称落在哪一截」和「双击命中哪一截」
         // 「胶囊盒交出去的是哪一截」必须是同一个数（裁决 7.195），各写一份迟早会在溢出态里错开半格。
@@ -547,7 +553,7 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         // 都在那枚函数里（裁决 7.183 登记的原句随之搬过去）。
         const NameRegion region = name_region(tab, w);
         const auto display = truncate_name(tab.display_name, region.width, font);
-        const au::Color text_color = tab.is_selected ? chrome.text : chrome.text_dim;
+        const au::Color text_color = prominent ? chrome.text : chrome.text_dim;
         const au::Rect text_box{
             .origin = au::Point{.x = card_box.origin.x + region.left_inset, .y = content_top},
             .size = au::Size{.width = region.width, .height = bar_height_ - 28.0F}};
@@ -586,7 +592,7 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
         // 打字时正该看见它已退出。
         //
         // 三枚同形、只靠颜色与次序分档，是屏 1 稿面那一幅的兑现（稿画的就是三枚 r=3 圆点，Bell 那枚
-        // 的铃形在稿内出现在另一格上、本棒按人裁的「圆点档」统一；登记在裁决 7.183）。颜色各占 13 枚
+        // 的铃形在稿内出现在另一格上、本棒按人裁的「圆点档」统一；登记在裁决 7.183）。颜色各占 14 枚
         // token 里的一格：断线＝`danger`、BEL＝`warning`、活动＝`success`。簇内次序即优先级，故两枚
         // 同格点亮时最占眼位的那一枚落在稿那个锚位上，而每一枚的**圆心横坐标**由它在簇里的位次唯一决定
         // ——这也是本套件几何证人取的读数（比的是位置与色道，不是外接面积：`fill_sector` 四条边各 1 px
@@ -626,7 +632,7 @@ auto TabBarWidget::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bu
 
     // 栏底那条 1 dp 细线（稿 `line x1=0 y1=78 x2=1500 y2=78 stroke=#3A3C4C`）：压在卡片之上画，因为稿的
     // 次序就是先五格再这一线——它是标签条与下方内容区的分界，不属于任何一格。`#3A3C4C` 是 §2.1 表的
-    // `line`，13 枚 token 里没有这一格，按既有细线口径取 `card_line`（`app_title_bar` / `sidebar_rail`
+    // `line`，14 枚 token 里没有这一格，按既有细线口径取 `card_line`（`app_title_bar` / `sidebar_rail`
     // 同一条，裁决 7.179④c）。栏顶那条同类细线由自绘标题栏的底缘承担，不在本件。
     const au::Rect hairline{
         .origin = au::Point{.x = bounds.origin.x, .y = bounds.origin.y + bar_height_ - 1.0F},
