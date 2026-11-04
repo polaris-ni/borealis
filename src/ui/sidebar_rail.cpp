@@ -87,7 +87,7 @@ auto SidebarRail::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bui
     const SettingsChrome chrome = settings_chrome();
     p.fill_rect(bounds, chrome.card_bg);
     // 右沿那条 1 dp 线取 `card_line` 而不是稿上的 `#3A3C4C`——与状态栏条顶线同一条口径（7.179④c）：
-    // 那个值不在两档 13 枚 token 里，为本件单开一枚就是给色板加第 14 格。
+    // 那个值不在两档 14 枚 token 里，为本件单开一枚就是给色板加第 15 格（第 14 枚已被 hover 底 `sel` 占了，裁决 7.196）。
     p.fill_rect(au::Rect{.origin = au::Point{
                              .x = static_cast<float>(static_cast<double>(bounds.origin.x) +
                                                     kRailWidthDp - kHairlineWidthDp),

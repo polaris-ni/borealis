@@ -327,7 +327,7 @@ AURORA_TEST_CASE(the_band_paints_the_active_schemes_body_hairline_separator_and_
     const Pixels before = h.pixels();
     // 条身：字形行（y≈8..28）之外的空白段就是纯条身。
     AURORA_TEST_CHECK_TRUE(h.sample(before, 600.0, 32.0) == dark.card_bg);
-    // 底缘那条 1 dp 线取 `card_line`（稿的 `#3A3C4C` 不在 13 枚 token 里，同 7.179④c 口径）。
+    // 底缘那条 1 dp 线取 `card_line`（稿的 `#3A3C4C` 不在 14 枚 token 里，同 7.179④c 口径）。
     AURORA_TEST_CHECK_TRUE(h.sample(before, 600.0, 35.0) == dark.card_line);
     // 竖分隔线（稿 `#4D4F63`＝`card_line`，在册）。
     AURORA_TEST_CHECK_TRUE(h.sample(before, static_cast<double>(h.width()) - kSeparatorInsetDp, 18.0) ==

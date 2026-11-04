@@ -13,8 +13,8 @@
 //    取「以 run 中心为心、统一 28 dp 宽、通栏高」，字形按各自的外接尺寸画线。中心距右缘的内缩
 //    直接取稿面值（123／94／27），pitch 因此是非等距的——这正是 F11 插在 ▢ 与 ✕ 之间的结果。
 // ② 上下文串的左沿跟标题右端走（稿那个 105.2 只在「Borealis」这枚字宽下成立）。
-// ③ 底缘那条线取 `card_line`（#4D4F63）而不是稿的 `#3A3C4C`：后者不在两档 13 枚 token 里，为本件
-//    单开一枚就是给色板加第 14 格——与状态栏条顶线（7.179④c）、折叠轨右沿线同一条口径。
+// ③ 底缘那条线取 `card_line`（#4D4F63）而不是稿的 `#3A3C4C`：后者不在两档 14 枚 token 里，为本件
+//    单开一枚就是给色板加第 15 格（第 14 枚已被 hover 底 `sel` 占了，裁决 7.196）——与状态栏条顶线（7.179④c）、折叠轨右沿线同一条口径。
 //
 // 文本落点（`title_box_`／`context_box_`）算在**绘制**里而不是布局里：它们只随串宽动，放进布局就
 // 要在改标题时额外重排一整条带（`StatusBar::anchor_box_` 同一先例）。三枚钮与 F11 的盒只随窗宽动，
@@ -270,7 +270,7 @@ auto AppTitleBar::on_paint(au::Painter &p, const au::Rect &bounds, const au::Bui
     const double width = static_cast<double>(bounds.size.width);
 
     // ① 条身与底缘。失焦让位一档：稿只画了激活态，`window_bg` 是暗档里比卡片低一格的既有值，
-    //    亮档同构（与基类 `bg_inactive` 的角色一致，只是值改由 13 枚 token 给）。
+    //    亮档同构（与基类 `bg_inactive` 的角色一致，只是值改由 14 枚 token 给）。
     p.fill_rect(au::Rect{.origin = bounds.origin,
                          .size = au::Size{.width = bounds.size.width,
                                           .height = static_cast<float>(kBarHeightDp)}},

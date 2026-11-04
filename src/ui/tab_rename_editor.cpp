@@ -250,10 +250,10 @@ auto TabRenameEditor::build_pill(const RenameTarget &target) -> std::shared_ptr<
 
     // chrome 交接（裁决 7.58 的同一判法：框架输入类控件的缺省色是浅色档，暗档卡片上必须自己交）。
     input->set_text_color(chrome.text);
-    // 稿的胶囊底 `#191A21` 与栏底同一枚色值——它读作「卡上开的一个洞」，而不是又一层控件。13 枚 token
-    // 里没有这一格（§2.1 表里那格叫 `input`，代码侧尚无消费者，同 `sel` 的处境，裁决 7.187 的欠项），
-    // 故取栏底今日实际落的那一枚 `card_bg`（PREF.01 的像素证人钉的就是它），把「胶囊＝栏底透过卡」这层
-    // 关系留住，而不是为一只浮层新增第 14 枚 token。
+    // 稿的胶囊底 `#191A21` 与栏底同一枚色值——它读作「卡上开的一个洞」，而不是又一层控件。14 枚 token
+    // 里没有这一格（§2.1 表里那格叫 `input`，代码侧尚无消费者；同表里 `sel` 那份欠项已在 7.196 由标签条
+    // hover 底出账，`input` 仍挂着，见 7.187），故取栏底今日实际落的那一枚 `card_bg`（PREF.01 的像素证人
+    // 钉的就是它），把「胶囊＝栏底透过卡」这层关系留住，而不是为一只浮层新增第 15 枚 token。
     input->set_background(chrome.card_bg);
     input->set_focused_background(chrome.card_bg);  // 聚焦态不换底：稿只画了一档底
     // 边框两档都给 accent：胶囊只在获焦时存在，但失焦到 `sync()` 收层之间还有一帧未聚焦的画档，

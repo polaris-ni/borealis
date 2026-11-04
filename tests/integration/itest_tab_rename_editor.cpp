@@ -543,7 +543,7 @@ AURORA_TEST_CASE(a_steady_frame_with_the_pill_open_stays_idle) {
 
 AURORA_TEST_CASE(the_pill_is_a_hole_in_the_card_with_an_accent_border) {
 #ifdef AURORA_BACKEND_HEADLESS
-    // 像素腿（裁决 7.195 那两处色档）：胶囊底走 `card_bg`（稿 `#191A21` 那一格在 13 枚 token 里没有，
+    // 像素腿（裁决 7.195 那两处色档）：胶囊底走 `card_bg`（稿 `#191A21` 那一格在 14 枚 token 里没有，
     // 与 `sel` 同档登记），描边与光标走 `accent`。判法取**选中格内部**那一块：卡片底是 `control_bg`，
     // 故卡里出现的 `card_bg` 只能是胶囊那一枚；而卡顶那条 2 dp accent 带在行 4..5，取行 6 之下的 accent
     // 就只剩胶囊自己的描边。开盒前后各取一帧，两句「之前空、之后有墨」都是反空转。

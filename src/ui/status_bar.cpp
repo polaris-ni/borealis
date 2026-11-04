@@ -95,8 +95,8 @@ auto StatusBar::on_paint(au::Painter &p, const au::Rect &bounds, const au::Build
     const SettingsChrome chrome = settings_chrome();
     p.fill_rect(bounds, chrome.card_bg);
     // 条顶那 1 dp 分隔线是稿面画的（`codespec/UI_WORKSPACE.draft.svg` 里工作区与这条之间那道线），
-    // 色取 `card_line` 而不是稿上的十六进制值：后者不在两档色板的 13 枚 token 里，而 `UI_CHROME.draft.md`
-    // §1 是唯一色值源——为本件单开一枚「分隔线专用色」就是给色板加第 14 格（代价：暗档这条比稿面亮一档）。
+    // 色取 `card_line` 而不是稿上的十六进制值：后者不在两档色板的 14 枚 token 里，而 `UI_CHROME.draft.md`
+    // §1 是唯一色值源——为本件单开一枚「分隔线专用色」就是给色板加第 15 格（第 14 枚已被 hover 底 `sel` 占了，裁决 7.196）（代价：暗档这条比稿面亮一档）。
     p.fill_rect(au::Rect{.origin = au::Point{.x = bounds.origin.x, .y = bounds.origin.y},
                          .size = au::Size{.width = bounds.size.width, .height = 1.0F}},
                 chrome.card_line);
