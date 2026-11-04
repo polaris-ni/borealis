@@ -213,6 +213,16 @@ struct SettingsChrome {
     aurora::Color nav_bg{};      ///< 设置页左导航列底（比卡片暗一档，分出两栏）。
     aurora::Color card_line{};   ///< 卡片描边 / 行区分隔线 / 控件描边。
     aurora::Color control_bg{};  ///< 输入类控件底与次级按钮底（chip 的关档底、选中标签底）。
+    /// @brief 当前项／悬停底：稿 §2.1 的 `sel`（第 14 枚，裁决 **7.196**）。
+    ///
+    /// 暗档 `#44475A` 是 §2.1 直接给的格，不是本仓自算；亮档同构推——取「`control_bg`→`card_line`
+    /// 这一段的同一比例位」（暗档实测 0.7197，亮档 `#DBDCE5` 落 0.7200）。它比 `control_bg` 高一档而
+    /// 低于描边档，故标签条上「指针在这一格」比「这一格是活动格」更抢眼——这正是交互稿面板 5 那格的
+    /// 画法（活动＋普通＝`raised`，hover＝`sel`）。
+    /// 代价（在册）：`text_dim` 落在这一档上只剩 2.98:1（暗档），低于 WCAG 非正文下界——所以凡以本档
+    /// 为底的**名称文字**必须走 `text`，`itest_tab_bar` 按这一条钉住，`utest_chrome_palette` 把 2.98
+    /// 那档不过线也钉成「不许改」的证据。
+    aurora::Color sel{};
     aurora::Color text{};        ///< 正文。
     aurora::Color text_dim{};    ///< 副标题、占位符、关档前景、未选标签。
     /// @brief 弱化档：稿 §2.1 的 `dim`（第三枚文本 token，比 `text_dim` 再暗一档）。
